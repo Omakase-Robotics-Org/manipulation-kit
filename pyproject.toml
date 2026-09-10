@@ -20,7 +20,15 @@ dependencies = [
 # The MuJoCo-backed KinematicChain substrate. OPTIONAL on purpose: it is one
 # substrate of two, and consumers with no MuJoCo dependency satisfy the same
 # protocol by walking the guard-parsed URDF.
-mujoco = ["mujoco>=3.0"]
+#
+# The 3.9 ceiling is not a preference: MuJoCo stopped shipping cp39 wheels after
+# 3.3.7, and without the marker pip tries to BUILD it from source and dies on a
+# missing MUJOCO_PATH. 3.9 is the floor this package declares because that is
+# what the robot images run, so the pin has to be real.
+mujoco = [
+    "mujoco>=3.0,<=3.3.7; python_version < '3.10'",
+    "mujoco>=3.0; python_version >= '3.10'",
+]
 # Mesh work: the vendoring/decimation tools under hands/*/*/tools/ and
 # description/d1/tools/prepare_visual_meshes.py.
 meshes = ["trimesh", "fast-simplification"]
