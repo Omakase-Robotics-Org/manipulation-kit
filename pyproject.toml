@@ -51,6 +51,13 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Assets resolve package-relative (importlib.resources / __file__), never from
 # a $D1_SDK_DIR checkout, so they MUST ship inside the wheel.
+#
+# The mesh globs below match NOTHING in a clean checkout — the CAD is not in
+# this repository (LICENSE-STATUS.md), so a wheel built from a clean tree
+# carries no CAD, which is the default and the one that may be published. They
+# are kept so that an INTERNAL wheel built after `mkit-urdf fetch-assets` is
+# complete. Do not build a public wheel from a fetched work tree: run
+# `git clean -xdf` first, or build from a fresh clone.
 "manipulation_kit.config" = ["*.json", "tool_configs/*.json", "tool_configs/*.md"]
 "manipulation_kit.description" = [
     "d1/*.urdf", "d1/*.xml", "d1/*.md", "d1/CMakeLists.txt",
