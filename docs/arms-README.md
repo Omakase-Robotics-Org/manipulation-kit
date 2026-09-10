@@ -11,7 +11,7 @@ arms/*.py                        # the arm-AGNOSTIC layer (solver, clamps, conve
 
 | path | arm | status |
 |---|---|---|
-| `arms/d1/arm/` | the arm vendor D1 arm (as mounted on D1) | kinematics migrated from `dx-vr-teleop`; driver still in `d1-sdk` |
+| `arms/d1/arm/` | the D1 arm (as mounted on D1) | kinematics migrated from `dx-vr-teleop`; driver still in `d1-sdk` |
 
 ## Why arms live here
 

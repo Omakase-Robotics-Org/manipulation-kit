@@ -1,4 +1,4 @@
-"""the arm vendor D1 arm kinematics as mounted on D1 — the vendor binding.
+"""the D1 arm kinematics as mounted on D1 — the vendor binding.
 
 This is the ``<maker>/<model>`` half of the seam: everything here is knowledge
 about THIS arm on THIS robot — which URDF describes it, what its links are
@@ -88,7 +88,7 @@ def clutch_tuning() -> ClutchTuning:
     """This arm's reachable envelope and per-tick clamps.
 
     Resolved by :func:`manipulation_kit.arms.get_clutch_tuning`. The box is a measured
-    property of the D1 arm arm as mounted on D1 — see
+    property of the D1 arm as mounted on D1 — see
     :data:`manipulation_kit.arms.safety.WORKSPACE` for the measurements and for why the
     x-floor is 0.15 rather than 0.
     """

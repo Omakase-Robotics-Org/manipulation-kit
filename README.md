@@ -10,10 +10,11 @@ Hardware is `exp--d1-firmware` — the Rust daemon `d1-firmwared`, REST on
 development** receives a D1 with the firmware pre-flashed, and this is the layer
 they read, extend and plan against.
 
-> **Licensing:** there is deliberately **no `LICENSE` file yet**. Relicensing
-> and vendor-mesh clearance are open decisions. Read
-> **[LICENSE-STATUS.md](LICENSE-STATUS.md)** before publishing or sharing
-> anything from here.
+> **Licensing:** there is deliberately **no `LICENSE` file yet** — what we
+> grant on our own code is still an open decision. What is no longer open is
+> the CAD: **this repository ships the URDFs and not the geometry they
+> reference.** Read **[LICENSE-STATUS.md](LICENSE-STATUS.md)** before
+> publishing or sharing anything from here.
 
 ## Install
 
@@ -23,7 +24,7 @@ uv pip install -e '.[mujoco]'  # + the MuJoCo IK substrate
 uv pip install -e '.[dev]'     # + pytest
 ```
 
-Assets (`d1.urdf`, `home_pose.json`, `safety_zones.json`, the meshes) ship
+Assets (`d1.urdf`, `home_pose.json`, `safety_zones.json`, the URDFs) ship
 **inside the package** and resolve package-relative. There is no `$D1_SDK_DIR`,
 no sibling checkout, and nothing to set up:
 
@@ -42,6 +43,7 @@ mkit-urdf variants                                    # what can be built
 mkit-urdf build [--only d1.urdf] [--yubi]             # regenerate the URDFs
 mkit-urdf export d1-wholebody-gripper --dest DIR      # vendor it, with provenance
 mkit-urdf export d1-wholebody-gripper --dest DIR --check   # CI drift gate
+mkit-urdf fetch-assets --from ~/manipulation-kit-assets     # the CAD (below)
 mkit-urdf fetch-visuals --from-d1-sdk ~/d1-sdk        # optional visual layer
 
 mkit-toolconfig list
@@ -50,14 +52,55 @@ mkit-toolconfig export d1/parallel_gripper out.json
 
 | variant | what it is |
 |---|---|
-| `d1-wholebody-gripper` | The **authoritative** whole body (base + lift + neck + both arms) wearing the stock parallel gripper. Prebuilt in [`dist/d1-wholebody-gripper/`](dist/d1-wholebody-gripper). |
+| `d1-wholebody-gripper` | The **authoritative** whole body (base + lift + neck + both arms) wearing the stock parallel gripper. Prebuilt (mesh-free) in [`dist/d1-wholebody-gripper/`](dist/d1-wholebody-gripper). |
 | `d1-collision` | The mesh-free guard model `d1.urdf` alone — one file, zero assets, loads anywhere. Prebuilt in [`dist/d1-collision/`](dist/d1-collision). |
 | `d1-yubi` | Mesh-bearing dual-arm D1 + YUBI hands (RViz, Genesis, MuJoCo). |
-| `d1-arm` | The vendor per-arm packages, verbatim. |
+| `d1-arm` | The per-arm packages, left and right. |
 | `d1-wholebody-o30` | **Registered, not buildable.** No O30 CAD and no measured TCP exist yet; `export` prints the four things needed, in order, rather than "unknown variant". |
 
 **The URDFs are generated. Edit the generator, never the `.urdf`** — a test
-regenerates and byte-diffs, so a hand-edit fails CI instead of shipping.
+regenerates and byte-diffs, so a hand-edit fails CI instead of shipping. That
+holds with no CAD on the machine: `mkit-urdf build` reproduces all three D1
+URDFs byte for byte from a bare checkout.
+
+## The CAD is not here
+
+**The URDFs are complete; the STL geometry they reference is not in this
+repository.** Its redistribution rights are unresolved and this repository is
+meant to be publishable without waiting for that answer, so on 2026-09-10 the
+Omakase and vendor CAD was removed from the work tree *and from the whole git
+history* and moved to the private
+[`manipulation-kit-assets`](https://github.com/Omakase-Robotics-Org/manipulation-kit-assets).
+`tests/test_no_vendor_cad.py` fails if any of it comes back.
+
+Third-party geometry that already carries a licence **stays**: the YUBI hand
+and the DH116S hand are both Apache-2.0 and ship here, with their upstream
+`package.xml` / README intact. [`LICENSE-STATUS.md`](LICENSE-STATUS.md) has
+the file-by-file table.
+
+Nothing about the *shape* of this package changed. Every `<mesh>` reference is
+verbatim, at the path it always had; the two ways to complete a checkout both
+put files exactly where the URDFs already look:
+
+```sh
+export MKIT_ASSETS_DIR=~/manipulation-kit-assets            # resolve in place
+mkit-urdf fetch-assets --from ~/manipulation-kit-assets     # or copy them in
+mkit-urdf fetch-assets --from git@github.com:Omakase-Robotics-Org/manipulation-kit-assets.git
+```
+
+Both destinations are `.gitignore`d — a completed work tree cannot commit the
+CAD back.
+
+**Exports declare what they withhold.** `mkit-urdf export
+d1-wholebody-gripper` produces the URDF and a `PROVENANCE.json` naming all 22
+withheld meshes under `absent_external` (and the 13 optional visuals under
+`absent_optional`), so a consumer can always tell *withheld* from *lost*. Add
+`--with-assets` for the full mesh-bearing bundle; the assets repository also
+carries a prebuilt one under `dist/d1-wholebody-gripper/`.
+
+`--check` is honest in both directions: a mesh-free `dist/` verifies on a
+machine that has the CAD fetched, because the export depends on the flag it
+was given and never on what happens to be on disk.
 
 ## Layout
 
@@ -112,8 +155,8 @@ the target from an out-of-limits posture — and are fixed here **in the fixture
 | | why |
 |---|---|
 | **Hand and gripper drivers** — `driver.py`, `transport.py`, `canbus.py`, `arm_passthrough.py`, `scripts/{smoke,wiggle}.py` | The wire is `d1-firmwared`'s. The force-limited grasp, supervised preload hold and thermal self-protection grown against d1-2 moved with it. `get_hand()` is gone from the registry; ask the daemon for a hand, ask this package what a hand *is*. |
-| **`arms/d1/arm/channel_bus.py`** | ctypes over `the arm vendor's SDK shared library` — the arm's CAN channel passthrough. Hardware. |
-| **The vendor SDK** — `sdk/`, `lib/the arm vendor's SDK shared library`, `libKine.so` | Vendor source and binaries; `DISTRIBUTION.md §7.2` requires they stay internal. Destined for a `vendor-arm-package`. |
+| **`arms/d1/arm/channel_bus.py`** | ctypes over the vendor arm SDK `.so` — the arm's CAN channel passthrough. Hardware. |
+| **The vendor SDK** — `sdk/`, the vendor arm SDK `.so`, `libKine.so` | Vendor source and binaries; `DISTRIBUTION.md §7.2` requires they stay internal. Destined for a `vendor-arm-package`. |
 | **The C++ wrapper, `example/`, `numeric_ik`** | FK there is vendor `libKine`. Retired into the daemon. `test_cpp_crosscheck.py` came off with it. |
 | **`pyarmstate`** | Arm modes, recovery and state sequencing are the daemon's job by definition. |
 | **Every other device** — eyes, car, neck, slider, camera, audio, microphone | Not manipulation. |
@@ -169,4 +212,11 @@ pytest
 Everything is a test of a claim somebody once got wrong on a robot; the
 docstrings say which. The suite is `pytest`-only and runs on every push
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), including
-`mkit-urdf build` byte-reproduction and `--check` against the committed `dist/`.
+`mkit-urdf build` byte-reproduction and `--check` against the committed
+`dist/`.
+
+Tests that OPEN a mesh skip themselves, by name and with the reason, when the
+CAD is absent — 10 of them. Set `MKIT_ASSETS_DIR` (or fetch) and they run.
+Tests that check the URDFs still NAME the right meshes run unconditionally;
+those are the ones that catch a generator which quietly stopped referencing
+half the robot.

@@ -14,7 +14,7 @@ gestures, plus the cross-repo CSV/home-pose/CLI contract shared with **omakaseos
 - `config/collision_thresholds.json` — per-joint collision thresholds (conservative; tune on the real robot)
 - `test/gesture_csv_test.cpp`, `test/safety_zones_test.cpp`, `test/collision_monitor_test.cpp`, `test/stow_pose_test.cpp` — host unit tests (no robot/.so needed)
 
-> Runtime needs the robot: the tools link `the arm vendor's SDK shared library`/`libKine.so`
+> Runtime needs the robot: the tools link the vendor arm SDK `.so`/`libKine.so`
 > (aarch64). On an x86 dev box they **compile** but cannot link the vendor .so;
 > build & run them on the robot. The CSV/maths in `gesture_csv.h` are fully
 > unit-tested host-side.

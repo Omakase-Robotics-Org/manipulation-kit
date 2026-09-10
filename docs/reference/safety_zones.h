@@ -115,7 +115,7 @@ struct JointDef {
     double tx, ty, tz;  // xyz
 };
 
-// D1 arm arm chain Base -> Link1..Link7 (one arm). IDENTICAL to the URDF
+// D1 arm chain Base -> Link1..Link7 (one arm). IDENTICAL to the URDF
 // Joint*_R / Joint*_L origins. radius is the capsule radius of the link that
 // this joint's origin starts (used for the capsule between consecutive frames).
 inline const std::array<JointDef, kJointsPerArm>& armChain()

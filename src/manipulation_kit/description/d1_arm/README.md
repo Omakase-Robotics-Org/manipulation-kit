@@ -1,4 +1,4 @@
-# D1 arm arm descriptions
+# D1 arm descriptions
 
 Authoritative URDF descriptions for the **D1 arm** 7-DoF arm used on the D1
 robot. These are the **vendor real-robot descriptions** — they match the physical

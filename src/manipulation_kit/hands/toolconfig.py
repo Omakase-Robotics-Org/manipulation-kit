@@ -1,6 +1,6 @@
 """Tool physical config — the hand-owned answer to "what is mounted on the arm".
 
-Arm controllers (D1's D1 arm arm in particular) need the mounted tool
+Arm controllers (D1's D1 arm in particular) need the mounted tool
 registered with their dynamics model: TCP offset for kinematics, and
 mass / COM / inertia for gravity compensation and the torque-mode entry
 check. Registering the WRONG tool is the failure mode this module exists

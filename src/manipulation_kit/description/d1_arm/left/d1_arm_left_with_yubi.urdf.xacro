@@ -4,7 +4,7 @@
      arm TCP flange (TCP_Link_L).
      Includes the in-package arm URDF and the yubi_description hand macro.
 
-     NOTE (2026-07-25): the two D1 arm arms are the SAME physical arm (not
+     NOTE (2026-07-25): the two D1 arms are the SAME physical arm (not
      mirror-image hardware), so with mirror-symmetric joint values the two
      TCP flanges land 180 deg apart.  The hand on THIS side is therefore
      physically mounted 180 deg rotated (yaw pi, y-offset sign flipped) to

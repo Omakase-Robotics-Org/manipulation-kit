@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Merged URDF: Wheeled Dual-Arm Composite Robot
      Base robot: urdf2026072302 (mobile base + lift slider + head)
-     Arms: D1 arm D1 arm (right) (7-DOF, attached to rarmbase_Link and larmbase_Link)
-     Right arm: original D1 arm arm (_R suffix)
-     Left arm: Y-axis mirrored D1 arm arm (_L suffix) -->
+     Arms: D1 arm (7-DOF, attached to rarmbase_Link and larmbase_Link)
+     Right arm: original D1 arm (_R suffix)
+     Left arm: Y-axis mirrored D1 arm (_L suffix) -->
 <robot
   name="merged_robot">
   <link

@@ -1,16 +1,16 @@
-# the arm vendor arm (D1 arm) — why the two D1 arms are NOT mirror images
+# The D1 arm — why the two arms are NOT mirror images
 
 **Read this before "fixing" anything about the D1's left/right arm symmetry.**
 The facts below were measured from the model files in this repository,
-cross-checked against the vendor's own files, and confirmed with the vendor
-(the arm vendor, maker of the D1 arm arm). They explain an asymmetry that
-looks like a bug and is not one. Machine-checked by
+cross-checked against the vendor's own files, and confirmed with the arm
+vendor directly. They explain an asymmetry that looks like a bug and is not
+one. Machine-checked by
 `devices/omakase_arm/pyguard/tests/test_description_consistency.py`.
 
 ## 1. Both arms are the SAME physical arm
 
 The D1 carries two identical D1 arm units — not a left-handed and a
-right-handed variant. the arm vendor confirmed this directly, and the vendor's own
+right-handed variant. The vendor confirmed this directly, and the vendor's own
 per-arm URDFs agree: in
 `description/d1_arm/left/d1_arm_left.urdf` and
 `right/d1_arm_right.urdf`, **every joint origin, axis and limit of
@@ -72,7 +72,7 @@ Consequences you can see on the real robot:
 - the wrist **cables do not** — one arm's cable exits on the other side.
 
 The cable asymmetry is therefore EXPECTED, not an assembly error. Every
-integrator using the arm vendor arms shows the same thing (e.g. Genesis.ai's
+integrator using the same arms shows the same thing (e.g. Genesis.ai's
 published robot footage).
 
 ## 4. Which model files encode this correctly

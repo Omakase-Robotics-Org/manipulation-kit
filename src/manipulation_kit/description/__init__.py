@@ -1,7 +1,7 @@
 """manipulation_kit.description — the D1 robot's geometry, and only geometry.
 
 This package is the **canonical home of the D1's shape**. Every URDF of the D1
-or its D1 arm arms used anywhere in the Omakase stack either lives
+or its D1 arms used anywhere in the Omakase stack either lives
 here or is a provenance-tracked export of what lives here (``mkit-urdf
 export``). Do not hand-copy a URDF out of it, and do not hand-edit a copy in a
 consumer repository.

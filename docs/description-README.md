@@ -1,7 +1,7 @@
 # D1 robot description — single source of truth
 
 This directory is the **canonical home of the D1 robot's geometry**. Every
-URDF of the D1 or its D1 arm arms used anywhere in the Omakase
+URDF of the D1 or its D1 arms used anywhere in the Omakase
 stack either lives here or is a **vendored, provenance-tracked export** of
 what lives here. Do not hand-copy a URDF out of this directory, and do not
 hand-edit a copy in a consumer repository.

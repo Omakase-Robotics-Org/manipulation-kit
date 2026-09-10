@@ -40,7 +40,7 @@ DEFAULT_HOME = os.path.join(KIT, "config", "home_pose.json")
 #
 # It is the only script here that is NOT pure computation: it shells out to the
 # d1-sdk C++ example binaries ``fk_batch`` and ``ik_batch``, which link the
-# vendor ``libKine.so`` / ``the arm vendor's SDK shared library``. Neither the binaries, the vendor
+# vendor ``libKine.so`` / `the vendor arm SDK `.so``. Neither the binaries, the vendor
 # libs, nor the ``.VendorKinCfg`` kinematic configs came to manipulation-kit — they
 # are hardware/vendor artefacts and belong to ``d1-firmwared``.
 #

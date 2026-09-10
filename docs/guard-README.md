@@ -1,7 +1,7 @@
 # pyguard — D1 software range-of-motion / self-collision guard
 
 Pure-python (standard library only, no numpy/ROS) guard that checks
-commanded **joint vectors** for the D1's two D1 arm arms **before
+commanded **joint vectors** for the D1's two D1 arms **before
 they reach the hardware**:
 
 1. **per-joint limit clamp** — limits parsed from the full-body URDF
