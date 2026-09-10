@@ -36,6 +36,24 @@ guard = MotionGuard()                       # loads the bundled d1.urdf
 arm = get_arm_kinematics("d1/arm")   # IK, clamps, HOME, guard wired in
 ```
 
+## Versioning: bump it, or consumers keep the old code
+
+**Consumers pin a commit** — `manipulation-kit @
+git+ssh://git@github.com/Omakase-Robotics-Org/manipulation-kit.git@<sha>` in
+`requirements.txt` / `pyproject.toml` (dx-vr-teleop, omakase-core,
+d1-inference, poc-dx-inspect-robots). **Bump `project.version` in
+`pyproject.toml` with every change consumers must pick up, otherwise pip will
+not reinstall.** pip compares versions, never commits: against an installed
+`0.1.0` a new `0.1.0` from a different sha is "Requirement already satisfied",
+so `git pull && pip install -e .` prints success and leaves the OLD kit in the
+venv. That is not a hypothetical — on 2026-09-09 the history rewrite that
+renamed the modules (`6655b2d` → `ce802ad`) reached three repositories on d1-2
+as a green install followed by `ModuleNotFoundError:
+manipulation_kit.arms.d1`. `tools/check_version_bump.py` runs in CI and fails a
+pull request that changes `src/` or the dependency lists without moving the
+version; consumers run the mirror-image check at start-up and refuse to launch
+against a kit that is not the commit they pin.
+
 ## CLI
 
 ```sh
