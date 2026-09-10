@@ -39,6 +39,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 import manipulation_kit
+from manipulation_kit import assets
 from manipulation_kit.description.tools.export_description import (
     PKG_V2, YUBI_MESH_SOURCES, is_optional)
 from manipulation_kit.guard import geometry as g
@@ -51,6 +52,29 @@ KIT = os.path.dirname(os.path.abspath(manipulation_kit.__file__))
 DESCRIPTION = os.path.join(KIT, "description")
 CONFIG = os.path.join(KIT, "config")
 REPO = os.path.normpath(os.path.join(KIT, "..", ".."))
+
+#: The CAD is not in this repository (LICENSE-STATUS.md). Checks that OPEN a
+#: mesh carry this mark; checks that the URDF still NAMES the right meshes run
+#: unconditionally, because those are the ones that catch a generator that
+#: quietly stopped referencing half the robot. Set $MKIT_ASSETS_DIR to run
+#: both halves, as CI does.
+needs_assets = pytest.mark.skipif(not assets.have_external_assets(),
+                                  reason=assets.NO_ASSETS_REASON)
+
+#: What ``description/d1/meshes/{body,gripper}/`` must contain. Written down
+#: rather than listed off disk, because the files are external now: a test that
+#: enumerates the directory would assert "the ten meshes I found are ten" and
+#: pass on an empty one. This list is the claim; the directory is the evidence.
+BODY_MESH_NAMES = (
+    "backcamer_Link.STL", "base_link.STL", "carcamer_Link.STL",
+    "dhead_Link.STL", "fcamer_Link.STL", "headcamera_Link.STL",
+    "lwheel_Link.STL", "rwheel_Link.STL", "slider_Link.STL",
+    "uphead_Link.STL",
+)
+GRIPPER_MESH_NAMES = (
+    "base_link.STL", "camera_plate.STL", "camera_plate_full.STL",
+    "tcp_l_Link.STL", "tcp_r_Link.STL",
+)
 
 D1 = os.path.join(DESCRIPTION, "d1", "d1.urdf")
 D1_WB = os.path.join(DESCRIPTION, "d1", "d1_wholebody.urdf")
@@ -224,9 +248,13 @@ def test_yubi_mesh_alias_covers_every_package_uri():
             uncovered.append(rel)
             continue
         dst = next(d for d in YUBI_MESH_SOURCES if rel.startswith(d + "/"))
-        path = os.path.join(DESCRIPTION, *src_dir.split("/"),
-                            *rel[len(dst) + 1:].split("/"))
-        if not os.path.isfile(path):
+        pkg_rel = "/".join(("description", *src_dir.split("/"),
+                            *rel[len(dst) + 1:].split("/")))
+        # The arm CAD is external (LICENSE-STATUS.md), so "does the alias land
+        # on a real file" is only answerable with an assets checkout. The
+        # COVERAGE half above is answerable always, and is the half that
+        # catches a URI the table forgot.
+        if assets.have_external_assets() and assets.resolve(pkg_rel) is None:
             missing.append(rel)
     assert not uncovered, (
         f"YUBI_MESH_SOURCES does not cover {uncovered} — add the mapping or "
@@ -711,6 +739,16 @@ def test_wholebody_meshes_resolve_from_a_fresh_checkout(path):
             # repo does not carry (rendering only; the guard and collision
             # never see them). `mkit-urdf fetch-visuals` drops them in.
             continue
+        if assets.is_external(full):
+            # CAD with unresolved redistribution rights (LICENSE-STATUS.md).
+            # The REFERENCE is the thing this test is about and it is checked
+            # above; the bytes live in manipulation-kit-assets and are opened
+            # here only when a checkout is configured.
+            resolved = assets.resolve(
+                os.path.relpath(full, assets.PACKAGE_ROOT))
+            if resolved is None:
+                continue
+            full = str(resolved)
         assert os.path.isfile(full), f"missing mesh {full}"
         if ref.endswith(".obj"):                        # hifi body visuals
             with open(full) as f:
@@ -839,13 +877,14 @@ def test_every_export_flavour_resolves_its_own_meshes(flavour):
                     f"{flavour}/{name} still has a package:// URI: {ref}"
                 assert not os.path.isabs(ref), \
                     f"{flavour}/{name} has an absolute mesh path: {ref}"
-                if is_optional(ref) and not os.path.exists(
-                        os.path.join(dest, ref)):
+                if not os.path.exists(os.path.join(dest, ref)):
                     with open(os.path.join(dest, "PROVENANCE.json")) as pf:
-                        absent = json.load(pf)["absent_optional"]
-                    assert ref in absent, (
-                        f"{flavour}/{name} is missing optional mesh {ref} and "
-                        "PROVENANCE.json does not declare it absent")
+                        manifest = json.load(pf)
+                    declared = (set(manifest["absent_optional"])
+                                | set(manifest["absent_external"]))
+                    assert ref in declared, (
+                        f"{flavour}/{name} references {ref}, which was neither "
+                        "exported nor declared absent in PROVENANCE.json")
                     continue
                 assert os.path.exists(os.path.join(dest, ref)), \
                     f"{flavour}/{name} references {ref}, which was not exported"
@@ -950,6 +989,7 @@ def test_optical_frames_put_the_lens_on_plus_z(name, path):
             f"renderer mounted there would look the wrong way. R = {R}")
 
 
+@needs_assets
 def test_head_camera_is_the_front_face_of_the_vendor_housing():
     """The head camera frame is SOLVED from the vendor mesh, and this re-derives
     it independently: read ``headcamera_Link.STL``, take its AABB in the frame
@@ -965,8 +1005,8 @@ def test_head_camera_is_the_front_face_of_the_vendor_housing():
     # is no longer DRAWN, but it is still the file the mount is SOLVED from,
     # and it rides head_link at identity (BODY_MESH_HOSTS) — so the AABB in
     # file coordinates is already head_link-local, same as ever.
-    pts = _stl_vertices(os.path.join(DESCRIPTION, "d1", "meshes", "body",
-                                     "headcamera_Link.STL"))
+    pts = _stl_vertices(str(assets.resolve(
+        "description/d1/meshes/body/headcamera_Link.STL")))
     lo = [min(p[i] for p in pts) for i in range(3)]
     hi = [max(p[i] for p in pts) for i in range(3)]
     # a bar: shallow in x, 90 mm across in z
@@ -1024,34 +1064,39 @@ def test_camera_frames_weigh_effectively_nothing():
                 f"{name} weighs {mass} kg, want {FRAME_MASS_KG}"
 
 
+@needs_assets
 def test_body_meshes_are_the_vendor_cad():
     """description/d1/meshes/body/ is a straight copy of the vendor package —
     not decimated, because simplifying it to a 4 k-triangle budget moved the
     surface by up to 48 mm. Zero-triangle vendor placeholders are excluded."""
-    here = os.path.join(DESCRIPTION, "d1", "meshes", "body")
-    stls = sorted(f for f in os.listdir(here) if f.endswith(".STL"))
+    stls = sorted(BODY_MESH_NAMES)
     assert len(stls) == 10, f"expected 10 body meshes, got {stls}"
     for name in stls:
-        with open(os.path.join(here, name), "rb") as f:
+        path = assets.resolve(f"description/d1/meshes/body/{name}")
+        assert path is not None, f"{name} not in the assets checkout"
+        with open(path, "rb") as f:
             blob = f.read()
         count = int.from_bytes(blob[80:84], "little")
         assert count > 100, f"{name} has {count} triangles"
         assert len(blob) == 84 + 50 * count
 
 
+@needs_assets
 def test_gripper_meshes_match_the_hands_package():
     """``hands/d1/parallel_gripper/descriptions/meshes/`` owns the gripper
     geometry; ``description/d1/meshes/gripper/`` is a vendored copy the URDF
     generator references. Both now live in THIS repo, so what used to be a
     cross-repo check that skipped itself whenever a sibling checkout was
     missing is now unconditional — which is the point of consolidating."""
-    here = os.path.join(DESCRIPTION, "d1", "meshes", "gripper")
-    src = os.path.join(KIT, "hands", "d1", "parallel_gripper",
-                       "descriptions", "meshes")
-    for name in sorted(os.listdir(here)):
-        with open(os.path.join(here, name), "rb") as f:
+    for name in sorted(GRIPPER_MESH_NAMES):
+        here = assets.resolve(f"description/d1/meshes/gripper/{name}")
+        src = assets.resolve(
+            f"hands/d1/parallel_gripper/descriptions/meshes/{name}")
+        assert here is not None and src is not None, \
+            f"{name} not in the assets checkout"
+        with open(here, "rb") as f:
             mine = hashlib.sha256(f.read()).hexdigest()
-        with open(os.path.join(src, name), "rb") as f:
+        with open(src, "rb") as f:
             theirs = hashlib.sha256(f.read()).hexdigest()
         assert mine == theirs, (
             f"description/d1/meshes/gripper/{name} has forked from "

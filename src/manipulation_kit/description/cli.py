@@ -4,6 +4,7 @@
     mkit-urdf export <variant> --dest DIR     vendor a variant, with provenance
     mkit-urdf export <variant> --dest DIR --check   fail on drift
     mkit-urdf variants                        list what can be built
+    mkit-urdf fetch-assets --from SRC         fetch the withheld CAD
     mkit-urdf fetch-visuals --from-d1-sdk DIR fetch the optional visual layer
 
 ``build`` runs ``description/d1/tools/generate_d1_urdf.py`` (and, with
@@ -16,9 +17,12 @@ from __future__ import annotations
 import argparse
 import runpy
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
+from .. import assets
 from . import ROOT
 from .variants import VARIANTS, VariantNotBuildable, resolve
 
@@ -68,14 +72,21 @@ def cmd_export(args) -> int:
         return 2
     dest = str(Path(args.dest).absolute())
     if args.check:
-        return ex.check(variant.flavour, dest, args.mesh_prefix)
-    manifest = ex.export(variant.flavour, dest, args.mesh_prefix)
+        return ex.check(variant.flavour, dest, args.mesh_prefix,
+                        args.with_assets)
+    manifest = ex.export(variant.flavour, dest, args.mesh_prefix,
+                         args.with_assets)
     print(f"exported {variant.name}: {len(manifest['files'])} files -> {dest}")
     print(f"source commit {manifest['source_commit']}"
           + (" (DIRTY)" if manifest["source_dirty"] else ""))
     if manifest["absent_optional"]:
         print(f"{len(manifest['absent_optional'])} optional visual mesh(es) "
               f"absent by design — `mkit-urdf fetch-visuals` to complete them")
+    if manifest["absent_external"]:
+        print(f"{len(manifest['absent_external'])} CAD mesh(es) withheld and "
+              f"declared in PROVENANCE.json (LICENSE-STATUS.md) — they live in "
+              f"{manifest['assets_repo']}; `mkit-urdf fetch-assets --from` it, "
+              f"or re-export with --with-assets, to include them")
     return 0
 
 
@@ -88,6 +99,82 @@ def cmd_variants(_args) -> int:
     if any(not v.buildable for v in VARIANTS.values()):
         print("\n! = registered but not buildable; "
               "`mkit-urdf export <name>` prints why")
+    return 0
+
+
+def _asset_source(spec: str):
+    """Yield a local directory for ``spec``, cloning it first if it is a URL.
+
+    A git URL is cloned ``--depth 1`` into a temp dir that is removed on the
+    way out: the CAD ends up in the package (where ``.gitignore`` covers it)
+    and nowhere else, so a fetch cannot leave a second unlicensed copy on the
+    machine for somebody to find later and publish.
+    """
+    path = Path(spec).expanduser()
+    if path.is_dir():
+        return None, path
+    if not any(spec.startswith(p) or "@" in spec.split("/")[0]
+               for p in ("http://", "https://", "git@", "ssh://", "git://")):
+        raise SystemExit(
+            f"mkit-urdf: {spec!r} is neither a directory nor a git URL")
+    tmp = tempfile.TemporaryDirectory(prefix="mkit-assets-")
+    print(f"cloning {spec} ...")
+    try:
+        subprocess.run(["git", "clone", "--depth", "1", spec, tmp.name + "/a"],
+                       check=True)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        tmp.cleanup()
+        raise SystemExit(f"mkit-urdf: could not clone {spec}: {exc}") from exc
+    return tmp, Path(tmp.name) / "a"
+
+
+def cmd_fetch_assets(args) -> int:
+    """Copy the withheld CAD in from a manipulation-kit-assets checkout.
+
+    This repository ships the URDFs and not the geometry they reference (see
+    LICENSE-STATUS.md). The assets repository mirrors this package's layout
+    exactly, so completing a checkout is a copy and never a rewrite: no URDF
+    is touched, no path is patched, and `mkit-urdf build` reproduces the same
+    bytes before and after.
+
+    The destinations are all in ``.gitignore``. Fetching cannot put the CAD
+    back into this repository's history, which is the point.
+    """
+    tmp, src = _asset_source(args.source)
+    try:
+        root = src / "manipulation_kit"
+        if not root.is_dir():
+            root = src
+        found = {}
+        for rel in assets.external_dirs():
+            d = root / rel
+            if not d.is_dir():
+                continue
+            names = sorted(p for p in d.iterdir()
+                           if p.is_file() and p.suffix in assets.ASSET_SUFFIXES)
+            if names:
+                found[rel] = names
+        if not found:
+            print(f"mkit-urdf: no CAD under {src}\n"
+                  f"  expected a manipulation-kit-assets checkout with "
+                  f"{assets.EXTERNAL_ASSET_DIRS[0]}/ in it", file=sys.stderr)
+            return 2
+        total = 0
+        for rel, names in sorted(found.items()):
+            out = assets.PACKAGE_ROOT / rel
+            out.mkdir(parents=True, exist_ok=True)
+            for name in names:
+                shutil.copy2(name, out / name.name)
+                total += 1
+            print(f"  {len(names):3d} -> manipulation_kit/{rel}/")
+        print(f"fetched {total} file(s) from {src}")
+        missing = [r for r in assets.EXTERNAL_ASSET_DIRS if r not in found]
+        if missing:
+            print("still incomplete: " + ", ".join(missing), file=sys.stderr)
+            return 1
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
     return 0
 
 
@@ -132,10 +219,21 @@ def main(argv=None) -> int:
     e.add_argument("--mesh-prefix", default="")
     e.add_argument("--check", action="store_true",
                    help="verify an existing export instead of writing it")
+    e.add_argument("--with-assets", action="store_true",
+                   help="also collect the withheld CAD, from a fetched "
+                        "checkout or $MKIT_ASSETS_DIR (internal use)")
     e.set_defaults(func=cmd_export)
 
     v = sub.add_parser("variants", help="list the variants")
     v.set_defaults(func=cmd_variants)
+
+    fa = sub.add_parser("fetch-assets",
+                        help="fetch the withheld CAD geometry")
+    fa.add_argument("--from", dest="source", required=True,
+                    metavar="PATH-OR-GIT-URL",
+                    help="a manipulation-kit-assets checkout, or a git URL "
+                         "to clone")
+    fa.set_defaults(func=cmd_fetch_assets)
 
     fv = sub.add_parser("fetch-visuals",
                         help="fetch the optional decorative body meshes")

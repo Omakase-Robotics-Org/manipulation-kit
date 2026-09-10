@@ -21,6 +21,18 @@ from manipulation_kit.hands.d1.parallel_gripper.description import (
     mesh_paths,
 )
 
+
+from manipulation_kit import assets
+
+#: The CAD is not in this repository (LICENSE-STATUS.md). Every check that
+#: OPENS a mesh — as opposed to checking that the URDF names one — carries this
+#: mark, so a public checkout runs the whole suite and says out loud which
+#: claims it could not test. Set $MKIT_ASSETS_DIR (or `mkit-urdf fetch-assets`)
+#: and the same tests run for real; CI does exactly that.
+needs_assets = pytest.mark.skipif(not assets.have_external_assets(),
+                                  reason=assets.NO_ASSETS_REASON)
+
+
 GRIPPER_LINKS = {"base_link", "tcp_r_Link", "tcp_l_Link"}
 CAMERA_LINKS = {"camera_plate", "wrist_camera", "wrist_camera_optical"}
 CAMERA_JOINTS = {"camera_plate_joint", "wrist_camera_joint",
@@ -66,6 +78,7 @@ def test_gripper_portion_is_the_vendored_description():
             assert ET.tostring(a) == ET.tostring(b), f"{tag} {name} diverged"
 
 
+@needs_assets
 def test_meshes_resolve_and_plate_is_in_metres():
     paths = mesh_paths(camera=True)
     assert len(paths) == 8  # 3 gripper links + plate, visual + collision each
@@ -78,6 +91,7 @@ def test_meshes_resolve_and_plate_is_in_metres():
     assert max(ys) == pytest.approx(0.0999, abs=5e-4)
 
 
+@needs_assets
 def test_plate_stays_inside_the_flange_gap():
     """The vendor gripper body mesh starts at z = 16.5 mm; inside the body
     footprint the plate must stay below that, or the two meshes interpenetrate."""
@@ -87,6 +101,7 @@ def test_plate_stays_inside_the_flange_gap():
             assert z <= 0.0165 + 1e-6, "plate protrudes into the gripper body"
 
 
+@needs_assets
 def test_camera_mount_frame_matches_the_plate_mesh():
     """The wrist_camera joint origin must lie ON the plate's tilted camera
     face and its rpy must be exactly the face tilt."""
@@ -155,6 +170,7 @@ def test_no_double_hyphen_inside_comments():
         assert "--" not in chunk.split("-->")[0]
 
 
+@needs_assets
 def test_loads_in_a_real_urdf_parser():
     yourdfpy = pytest.importorskip("yourdfpy")
     robot = yourdfpy.URDF.load(str(description_path("gripper_with_camera.urdf")),

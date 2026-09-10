@@ -8,3 +8,17 @@ venv/
 .coverage
 htmlcov/
 *.mp4
+
+# ---------------------------------------------------------------- CAD assets
+# This repository ships the URDFs, not the geometry they reference — the CAD
+# has no redistribution grant on file (LICENSE-STATUS.md) and lives in the
+# private manipulation-kit-assets repository. `mkit-urdf fetch-assets` writes
+# it HERE, so these lines are what stops a completed work tree from committing
+# it back. Do not remove them without reading LICENSE-STATUS.md first.
+src/manipulation_kit/description/d1/meshes/body/*.STL
+src/manipulation_kit/description/d1/meshes/gripper/*.STL
+src/manipulation_kit/description/d1_arm/left/meshes/*.STL
+src/manipulation_kit/description/d1_arm/right/meshes/*.STL
+src/manipulation_kit/hands/d1/parallel_gripper/descriptions/meshes/*.STL
+# the optional decorative visual layer (`mkit-urdf fetch-visuals`)
+src/manipulation_kit/description/d1/meshes/body_hifi/*.obj

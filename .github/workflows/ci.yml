@@ -27,11 +27,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[mujoco,dev]'
       - name: Tests
+        # -rs on purpose: this runner has no CAD (it is not in this
+        # repository — LICENSE-STATUS.md), so the checks that OPEN a mesh skip
+        # themselves and the summary has to SAY which. A run that is green
+        # because it quietly tested nothing is the failure mode. To run them,
+        # add MKIT_ASSETS_DIR pointing at a manipulation-kit-assets checkout.
         run: pytest -q -rs
       - name: The URDFs are what the generator emits
         run: |
           mkit-urdf build
           git diff --exit-code -- src/manipulation_kit/description
+      - name: No unlicensed CAD has come back
+        # The history was rewritten to remove it (2026-09-10). This is the
+        # gate that stops it returning one convenient copy at a time.
+        run: pytest -q tests/test_no_vendor_cad.py
+
       - name: The committed dist/ exports have not drifted
         run: |
           mkit-urdf export d1-collision --dest dist/d1-collision --check

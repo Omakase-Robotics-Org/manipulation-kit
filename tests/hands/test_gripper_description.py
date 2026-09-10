@@ -21,6 +21,18 @@ from manipulation_kit.hands.d1.parallel_gripper.description import (
     mesh_paths,
 )
 
+
+from manipulation_kit import assets
+
+#: The CAD is not in this repository (LICENSE-STATUS.md). Every check that
+#: OPENS a mesh — as opposed to checking that the URDF names one — carries this
+#: mark, so a public checkout runs the whole suite and says out loud which
+#: claims it could not test. Set $MKIT_ASSETS_DIR (or `mkit-urdf fetch-assets`)
+#: and the same tests run for real; CI does exactly that.
+needs_assets = pytest.mark.skipif(not assets.have_external_assets(),
+                                  reason=assets.NO_ASSETS_REASON)
+
+
 LINKS = {"base_link", "tcp_r_Link", "tcp_l_Link"}
 JOINTS = {"tcp_r_joint", "tcp_l_joint"}
 
@@ -55,6 +67,7 @@ def test_no_double_hyphen_inside_comments():
         assert "--" not in body, "double hyphen inside an XML comment"
 
 
+@needs_assets
 def test_mesh_references_resolve_from_a_fresh_checkout():
     paths = mesh_paths()
     assert len(paths) == 6  # visual + collision for each of the three links
@@ -125,6 +138,7 @@ def test_jaws_are_mirror_images_across_the_travel_axis():
     assert coms["tcp_r_Link"][2] == pytest.approx(-coms["tcp_l_Link"][2], abs=1e-6)
 
 
+@needs_assets
 def test_geometry_constants_match_the_meshes():
     """JAW_TIP_Z_M is the number consumers place a TCP against — derive it
     from the committed mesh rather than trusting the constant."""
@@ -189,6 +203,7 @@ def test_base_link_inertial_is_labelled_an_estimate():
     assert "0.244768569107893" in head, "the CAD original must stay quoted"
 
 
+@needs_assets
 def test_loads_in_a_real_urdf_parser():
     """Full validation when a real URDF library is available: yourdfpy
     builds the kinematic tree AND loads every mesh off disk."""

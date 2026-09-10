@@ -49,6 +49,28 @@ def test_prebuilt_export_carries_provenance(name):
         "reader cannot tell 'not shipped' from 'lost'")
 
 
+def test_the_prebuilt_wholebody_is_mesh_free_and_says_so():
+    """``dist/d1-wholebody-gripper/`` is the whole robot's URDF and nothing
+    else: the CAD it references is withheld (LICENSE-STATUS.md).
+
+    Both halves matter. A directory with no meshes and no manifest entry would
+    be indistinguishable from a broken export; a directory with meshes in it
+    would be the thing this repository was rewritten to stop shipping. The full
+    mesh-bearing bundle is in manipulation-kit-assets, or from
+    ``mkit-urdf export d1-wholebody-gripper --with-assets``."""
+    dest = os.path.join(DIST, "d1-wholebody-gripper")
+    if not os.path.isdir(dest):
+        pytest.skip("dist/ not present")
+    assert sorted(os.listdir(dest)) == ["PROVENANCE.json",
+                                        "d1_wholebody_gripper.urdf"]
+    with open(os.path.join(dest, "PROVENANCE.json")) as f:
+        manifest = json.load(f)
+    assert len(manifest["absent_external"]) == 22, (
+        "18 arm meshes + 4 gripper meshes are withheld; the manifest must "
+        "name every one of them")
+    assert manifest["assets_repo"], "say where the withheld CAD can be got"
+
+
 def test_the_collision_export_needs_no_assets_at_all():
     """d1-collision is THE variant for a consumer with zero mesh assets — a
     planner, a bare host, a firmware-side test rig. One file, no meshes."""

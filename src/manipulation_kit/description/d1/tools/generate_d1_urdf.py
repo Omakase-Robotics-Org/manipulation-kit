@@ -7,7 +7,7 @@ Run from anywhere:  python3 description/d1/tools/generate_d1_urdf.py
 PURPOSE
 -------
 A single URDF of the whole D1 robot (chassis + lift + torso + head + both
-D1 arm arms + an end effector) whose COLLISION geometry is SIMPLE
+D1 arms + an end effector) whose COLLISION geometry is SIMPLE
 PRIMITIVES ONLY (boxes / cylinders / spheres — no meshes).  It exists for
 software collision checking (devices/omakase_arm/pyguard) and for loading
 into sims/planners on machines that have no mesh assets.
@@ -585,6 +585,22 @@ HEAD_CAMERA_MESH = "headcamera_Link.STL"
 #: it.  The mesh rides `head_link` at identity (BODY_MESH_HOSTS), so the AABB
 #: computed in the mesh's own coordinates is already head_link-local.
 HEAD_CAMERA_HOST = "head_link"
+#: The AABB that solve produces, RECORDED, in ``head_link`` metres.
+#:
+#: The mesh is Omakase/vendor CAD and does not ship with this repository (see
+#: ``LICENSE-STATUS.md`` and :mod:`manipulation_kit.assets`), so the generator
+#: has to be able to run without it — otherwise a public checkout cannot
+#: rebuild its own URDFs, and "the URDFs are generated" stops being true.
+#:
+#: This is a CACHE OF A SOLVE, not a hand-transcribed number: when the mesh IS
+#: present :func:`_mesh_aabb_in_link` recomputes it and refuses to continue if
+#: the two disagree, so a vendor revision that moves the housing still fails
+#: loudly instead of being papered over. Regenerate by running the build with
+#: the assets fetched and copying what the mismatch message prints.
+HEAD_CAMERA_AABB = (
+    (0.06923796981573105, -0.08604652434587462, -0.07312534004449843),
+    (0.09665606170892715, -0.060358349233865585, 0.016526428982615467),
+)
 #: Torso cameras, measured off the 2026-08-23 full-robot CAD via the head-
 #: D435 anchor (both expressed in torso_column, which rides the lift like
 #: the shells they bolt through).  PHYSICALLY PRESENT ON THE ROBOT but kept
@@ -906,6 +922,47 @@ def body_mesh_visuals(host, host_in_dual_base, indent="    "):
 
 
 # ----------------------------------------------------------- camera frames
+#: Solves this generator can perform only with the external CAD present, keyed
+#: by (host link, mesh file).  See :data:`HEAD_CAMERA_AABB`.
+RECORDED_AABBS = {(HEAD_CAMERA_HOST, HEAD_CAMERA_MESH): HEAD_CAMERA_AABB}
+
+
+def _external_mesh(desc_rel):
+    """An external mesh under ``description/``, or ``None`` if absent.
+
+    ``desc_rel`` is relative to this description tree, e.g.
+    ``"meshes/body/headcamera_Link.STL"``.
+    """
+    from manipulation_kit import assets  # noqa: PLC0415  (runs as a script)
+
+    return assets.resolve(f"description/d1/{desc_rel}")
+
+
+def _recorded_aabb(host, mesh_file):
+    try:
+        return RECORDED_AABBS[(host, mesh_file)]
+    except KeyError:
+        raise SystemExit(
+            f"{mesh_file} is not in this repository and no solve is recorded "
+            f"for it on {host}. Fetch the CAD (`mkit-urdf fetch-assets`) or "
+            "add an entry to RECORDED_AABBS.") from None
+
+
+def _checked_aabb(host, mesh_file, solved):
+    """The freshly solved AABB, after proving the recorded one still matches."""
+    recorded = RECORDED_AABBS.get((host, mesh_file))
+    if recorded is None:
+        return solved
+    if max(abs(a - b) for r, s in zip(recorded, solved)
+           for a, b in zip(r, s)) > 1e-9:
+        raise SystemExit(
+            f"{mesh_file} no longer solves to the recorded AABB on {host}.\n"
+            f"  recorded: {recorded}\n  from the mesh: {solved}\n"
+            "The CAD changed. Update RECORDED_AABBS with the second line and "
+            "expect the camera frames to move.")
+    return solved
+
+
 def _stl_points(path):
     """Every vertex of a binary or ASCII STL, in the mesh's own coordinates.
 
@@ -955,6 +1012,10 @@ def _mesh_aabb_in_link(host, mesh_file):
     cannot disagree with where the mesh is actually drawn.  Every vertex is
     transformed (not the eight AABB corners), so the result stays exact if a
     vendor revision rotates the mesh.
+
+    The mesh is external CAD (:mod:`manipulation_kit.assets`).  Absent, the
+    recorded :data:`HEAD_CAMERA_AABB` answers; present, it is recomputed and
+    cross-checked, so the record can never silently outlive its mesh.
     """
     body = vendor_body()
     inv_host = _minv(_host_in_dual_base(host))
@@ -967,7 +1028,10 @@ def _mesh_aabb_in_link(host, mesh_file):
                 if stl != mesh_file:
                     continue
                 m = _mmul(_mmul(inv_host, transform), local)
-                pts = _stl_points(os.path.join(DESC_DIR, BODY_MESH_DIR, stl))
+                path = _external_mesh(f"{BODY_MESH_DIR}/{stl}")
+                if path is None:
+                    return _recorded_aabb(host, mesh_file)
+                pts = _stl_points(path)
                 lo = [float("inf")] * 3
                 hi = [float("-inf")] * 3
                 for p in pts:
@@ -976,7 +1040,8 @@ def _mesh_aabb_in_link(host, mesh_file):
                              + m[i][2] * p[2] + m[i][3])
                         lo[i] = min(lo[i], v)
                         hi[i] = max(hi[i], v)
-                return tuple(lo), tuple(hi)
+                return _checked_aabb(host, mesh_file,
+                                     (tuple(lo), tuple(hi)))
     raise SystemExit(f"{mesh_file} is not hosted on {host}: check "
                      "BODY_MESH_HOSTS")
 

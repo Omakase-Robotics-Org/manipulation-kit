@@ -17,6 +17,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .... import assets
 from . import description_path
 
 #: Jaw travel of ONE finger, metres. ``tcp_r_joint`` spans ``[0, STROKE]``
@@ -83,6 +84,13 @@ def load_urdf(absolute_meshes: bool = True, camera: bool = False) -> ET.ElementT
     ``camera=True`` returns ``gripper_with_camera.urdf`` instead: the same
     gripper plus the arm-end camera plate, the ``wrist_camera`` mount frame
     and the ``wrist_camera_optical`` ROS optical frame.
+
+    The mesh files themselves are CAD this repository does not carry (see
+    :mod:`manipulation_kit.assets`). ``absolute_meshes`` resolves them through
+    an assets checkout when one is configured, and otherwise points at where
+    they WOULD be: a composed URDF that names an absent file is still the
+    right answer — the caller can see what is missing — whereas silently
+    emitting a relative path that resolves against the caller's cwd is not.
     """
     path = Path(str(description_path(_urdf_name(camera))))
     tree = ET.parse(path)
@@ -91,14 +99,28 @@ def load_urdf(absolute_meshes: bool = True, camera: bool = False) -> ET.ElementT
             filename = mesh.get("filename")
             if filename is None:
                 continue
-            mesh.set("filename", str((path.parent / filename).resolve()))
+            mesh.set("filename", str(_resolve(path.parent, filename)))
     return tree
 
 
+def _resolve(base: Path, filename: str) -> Path:
+    """One mesh reference as an absolute path, via the assets layer."""
+    here = (base / filename).resolve()
+    try:
+        found = assets.resolve(str(here.relative_to(assets.PACKAGE_ROOT)))
+    except ValueError:
+        return here
+    return found if found is not None else here
+
+
 def mesh_paths(camera: bool = False) -> list[Path]:
-    """Every mesh the URDF references, as absolute paths, in document order."""
+    """Every mesh the URDF references, as absolute paths, in document order.
+
+    Resolved through :mod:`manipulation_kit.assets`, so a path here exists iff
+    the CAD has been fetched or ``$MKIT_ASSETS_DIR`` is set.
+    """
     path = Path(str(description_path(_urdf_name(camera))))
-    return [(path.parent / m.get("filename", "")).resolve()
+    return [_resolve(path.parent, m.get("filename", ""))
             for m in ET.parse(path).getroot().iter("mesh")]
 
 
