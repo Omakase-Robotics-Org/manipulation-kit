@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>d1_description</name>
+  <version>0.0.0</version>
+  <description>Full-body Omakase D1 collision model: chassis + lift + torso + head + both D1 arm arms + YUBI hands, collision geometry as simple primitives (no meshes). For software collision checking (devices/omakase_arm/pyguard) and mesh-free sim/planner loading.</description>
+  <maintainer email="shuichi.nagao@omakase.ai">Omakase Robotics</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>urdf</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

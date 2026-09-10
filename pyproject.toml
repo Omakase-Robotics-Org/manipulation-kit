@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manipulation-kit"
+version = "0.1.0"
+description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs (pure computation; hardware via d1-firmwared)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    # The arm math (IK, targeting, frames) is numpy + scipy rotations. The
+    # motion guard deliberately needs NEITHER — it is stdlib-only so it can be
+    # imported anywhere, including a bare planner or a firmware-side test host.
+    "numpy",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+# The MuJoCo-backed KinematicChain substrate. OPTIONAL on purpose: it is one
+# substrate of two, and consumers with no MuJoCo dependency satisfy the same
+# protocol by walking the guard-parsed URDF.
+mujoco = ["mujoco>=3.0"]
+# Mesh work: the vendoring/decimation tools under hands/*/*/tools/ and
+# description/d1/tools/prepare_visual_meshes.py.
+meshes = ["trimesh", "fast-simplification"]
+dev = ["pytest"]
+
+[project.scripts]
+mkit-urdf = "manipulation_kit.description.cli:main"
+mkit-toolconfig = "manipulation_kit.hands.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Assets resolve package-relative (importlib.resources / __file__), never from
+# a $D1_SDK_DIR checkout, so they MUST ship inside the wheel.
+"manipulation_kit.config" = ["*.json", "tool_configs/*.json", "tool_configs/*.md"]
+"manipulation_kit.description" = [
+    "d1/*.urdf", "d1/*.xml", "d1/*.md", "d1/CMakeLists.txt",
+    "d1/meshes/body/*", "d1/meshes/gripper/*", "d1/meshes/body_hifi/*",
+    "d1_yubi_description_v2/*.xml", "d1_yubi_description_v2/*.md",
+    "d1_yubi_description_v2/urdf/*", "d1_yubi_description_v2/config/*",
+    "d1_arm/*.md",
+    "d1_arm/left/*", "d1_arm/left/meshes/*",
+    "d1_arm/right/*", "d1_arm/right/meshes/*",
+    "d1_arm/yubi_description/*",
+    "d1_arm/yubi_description/meshes/*",
+    "d1_arm/yubi_description/urdf/*",
+    "d1_arm/yubi_description/rviz/*",
+]
+"manipulation_kit.hands.d1.parallel_gripper" = [
+    "descriptions/*.urdf", "descriptions/README.md", "descriptions/meshes/*.STL",
+]
+"manipulation_kit.hands.leadshine.dh116s" = [
+    "README.md", "data/*.csv",
+    "descriptions/*.xml", "descriptions/README.md", "descriptions/meshes/*.STL",
+]
+"manipulation_kit.hands.linkerbot.o30" = ["README.md"]
+"manipulation_kit.scripts" = ["*.csv"]
+
+[tool.pytest.ini_options]
+# Test files live in tests/<area>/ with no __init__.py, so two areas cannot both
+# have a test_description.py under pytest's default (prepend) import mode — the
+# basenames collide as top-level module names. importlib mode gives each file
+# its own module.
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]

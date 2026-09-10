@@ -1,0 +1,38 @@
+# Regression targets for scripts/ik_click_move.py --targets
+# side,x,y,z[,expect]   expect: ok | unreachable | guard (default ok)
+# Coordinates in meters, world frame. Home EE: left (0.187, 0.236, 0.135),
+# right mirrored in y. Each row solves from HOME (with FALLBACK_SEEDS retry),
+# then the pose is checked by pyguard; the row FAILS if the classification
+# differs.
+
+# -- reachable, guard-clean --------------------------------------------------
+left,  0.30,  0.20, 0.30
+left,  0.30,  0.20, 0.10
+left,  0.55,  0.35, 0.20
+left,  0.40,  0.25, 0.05
+right, 0.30, -0.20, 0.30
+right, 0.55, -0.35, 0.20
+right, 0.40, -0.25, 0.05
+left,  0.35,  0.10, 0.45
+right, 0.35, -0.10, 0.45
+
+# -- belly-front manipulation band (needs the elbow-out fallback seeds) ------
+left,  0.25,  0.02, 0.30
+left,  0.24,  0.00, 0.30
+left,  0.22,  0.06, 0.30
+left,  0.28,  0.06, 0.20
+right, 0.25, -0.02, 0.30
+right, 0.24,  0.00, 0.30
+right, 0.28, -0.06, 0.20
+
+# -- outside the workspace (guard OK, residual > 3 cm) -----------------------
+left,  0.20,  1.00, 0.30, unreachable
+right, 0.20, -1.00, 0.30, unreachable
+
+# -- pyguard rejects ----------------------------------------------------------
+# x < ~0.20 in front of the belly is inside the conservative safety envelope
+# (torso_belly box front at x=0.127 + Link/hand clearance): genuinely blocked.
+left,  0.20,  0.06, 0.30, guard
+right, 0.20, -0.06, 0.30, guard
+left, -0.10,  0.05, 0.40, guard
+left,  0.05, -0.15, 0.40, guard

@@ -1,0 +1,31 @@
+{
+  "_comment": "Leadshine DH116S 5-finger hand on the D1 flange. Registration set supplied by the arm engineer 2026-08-08 (compliance-mode fix on d1-1): TCP 100 mm, mass 0.4 kg, COM z 40 mm, inertia 0.0006/0.0008/0.0002. Supersedes the measured set of 2026-07 (TCP 210 mm / COM z 120 mm, Shu 2026-07-18; 0.380 kg weighed, Shu 2026-07-29) \u2014 the reference-point change behind the TCP/COM shift is not yet documented. Inertia is a cylinder-order ESTIMATE pending load identification.",
+  "schema": "omakase_hands.tool_config.v1",
+  "model": "leadshine/dh116s",
+  "units": {
+    "kinematics": "mm (xyz), deg (rpy, XYZ order)",
+    "mass": "kg",
+    "com": "mm",
+    "inertia": "kg*m^2, row-major upper-triangular (Ixx,Ixy,Ixz,Iyy,Iyz,Izz)"
+  },
+  "kinematics": [
+    0.0,
+    0.0,
+    100.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "dynamics": [
+    0.4,
+    0.0,
+    0.0,
+    40.0,
+    0.0006,
+    0.0,
+    0.0,
+    0.0008,
+    0.0,
+    0.0002
+  ]
+}

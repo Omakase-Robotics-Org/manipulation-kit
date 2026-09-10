@@ -1,0 +1,31 @@
+{
+  "_comment": "D1 stock parallel gripper \u2014 values carried over verbatim from d1-sdk omakase_arm::ToolConfig::defaultGripper() (validated on the real D1; inertia is a cylinder-approximation estimate).",
+  "schema": "omakase_hands.tool_config.v1",
+  "model": "d1/parallel_gripper",
+  "units": {
+    "kinematics": "mm (xyz), deg (rpy, XYZ order)",
+    "mass": "kg",
+    "com": "mm",
+    "inertia": "kg*m^2, row-major upper-triangular (Ixx,Ixy,Ixz,Iyy,Iyz,Izz)"
+  },
+  "kinematics": [
+    0.0,
+    0.0,
+    136.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "dynamics": [
+    1.5,
+    0.0,
+    0.0,
+    68.0,
+    0.003,
+    0.0,
+    0.0,
+    0.003,
+    0.0,
+    0.001
+  ]
+}

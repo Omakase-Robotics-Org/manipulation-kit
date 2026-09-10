@@ -1,0 +1,54 @@
+{
+  "_comment": "D1 dual-arm SAFETY ZONES -- the DERIVED export of the compiled playback gate. The single authored source of these numbers is the C++ header include/omakase_arm/safety_zones.h (the guard that gesture_play / loadCsv compile and run to refuse any dual-arm trajectory that would drive a link into the other arm or into the torso keep-out volume). This file mirrors every field that header authors that a validator needs (joint limits, capsule radii, kinematic chain, arm mounts, keep-out zones); it carries NO number that the header does not. The derivation is enforced in-repo by pyguard/tests/test_safety_zones_export.py, which text-parses the header and asserts this JSON equals it field by field, so the export cannot drift from the authored source. Geometry derived from the STEP assembly d1-face/d1_face.step (shoulder separation 74 mm = +/-0.037 m). Lengths in METRES, angles in DEGREES except arm_chain / arm_mounts rpy which are RADIANS (URDF fixed-axis roll-pitch-yaw). Frame: z up, y lateral (shoulders at y=+/-0.037, z=0.50), x forward. Conservative by design.",
+  "version": 2,
+  "units": {"length": "m", "angle": "deg", "chain_rpy": "rad"},
+
+  "shoulder_half_width_m": 0.037,
+  "shoulder_z_m": 0.50,
+
+  "torso_keepout_box": {
+    "min": [-0.075, -0.075, 0.0],
+    "max": [0.075, 0.075, 0.49]
+  },
+
+  "min_arm_arm_distance_m": 0.06,
+  "min_body_clearance_m": 0.03,
+
+  "capsule_radii_m": {
+    "Base": 0.055,
+    "Link1": 0.05,
+    "Link2": 0.045,
+    "Link3": 0.04,
+    "Link4": 0.04,
+    "Link5": 0.035,
+    "Link6": 0.03,
+    "Link7": 0.03
+  },
+
+  "joint_limits_deg": {
+    "J1": [-173, 173],
+    "J2": [-118, 118],
+    "J3": [-173, 173],
+    "J4": [-145, 45],
+    "J5": [-173, 173],
+    "J6": [-60, 60],
+    "J7": [-90, 90]
+  },
+
+  "_chain_comment": "Per-arm kinematic chain Base->Link1..Link7, IDENTICAL to safety_zones.h::armChain() (which is IDENTICAL to d1_dual.urdf Joint*_R|_L origins). Each entry is one joint's fixed origin transform: rpy = fixed-axis roll-pitch-yaw in RADIANS, xyz = translation in METRES. A consumer applies, per joint i, the fixed transform fromRpyXyz(rpy, xyz) then a rotation about local z by the commanded joint angle.",
+  "arm_chain": [
+    {"joint": "Joint1", "rpy": [0.0, 0.0, 0.0], "xyz": [0.0, 0.0, 0.1586]},
+    {"joint": "Joint2", "rpy": [1.5708, 0.0, 0.0], "xyz": [0.0, 0.0, 0.0]},
+    {"joint": "Joint3", "rpy": [-1.5708, 0.0, 0.0], "xyz": [0.0, 0.264, 0.0]},
+    {"joint": "Joint4", "rpy": [-1.5708, 0.0, 3.1416], "xyz": [0.018, 0.0, 0.0]},
+    {"joint": "Joint5", "rpy": [-1.5708, 0.0, 3.1416], "xyz": [0.018, -0.264, 0.0]},
+    {"joint": "Joint6", "rpy": [1.5708, -1.5708, 0.0], "xyz": [0.0, 0.0, 0.0]},
+    {"joint": "Joint7", "rpy": [1.5708, -1.5708, 0.0], "xyz": [0.0, 0.0, 0.0]}
+  ],
+
+  "_mounts_comment": "Arm base mount transforms in the torso/dual_base frame, IDENTICAL to safety_zones.h::mountA() / mountB(). A = SDK ArmSide A (Genesis _R tree, physical LEFT, +y); B = SDK ArmSide B (_L tree, physical RIGHT, -y). rpy in RADIANS, xyz in METRES. shoulder_half_width_m / shoulder_z_m above are the |xyz.y| / xyz.z of these mounts, kept as scalar conveniences.",
+  "arm_mounts": {
+    "A": {"rpy": [-1.5708, 0.0, 0.0], "xyz": [0.0, 0.037, 0.50]},
+    "B": {"rpy": [1.5708, 0.0, 0.0], "xyz": [0.0, -0.037, 0.50]}
+  }
+}

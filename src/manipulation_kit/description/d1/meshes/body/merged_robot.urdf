@@ -1,0 +1,1741 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged URDF: Wheeled Dual-Arm Composite Robot
+     Base robot: urdf2026072302 (mobile base + lift slider + head)
+     Arms: D1 arm D1 arm (right) (7-DOF, attached to rarmbase_Link and larmbase_Link)
+     Right arm: original D1 arm arm (_R suffix)
+     Left arm: Y-axis mirrored D1 arm arm (_L suffix) -->
+<robot
+  name="merged_robot">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="0.007022 -0.00014747 0.071838"
+        rpy="0 0 0" />
+      <mass
+        value="100" />
+      <inertia
+        ixx="0.48116"
+        ixy="7.562E-05"
+        ixz="0.0013191"
+        iyy="0.57005"
+        iyz="5.9776E-07"
+        izz="0.77571" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="rwheel_Link">
+    <inertial>
+      <origin
+        xyz="8.1705E-08 1.0342E-06 0.032598"
+        rpy="0 0 0" />
+      <mass
+        value="1" />
+      <inertia
+        ixx="0.0012767"
+        ixy="1.3994E-09"
+        ixz="6.183E-10"
+        iyy="0.0012767"
+        iyz="-4.8638E-10"
+        izz="0.0023907" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/rwheel_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/rwheel_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="rwheeljoint"
+    type="continuous">
+    <origin
+      xyz="0.01577 -0.15335 -0.18517"
+      rpy="1.5708 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="rwheel_Link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      effort="7"
+      velocity="26.18" />
+  </joint>
+  <link
+    name="lwheel_Link">
+    <inertial>
+      <origin
+        xyz="-6.0137E-05 -7.1623E-07 0.032598"
+        rpy="0 0 0" />
+      <mass
+        value="1" />
+      <inertia
+        ixx="0.0012767"
+        ixy="6.1118E-10"
+        ixz="6.575E-10"
+        iyy="0.0012767"
+        iyz="-4.5164E-10"
+        izz="0.0023907" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/lwheel_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/lwheel_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="lwheeljoint"
+    type="continuous">
+    <origin
+      xyz="0.01577 0.15335 -0.18517"
+      rpy="1.5708 0 3.1416" />
+    <parent
+      link="base_link" />
+    <child
+      link="lwheel_Link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      effort="7"
+      velocity="26.18" />
+  </joint>
+  <link
+    name="carcamer_Link">
+    <inertial>
+      <origin
+        xyz="0.00011407 -6.0489E-06 -0.00025065"
+        rpy="0 0 0" />
+      <mass
+        value="0.5" />
+      <inertia
+        ixx="1.5162E-08"
+        ixy="-3.023E-12"
+        ixz="-3.7639E-14"
+        iyy="3.3752E-07"
+        iyz="2.1404E-14"
+        izz="3.5266E-07" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/carcamer_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/carcamer_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="carmerjoint"
+    type="fixed">
+    <origin
+      xyz="0.28458 -0.0001227 -0.066805"
+      rpy="1.0472 0 1.5708" />
+    <parent
+      link="base_link" />
+    <child
+      link="carcamer_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="lidar_Link">
+    <inertial>
+      <origin
+        xyz="-0.13873 -0.0001057 -0.55214"
+        rpy="0 0 0" />
+      <mass
+        value="0.4" />
+      <inertia
+        ixx="12.725"
+        ixy="0.003492"
+        ixz="0.12645"
+        iyy="12.954"
+        iyz="0.003223"
+        izz="2.1414" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/lidar_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/lidar_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="lidarjoint"
+    type="fixed">
+    <origin
+      xyz="0.15295 0 -0.0178"
+      rpy="-3.1416 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="lidar_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="slider_Link">
+    <inertial>
+      <origin
+        xyz="0.0035981 1.5053E-05 0.27343"
+        rpy="0 0 0" />
+      <mass
+        value="30" />
+      <inertia
+        ixx="0.046932"
+        ixy="4.9368E-07"
+        ixz="-6.4341E-05"
+        iyy="0.041064"
+        iyz="1.7428E-06"
+        izz="0.0191" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/slider_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/slider_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="sliderjoint"
+    type="prismatic">
+    <origin
+      xyz="0.015846 0 0.28831"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="slider_Link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="0"
+      upper="0.3"
+      effort="80"
+      velocity="0.03" />
+  </joint>
+  <link
+    name="rarmbase_Link">
+    <inertial>
+      <origin
+        xyz="-1.0745E-05 -0.22197 -0.037106"
+        rpy="0 0 0" />
+      <mass
+        value="10" />
+      <inertia
+        ixx="12.725"
+        ixy="-0.12645"
+        ixz="0.003492"
+        iyy="2.1414"
+        iyz="-0.003223"
+        izz="12.954" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/rarmbase_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/rarmbase_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="rarmbasejoint"
+    type="fixed">
+    <origin
+      xyz="-0.0016171 -0.037 0.468"
+      rpy="1.5708 0 0" />
+    <parent
+      link="slider_Link" />
+    <child
+      link="rarmbase_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="larmbase_Link">
+    <inertial>
+      <origin
+        xyz="-1.0745E-05 0.22197 -0.036894"
+        rpy="0 0 0" />
+      <mass
+        value="10" />
+      <inertia
+        ixx="12.725"
+        ixy="0.12645"
+        ixz="-0.003492"
+        iyy="2.1414"
+        iyz="-0.003223"
+        izz="12.954" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/larmbase_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/larmbase_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="larmbasejoint"
+    type="fixed">
+    <origin
+      xyz="-0.0016170599245069 0.0370000000000001 0.468"
+      rpy="-1.5707963267949 0 0" />
+    <parent
+      link="slider_Link" />
+    <child
+      link="larmbase_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="fcamer_Link">
+    <inertial>
+      <origin
+        xyz="-8.5984E-06 -1.2514E-08 0.14411"
+        rpy="0 0 0" />
+      <mass
+        value="0.5" />
+      <inertia
+        ixx="0.032105"
+        ixy="-8.0163E-09"
+        ixz="-4.511E-08"
+        iyy="0.089021"
+        iyz="1.3017E-08"
+        izz="0.094223" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/fcamer_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/fcamer_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="fcamerjoint"
+    type="fixed">
+    <origin
+      xyz="0.079605 0 0.53233"
+      rpy="1.2217 0 1.5708" />
+    <parent
+      link="slider_Link" />
+    <child
+      link="fcamer_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="backcamer_Link">
+    <inertial>
+      <origin
+        xyz="0 0 -0.0098042"
+        rpy="0 0 0" />
+      <mass
+        value="0.3" />
+      <inertia
+        ixx="7.1393E-07"
+        ixy="-5.1699E-23"
+        ixz="2.0542E-23"
+        iyy="7.1393E-07"
+        iyz="-8.7826E-24"
+        izz="9.246E-07" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/backcamer_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/backcamer_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="backcamerjoint"
+    type="fixed">
+    <origin
+      xyz="-0.11591 0 0.447"
+      rpy="1.5708 0 -1.5708" />
+    <parent
+      link="slider_Link" />
+    <child
+      link="backcamer_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="dhead_Link">
+    <inertial>
+      <origin
+        xyz="-6.3148E-05 0.00087515 0.049653"
+        rpy="0 0 0" />
+      <mass
+        value="1" />
+      <inertia
+        ixx="6.0473E-05"
+        ixy="-4.1834E-08"
+        ixz="-2.7197E-08"
+        iyy="6.7578E-05"
+        iyz="2.0488E-06"
+        izz="5.1101E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/dhead_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/dhead_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="dheadjoint"
+    type="revolute">
+    <origin
+      xyz="0 0 0.589"
+      rpy="0 0 0" />
+    <parent
+      link="slider_Link" />
+    <child
+      link="dhead_Link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-1.57"
+      upper="1.57"
+      effort="3"
+      velocity="3.14" />
+  </joint>
+  <link
+    name="uphead_Link">
+    <inertial>
+      <origin
+        xyz="0.011242 -0.042641 -0.027744"
+        rpy="0 0 0" />
+      <mass
+        value="1" />
+      <inertia
+        ixx="0.0028066"
+        ixy="2.6372E-05"
+        ixz="-8.6976E-08"
+        iyy="0.0043265"
+        iyz="-6.2354E-06"
+        izz="0.0023777" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/uphead_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/uphead_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="upheadjoint"
+    type="revolute">
+    <origin
+      xyz="0 0.0285 0.0555"
+      rpy="-1.5708 0 0" />
+    <parent
+      link="dhead_Link" />
+    <child
+      link="uphead_Link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.18"
+      upper="0.65"
+      effort="3"
+      velocity="3.14" />
+  </joint>
+  <link
+    name="headcamera_Link">
+    <inertial>
+      <origin
+        xyz="0.23743 -0.048057 -0.028509"
+        rpy="0 0 0" />
+      <mass
+        value="0.5" />
+      <inertia
+        ixx="0.094096"
+        ixy="0.00080042"
+        ixz="-4.5811E-08"
+        iyy="0.089147"
+        iyz="8.9535E-10"
+        izz="0.032105" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/headcamera_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/headcamera_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="headcamerjoint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="uphead_Link" />
+    <child
+      link="headcamera_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <!-- ==================== RIGHT ARM (D1 arm, _R suffix) ==================== -->
+  <joint
+    name="rarm_attach_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="rarmbase_Link" />
+    <child
+      link="Base_R" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="Base_R">
+    <inertial>
+      <origin
+        xyz="1.1648e-04 -9.321e-05 3.390668e-02"
+        rpy="0 0 0" />
+      <mass
+        value="0.8553322" />
+      <inertia
+        ixx="6.5490e-04"
+        ixy="-1.5e-07"
+        ixz="7.70e-06"
+        iyy="6.6931e-04"
+        iyz="2.01e-06"
+        izz="8.0985e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Base_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Base_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Link1_R">
+    <inertial>
+      <origin
+        xyz="-3.3175e-04 -4.26687e-03 -3.522466e-02"
+        rpy="0 0 0" />
+      <mass
+        value="1.537551" />
+      <inertia
+        ixx="3.66914e-03"
+        ixy="1.77e-06"
+        ixz="1.342e-05"
+        iyy="3.94529e-03"
+        iyz="-2.3437e-04"
+        izz="1.31774e-03" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link1_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 1 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link1_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint1_R"
+    type="revolute">
+    <origin
+      xyz="0 0 0.1586"
+      rpy="0 0 0" />
+    <parent
+      link="Base_R" />
+    <child
+      link="Link1_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-3.0194"
+      upper="3.0194"
+      effort="35"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link2_R">
+    <inertial>
+      <origin
+        xyz="2.044e-05 0.0535881 -0.00881535"
+        rpy="0 0 0" />
+      <mass
+        value="1.58697" />
+      <inertia
+        ixx="0.00651482"
+        ixy="8.49e-06"
+        ixz="1.19e-06"
+        iyy="0.0018653"
+        iyz="0.00075929"
+        izz="0.00613149" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link2_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link2_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint2_R"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="1.5708 0 0" />
+    <parent
+      link="Link1_R" />
+    <child
+      link="Link2_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.0595"
+      upper="2.0595"
+      effort="35"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link3_R">
+    <inertial>
+      <origin
+        xyz="0.00796684 -0.00357354 -0.0495339"
+        rpy="0 0 0" />
+      <mass
+        value="1.2915" />
+      <inertia
+        ixx="0.00420137"
+        ixy="-2.925e-05"
+        ixz="0.00054194"
+        iyy="0.00445361"
+        iyz="-0.00016742"
+        izz="0.00106698" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link3_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link3_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint3_R"
+    type="revolute">
+    <origin
+      xyz="0 0.264 0"
+      rpy="-1.5708 0 0" />
+    <parent
+      link="Link2_R" />
+    <child
+      link="Link3_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-3.0194"
+      upper="3.0194"
+      effort="18"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link4_R">
+    <inertial>
+      <origin
+        xyz="0.00840183 -0.038565 -0.0073627"
+        rpy="0 0 0" />
+      <mass
+        value="1.03775" />
+      <inertia
+        ixx="0.00308966"
+        ixy="-0.00038612"
+        ixz="7.072e-05"
+        iyy="0.00119659"
+        iyz="-0.00032564"
+        izz="0.0029308" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link4_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 1 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link4_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint4_R"
+    type="revolute">
+    <origin
+      xyz="0.018 0 0"
+      rpy="-1.5708 0 3.1416" />
+    <parent
+      link="Link3_R" />
+    <child
+      link="Link4_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.5307"
+      upper="0.7854"
+      effort="18"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link5_R">
+    <inertial>
+      <origin
+        xyz="5.008e-04 -2.23923e-03 -9.253416e-02"
+        rpy="0 0 0" />
+      <mass
+        value="1.000479" />
+      <inertia
+        ixx="2.17057e-03"
+        ixy="-1.142e-05"
+        ixz="6.68e-06"
+        iyy="1.95131e-03"
+        iyz="-3.059e-05"
+        izz="8.4222e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link5_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link5_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint5_R"
+    type="revolute">
+    <origin
+      xyz="0.018 -0.264 0"
+      rpy="-1.5708 0 3.1416" />
+    <parent
+      link="Link4_R" />
+    <child
+      link="Link5_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-3.0194"
+      upper="3.0194"
+      effort="5.5"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link6_R">
+    <inertial>
+      <origin
+        xyz="-1.8634e-04 2.3824e-04 5.829e-04"
+        rpy="0 0 0" />
+      <mass
+        value="0.3906229" />
+      <inertia
+        ixx="1.9943e-04"
+        ixy="-1.1800e-06"
+        ixz="-3.0000e-07"
+        iyy="1.7163e-04"
+        iyz="3.5300e-06"
+        izz="1.8567e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link6_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link6_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint6_R"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="1.5708 -1.5708 0" />
+    <parent
+      link="Link5_R" />
+    <child
+      link="Link6_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.0472"
+      upper="1.0472"
+      effort="5.5"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link7_R">
+    <inertial>
+      <origin
+        xyz="-5.2431e-04 -3.976234e-02 7.27342e-03"
+        rpy="0 0 0" />
+      <mass
+        value="0.37939" />
+      <inertia
+        ixx="7.0308e-04"
+        ixy="5.97e-06"
+        ixz="7.30e-07"
+        iyy="3.0365e-04"
+        iyz="1.2769e-04"
+        izz="5.8833e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link7_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 1 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link7_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint7_R"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="1.5708 -1.5708 0" />
+    <parent
+      link="Link6_R" />
+    <child
+      link="Link7_R" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.5708"
+      upper="1.5708"
+      effort="5.5"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="TCP_Link_R">
+    <inertial>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <mass
+        value="0" />
+      <inertia
+        ixx="0"
+        ixy="0"
+        ixz="0"
+        iyy="0"
+        iyz="0"
+        izz="0" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/TCP_Link_R.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/TCP_Link_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="JointTCP_R"
+    type="fixed">
+    <origin
+      xyz="0 -0.087 0"
+      rpy="1.5708 -1.5708 0" />
+    <parent
+      link="Link7_R" />
+    <child
+      link="TCP_Link_R" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <!-- ==================== LEFT ARM (Y-mirrored D1 arm, _L suffix) ==================== -->
+  <joint
+    name="larm_attach_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="larmbase_Link" />
+    <child
+      link="Base_L" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="Base_L">
+    <inertial>
+      <origin
+        xyz="1.1648e-04 9.321e-05 3.390668e-02"
+        rpy="0 0 0" />
+      <mass
+        value="0.8553322" />
+      <inertia
+        ixx="6.5490e-04"
+        ixy="1.5e-07"
+        ixz="7.70e-06"
+        iyy="6.6931e-04"
+        iyz="-2.01e-06"
+        izz="8.0985e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Base_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Base_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Link1_L">
+    <inertial>
+      <origin
+        xyz="-3.3175e-04 4.26687e-03 -3.522466e-02"
+        rpy="0 0 0" />
+      <mass
+        value="1.537551" />
+      <inertia
+        ixx="3.66914e-03"
+        ixy="-1.77e-06"
+        ixz="1.342e-05"
+        iyy="3.94529e-03"
+        iyz="2.3437e-04"
+        izz="1.31774e-03" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link1_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 1 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link1_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint1_L"
+    type="revolute">
+    <origin
+      xyz="0 0 0.1586"
+      rpy="0 0 0" />
+    <parent
+      link="Base_L" />
+    <child
+      link="Link1_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-3.0194"
+      upper="3.0194"
+      effort="35"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link2_L">
+    <inertial>
+      <origin
+        xyz="2.044e-05 -0.0535881 -0.00881535"
+        rpy="0 0 0" />
+      <mass
+        value="1.58697" />
+      <inertia
+        ixx="0.00651482"
+        ixy="-8.49e-06"
+        ixz="1.19e-06"
+        iyy="0.0018653"
+        iyz="-0.00075929"
+        izz="0.00613149" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link2_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link2_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint2_L"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5708 0 0" />
+    <parent
+      link="Link1_L" />
+    <child
+      link="Link2_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.0595"
+      upper="2.0595"
+      effort="35"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link3_L">
+    <inertial>
+      <origin
+        xyz="0.00796684 0.00357354 -0.0495339"
+        rpy="0 0 0" />
+      <mass
+        value="1.2915" />
+      <inertia
+        ixx="0.00420137"
+        ixy="2.925e-05"
+        ixz="0.00054194"
+        iyy="0.00445361"
+        iyz="0.00016742"
+        izz="0.00106698" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link3_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link3_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint3_L"
+    type="revolute">
+    <origin
+      xyz="0 -0.264 0"
+      rpy="1.5708 0 0" />
+    <parent
+      link="Link2_L" />
+    <child
+      link="Link3_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-3.0194"
+      upper="3.0194"
+      effort="18"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link4_L">
+    <inertial>
+      <origin
+        xyz="0.00840183 0.038565 -0.0073627"
+        rpy="0 0 0" />
+      <mass
+        value="1.03775" />
+      <inertia
+        ixx="0.00308966"
+        ixy="0.00038612"
+        ixz="7.072e-05"
+        iyy="0.00119659"
+        iyz="0.00032564"
+        izz="0.0029308" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link4_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 1 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link4_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint4_L"
+    type="revolute">
+    <origin
+      xyz="0.018 0 0"
+      rpy="1.5708 0 -3.1416" />
+    <parent
+      link="Link3_L" />
+    <child
+      link="Link4_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.5307"
+      upper="0.7854"
+      effort="18"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link5_L">
+    <inertial>
+      <origin
+        xyz="5.008e-04 2.23923e-03 -9.253416e-02"
+        rpy="0 0 0" />
+      <mass
+        value="1.000479" />
+      <inertia
+        ixx="2.17057e-03"
+        ixy="1.142e-05"
+        ixz="6.68e-06"
+        iyy="1.95131e-03"
+        iyz="3.059e-05"
+        izz="8.4222e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link5_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link5_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint5_L"
+    type="revolute">
+    <origin
+      xyz="0.018 0.264 0"
+      rpy="1.5708 0 -3.1416" />
+    <parent
+      link="Link4_L" />
+    <child
+      link="Link5_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-3.0194"
+      upper="3.0194"
+      effort="5.5"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link6_L">
+    <inertial>
+      <origin
+        xyz="-1.8634e-04 -2.3824e-04 5.829e-04"
+        rpy="0 0 0" />
+      <mass
+        value="0.3906229" />
+      <inertia
+        ixx="1.9943e-04"
+        ixy="1.1800e-06"
+        ixz="-3.0000e-07"
+        iyy="1.7163e-04"
+        iyz="-3.5300e-06"
+        izz="1.8567e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link6_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link6_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint6_L"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5708 1.5708 0" />
+    <parent
+      link="Link5_L" />
+    <child
+      link="Link6_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.0472"
+      upper="1.0472"
+      effort="5.5"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="Link7_L">
+    <inertial>
+      <origin
+        xyz="-5.2431e-04 3.976234e-02 7.27342e-03"
+        rpy="0 0 0" />
+      <mass
+        value="0.37939" />
+      <inertia
+        ixx="7.0308e-04"
+        ixy="-5.97e-06"
+        ixz="7.30e-07"
+        iyy="3.0365e-04"
+        iyz="-1.2769e-04"
+        izz="5.8833e-04" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link7_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 1 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/Link7_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint7_L"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5708 1.5708 0" />
+    <parent
+      link="Link6_L" />
+    <child
+      link="Link7_L" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.5708"
+      upper="1.5708"
+      effort="5.5"
+      velocity="3.1416" />
+  </joint>
+  <link
+    name="TCP_Link_L">
+    <inertial>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <mass
+        value="0" />
+      <inertia
+        ixx="0"
+        ixy="0"
+        ixz="0"
+        iyy="0"
+        iyz="0"
+        izz="0" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/TCP_Link_R.STL"
+          scale="1 -1 1" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://merged_robot/meshes/TCP_Link_R.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="JointTCP_L"
+    type="fixed">
+    <origin
+      xyz="0 0.087 0"
+      rpy="-1.5708 1.5708 0" />
+    <parent
+      link="Link7_L" />
+    <child
+      link="TCP_Link_L" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+</robot>

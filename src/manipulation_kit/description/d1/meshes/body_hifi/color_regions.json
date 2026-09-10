@@ -1,0 +1,59 @@
+{
+  "reference": "d1.avif",
+  "boundary_method": "surface triangle clipping",
+  "palette": {
+    "white": "0.90 0.91 0.92 1",
+    "navy": "0.012 0.032 0.16 1",
+    "dark": "0.015 0.020 0.026 1",
+    "silver": "0.48 0.54 0.60 1",
+    "cyan": "0.02 0.48 0.90 1",
+    "red": "0.72 0.02 0.025 1"
+  },
+  "hosts": {
+    "chassis_link": {
+      "source_sha256": "2cc40a38d130af47f5cd07672d49eb789e63b1a963365173fb2046eb0d734d43",
+      "source_faces": 200000,
+      "source_area_m2": 6.504508402323211,
+      "result_area_m2": 6.504508402323211,
+      "faces": {
+        "white": 140281,
+        "navy": 1631,
+        "dark": 43436,
+        "silver": 23984
+      }
+    },
+    "torso_column": {
+      "source_sha256": "849f829c5377c91c12cc4ca9520056b6905d49db3e1df6217bf465b15b57db65",
+      "source_faces": 114965,
+      "source_area_m2": 1.1247974918437822,
+      "result_area_m2": 1.1247974918437824,
+      "faces": {
+        "white": 57261,
+        "navy": 41427,
+        "dark": 41481
+      }
+    },
+    "neck_pan_link": {
+      "source_sha256": "36d4485c084fdfc83e235acf145c74e3363b9b2ead71fef80189d8a8e5cc5f7d",
+      "source_faces": 59999,
+      "source_area_m2": 0.07906492772714178,
+      "result_area_m2": 0.07906492772714178,
+      "faces": {
+        "silver": 59972
+      }
+    },
+    "head_link": {
+      "source_sha256": "c85a14eeed79cf396369c216fc9569a1d5cd2ae2c854f2927f62fe5ac6292d95",
+      "source_faces": 119999,
+      "source_area_m2": 0.47274454666138305,
+      "result_area_m2": 0.47274454666138305,
+      "faces": {
+        "white": 20595,
+        "navy": 50689,
+        "dark": 59852,
+        "cyan": 1542,
+        "red": 1170
+      }
+    }
+  }
+}

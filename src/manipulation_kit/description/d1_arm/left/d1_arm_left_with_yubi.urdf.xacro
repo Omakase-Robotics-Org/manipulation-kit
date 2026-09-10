@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!-- D1 arm LEFT arm + YUBI parallel-jaw hand.
+     Vendor "D1 arm M6-S with yubi" update (2026-06): mounts the YUBI hand on the
+     arm TCP flange (TCP_Link_L).
+     Includes the in-package arm URDF and the yubi_description hand macro.
+
+     NOTE (2026-07-25): the two D1 arm arms are the SAME physical arm (not
+     mirror-image hardware), so with mirror-symmetric joint values the two
+     TCP flanges land 180 deg apart.  The hand on THIS side is therefore
+     physically mounted 180 deg rotated (yaw pi, y-offset sign flipped) to
+     make the hands mirror-symmetric.  The vendor's original drop of this
+     file copied the right-side transform verbatim, which is wrong for this
+     side; the transform below matches every assembled dual-arm model
+     (description/d1/d1.urdf, description/d1_yubi_description_v2).
+     See description/d1-arm-notes.md. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="d1_arm_left_with_yubi">
+  <xacro:include filename="$(find d1_arm_left)/d1_arm_left.urdf"/>
+  <xacro:include filename="$(find yubi_description)/urdf/yubi_hand.urdf.xacro"/>
+
+  <xacro:yubi_hand hand_prefix="left"/>
+
+  <joint name="d1_arm_l_tip_to_yubi" type="fixed">
+    <origin xyz="0 0.019 0.055" rpy="${radians(90)} ${radians(-90)} ${radians(180)}"/>
+    <parent link="TCP_Link_L"/>
+    <child link="left_hand_root"/>
+  </joint>
+</robot>

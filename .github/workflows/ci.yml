@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor declared in pyproject (robots run old images);
+        # 3.12 is what a fresh install gets. Both, or the floor rots.
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        # [mujoco] pulls the optional IK substrate: without it the
+        # d1/arm kinematics tests silently skip, and a green run that
+        # skipped the IK is not a green run.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[mujoco,dev]'
+      - name: Tests
+        run: pytest -q -rs
+      - name: The URDFs are what the generator emits
+        run: |
+          mkit-urdf build
+          git diff --exit-code -- src/manipulation_kit/description
+      - name: The committed dist/ exports have not drifted
+        run: |
+          mkit-urdf export d1-collision --dest dist/d1-collision --check
+          mkit-urdf export d1-wholebody-gripper --dest dist/d1-wholebody-gripper --check
+      - name: Import with nothing but the package
+        # The guard must load its URDF from inside the install — no checkout,
+        # no $D1_SDK_DIR. Run from / so a stray relative path cannot save it.
+        run: cd / && python -c "import manipulation_kit.arms, manipulation_kit.guard; from manipulation_kit.guard import MotionGuard; MotionGuard(); print('ok')"

@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- D1 stock parallel gripper, vendor CAD (SolidWorks URDF export).
+     VENDORED by hands/d1/parallel_gripper/tools/vendor_gripper_description.py
+     from the vendor ROS package `gripper`; do not hand edit, re-run the
+     script. Provenance, the exact source hashes and every local change:
+     descriptions/README.md.
+
+     Frame: base_link is the arm tool flange, fingers extend along +Z, the
+     jaws travel along +/-X. Registered TCP is 136 mm along +Z (see
+     toolconfig.py); the jaw tips reach Z = 143.5 mm.
+
+     Jaw convention: tcp_r_joint spans 0 .. 0.035 m and tcp_l_joint mimics it
+     with multiplier minus one over 0.035 .. 0 m. Both jaws move inward as
+     |q| grows, so q = 0 is the 70 mm OPEN gap and |q| = 0.035 is fully
+     CLOSED. This is the OPPOSITE polarity to the CAN 2.0 wire command,
+     where 0.0 is closed. Do not wire one to the other without inverting.
+
+     MASS: the link masses here sum to the MEASURED 1.5 kg (scale, Shu
+     2026-07-29), not to the 0.3279 kg the CAD export claimed. That export
+     models outer shells only and its implied densities are default material
+     values, so it was light by a factor of 4.6. The missing mass is carried
+     on base_link, whose inertial is therefore an ESTIMATE: the mass is
+     measured, the COM is solved so the assembly COM lands on the
+     hardware-validated 68 mm, and the tensor is the CAD tensor scaled by the
+     mass ratio. The jaw inertials are the CAD's, verbatim. Full derivation:
+     descriptions/README.md and toolconfig.py. -->
+<robot
+  name="gripper">
+  <link
+    name="base_link">
+    <inertial>
+      <!-- ESTIMATE, not the CAD values. Mass is the MEASURED 1.5 kg
+           assembly (Shu 2026-07-29) minus the two CAD jaws; the CAD
+           export claimed 0.2448 kg for this link and models outer
+           shells only. COM z is solved so the ASSEMBLY COM lands on
+           the hardware validated 68 mm. The tensor is the CAD tensor
+           scaled by the mass ratio. descriptions/README.md has the
+           derivation. CAD original: mass 0.244768569107893, COM
+           (0.000188064059438092, -0.0101851841222577,
+           0.0346226600011052). -->
+      <origin
+        xyz="0 0 0.0661547344675"
+        rpy="0 0 0" />
+      <mass
+        value="1.41685119941" />
+      <inertia
+        ixx="0.000344766325199"
+        ixy="1.21238986963E-06"
+        ixz="9.16011466331E-07"
+        iyy="0.000863569213507"
+        iyz="3.29510790769E-08"
+        izz="0.00108375509566" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.180392156862745 0.180392156862745 0.180392156862745 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="tcp_r_Link">
+    <inertial>
+      <origin
+        xyz="-0.00902677214251069 6.53233158398603E-07 0.0501543391304759"
+        rpy="0 0 0" />
+      <mass
+        value="0.0415744002939907" />
+      <inertia
+        ixx="8.52933084887925E-06"
+        ixy="-1.10039576080727E-12"
+        ixz="2.91187879767278E-06"
+        iyy="1.23028085368773E-05"
+        iyz="1.00690535185614E-11"
+        izz="1.16062383666055E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/tcp_r_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0.501960784313725 0.250980392156863 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/tcp_r_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="tcp_r_joint"
+    type="prismatic">
+    <origin
+      xyz="0 0 0.10847"
+      rpy="3.1416 -1.5708 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="tcp_r_Link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="0.035"
+      effort="3"
+      velocity="0.05" />
+  </joint>
+  <link
+    name="tcp_l_Link">
+    <inertial>
+      <origin
+        xyz="-0.00902675986326329 6.17141641345853E-07 -0.0501543401280922"
+        rpy="0 0 0" />
+      <mass
+        value="0.0415743761389037" />
+      <inertia
+        ixx="8.52933100035394E-06"
+        ixy="6.9744239984036E-11"
+        ixz="-2.91189485852678E-06"
+        iyy="1.23028705409144E-05"
+        iyz="8.22192607198561E-12"
+        izz="1.16062983287409E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/tcp_l_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0 0.501960784313725 0.250980392156863 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/tcp_l_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="tcp_l_joint"
+    type="prismatic">
+    <origin
+      xyz="0 0 0.10847"
+      rpy="3.1416 -1.5708 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="tcp_l_Link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-0.035"
+      upper="0"
+      effort="3"
+      velocity="0.05" />
+    <mimic
+      joint="tcp_r_joint"
+      multiplier="-1"
+      offset="0" />
+  </joint>
+</robot>
