@@ -1,13 +1,8 @@
 """Coupling-table tests against known rows from the vendor xlsx."""
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import coupling  # noqa: E402
+from manipulation_kit.hands.leadshine.dh116s import coupling
 
 
 def test_all_bundled_tables_load_and_are_monotonic():

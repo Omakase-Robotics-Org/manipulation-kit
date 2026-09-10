@@ -32,7 +32,11 @@ mujoco = [
 # Mesh work: the vendoring/decimation tools under hands/*/*/tools/ and
 # description/d1/tools/prepare_visual_meshes.py.
 meshes = ["trimesh", "fast-simplification"]
-dev = ["pytest"]
+# yourdfpy is a TEST dependency, not a runtime one: two gripper tests load the
+# vendor URDF through a third-party parser to confirm our own reading of it is
+# not the only reading. Without it they skip, and a skipped cross-check is not
+# a cross-check.
+dev = ["pytest", "yourdfpy"]
 
 [project.scripts]
 mkit-urdf = "manipulation_kit.description.cli:main"

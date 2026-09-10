@@ -73,57 +73,9 @@ def test_retarget_is_an_explicit_not_implemented():
         oh.get_retarget("linkerbot/o30")
 
 
-def test_get_hand_dry_run_conforms_to_the_hand_protocol():
-    import manipulation_kit.hands as oh
-
-    h = oh.get_hand("linkerbot/o30", execute=False)
-    try:
-        assert isinstance(h, oh.Hand)
-        assert h.num_axes == 20
-        assert h.identify()["model"] == "O30"
-        h.enable()
-        h.home()
-        h.set_positions([10] * 20)
-        assert h.latest_feedback is None or h.latest_feedback.pos
-    finally:
-        h.close()
-
-
-def test_get_hand_maps_node_id_onto_the_frame_id():
-    import manipulation_kit.hands as oh
-
-    left = oh.get_hand("linkerbot/o30", node_id=2, execute=False)
-    try:
-        assert left.frame_id == 2
-        assert left.identify()["reply_id"] == 0x402
-    finally:
-        left.close()
-
-
-def test_the_registration_announces_that_it_is_provisional():
-    """A docstring cannot warn anyone at the moment the numbers are registered.
-
-    The consumer (an arm stack) feeds these into the controller's dynamics
-    model. Mounting this hand moves the registered tool point from the DH116S's
-    100 mm to the flange origin, so "TCP is not chosen yet" has to be readable
-    at runtime, not only in this module's prose.
-    """
-    tc = o30.tool_config()
-    assert tc.provisional is True
-    assert tc.unmeasured == ("tcp", "com", "inertia")
-    assert "PROVISIONAL" in tc.caveat()
-    assert "tcp" in tc.caveat()
-    assert tc.to_json_dict()["provisional"] is True
-    assert tc.to_json_dict()["unmeasured"] == ["tcp", "com", "inertia"]
-
-
-def test_a_measured_tool_says_nothing():
-    tc = ToolConfig(model="acme/measured", tcp_xyz_mm=(0.0, 0.0, 100.0),
-                    mass_kg=0.4, com_mm=(0.0, 0.0, 50.0))
-    assert tc.provisional is False and tc.caveat() == ""
-
-
-def test_a_placeholder_that_does_not_announce_itself_is_refused():
-    with pytest.raises(ValueError, match="provisional=False"):
-        ToolConfig(model="acme/quiet", tcp_xyz_mm=(0.0, 0.0, 0.0), mass_kg=0.4,
-                   com_mm=(0.0, 0.0, 0.0), unmeasured=("tcp",))
+# The two get_hand() tests that stood here did not come to manipulation-kit.
+# They constructed the O30's CANFD driver over a MockBus and exercised
+# enable/home/set_positions — a driver test, and the driver is d1-firmwared's
+# now. `get_hand` no longer exists on the seam at all; the dry-run protocol
+# conformance they checked belongs in the daemon's own suite, against the
+# daemon's own simulator, not here.
