@@ -13,20 +13,20 @@
   },
   "hosts": {
     "chassis_link": {
-      "source_sha256": "dcb0acfefe6ac898897495dffe41794fb08f91eaac1efc3793220300c02a0976",
-      "source_faces": 39063,
-      "source_area_m2": 4.92723931963149,
-      "result_area_m2": 4.92723931963149,
+      "source_sha256": "fc4a0bb8b8ed0b5693e5e21080b9955cc59f5c5000f8a2079aeb4d1a5d4024de",
+      "source_faces": 39560,
+      "source_area_m2": 4.94027796089546,
+      "result_area_m2": 4.94027796089546,
       "faces": {
-        "white": 28607,
+        "white": 28867,
         "navy": 1221,
         "dark": 14524,
         "silver": 23998,
-        "gray": 33
+        "gray": 1008
       }
     },
     "torso_column": {
-      "source_sha256": "e98eeaf51b5fd826c342e2a42458f968dc6d9a1d6b6f489c09466f2ee337aad1",
+      "source_sha256": "b9e49e43d6fde2731ded7d45f0592bb3350690622c67783ae2214f6e1f7b751b",
       "source_faces": 110970,
       "source_area_m2": 1.350545845185772,
       "result_area_m2": 1.3505458451857715,
@@ -48,7 +48,7 @@
       }
     },
     "head_link": {
-      "source_sha256": "60db383d54ea4e7c9ee0b6fe15fa68aa99c90ebdc4a8f78a8937ce7933eac219",
+      "source_sha256": "08a54016286163fafbae8719774a6a525c1f46760358cf1a99b9af815c0e4b29",
       "source_faces": 9596,
       "source_area_m2": 0.22958126919436353,
       "result_area_m2": 0.22958126919436353,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.2.3"
+version = "0.2.4"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 requires-python = ">=3.9"

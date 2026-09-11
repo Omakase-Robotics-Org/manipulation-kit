@@ -80,3 +80,9 @@ occlude the wheel cutout. Six round visual wheels replace the decimated
 surfaces: four caster wheels and two drive wheels with white hubs and dark
 treads. Their visual radii/locations follow the original CAD bounds; the
 physical collision and joint definitions remain unchanged.
+
+The final front-only correction follows the direct front gallery image:
+a 444 mm wide gray inset with a flat central lower edge and rounded ends,
+a 90 × 24 mm light-bordered capsule sensor window, and 14 mm of shallow
+front lower-edge relief exposing the front caster bottoms. Rear cutout,
+forehead optics and robot/table placement are unchanged by this correction.

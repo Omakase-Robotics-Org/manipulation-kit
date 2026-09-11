@@ -86,7 +86,9 @@ def lower_chassis_profile():
         for x,y in perimeter:
             rear=max(0,min(1,(-x-.210)/.060))
             arch=max(0,cos(min(1,max(0,(abs(y-.0016)-.130)/.098))*pi/2))
-            bottom=.036+.067*rear*arch
+            front=max(0,min(1,(x-.210)/.060))
+            front_relief=max(0,min(1,(.228-abs(y-.0016))/.068))
+            bottom=.036+.067*rear*arch+.014*front*front_relief
             inset,z=((.003,bottom), (0,bottom+.007), (0,.219),(.004,.235),(.012,.239))[level]
             verts.append((.010+(x-.010)*(1-inset/hx),.0016+(y-.0016)*(1-inset/hy),z))
     for level in range(4):
@@ -97,12 +99,24 @@ def lower_chassis_profile():
     # Real top deck is recessed inside the white rim, revealing the supports.
     box('Paint_silver_RecessedDeck',(.010,.0016,.233),(.549,.448,.004),.0015)
     # Wide front insert with a curved lower edge, rather than a small plaque.
-    verts=[(.300,-.188,.234),(.300,.191,.234)]
-    for i in range(33):
-        y=.191-i*.379/32
-        z=.184+.050*(abs((y-.0016)/.190)**4)
-        verts.append((.300,y,z))
-    mesh=bpy.data.meshes.new('Front insert');mesh.from_pydata(verts,[],[tuple(reversed(range(len(verts))))]);mesh.update()
+    from math import sqrt
+    verts=[];faces=[]
+    for i in range(65):
+        y=.0016-.222+i*.444/64
+        t=max(0,min(1,(abs(y-.0016)-.140)/.082))
+        low=.166+.068*(1-sqrt(max(0,1-t*t)))
+        for j in range(9):
+            z=low+(.234-low)*j/8
+            inset=max(0,min(.004,(z-.219)*.004/.016))
+            local_y=(y-.0016)/(1-inset/.240)
+            dy=max(0,abs(local_y)-.188)
+            outer_x=.247+sqrt(max(0,.052**2-dy**2))
+            x=.010+(outer_x-.010)*(1-inset/.289)+.0006
+            verts.append((x,y,z))
+    for i in range(64):
+        for j in range(8):
+            n=i*9+j;faces.append((n,n+9,n+10,n+1))
+    mesh=bpy.data.meshes.new('Front insert');mesh.from_pydata(verts,[],faces);mesh.update()
     obj=bpy.data.objects.new('Paint_gray_BaseCameraPanel',mesh);bpy.context.collection.objects.link(obj)
     # Rear service slots and connector visible in the direct rear gallery view.
     for z in (.157,.172):
@@ -183,9 +197,16 @@ for host in ('torso_column','chassis_link','head_link'):
         for y in (-.0074,.0106):
             cylinder('Paint_silver_UltrasoundRing',(.265,y,.348),.007,.001)
             cylinder('Paint_dark_Ultrasound',(.266,y,.348),.0055,.001)
-        box('Paint_dark_BaseCameraGlass',(.302,.0016,.207),(.003,.063,.016),.006)
-        for y in (-.018,.0016,.021):
-            cylinder('Paint_silver_BaseLens',(.304,y,.207),.004,.001)
+        for name,x,width,height,depth in (
+            ('Paint_white_BaseCameraRim',.301,.090,.024,.0015),
+            ('Paint_dark_BaseCameraGlass',.302,.085,.019,.0015),
+        ):
+            o=camera_window(name,x,0,0,width,height,depth)
+            o.rotation_euler[0]=radians(90);o.location=(0,.0016,.203)
+            bpy.context.view_layer.objects.active=o
+            bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
+        for y in (-.025,.0016,.028):
+            cylinder('Paint_silver_BaseLens',(.304,y,.203),.004,.001)
     else:
         bpy.ops.object.mode_set(mode='EDIT');bpy.ops.mesh.separate(type='LOOSE');bpy.ops.object.mode_set(mode='OBJECT')
         for part in list(bpy.context.selected_objects):
