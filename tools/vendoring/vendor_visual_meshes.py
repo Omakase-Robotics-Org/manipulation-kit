@@ -2,7 +2,7 @@
 """Import the vendor BODY CAD into description/d1/meshes/body/.
 
     unzip urdf20260725.zip -d /tmp/body
-    python3 description/d1/tools/vendor_visual_meshes.py \
+    python3 tools/vendoring/vendor_visual_meshes.py \
         --vendor-meshes /tmp/body/merged_robot/meshes
 
 This is the only mesh set the `d1/` package has to carry itself. The others the
@@ -56,8 +56,10 @@ import shutil
 import struct
 import sys
 
+from _kit_paths import description_d1
+
 HERE = pathlib.Path(__file__).resolve().parent
-OUT = HERE.parent / "meshes" / "body"
+OUT = description_d1() / "meshes" / "body"
 
 #: Vendor STLs to carry. Anything not hosted by a link in the generated URDFs
 #: (see BODY_MESH_HOSTS there) is not copied.

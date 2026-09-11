@@ -18,7 +18,7 @@ Original OBJ files are included so regeneration also works in a fresh clone.
 Rebuild from the SDK root:
 
 ```sh
-python3 description/d1/tools/prepare_visual_meshes.py
+python3 tools/vendoring/prepare_visual_meshes.py
 python3 description/d1/tools/build_visual_colors.py
 python3 description/d1/tools/generate_d1_urdf.py
 ```

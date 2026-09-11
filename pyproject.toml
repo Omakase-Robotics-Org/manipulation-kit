@@ -4,22 +4,35 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.1.0"
+version = "0.2.0"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    # The arm math (IK, targeting, frames) is numpy + scipy rotations. The
-    # motion guard deliberately needs NEITHER — it is stdlib-only so it can be
-    # imported anywhere, including a bare planner or a firmware-side test host.
+    # EVERYTHING the kit computes runs on these two. The arm math — inverse
+    # kinematics included — is numpy plus scipy rotations over the URDF this
+    # package ships (manipulation_kit.arms.urdf_chain). The motion guard
+    # deliberately needs NEITHER: it is stdlib-only, so it can be imported
+    # anywhere, including a bare planner or a firmware-side test host.
     "numpy",
     "scipy>=1.7",
 ]
 
 [project.optional-dependencies]
-# The MuJoCo-backed KinematicChain substrate. OPTIONAL on purpose: it is one
-# substrate of two, and consumers with no MuJoCo dependency satisfy the same
-# protocol by walking the guard-parsed URDF.
+# MuJoCo. NOT needed to use this package: the default IK substrate is
+# manipulation_kit.arms.urdf_chain.UrdfChain (numpy), and nothing under
+# manipulation_kit.arms imports mujoco at module scope. Install this extra for
+#
+#   * the ALTERNATIVE IK substrate, get_arm_kinematics("d1/arm", chain="mujoco"),
+#     which exists for consumers that already keep a MuJoCo mirror of the robot
+#     (dx-vr-teleop: viewer + sim backend + composed hand model) and want the
+#     solver driving THAT model rather than a second one;
+#   * the research and preview code outside the wheel — contrib/wholebody/
+#     (whole-body IK demos) and examples/ (gesture preview, click-to-move);
+#   * the tests that cross-check the two substrates against each other
+#     (tests/arms/test_urdf_chain_parity.py) or load the DH116S MJCF.
+#
+# Everything else in the suite runs, and passes, without it.
 #
 # The 3.9 ceiling is not a preference: MuJoCo stopped shipping cp39 wheels after
 # 3.3.7, and without the marker pip tries to BUILD it from source and dies on a
@@ -29,8 +42,9 @@ mujoco = [
     "mujoco>=3.0,<=3.3.7; python_version < '3.10'",
     "mujoco>=3.0; python_version >= '3.10'",
 ]
-# Mesh work: the vendoring/decimation tools under hands/*/*/tools/ and
-# description/d1/tools/prepare_visual_meshes.py.
+# Mesh work: the CAD vendoring/decimation tools under tools/vendoring/ (which
+# are outside the wheel, and need the private assets repository — see
+# tools/vendoring/README.md).
 meshes = ["trimesh", "fast-simplification"]
 # yourdfpy is a TEST dependency, not a runtime one: two gripper tests load the
 # vendor URDF through a third-party parser to confirm our own reading of it is
@@ -46,6 +60,10 @@ mkit-toolconfig = "manipulation_kit.hands.cli:main"
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
+# Only src/ is packaged. contrib/, examples/ and tools/ are deliberately
+# top-level and outside the wheel: research demos, runnable examples and CAD
+# vendoring are not things a consumer imports, and two of the three need
+# either mujoco or assets that are not in this repository.
 where = ["src"]
 
 [tool.setuptools.package-data]
@@ -80,7 +98,6 @@ where = ["src"]
     "descriptions/*.xml", "descriptions/README.md", "descriptions/meshes/*.STL",
 ]
 "manipulation_kit.hands.linkerbot.o30" = ["README.md"]
-"manipulation_kit.scripts" = ["*.csv"]
 
 [tool.pytest.ini_options]
 # Test files live in tests/<area>/ with no __init__.py, so two areas cannot both

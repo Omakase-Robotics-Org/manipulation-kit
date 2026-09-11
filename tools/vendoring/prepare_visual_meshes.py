@@ -6,10 +6,21 @@ Requires numpy, scipy and trimesh. Source CAD and collision meshes are untouched
 
 from pathlib import Path
 import json
+import sys
+
 import numpy as np
 import trimesh
 
-BODY = Path(__file__).resolve().parents[1] / "meshes" / "body_hifi"
+from _kit_paths import description_d1
+
+#: Where the hi-fi visual OBJs land. They are not in this repository (see
+#: ../../LICENSE-STATUS.md) — this tool is what puts them there.
+BODY = description_d1() / "meshes" / "body_hifi"
+
+#: ``build_visual_colors`` stays INSIDE the package (it is data about the
+#: robot's paint, and a test beside it exercises it), so make it importable
+#: from here.
+sys.path.insert(0, str(description_d1() / "tools"))
 
 
 def components(mesh):

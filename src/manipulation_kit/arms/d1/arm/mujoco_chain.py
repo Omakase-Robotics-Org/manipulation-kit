@@ -4,11 +4,14 @@ Migrated from dx-vr-teleop ``server/backends.py`` (``SimBackend``'s joint/body
 index bookkeeping, ``ee_pose``, ``_set_joints``, the ``mj_jacBody`` call inside
 ``_ik``) at post-#41 ``master``.
 
-This is ONE substrate. It exists because dx-vr-teleop already carries a full
-MuJoCo mirror of the robot (viewer, sim backend, composed hand model), so FK and
-the Jacobian are free there. omakase-core has no MuJoCo dependency and gets the
-same quantities by walking the ``pyguard``-parsed URDF; it satisfies the same
-protocol. Neither substrate is privileged, and the solver in
+This is the OPTIONAL substrate. It exists because dx-vr-teleop already carries a
+full MuJoCo mirror of the robot (viewer, sim backend, composed hand model), so
+FK and the Jacobian are free there and the solver can be pointed at the model
+that repository is already stepping. Everyone else gets the same quantities from
+:class:`~manipulation_kit.arms.urdf_chain.UrdfChain`, which walks the same URDF
+in numpy and is the DEFAULT — ``mujoco`` is not a dependency of inverse
+kinematics. The two agree to ~1e-15 on D1
+(``tests/arms/test_urdf_chain_parity.py``), and the solver in
 :mod:`manipulation_kit.arms.ik` never learns which one it is talking to.
 
 ``mujoco`` is imported by the caller and injected, not imported at module scope:

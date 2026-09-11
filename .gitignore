@@ -2,7 +2,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 build/
-.venv/
+.venv*/
 venv/
 .pytest_cache/
 .coverage
@@ -22,3 +22,4 @@ src/manipulation_kit/description/d1_arm/right/meshes/*.STL
 src/manipulation_kit/hands/d1/parallel_gripper/descriptions/meshes/*.STL
 # the optional decorative visual layer (`mkit-urdf fetch-visuals`)
 src/manipulation_kit/description/d1/meshes/body_hifi/*.obj
+dist-wheel/

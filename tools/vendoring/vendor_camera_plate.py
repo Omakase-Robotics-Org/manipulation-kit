@@ -61,8 +61,10 @@ import sys
 
 import numpy as np
 
+from _kit_paths import parallel_gripper
+
 HERE = pathlib.Path(__file__).resolve().parent
-DEST = HERE.parent / "descriptions"
+DEST = parallel_gripper() / "descriptions"
 
 #: SHA256 of the source drop this script was written against. A different
 #: hash is not an error (plates get revised) but is loudly reported so the
@@ -196,7 +198,7 @@ def _inertial(mass, com, inertia, indent="    ") -> str:
 
 HEADER_NOTE = """
   <!-- CAMERA PLATE + WRIST CAMERA, appended by
-       hands/d1/parallel_gripper/tools/vendor_camera_plate.py; do not hand
+       tools/vendoring/vendor_camera_plate.py; do not hand
        edit, re-run the script. Provenance: descriptions/README.md.
 
        The plate (arm-end connection plate V2.0) fills the first 8 mm of the

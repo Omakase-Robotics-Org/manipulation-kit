@@ -28,8 +28,11 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
-URDF = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "description", "d1", "d1_wholebody.urdf")
+#: Resolved through the import: this package lives outside the wheel now
+#: (contrib/), while the description still ships inside manipulation_kit.
+URDF = os.path.join(
+    os.path.dirname(os.path.abspath(__import__("manipulation_kit").__file__)),
+    "description", "d1", "d1_wholebody.urdf")
 
 # Link7 -> TCP fixed transform (generator TCP_XYZ / TCP_RPY, rpy=XYZ-fixed).
 _TCP_XYZ = np.array([0.0, -0.087, 0.0])

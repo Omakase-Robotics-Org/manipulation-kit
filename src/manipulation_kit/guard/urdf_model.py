@@ -57,7 +57,11 @@ class Joint:
         a = el.find("axis")
         self.axis = _floats(a.get("xyz") if a is not None else None, (0.0, 0.0, 1.0))
         lim = el.find("limit")
-        if self.type == "revolute" and lim is not None:
+        # Prismatic joints carry <limit> too (metres, not radians). The guard
+        # only ever asks about revolute ones, but the IK substrate in
+        # manipulation_kit.arms.urdf_chain needs the bounds of whatever it
+        # actuates, and parsing them here keeps ONE URDF reader in the package.
+        if self.type in ("revolute", "prismatic") and lim is not None:
             self.lower = float(lim.get("lower"))
             self.upper = float(lim.get("upper"))
         else:

@@ -112,7 +112,7 @@ DESC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 # Paths are relative TO THE URDF FILE.  The arm and YUBI meshes are used IN
 # PLACE from the packages that already hold them at full resolution, so nothing
 # is duplicated; only the body CAD needed importing (see
-# tools/vendor_visual_meshes.py for its provenance and why none of it is
+# tools/vendoring/vendor_visual_meshes.py for its provenance and why none of it is
 # decimated).
 ARM_MESH_DIR = {"R": "../d1_arm/right/meshes",
                 "L": "../d1_arm/left/meshes"}
@@ -377,7 +377,7 @@ GRIPPER_COLOUR = {"base": ("gripper_housing", "0.180392 0.180392 0.180392 1"),
 # --------------------------------------------------------------------------
 # GRIPPER WRIST-CAMERA PLATE — the arm-end connection plate V2.0
 # (夹爪连接板 手臂端, received 2026-08-21; Drive D1/URDF/, vendored into
-# dx-manipulator hands/d1/parallel_gripper by its tools/vendor_camera_plate.py
+# dx-manipulator hands/d1/parallel_gripper by its tools/vendoring/vendor_camera_plate.py
 # and copied byte-identical into meshes/gripper/ like the rest).
 #
 # This is the first REAL geometry inside the 16.5 mm flange gap: an 8 mm
