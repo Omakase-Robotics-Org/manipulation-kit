@@ -81,9 +81,21 @@ def theirs(vrt):
 
 @pytest.fixture(scope="module")
 def ours():
-    """The migrated kinematics."""
+    """The migrated kinematics, on the MuJoCo substrate.
+
+    ``chain="mujoco"`` is pinned here and ONLY here. Every assertion below
+    compares against dx-vr-teleop with ``atol=0`` — bit-for-bit — and
+    dx-vr-teleop's ``SimBackend`` gets its FK and Jacobian from ``mj_jacBody``.
+    Comparing the default numpy substrate against it at ``atol=0`` would fail on
+    double-precision rounding (~1e-15, measured in
+    ``tests/arms/test_urdf_chain_parity.py``) while nothing had actually
+    diverged, and this gate exists to answer "have the two COPIES drifted?",
+    not "do two FK implementations round identically?". The substrates are
+    compared to each other next door; this file compares the SOLVER to its
+    origin on the substrate that origin uses.
+    """
     from manipulation_kit.arms import get_arm_kinematics  # noqa: PLC0415
-    return get_arm_kinematics("d1/arm", quiet=True)
+    return get_arm_kinematics("d1/arm", chain="mujoco", quiet=True)
 
 
 # --------------------------------------------------------------------------- #

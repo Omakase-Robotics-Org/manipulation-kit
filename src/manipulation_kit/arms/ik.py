@@ -6,22 +6,27 @@ post-#41 ``master``. The arithmetic is unchanged.
 
 WHY THIS IS SUBSTRATE-AGNOSTIC
 ------------------------------
-The two consumers do forward kinematics with different machinery, on purpose:
+Consumers do forward kinematics with different machinery, on purpose:
 
+- the DEFAULT, :class:`~manipulation_kit.arms.urdf_chain.UrdfChain`, walks the
+  URDF this package already parses for the collision guard, with Rodrigues FK
+  and a geometric Jacobian in numpy. No physics engine — inverse kinematics
+  does not need one, and most consumers (omakase-core, d1-inference,
+  poc-dx-inspect-robots) have no reason to install one;
 - dx-vr-teleop already keeps a full MuJoCo mirror of the robot (it has a
-  viewer, a sim backend and a composed hand model), so it gets FK and the
-  Jacobian from ``mj_jacBody``;
-- omakase-core deliberately has NO MuJoCo dependency — it walks the URDF that
-  d1-sdk's ``pyguard`` has already parsed for the collision guard, with
-  Rodrigues FK and a geometric Jacobian.
+  viewer, a sim backend and a composed hand model), so there FK and the
+  Jacobian are free from ``mj_jacBody`` —
+  :class:`~manipulation_kit.arms.d1.arm.mujoco_chain.MujocoChain`, reached with
+  ``get_arm_kinematics("d1/arm", chain="mujoco")``.
 
 If the shared solver were welded to either one, the other could not adopt it,
 and we would keep two copies of the SOLVER — which is the part that carries the
 tuning and the safety behaviour. So the solver talks to a
 :class:`KinematicChain`: something that can be posed, and then asked for its
 end-effector pose, its Jacobian and its joint limits. Both substrates satisfy
-that in a few lines, and the solver, its constants and its failure semantics
-are then shared.
+that in a few lines (and agree to ~1e-15 on D1 — see
+``tests/arms/test_urdf_chain_parity.py``), and the solver, its constants and
+its failure semantics are then shared.
 
 The protocol is deliberately STATEFUL (``set_joints`` then query) because that
 is what a shared MuJoCo ``mjData`` requires; a purely functional chain

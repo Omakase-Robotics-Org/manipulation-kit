@@ -5,9 +5,15 @@ are reached through the arm-agnostic seam
 (:func:`manipulation_kit.arms.get_arm_kinematics`,
 :func:`manipulation_kit.arms.get_clutch_tuning`) rather than imported directly.
 
-They are NOT re-exported here on purpose: importing them pulls in ``mujoco``,
-and a consumer that only wants ``clutch_tuning()`` or the side conventions must
-not be made to pay for that. Import the submodule when you want the model.
+They are NOT re-exported here on purpose: importing them parses the URDF and
+builds two kinematic chains, and a consumer that only wants ``clutch_tuning()``
+or the side conventions must not be made to pay for that. Import the submodule
+when you want the model.
+
+Neither the submodule nor anything else under :mod:`manipulation_kit.arms`
+imports ``mujoco`` at module scope. The default substrate is
+:class:`~manipulation_kit.arms.urdf_chain.UrdfChain` (numpy); ``chain="mujoco"``
+imports the optional extra lazily, inside the factory.
 
 ``D1ArmChannelBus`` used to be re-exported here — ctypes over the vendor
 `the vendor arm SDK `.so``, the route every hand on the arm flange reached the wire

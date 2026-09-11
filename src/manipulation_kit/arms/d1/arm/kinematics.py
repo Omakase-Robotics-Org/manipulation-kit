@@ -36,6 +36,7 @@ from ...guard import GuardGate, load_motion_guard
 from ...ik import IkTuning, find_ready_seed
 from ...kinematics import GuardedArm
 from ...targeting import ClutchTuning
+from ...urdf_chain import build_chains as build_urdf_chains
 from .mujoco_chain import MujocoChain
 
 
@@ -95,8 +96,23 @@ def clutch_tuning() -> ClutchTuning:
     return ClutchTuning(workspace=safety.WORKSPACE)
 
 
+#: the substrates this binding can build its chains on. ``"urdf"`` is the
+#: default and needs nothing but numpy/scipy; ``"mujoco"`` is for consumers that
+#: already carry a MuJoCo mirror of the robot (dx-vr-teleop) and want the solver
+#: driving THAT model rather than a second one.
+CHAINS = ("urdf", "mujoco")
+DEFAULT_CHAIN = "urdf"
+
+
 class D1ArmKinematics(GuardedArm):
-    """Both D1 arms in one MuJoCo model, collision-gated.
+    """Both D1 arms on one description, collision-gated.
+
+    ``chain`` selects the :class:`~manipulation_kit.arms.ik.KinematicChain`
+    substrate: ``"urdf"`` (default) walks the bundled ``d1.urdf`` in numpy —
+    :class:`~manipulation_kit.arms.urdf_chain.UrdfChain` — and ``"mujoco"``
+    poses a MuJoCo model of the same file. They agree to float noise
+    (``tests/arms/test_urdf_chain_parity.py``); the default is the one that
+    does not make inverse kinematics depend on a physics engine.
 
     ``ready()`` returns the READY posture the IK null space biases toward; it is
     searched once at construction (deterministic, 200 restarts per side) unless
@@ -108,21 +124,17 @@ class D1ArmKinematics(GuardedArm):
                  guard: Optional[GuardGate] = None,
                  tuning: IkTuning = IkTuning(),
                  find_ready: bool = True,
+                 chain: str = DEFAULT_CHAIN,
                  quiet: bool = False):
-        import mujoco   # local: manipulation_kit.arms must import without MuJoCo
-
         urdf_path = Path(urdf) if urdf else default_urdf()
         self.urdf_path = urdf_path
-        self._mj = mujoco
-        self.model = mujoco.MjModel.from_xml_string(urdf_path.read_text())
-        self.data = mujoco.MjData(self.model)
-        chains = {
-            side: MujocoChain(mujoco, self.model, self.data,
-                              ee_body=sides.EE_BODY[side],
-                              joint_names=sides.ARM_JOINTS[side])
-            for side in sides.SIDES
-        }
-        mujoco.mj_forward(self.model, self.data)
+        self.substrate = chain
+        if chain == "urdf":
+            chains = self._urdf_chains(urdf_path)
+        elif chain == "mujoco":
+            chains = self._mujoco_chains(urdf_path)
+        else:
+            raise ValueError(f"chain must be one of {CHAINS}, got {chain!r}")
         super().__init__(chains, home=home if home is not None else load_home(quiet=quiet),
                          guard=guard, tuning=tuning)
         # Start at the real D1 HOME (the wrist-forward pose home_pose.json
@@ -136,6 +148,39 @@ class D1ArmKinematics(GuardedArm):
             # seed as q_ref). dx-vr-teleop relies on the same property.
             found = {s: self._search_ready(s, quiet=quiet) for s in sides.SIDES}
             self._ready = found
+
+    # -- substrates -------------------------------------------------------- #
+    @staticmethod
+    def _urdf_chains(urdf_path: Path) -> Dict[str, Any]:
+        """Two numpy chains over ONE parse of the description.
+
+        The same parse the collision guard uses, so the solver and the guard
+        cannot end up disagreeing about the geometry they are both reasoning
+        about.
+        """
+        return build_urdf_chains(str(urdf_path), sides.ARM_JOINTS, sides.EE_BODY)
+
+    def _mujoco_chains(self, urdf_path: Path) -> Dict[str, Any]:
+        """Two chains over one shared ``MjModel``/``MjData``.
+
+        ``import mujoco`` is LOCAL: nothing under
+        :mod:`manipulation_kit.arms` may import it at module scope, or the
+        pose-math path stops working on a machine without it — which is most of
+        them.
+        """
+        import mujoco  # noqa: PLC0415 — optional substrate, never a module import
+
+        self._mj = mujoco
+        self.model = mujoco.MjModel.from_xml_string(urdf_path.read_text())
+        self.data = mujoco.MjData(self.model)
+        chains = {
+            side: MujocoChain(mujoco, self.model, self.data,
+                              ee_body=sides.EE_BODY[side],
+                              joint_names=sides.ARM_JOINTS[side])
+            for side in sides.SIDES
+        }
+        mujoco.mj_forward(self.model, self.data)
+        return chains
 
     # -- READY-seed search ------------------------------------------------ #
     def _probe(self, side: str):
@@ -186,6 +231,7 @@ def build_kinematics(*, urdf: Optional[Path] = None,
                      guard_config: Optional[Path] = None,
                      tuning: IkTuning = IkTuning(),
                      find_ready: bool = True,
+                     chain: str = DEFAULT_CHAIN,
                      quiet: bool = False) -> D1ArmKinematics:
     """Factory resolved by :func:`manipulation_kit.arms.get_arm_kinematics`.
 
@@ -198,6 +244,9 @@ def build_kinematics(*, urdf: Optional[Path] = None,
         guard you ALREADY built (omakase-core has one for other purposes) rather
         than letting a second one be created behind your back.
       - ``None`` — explicitly no collision guard.
+
+    ``chain``: the kinematic substrate, ``"urdf"`` (default, numpy only) or
+    ``"mujoco"``. See :class:`D1ArmKinematics`.
     """
     if isinstance(guard, GuardGate):
         gate: Optional[GuardGate] = guard
@@ -213,4 +262,4 @@ def build_kinematics(*, urdf: Optional[Path] = None,
     else:
         gate = GuardGate(guard)
     return D1ArmKinematics(urdf=urdf, home=home, guard=gate, tuning=tuning,
-                            find_ready=find_ready, quiet=quiet)
+                           find_ready=find_ready, chain=chain, quiet=quiet)
