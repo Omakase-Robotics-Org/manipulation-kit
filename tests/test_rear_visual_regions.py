@@ -20,3 +20,9 @@ def test_lift_cover_is_white_not_a_continuation_of_blue_waist():
     assert color_at('torso_column',(-.04,0,-.10))=='white'
     assert color_at('chassis_link',(-.043,0,.50))=='white'
     assert color_at('chassis_link',(-.20,0,.44))=='navy'
+
+
+def test_chassis_sidewalls_and_wheel_covers_are_white():
+    assert color_at('chassis_link',(-.20,0,.40))=='white'
+    assert color_at('chassis_link',(0,.20,.10))=='white'
+    assert color_at('chassis_link',(-.20,0,.45))=='navy'

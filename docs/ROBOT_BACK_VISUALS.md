@@ -32,5 +32,29 @@ mkit-urdf export d1-wholebody-gripper --dest dist/d1-wholebody-gripper
 In `d1-isaaclab`, after any URDF-to-USD conversion, run
 `python scripts/sync_robot_body_visuals.py` with a Python containing `usd-core`.
 It consumes this repository's generated URDF and the private OBJ assets,
-updates the two visual hosts in the simulator URDF/USD, and preserves the
+updates the torso, chassis and head visual hosts in the simulator URDF/USD, and preserves the
 robot's physics layers and arm geometry. The runtime USD is self-contained.
+
+## Controls, head and chassis correction
+
+The supplied closeups and https://omakaserobotics.ai/en/ show white chassis
+sides and wheel covers, a blue top, a complete red stop cap, and a silver
+power button on the sloping rear control panel. The controls are now separate
+beveled meshes with explicit per-object paint, rather than coordinate-clipped
+paint on a single CAD assembly. The silver button is aligned to the panel.
+
+The two main head shells use their convex outer envelopes to remove inward
+CAD dents; smooth normals replace the damaged imported normals. The eyes and
+nose retain their CAD geometry. Camera trim/lenses, a microphone cap and rear
+vent detail are restored as separate visual geometry. All optical frames,
+collisions, inertias and joint locations are unchanged. These small decorative
+parts are photo-fitted representations, not new mechanical specifications.
+
+The color generator recognizes Blender objects named `Paint_<color>_*` and
+keeps their full surface in that material, preventing blue stripes on buttons.
+
+White paint revealed folded triangles in the outer chassis sidewalls. The
+upper and lower visual panels are rebuilt with beveled edges at the CAD
+bounds, retaining the blue roof and the separation between chassis levels.
+Small front sensor bezels reproduce the reference appearance; these are
+visuals only and do not relocate sensor frames.

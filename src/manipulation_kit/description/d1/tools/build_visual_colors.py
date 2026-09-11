@@ -88,12 +88,11 @@ def regions(host):
         ]
     if host == "chassis_link":
         return [
-            ("dark", [below(2, 0.048)]),
             ("white", box(x=(-.046, .066), y=(-.071, .074), z=(.30, .73))),
-            ("navy", [below(2, 0.56)]),
-            ("navy", [below(0, -0.055)] + box(z=(0.52, 0.65))),
-            ("dark", [below(2, 0.048)]),
-            ("silver", [above(0, 0.258)] + box(z=(0.173, 0.235))),
+            ("navy", box(z=(.438, .485))),
+            ("navy", [below(0, -.055)] + box(z=(.438, .65))),
+            ("silver", box(z=(.238, .274))),
+            ("silver", [above(0, .258)] + box(z=(.173, .235))),
         ]
     return [("silver", [])]
 
@@ -178,13 +177,13 @@ def area(poly):
 def build(refined=False):
     previous = json.loads((BODY / "color_regions.json").read_text()) if refined else {}
     output = previous.get("hosts", {})
-    for host in (("torso_column", "chassis_link") if refined else HOSTS):
+    for host in (("torso_column", "chassis_link", "head_link") if refined else HOSTS):
         source = BODY / (
             f"{host}_refined.obj" if refined else ("torso_column_smooth.obj" if host == "torso_column" else f"{host}_hifi.obj")
         )
         overrides = (
             json.loads((BODY / "face_feature_colors.json").read_text())["faces"]
-            if host == "head_link"
+            if host == "head_link" and not refined
             else {}
         )
         rows = source.read_text().splitlines()
@@ -201,7 +200,11 @@ def build(refined=False):
         rules = regions(host)
         source_area = result_area = 0.0
         source_faces = 0
+        object_color = None
         for row in rows:
+            if row.startswith("o "):
+                name = row.split()[1]
+                object_color = name.split("_")[1] if name.startswith("Paint_") else None
             if not row.startswith("f "):
                 continue
             poly = []
@@ -211,7 +214,7 @@ def build(refined=False):
                 uv = texcoords[int(indices[1]) - 1] if indices[1] else ()
                 poly.append(positions[int(indices[0]) - 1] + normal + uv)
             original_area = area(poly)
-            feature_color = overrides.get(str(source_faces))
+            feature_color = object_color or overrides.get(str(source_faces))
             pieces = (
                 [(feature_color, poly)]
                 if feature_color

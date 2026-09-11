@@ -11,26 +11,28 @@
   },
   "hosts": {
     "chassis_link": {
-      "source_sha256": "8062b833fa8d119c98df2aea1746070e92e8a640566603177c2a7f2b78f77153",
-      "source_faces": 156601,
-      "source_area_m2": 5.835683186084182,
-      "result_area_m2": 5.835683186084182,
+      "source_sha256": "493aead0fc193269ce5566e89411751b7a9145de5d251deaafca3b07878fce1d",
+      "source_faces": 155181,
+      "source_area_m2": 6.709326384117402,
+      "result_area_m2": 6.709326384117402,
       "faces": {
-        "white": 1132,
-        "navy": 123774,
-        "dark": 31746
+        "white": 129439,
+        "navy": 1221,
+        "dark": 3200,
+        "silver": 34458
       }
     },
     "torso_column": {
-      "source_sha256": "f51a89334bc64fca08aa86409e599e8113d492df23d9089fc12ec03ef2cbbce1",
-      "source_faces": 139142,
-      "source_area_m2": 1.3547772141283279,
-      "result_area_m2": 1.3547772141283274,
+      "source_sha256": "cb619bf41df621eae0df2ac1750048cb5db1822a218429dabc20074c259f9bdf",
+      "source_faces": 110970,
+      "source_area_m2": 1.350545845185772,
+      "result_area_m2": 1.3505458451857715,
       "faces": {
-        "white": 33204,
-        "navy": 66283,
-        "dark": 40747,
-        "red": 9824
+        "white": 33041,
+        "navy": 43034,
+        "dark": 42279,
+        "silver": 3064,
+        "red": 1532
       }
     },
     "neck_pan_link": {
@@ -43,14 +45,15 @@
       }
     },
     "head_link": {
-      "source_sha256": "c85a14eeed79cf396369c216fc9569a1d5cd2ae2c854f2927f62fe5ac6292d95",
-      "source_faces": 119999,
-      "source_area_m2": 0.47274454666138305,
-      "result_area_m2": 0.47274454666138305,
+      "source_sha256": "61ae5e39f9a784c4f2dc43b3c64ad7c3d1778a120b59c3c7f166ed26c2dcf551",
+      "source_faces": 11782,
+      "source_area_m2": 0.23156900402540864,
+      "result_area_m2": 0.23156900402540864,
       "faces": {
-        "white": 20595,
-        "navy": 50689,
-        "dark": 59852,
+        "white": 2122,
+        "navy": 3126,
+        "dark": 5688,
+        "silver": 4856,
         "cyan": 1542,
         "red": 1170
       }

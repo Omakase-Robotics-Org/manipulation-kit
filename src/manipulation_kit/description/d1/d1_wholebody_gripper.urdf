@@ -89,6 +89,11 @@
     </visual>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="meshes/body_hifi/torso_column_silver.obj"/></geometry>
+      <material name="d1_silver"><color rgba="0.48 0.54 0.60 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/torso_column_red.obj"/></geometry>
       <material name="d1_red"><color rgba="0.72 0.02 0.025 1"/></material>
     </visual>
@@ -176,6 +181,11 @@
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/head_link_dark.obj"/></geometry>
       <material name="d1_dark"><color rgba="0.015 0.020 0.026 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="meshes/body_hifi/head_link_silver.obj"/></geometry>
+      <material name="d1_silver"><color rgba="0.48 0.54 0.60 1"/></material>
     </visual>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -322,6 +332,11 @@
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/chassis_link_dark.obj"/></geometry>
       <material name="d1_dark"><color rgba="0.015 0.020 0.026 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="meshes/body_hifi/chassis_link_silver.obj"/></geometry>
+      <material name="d1_silver"><color rgba="0.48 0.54 0.60 1"/></material>
     </visual>
     <!-- AMR lift pole - CAD X+/-70 Y+/-70 Z-600..-100 (upper half overlaps the belly shell) -->
     <collision name="lift_pole">
