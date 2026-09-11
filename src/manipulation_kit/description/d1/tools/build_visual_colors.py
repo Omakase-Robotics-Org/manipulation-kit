@@ -58,6 +58,18 @@ def collar_planes():
     return planes
 
 
+def rear_panel_planes():
+    """Photo-aligned rounded rear bib surrounding the emergency stop."""
+    import math
+    cy, cz, width, depth = .0016, .545, .051, .055
+    planes = [above(1, cy-width), below(1, cy+width)]
+    for i in range(49):
+        a = math.pi + math.pi*i/48
+        y, z = math.cos(a)/width, math.sin(a)/depth
+        planes.append((0, -y, -z, 1+y*cy+z*cz))
+    return planes
+
+
 def regions(host):
     if host == "head_link":
         # Robot up = -local Y; robot left = local Z + .0285.
@@ -68,13 +80,17 @@ def regions(host):
         ]
     if host == "torso_column":
         return [
-            ("navy", [below(2, 0.249)]),
+            ("navy", box(z=(0.175, 0.249))),
+            ("red", [below(0, -0.098)] + box(y=(-0.014, 0.017), z=(0.538, 0.566))),
+            ("navy", [below(0, -0.055)] + rear_panel_planes()),
             ("dark", [above(0, 0.078)] + box(y=(-0.039, 0.039), z=(0.548, 0.569))),
             ("navy", collar_planes()),
         ]
     if host == "chassis_link":
         return [
-            ("navy", box(z=(0.438, 0.485))),
+            ("dark", [below(2, 0.048)]),
+            ("white", box(x=(-.046, .066), y=(-.071, .074), z=(.30, .73))),
+            ("navy", [below(2, 0.56)]),
             ("navy", [below(0, -0.055)] + box(z=(0.52, 0.65))),
             ("dark", [below(2, 0.048)]),
             ("silver", [above(0, 0.258)] + box(z=(0.173, 0.235))),
@@ -159,11 +175,12 @@ def area(poly):
     return total
 
 
-def build():
-    output = {}
-    for host in HOSTS:
+def build(refined=False):
+    previous = json.loads((BODY / "color_regions.json").read_text()) if refined else {}
+    output = previous.get("hosts", {})
+    for host in (("torso_column", "chassis_link") if refined else HOSTS):
         source = BODY / (
-            "torso_column_smooth.obj" if host == "torso_column" else f"{host}_hifi.obj"
+            f"{host}_refined.obj" if refined else ("torso_column_smooth.obj" if host == "torso_column" else f"{host}_hifi.obj")
         )
         overrides = (
             json.loads((BODY / "face_feature_colors.json").read_text())["faces"]
@@ -250,7 +267,7 @@ def build():
     (BODY / "color_regions.json").write_text(
         json.dumps(
             {
-                "reference": "d1.avif",
+                "reference": "Robot back and middle part / IMG_1384–1391 (2026-09-10)" if refined else "d1.avif",
                 "boundary_method": "surface triangle clipping",
                 "palette": PALETTE,
                 "hosts": output,
@@ -262,4 +279,10 @@ def build():
 
 
 if __name__ == "__main__":
-    build()
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--body-dir", type=Path, default=BODY)
+    parser.add_argument("--refined", action="store_true", help="Use photo-refined rear/lift surfaces; preserve head regions")
+    args = parser.parse_args()
+    BODY = args.body_dir
+    build(args.refined)

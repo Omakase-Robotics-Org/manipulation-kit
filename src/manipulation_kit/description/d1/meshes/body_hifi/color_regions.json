@@ -1,5 +1,5 @@
 {
-  "reference": "d1.avif",
+  "reference": "Robot back and middle part / IMG_1384\u20131391 (2026-09-10)",
   "boundary_method": "surface triangle clipping",
   "palette": {
     "white": "0.90 0.91 0.92 1",
@@ -11,26 +11,26 @@
   },
   "hosts": {
     "chassis_link": {
-      "source_sha256": "2cc40a38d130af47f5cd07672d49eb789e63b1a963365173fb2046eb0d734d43",
-      "source_faces": 200000,
-      "source_area_m2": 6.504508402323211,
-      "result_area_m2": 6.504508402323211,
+      "source_sha256": "8062b833fa8d119c98df2aea1746070e92e8a640566603177c2a7f2b78f77153",
+      "source_faces": 156601,
+      "source_area_m2": 5.835683186084182,
+      "result_area_m2": 5.835683186084182,
       "faces": {
-        "white": 140281,
-        "navy": 1631,
-        "dark": 43436,
-        "silver": 23984
+        "white": 1132,
+        "navy": 123774,
+        "dark": 31746
       }
     },
     "torso_column": {
-      "source_sha256": "849f829c5377c91c12cc4ca9520056b6905d49db3e1df6217bf465b15b57db65",
-      "source_faces": 114965,
-      "source_area_m2": 1.1247974918437822,
-      "result_area_m2": 1.1247974918437824,
+      "source_sha256": "f51a89334bc64fca08aa86409e599e8113d492df23d9089fc12ec03ef2cbbce1",
+      "source_faces": 139142,
+      "source_area_m2": 1.3547772141283279,
+      "result_area_m2": 1.3547772141283274,
       "faces": {
-        "white": 57261,
-        "navy": 41427,
-        "dark": 41481
+        "white": 33204,
+        "navy": 66283,
+        "dark": 40747,
+        "red": 9824
       }
     },
     "neck_pan_link": {
