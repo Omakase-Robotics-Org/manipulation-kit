@@ -61,24 +61,25 @@ def camera_window(name, x, cy, cz, width, height, depth):
     bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=bm.faces);bm.to_mesh(mesh);bm.free()
     return obj
 
-def upper_chassis_cover():
+def upper_chassis_cover(roof=False):
     """Broad plan-view corner radii with a small rolled vertical edge."""
     from math import sin, cos, pi
     hx,hy,r=.539/2,.480/2,.060
     verts=[];faces=[];count=4*33
-    for z,inset in ((.274,.003),(.277,0),(.435,0),(.438,.003)):
+    levels = ((.436,-.0015),(.442,-.0015),(.454,.002),(.464,.011),(.468,.024)) if roof else ((.274,.003),(.277,0),(.435,0),(.438,.003))
+    for z,inset in levels:
         for cx,cy,start in ((hx-r,hy-r,0),(-hx+r,hy-r,90),
                             (-hx+r,-hy+r,180),(hx-r,-hy+r,270)):
             for i in range(33):
                 a=(start+i*90/32)*pi/180
                 verts.append((-.0077+cx+(r-inset)*cos(a),.0016+cy+(r-inset)*sin(a),z))
-    for level in range(3):
+    for level in range(len(levels)-1):
         for i in range(count):
             j=(i+1)%count
             faces.append((level*count+i,level*count+j,(level+1)*count+j,(level+1)*count+i))
-    faces += [tuple(reversed(range(count))),tuple(range(3*count,4*count))]
+    faces += [tuple(reversed(range(count))),tuple(range((len(levels)-1)*count,len(levels)*count))]
     mesh=bpy.data.meshes.new('Rounded upper chassis');mesh.from_pydata(verts,[],faces);mesh.update()
-    obj=bpy.data.objects.new('Paint_white_UpperChassisCover',mesh);bpy.context.collection.objects.link(obj)
+    obj=bpy.data.objects.new('Paint_navy_UpperRoof' if roof else 'Paint_white_UpperChassisCover',mesh);bpy.context.collection.objects.link(obj)
 
 def slope_front_panel():
     """Photo-fitted continuous rake; sensor trim follows the same surface."""
@@ -221,6 +222,13 @@ for host in hosts:
         for part in list(bpy.context.selected_objects):
             pts=[v.co for v in part.data.vertices]
             lo=[min(v[i] for v in pts) for i in range(3)];hi=[max(v[i] for v in pts) for i in range(3)]
+            # Recovered upper sides, roof and rear mast boot are one loose
+            # component. Keep the raised boot; replace its damaged roof/sides.
+            if lo[2]<.275 and hi[2]>.54 and hi[1]-lo[1]>.47:
+                bm=bmesh.new();bm.from_mesh(part.data)
+                bmesh.ops.delete(bm,geom=[v for v in bm.verts if v.co.z<.467],context='VERTS')
+                bm.to_mesh(part.data);bm.free()
+                continue
             rail = hi[2]>.59 and lo[0]>-.1 and hi[0]<.11
             upper_shell = .273<lo[2]<.275 and .44<hi[2]<.444 and hi[1]-lo[1]>.47
             lower_wall = .035<lo[2]<.038 and .237<hi[2]<.24 and (hi[1]-lo[1]>.45 or hi[0]-lo[0]>.35)
@@ -231,6 +239,7 @@ for host in hosts:
         # Clean outer sheet-metal covers at the existing CAD envelope. Old
         # triangulated walls contained inward folds visible under white paint.
         upper_chassis_cover()
+        upper_chassis_cover(roof=True)
         lower_chassis_profile()
         box('Paint_dark_UpperSensorGlass',(.263,.0016,.348),(.003,.035,.020),.008)
         for y in (-.0074,.0106):

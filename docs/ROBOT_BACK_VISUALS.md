@@ -96,3 +96,8 @@ front apron, gray insert and sensor trim together. The upper white housing
 uses a 60 mm plan-view corner radius independently of its 3 mm rolled edge.
 The rear lower apron and wheel opening are retained. These remain visual
 estimates within the original envelope, not measured mechanical dimensions.
+
+The blue roof now shares the rounded white housing perimeter, with a 1.5 mm
+covering lip and a smoothly rolled top. The old recovered roof and attached
+upper-wall fragments are removed while retaining the raised rear mast boot.
+This eliminates the exposed white corner ledges and overlapping old sidewalls.

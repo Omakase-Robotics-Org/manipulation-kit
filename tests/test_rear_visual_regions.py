@@ -73,3 +73,25 @@ def test_chassis_closeup_front_rake_and_upper_corner_radius():
     # photographed broad plan-view radius retreats more than 14 mm.
     corner=[p for p in upper if p[0]>.249 and p[1]>.0016]
     assert corner and max(p[1] for p in corner)<.222
+
+
+def test_blue_roof_covers_white_housing_in_every_direction():
+    import math
+    import pytest
+    from manipulation_kit import assets
+    path=assets.resolve('description/d1/meshes/body_hifi/chassis_link_refined.obj')
+    if path is None:
+        pytest.skip('Photo-refined private visual assets are not installed')
+    vertices=[];parts={};active=None
+    for row in path.read_text().splitlines():
+        f=row.split()
+        if not f:continue
+        if f[0]=='v':vertices.append(tuple(map(float,f[1:4])))
+        elif f[0]=='o':active=f[1];parts.setdefault(active,[])
+        elif f[0]=='f':parts[active].extend(vertices[int(t.split('/')[0])-1] for t in f[1:])
+    roof=next(v for k,v in parts.items() if k.startswith('Paint_navy_UpperRoof'))
+    white=next(v for k,v in parts.items() if k.startswith('Paint_white_UpperChassisCover'))
+    assert min(p[2] for p in roof)<max(p[2] for p in white)
+    for angle in range(0,360,5):
+        dx,dy=math.cos(math.radians(angle)),math.sin(math.radians(angle))
+        assert max(x*dx+y*dy for x,y,z in roof)>max(x*dx+y*dy for x,y,z in white)+.001
