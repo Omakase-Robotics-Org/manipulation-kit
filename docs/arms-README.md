@@ -102,18 +102,25 @@ and streams nothing.
 
 `ik.solve_ik` talks to a `KinematicChain` — something posable, that can then be
 asked for its EE pose, its Jacobian and its joint limits. This is not
-gratuitous abstraction; the two consumers genuinely differ:
+gratuitous abstraction; the substrates genuinely differ:
 
-| consumer | substrate | why |
+| `chain=` | substrate | why |
 |---|---|---|
-| `dx-vr-teleop` | MuJoCo (`d1/arm/mujoco_chain.py`) | already carries a full MuJoCo mirror (viewer, sim backend, composed hand model), so FK and the Jacobian are free |
-| `omakase-core` | `pyguard`-parsed URDF, Rodrigues FK + geometric Jacobian | deliberately has **no** MuJoCo dependency; it already parses the URDF for the collision guard |
+| `"urdf"` (**default**) | `arms/urdf_chain.py` — the URDF the guard already parses, Rodrigues FK + geometric Jacobian, numpy only | inverse kinematics must not require a physics engine. Every consumer that only computes (`omakase-core`, `d1-inference`, `poc-dx-inspect-robots`) gets IK with `pip install manipulation-kit` and nothing else |
+| `"mujoco"` | `arms/d1/arm/mujoco_chain.py` — `mj_jacBody` on a shared `MjModel`/`MjData` | `dx-vr-teleop` already carries a full MuJoCo mirror (viewer, sim backend, composed hand model); pointing the solver at **that** model avoids running a second one beside it |
 
 Welding the solver to either one would leave the other unable to adopt it — and
 the solver is the part that carries the tuning and the safety behaviour.
 `tests/test_substrate_independence.py` implements a chain in plain numpy and
 drives the shared solver with it, so "a non-MuJoCo consumer can adopt this" is a
 test rather than a promise.
+
+The two are not merely interchangeable in principle — they are measured against
+each other. `tests/arms/test_urdf_chain_parity.py` sweeps 500 random in-limit
+postures per side and compares FK, the 6x7 Jacobian, the joint limits, the
+probe link positions, the 200-restart READY seed and `solve_ee` over a full
+trajectory. Worst observed difference on `d1.urdf` is ~5e-16 m / ~1.4e-15 rad /
+~3e-15 on the Jacobian: double-precision noise, not a different model.
 
 ## Phase 1 of 2: the copy in `dx-vr-teleop` is still live
 
