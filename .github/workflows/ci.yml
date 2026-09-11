@@ -50,3 +50,26 @@ jobs:
         # The guard must load its URDF from inside the install — no checkout,
         # no $D1_SDK_DIR. Run from / so a stray relative path cannot save it.
         run: cd / && python -c "import manipulation_kit.arms, manipulation_kit.guard; from manipulation_kit.guard import MotionGuard; MotionGuard(); print('ok')"
+
+  version-bump:
+    # Consumers pin this repository by COMMIT; pip decides whether to reinstall
+    # by VERSION. A change that moves what consumers import while leaving
+    # project.version at 0.1.0 therefore installs "successfully" on a robot and
+    # changes nothing — which is how d1-2 came up with
+    # `ModuleNotFoundError: manipulation_kit.arms.d1` on 2026-09-09 from three
+    # freshly pulled, freshly reinstalled checkouts.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # This gate is a DIFF against the base branch. The default depth-1
+          # checkout has no base commit on disk to diff against, and the check
+          # would skip itself on every run.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: A change consumers must pick up carries a version bump
+        # stdlib only, and no install step: the gate has to be able to run even
+        # when the package itself does not build.
+        run: python tools/check_version_bump.py
