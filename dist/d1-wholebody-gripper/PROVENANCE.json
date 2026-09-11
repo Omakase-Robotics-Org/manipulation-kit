@@ -46,11 +46,11 @@
   "assets_repo": "Omakase-Robotics-Org/manipulation-kit-assets (private)",
   "exported": "2026-09-10",
   "files": {
-    "d1_wholebody_gripper.urdf": "b41496d1dc753bdf3534bfd5a70a24ec805b24d4cbe8809b220e7cd1ae02cf83"
+    "d1_wholebody_gripper.urdf": "182b292a21f7ecc959be2ae369b9733c6540cb71dfbd940c84574d6a2ee31339"
   },
   "flavour": "d1_wholebody_gripper",
   "mesh_prefix": "",
-  "source_commit": "6a6dcdba0dca4bf50a783f48ff04af961f9c8495",
+  "source_commit": "c3136b1bac42df8116e4486f7e26a7df4c38cd58",
   "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",
