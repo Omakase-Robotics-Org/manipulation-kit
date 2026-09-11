@@ -49,3 +49,27 @@ def test_gallery_apron_has_rear_wheel_clearance():
     assert min(p[2] for p in apron)<.04
     assert sum(n.startswith('Paint_dark_CasterTread') for n in names)==4
     assert sum(n.startswith('Paint_dark_DriveTread') for n in names)==2
+
+
+def test_chassis_closeup_front_rake_and_upper_corner_radius():
+    import pytest
+    from manipulation_kit import assets
+    path=assets.resolve('description/d1/meshes/body_hifi/chassis_link_refined.obj')
+    if path is None:
+        pytest.skip('Photo-refined private visual assets are not installed')
+    vertices=[];parts={};active=None
+    for row in path.read_text().splitlines():
+        fields=row.split()
+        if not fields:continue
+        if fields[0]=='v':vertices.append(tuple(map(float,fields[1:4])))
+        elif fields[0]=='o':active=fields[1];parts.setdefault(active,[])
+        elif fields[0]=='f':parts[active].extend(vertices[int(t.split('/')[0])-1] for t in fields[1:])
+    panel=next(v for k,v in parts.items() if k.startswith('Paint_gray_BaseCameraPanel'))
+    center=[p for p in panel if abs(p[1]-.0016)<.01]
+    top=max(center,key=lambda p:p[2]);bottom=min(center,key=lambda p:p[2])
+    assert .020 < bottom[0]-top[0] < .045
+    upper=next(v for k,v in parts.items() if k.startswith('Paint_white_UpperChassisCover'))
+    # A 14 mm cube bevel leaves this point near the square corner; the
+    # photographed broad plan-view radius retreats more than 14 mm.
+    corner=[p for p in upper if p[0]>.249 and p[1]>.0016]
+    assert corner and max(p[1] for p in corner)<.222

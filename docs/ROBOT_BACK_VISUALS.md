@@ -86,3 +86,13 @@ a 444 mm wide gray inset with a flat central lower edge and rounded ends,
 a 90 × 24 mm light-bordered capsule sensor window, and 14 mm of shallow
 front lower-edge relief exposing the front caster bottoms. Rear cutout,
 forehead optics and robot/table placement are unchanged by this correction.
+
+## Chassis close-up refinement
+
+The supplied `chassis/IMG_1396 2.HEIC` and `IMG_1401 2.HEIC` show a
+raked front insert, with its upper edge recessed and its lower edge flowing
+outward into the apron. A continuous 32 mm photo-fitted rake now deforms the
+front apron, gray insert and sensor trim together. The upper white housing
+uses a 60 mm plan-view corner radius independently of its 3 mm rolled edge.
+The rear lower apron and wheel opening are retained. These remain visual
+estimates within the original envelope, not measured mechanical dimensions.

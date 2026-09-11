@@ -61,6 +61,40 @@ def camera_window(name, x, cy, cz, width, height, depth):
     bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=bm.faces);bm.to_mesh(mesh);bm.free()
     return obj
 
+def upper_chassis_cover():
+    """Broad plan-view corner radii with a small rolled vertical edge."""
+    from math import sin, cos, pi
+    hx,hy,r=.539/2,.480/2,.060
+    verts=[];faces=[];count=4*33
+    for z,inset in ((.274,.003),(.277,0),(.435,0),(.438,.003)):
+        for cx,cy,start in ((hx-r,hy-r,0),(-hx+r,hy-r,90),
+                            (-hx+r,-hy+r,180),(hx-r,-hy+r,270)):
+            for i in range(33):
+                a=(start+i*90/32)*pi/180
+                verts.append((-.0077+cx+(r-inset)*cos(a),.0016+cy+(r-inset)*sin(a),z))
+    for level in range(3):
+        for i in range(count):
+            j=(i+1)%count
+            faces.append((level*count+i,level*count+j,(level+1)*count+j,(level+1)*count+i))
+    faces += [tuple(reversed(range(count))),tuple(range(3*count,4*count))]
+    mesh=bpy.data.meshes.new('Rounded upper chassis');mesh.from_pydata(verts,[],faces);mesh.update()
+    obj=bpy.data.objects.new('Paint_white_UpperChassisCover',mesh);bpy.context.collection.objects.link(obj)
+
+def slope_front_panel():
+    """Photo-fitted continuous rake; sensor trim follows the same surface."""
+    for obj in bpy.context.scene.objects:
+        if not any(n in obj.name for n in ('LowerChassisCover','BaseCamera','BaseLens','RecessedDeck')):continue
+        # Bake locations so the deformation is shared by panels and hardware.
+        bpy.context.view_layer.objects.active=obj
+        bpy.ops.object.select_all(action='DESELECT');obj.select_set(True)
+        bpy.ops.object.transform_apply(location=True,rotation=True,scale=True)
+        for v in obj.data.vertices:
+            x,y,z=v.co
+            front=max(0,min(1,(x-.220)/.065))
+            t=max(0,min(1,(z-.160)/.079))
+            v.co.x += front*(.0055-.032*t*t*(3-2*t))
+        obj.data.update()
+
 def lower_chassis_profile():
     """Gallery-fitted wraparound apron; retains the original CAD extrema."""
     from math import sin, cos, pi
@@ -82,16 +116,20 @@ def lower_chassis_profile():
             t=j/steps;dense.append((a[0]*(1-t)+b[0]*t,a[1]*(1-t)+b[1]*t))
     perimeter=dense
     count=len(perimeter);verts=[];faces=[]
-    for level in range(5):
+    for level in range(21):
         for x,y in perimeter:
             rear=max(0,min(1,(-x-.210)/.060))
             arch=max(0,cos(min(1,max(0,(abs(y-.0016)-.130)/.098))*pi/2))
             front=max(0,min(1,(x-.210)/.060))
             front_relief=max(0,min(1,(.228-abs(y-.0016))/.068))
             bottom=.036+.067*rear*arch+.014*front*front_relief
-            inset,z=((.003,bottom), (0,bottom+.007), (0,.219),(.004,.235),(.012,.239))[level]
+            if level == 0:inset,z=.003,bottom
+            elif level == 1:inset,z=0,bottom+.007
+            else:
+                z=.150+(level-2)*(.239-.150)/18
+                inset=max(0,min(.004,(z-.219)*.004/.016)) if z<=.235 else .004+(z-.235)*2
             verts.append((.010+(x-.010)*(1-inset/hx),.0016+(y-.0016)*(1-inset/hy),z))
-    for level in range(4):
+    for level in range(20):
         for i in range(count):
             j=(i+1)%count;faces.append((level*count+i,level*count+j,(level+1)*count+j,(level+1)*count+i))
     mesh=bpy.data.meshes.new('Wraparound apron');mesh.from_pydata(verts,[],faces);mesh.update()
@@ -139,7 +177,8 @@ def lower_chassis_profile():
                 o=cylinder(name,(x,y,.070),radius,depth);o.rotation_euler[2]=radians(90)
                 bpy.context.view_layer.objects.active=o;bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
 
-for host in ('torso_column','chassis_link','head_link'):
+hosts = ('chassis_link',) if '--chassis-only' in sys.argv else ('torso_column','chassis_link','head_link')
+for host in hosts:
     bpy.ops.object.select_all(action='DESELECT')
     bpy.ops.wm.obj_import(filepath=str(BODY/(host+'_recovered.obj')),forward_axis='Y',up_axis='Z')
     obj=bpy.context.object
@@ -191,7 +230,7 @@ for host in ('torso_column','chassis_link','head_link'):
         box('Static lift cover',(.010,.0016,.51),(.106,.143,.42),.002)
         # Clean outer sheet-metal covers at the existing CAD envelope. Old
         # triangulated walls contained inward folds visible under white paint.
-        box('Paint_white_UpperChassisCover',(-.0077,.0016,.356),(.539,.480,.164),.014)
+        upper_chassis_cover()
         lower_chassis_profile()
         box('Paint_dark_UpperSensorGlass',(.263,.0016,.348),(.003,.035,.020),.008)
         for y in (-.0074,.0106):
@@ -207,6 +246,7 @@ for host in ('torso_column','chassis_link','head_link'):
             bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
         for y in (-.025,.0016,.028):
             cylinder('Paint_silver_BaseLens',(.304,y,.203),.004,.001)
+        slope_front_panel()
     else:
         bpy.ops.object.mode_set(mode='EDIT');bpy.ops.mesh.separate(type='LOOSE');bpy.ops.object.mode_set(mode='OBJECT')
         for part in list(bpy.context.selected_objects):

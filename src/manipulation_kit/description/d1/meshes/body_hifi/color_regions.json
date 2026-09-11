@@ -13,12 +13,12 @@
   },
   "hosts": {
     "chassis_link": {
-      "source_sha256": "fc4a0bb8b8ed0b5693e5e21080b9955cc59f5c5000f8a2079aeb4d1a5d4024de",
-      "source_faces": 39560,
-      "source_area_m2": 4.94027796089546,
-      "result_area_m2": 4.94027796089546,
+      "source_sha256": "b17d6af0f4473be0a993247ac8a3eeca9350c925b722069a35b2c3365ebc26a9",
+      "source_faces": 44096,
+      "source_area_m2": 4.923903138443284,
+      "result_area_m2": 4.923903138443284,
       "faces": {
-        "white": 28867,
+        "white": 38195,
         "navy": 1221,
         "dark": 14524,
         "silver": 23998,
