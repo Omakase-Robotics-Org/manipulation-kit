@@ -25,12 +25,14 @@
   ],
   "absent_optional": [
     "meshes/body_hifi/chassis_link_dark.obj",
+    "meshes/body_hifi/chassis_link_gray.obj",
     "meshes/body_hifi/chassis_link_navy.obj",
     "meshes/body_hifi/chassis_link_silver.obj",
     "meshes/body_hifi/chassis_link_white.obj",
     "meshes/body_hifi/head_link_cyan.obj",
     "meshes/body_hifi/head_link_dark.obj",
     "meshes/body_hifi/head_link_navy.obj",
+    "meshes/body_hifi/head_link_optic.obj",
     "meshes/body_hifi/head_link_red.obj",
     "meshes/body_hifi/head_link_silver.obj",
     "meshes/body_hifi/head_link_white.obj",
@@ -44,11 +46,11 @@
   "assets_repo": "Omakase-Robotics-Org/manipulation-kit-assets (private)",
   "exported": "2026-09-10",
   "files": {
-    "d1_wholebody_gripper.urdf": "98c3af1184d396ac297a6a70e09265d5de322d3b8c9207f8665bed222ba53763"
+    "d1_wholebody_gripper.urdf": "b41496d1dc753bdf3534bfd5a70a24ec805b24d4cbe8809b220e7cd1ae02cf83"
   },
   "flavour": "d1_wholebody_gripper",
   "mesh_prefix": "",
-  "source_commit": "ebb197e19c7d940045c797051a88c58153738728",
+  "source_commit": "25ff4e43782133d4fa20d6066b0055954eda2281",
   "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",

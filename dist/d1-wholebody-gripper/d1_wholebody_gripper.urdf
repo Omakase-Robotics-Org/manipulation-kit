@@ -192,6 +192,11 @@
       <geometry><mesh filename="meshes/body_hifi/head_link_red.obj" /></geometry>
       <material name="d1_red"><color rgba="0.72 0.02 0.025 1" /></material>
     </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="meshes/body_hifi/head_link_optic.obj" /></geometry>
+      <material name="d1_optic"><color rgba="0.008 0.024 0.021 1" /></material>
+    </visual>
     
     <collision name="head_link_shell">
       <origin xyz="0.0143 -0.0344 -0.0285" rpy="0 0 0" />
@@ -307,6 +312,11 @@
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry><mesh filename="meshes/body_hifi/chassis_link_silver.obj" /></geometry>
       <material name="d1_silver"><color rgba="0.48 0.54 0.60 1" /></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="meshes/body_hifi/chassis_link_gray.obj" /></geometry>
+      <material name="d1_gray"><color rgba="0.48 0.54 0.60 1" /></material>
     </visual>
     
     <collision name="lift_pole">
