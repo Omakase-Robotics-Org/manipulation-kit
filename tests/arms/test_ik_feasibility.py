@@ -30,7 +30,6 @@ import pytest
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("scipy")
-pytest.importorskip("mujoco")
 from scipy.spatial.transform import Rotation as R  # noqa: E402
 
 from manipulation_kit.arms import safety  # noqa: E402
@@ -40,13 +39,16 @@ from manipulation_kit.arms.d1.arm import kinematics as mk  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def arm():
+def arm(substrate):
     if not mk.default_urdf().exists():
-        pytest.skip(f"no d1.urdf at {mk.default_urdf()} — set D1_SDK_DIR")
+        pytest.skip(f"no d1.urdf at {mk.default_urdf()}")
     # guard=None / find_ready=False: this file is about the SOLVER's honesty,
     # which must not depend on whether pyguard imports. Same fixture style as
-    # test_kinematics.py in this directory.
-    return mk.build_kinematics(guard=None, find_ready=False, quiet=True)
+    # test_d1_arm_kinematics.py in this directory. Parametrised over the
+    # substrates because the d1-3 bug this file pins was in the SOLVER, and the
+    # solver must be honest on whatever chain it is handed.
+    return mk.build_kinematics(guard=None, find_ready=False, quiet=True,
+                               chain=substrate)
 
 
 # --------------------------------------------------------------------------- #

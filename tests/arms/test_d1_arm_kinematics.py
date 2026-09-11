@@ -1,7 +1,9 @@
-"""arm-on-D1 kinematics — needs the MuJoCo substrate and d1-sdk's URDF.
+"""arm-on-D1 kinematics, on every substrate the binding can be built on.
 
-Skips cleanly when either is absent, so the suite stays green on a machine that
-only has the pose math installed.
+Runs once per entry of the ``substrate`` fixture (see ``conftest.py``): the
+numpy ``UrdfChain`` always, and the MuJoCo one when that optional extra is
+installed. Nothing in this file is substrate-specific — it is the arm contract,
+and both substrates owe it.
 """
 
 from __future__ import annotations
@@ -10,7 +12,6 @@ import pytest
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("scipy")
-pytest.importorskip("mujoco")
 from scipy.spatial.transform import Rotation as R  # noqa: E402
 
 from manipulation_kit.arms import sides  # noqa: E402
@@ -19,13 +20,14 @@ from manipulation_kit.arms.d1.arm import kinematics as mk  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def arm():
+def arm(substrate):
     if not mk.default_urdf().exists():
-        pytest.skip(f"no d1.urdf at {mk.default_urdf()} — set D1_SDK_DIR")
+        pytest.skip(f"no d1.urdf at {mk.default_urdf()}")
     # guard=None keeps this fixture independent of whether pyguard is importable;
     # the guard's own behaviour is covered in tests/test_arm_conventions.py and
     # end-to-end in the parity gate.
-    return mk.build_kinematics(guard=None, find_ready=False, quiet=True)
+    return mk.build_kinematics(guard=None, find_ready=False, quiet=True,
+                               chain=substrate)
 
 
 def test_both_arms_present_with_seven_joints(arm):
@@ -91,7 +93,8 @@ def test_unreachable_target_fails_and_moves_nothing(arm):
 
 
 def test_solving_one_arm_does_not_disturb_the_other(arm):
-    """Both chains share one mjData; a solve must be scoped to its own joints."""
+    """On MuJoCo both chains share one mjData, so a solve that forgot to scope
+    itself would drag the other arm along. Asserted on every substrate."""
     for s in arm.sides:
         arm.set_joints(s, arm.home(s))
     right_before = arm.joints("right")
