@@ -26,7 +26,6 @@
   "absent_optional": [
     "meshes/body_hifi/chassis_link_dark.obj",
     "meshes/body_hifi/chassis_link_navy.obj",
-    "meshes/body_hifi/chassis_link_silver.obj",
     "meshes/body_hifi/chassis_link_white.obj",
     "meshes/body_hifi/head_link_cyan.obj",
     "meshes/body_hifi/head_link_dark.obj",
@@ -36,17 +35,18 @@
     "meshes/body_hifi/neck_pan_link_silver.obj",
     "meshes/body_hifi/torso_column_dark.obj",
     "meshes/body_hifi/torso_column_navy.obj",
+    "meshes/body_hifi/torso_column_red.obj",
     "meshes/body_hifi/torso_column_white.obj"
   ],
   "assets_repo": "Omakase-Robotics-Org/manipulation-kit-assets (private)",
-  "exported": "2026-09-09",
+  "exported": "2026-09-10",
   "files": {
-    "d1_wholebody_gripper.urdf": "68e22947db43f58965fd9d81f8e34583f664ae5f08dad29b4e0a4da2a6b5f0b2"
+    "d1_wholebody_gripper.urdf": "ac9b1d98b467bddb2b2c0f4ccd23f1739d9c39c70d8128637ead729f67c5958b"
   },
   "flavour": "d1_wholebody_gripper",
   "mesh_prefix": "",
-  "source_commit": "b07dc71afdcc4c02c7ec46eddcf0cf813ba6e82c",
-  "source_dirty": true,
+  "source_commit": "26a5e322b3f695b72572ac0795930f64132fed7e",
+  "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",
   "tool": "manipulation_kit.description.tools.export_description",
