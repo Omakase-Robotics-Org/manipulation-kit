@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- D1 stock parallel gripper, vendor CAD (SolidWorks URDF export).
-     VENDORED by hands/d1/parallel_gripper/tools/vendor_gripper_description.py
+     VENDORED by tools/vendoring/vendor_gripper_description.py
      from the vendor ROS package `gripper`; do not hand edit, re-run the
      script. Provenance, the exact source hashes and every local change:
      descriptions/README.md.
@@ -197,7 +197,7 @@
   </joint>
 
   <!-- CAMERA PLATE + WRIST CAMERA, appended by
-       hands/d1/parallel_gripper/tools/vendor_camera_plate.py; do not hand
+       tools/vendoring/vendor_camera_plate.py; do not hand
        edit, re-run the script. Provenance: descriptions/README.md.
 
        The plate (arm-end connection plate V2.0) fills the first 8 mm of the

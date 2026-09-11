@@ -52,7 +52,7 @@ JAW_TIP_Z_M = 0.14350
 #: The arm-end connection plate (V2.0, 2026-08-21) that carries the
 #: wide-angle UVC wrist camera. It fills the first 8 mm of the 16.5 mm
 #: flange gap the vendor gripper CAD leaves empty; its camera arm extends
-#: along ``base_link`` +Y. See ``tools/vendor_camera_plate.py`` for the
+#: along ``base_link`` +Y. See ``tools/vendoring/vendor_camera_plate.py`` for the
 #: derivation of every number and ``descriptions/README.md`` for provenance.
 CAMERA_PLATE_THICKNESS_M = 0.008
 

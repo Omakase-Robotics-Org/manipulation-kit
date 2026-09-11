@@ -8,8 +8,10 @@
   truth for the gripper's SHAPE; :mod:`manipulation_kit.description` composes it
   onto the D1 wrist rather than keeping its own copy of the geometry.
 - ``tools/`` — the vendoring and calibration scripts that PRODUCED
-  ``descriptions/``: :mod:`tools.vendor_gripper_description`,
-  :mod:`tools.vendor_camera_plate`, :mod:`tools.calibrate_wrist_camera_mount`.
+  ``descriptions/``: ``tools/vendoring/vendor_gripper_description.py`` and
+  ``tools/vendoring/vendor_camera_plate.py`` at the repository root (outside
+  the wheel — they need CAD that is not in this repository), plus
+  :mod:`tools.calibrate_wrist_camera_mount` here.
 
 The DRIVER is not here. On the robot this gripper is reachable only through the
 D1 arm controller's CAN channel passthrough, and that passthrough — with the

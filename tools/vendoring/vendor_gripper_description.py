@@ -5,7 +5,7 @@ The committed description is NOT hand-edited — it is the output of this
 script, so a fresh vendor drop can be re-vendored the same way instead of
 being patched by hand::
 
-    python hands/d1/parallel_gripper/tools/vendor_gripper_description.py \
+    python tools/vendoring/vendor_gripper_description.py \
         --source /path/to/gripper            # the unpacked ROS package
 
 What it does, and why (each of these is a deliberate change from the raw
@@ -47,8 +47,10 @@ import pathlib
 import re
 import sys
 
+from _kit_paths import parallel_gripper
+
 HERE = pathlib.Path(__file__).resolve().parent
-DEST = HERE.parent / "descriptions"
+DEST = parallel_gripper() / "descriptions"
 
 #: Total triangle budget for the base-link shell after decimation. 24 k keeps
 #: the enclosed volume within 0.6 % of the CAD and the file near 1.2 MB.
@@ -110,7 +112,7 @@ MESH_RENAMES = {"j6_Link.STL": "base_link.STL"}
 #: no parser will read the file if it does. Keep this text hyphen-pair free.
 HEADER = """<?xml version="1.0" encoding="utf-8"?>
 <!-- D1 stock parallel gripper, vendor CAD (SolidWorks URDF export).
-     VENDORED by hands/d1/parallel_gripper/tools/vendor_gripper_description.py
+     VENDORED by tools/vendoring/vendor_gripper_description.py
      from the vendor ROS package `gripper`; do not hand edit, re-run the
      script. Provenance, the exact source hashes and every local change:
      descriptions/README.md.
