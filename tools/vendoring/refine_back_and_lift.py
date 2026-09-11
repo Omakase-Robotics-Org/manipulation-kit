@@ -44,6 +44,87 @@ def cylinder(name, center, radius, depth):
     bpy.ops.object.modifier_apply(modifier=m.name);finish(o)
     return o
 
+def camera_window(name, x, cy, cz, width, height, depth):
+    """Thin capsule in the YZ plane; corner radius is independent of depth."""
+    from math import cos,sin,pi
+    radius=height/2;outline=[]
+    for side,start in ((1,-pi/2),(-1,pi/2)):
+        center=cz+side*(width/2-radius)
+        for i in range(33):
+            a=start+i*pi/32
+            outline.append((cy+radius*sin(a),center+radius*cos(a)))
+    n=len(outline);verts=[(xx,y,z) for xx in (x-depth/2,x+depth/2) for y,z in outline]
+    faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+    faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+    mesh=bpy.data.meshes.new(name);mesh.from_pydata(verts,[],faces);mesh.update()
+    obj=bpy.data.objects.new(name,mesh);bpy.context.collection.objects.link(obj)
+    bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=bm.faces);bm.to_mesh(mesh);bm.free()
+    return obj
+
+def lower_chassis_profile():
+    """Gallery-fitted wraparound apron; retains the original CAD extrema."""
+    from math import sin, cos, pi
+    hx, hy, radius = .289, .240, .052
+    perimeter=[]
+    for cx,cy,start in ((hx-radius,hy-radius,0),(-hx+radius,hy-radius,90),
+                        (-hx+radius,-hy+radius,180),(hx-radius,-hy+radius,270)):
+        for i in range(25):
+            a=(start+i*90/24)*pi/180
+            perimeter.append((.010+cx+radius*cos(a),.0016+cy+radius*sin(a)))
+    # Sample the straight rear edge too: corner-only samples would bridge
+    # across and flatten the wheel opening between the corner arcs.
+    from math import ceil,hypot
+    dense=[]
+    for i,a in enumerate(perimeter):
+        b=perimeter[(i+1)%len(perimeter)]
+        steps=max(1,ceil(hypot(b[0]-a[0],b[1]-a[1])/.010))
+        for j in range(steps):
+            t=j/steps;dense.append((a[0]*(1-t)+b[0]*t,a[1]*(1-t)+b[1]*t))
+    perimeter=dense
+    count=len(perimeter);verts=[];faces=[]
+    for level in range(5):
+        for x,y in perimeter:
+            rear=max(0,min(1,(-x-.210)/.060))
+            arch=max(0,cos(min(1,max(0,(abs(y-.0016)-.130)/.098))*pi/2))
+            bottom=.036+.067*rear*arch
+            inset,z=((.003,bottom), (0,bottom+.007), (0,.219),(.004,.235),(.012,.239))[level]
+            verts.append((.010+(x-.010)*(1-inset/hx),.0016+(y-.0016)*(1-inset/hy),z))
+    for level in range(4):
+        for i in range(count):
+            j=(i+1)%count;faces.append((level*count+i,level*count+j,(level+1)*count+j,(level+1)*count+i))
+    mesh=bpy.data.meshes.new('Wraparound apron');mesh.from_pydata(verts,[],faces);mesh.update()
+    obj=bpy.data.objects.new('Paint_white_LowerChassisCover',mesh);bpy.context.collection.objects.link(obj)
+    # Real top deck is recessed inside the white rim, revealing the supports.
+    box('Paint_silver_RecessedDeck',(.010,.0016,.233),(.549,.448,.004),.0015)
+    # Wide front insert with a curved lower edge, rather than a small plaque.
+    verts=[(.300,-.188,.234),(.300,.191,.234)]
+    for i in range(33):
+        y=.191-i*.379/32
+        z=.184+.050*(abs((y-.0016)/.190)**4)
+        verts.append((.300,y,z))
+    mesh=bpy.data.meshes.new('Front insert');mesh.from_pydata(verts,[],[tuple(reversed(range(len(verts))))]);mesh.update()
+    obj=bpy.data.objects.new('Paint_gray_BaseCameraPanel',mesh);bpy.context.collection.objects.link(obj)
+    # Rear service slots and connector visible in the direct rear gallery view.
+    for z in (.157,.172):
+        box('Paint_dark_RearServiceSlot',(-.280,.036,z),(.001,.032,.003),.0004)
+    cylinder('Paint_dark_RearConnector',(-.280,-.068,.166),.007,.0015)
+    # Wheel geometry is rebuilt with the apron so old decimated wheel caps
+    # cannot fill the rear cutout or protrude through the new round hubs.
+    for y in (-.185,.185):
+        for name,radius,depth in (('Paint_dark_DriveTread',.086,.048),('Paint_white_DriveHub',.064,.050)):
+            o=cylinder(name,(.010,y,.087),radius,depth);o.rotation_euler[2]=radians(90)
+            bpy.context.view_layer.objects.active=o;bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
+    for x in (-.20,.20):
+        for y in (-.17,.17):
+            o=cylinder('Paint_silver_DeckSupport',(x,y,.255),.006,.040)
+            o.rotation_euler[1]=radians(90)
+            bpy.context.view_layer.objects.active=o;bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
+    for x in (-.248,.235):
+        for y in (-.133,.133):
+            for name,radius,depth in (('Paint_dark_CasterTread',.041,.040),('Paint_white_CasterHub',.032,.042)):
+                o=cylinder(name,(x,y,.070),radius,depth);o.rotation_euler[2]=radians(90)
+                bpy.context.view_layer.objects.active=o;bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
+
 for host in ('torso_column','chassis_link','head_link'):
     bpy.ops.object.select_all(action='DESELECT')
     bpy.ops.wm.obj_import(filepath=str(BODY/(host+'_recovered.obj')),forward_axis='Y',up_axis='Z')
@@ -90,18 +171,18 @@ for host in ('torso_column','chassis_link','head_link'):
             rail = hi[2]>.59 and lo[0]>-.1 and hi[0]<.11
             upper_shell = .273<lo[2]<.275 and .44<hi[2]<.444 and hi[1]-lo[1]>.47
             lower_wall = .035<lo[2]<.038 and .237<hi[2]<.24 and (hi[1]-lo[1]>.45 or hi[0]-lo[0]>.35)
-            if rail or upper_shell or lower_wall:
+            caster = hi[2]<.122 and lo[2]>.025 and (lo[0]>.17 or hi[0]<-.17)
+            if rail or upper_shell or lower_wall or caster or hi[2]<.274:
                 bpy.data.objects.remove(part,do_unlink=True)
         box('Static lift cover',(.010,.0016,.51),(.106,.143,.42),.002)
         # Clean outer sheet-metal covers at the existing CAD envelope. Old
         # triangulated walls contained inward folds visible under white paint.
         box('Paint_white_UpperChassisCover',(-.0077,.0016,.356),(.539,.480,.164),.014)
-        box('Paint_white_LowerChassisCover',(.010,.0016,.137),(.578,.480,.202),.014)
+        lower_chassis_profile()
         box('Paint_dark_UpperSensorGlass',(.263,.0016,.348),(.003,.035,.020),.008)
         for y in (-.0074,.0106):
             cylinder('Paint_silver_UltrasoundRing',(.265,y,.348),.007,.001)
             cylinder('Paint_dark_Ultrasound',(.266,y,.348),.0055,.001)
-        box('Paint_silver_BaseCameraPanel',(.300,.0016,.207),(.003,.145,.048),.009)
         box('Paint_dark_BaseCameraGlass',(.302,.0016,.207),(.003,.063,.016),.006)
         for y in (-.018,.0016,.021):
             cylinder('Paint_silver_BaseLens',(.304,y,.207),.004,.001)
@@ -143,11 +224,10 @@ for host in ('torso_column','chassis_link','head_link'):
         bpy.context.view_layer.objects.active=o;bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
         # Rounded camera bezel and individual optical windows sit on the
         # repaired forehead. Optical/kinematic frames are unchanged.
-        box('Paint_silver_HeadCameraRim',(.114,-.075,-.027),(.006,.024,.085),.005)
-        box('Paint_dark_HeadCameraGlass',(.1175,-.075,-.027),(.002,.020,.080),.004)
-        for z in (-.054,-.027,0):
-            cylinder('Paint_silver_LensRing',(.119,-.075,z),.0048,.0015)
-            cylinder('Paint_dark_Lens',(.120,-.075,z),.0039,.001)
+        camera_window('Paint_silver_HeadCameraRim',.1135,-.075,-.027,.079,.022,.002)
+        camera_window('Paint_dark_HeadCameraGlass',.1148,-.075,-.027,.0775,.0205,.001)
+        for z in (-.053,-.027,-.001):
+            cylinder('Paint_optic_Lens',(.1155,-.075,z),.0034,.0004)
     for part in list(bpy.context.scene.objects):
         if part.type=='MESH':finish(part)
     bpy.ops.object.select_all(action='SELECT')

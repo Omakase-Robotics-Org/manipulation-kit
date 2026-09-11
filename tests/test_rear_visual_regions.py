@@ -26,3 +26,26 @@ def test_chassis_sidewalls_and_wheel_covers_are_white():
     assert color_at('chassis_link',(-.20,0,.40))=='white'
     assert color_at('chassis_link',(0,.20,.10))=='white'
     assert color_at('chassis_link',(-.20,0,.45))=='navy'
+
+
+def test_gallery_apron_has_rear_wheel_clearance():
+    """The rear apron must not fill the caster opening seen in the gallery."""
+    import pytest
+    from manipulation_kit import assets
+    path=assets.resolve('description/d1/meshes/body_hifi/chassis_link_refined.obj')
+    if path is None:
+        pytest.skip('Photo-refined private visual assets are not installed')
+    vertices=[];apron=[];names=[];active=False
+    for row in path.read_text().splitlines():
+        fields=row.split()
+        if not fields:continue
+        if fields[0]=='v':vertices.append(tuple(map(float,fields[1:4])))
+        elif fields[0]=='o':
+            names.append(fields[1]);active=fields[1].startswith('Paint_white_LowerChassisCover')
+        elif fields[0]=='f' and active:
+            apron.extend(vertices[int(token.split('/')[0])-1] for token in fields[1:])
+    rear=[p for p in apron if p[0]<-.26 and abs(p[1]-.0016)<.06]
+    assert rear and min(p[2] for p in rear)>.09
+    assert min(p[2] for p in apron)<.04
+    assert sum(n.startswith('Paint_dark_CasterTread') for n in names)==4
+    assert sum(n.startswith('Paint_dark_DriveTread') for n in names)==2

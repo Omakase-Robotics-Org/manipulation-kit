@@ -18,6 +18,8 @@ PALETTE = {
     "silver": "0.48 0.54 0.60 1",
     "cyan": "0.02 0.48 0.90 1",
     "red": "0.72 0.02 0.025 1",
+    "optic": "0.008 0.024 0.021 1",
+    "gray": "0.48 0.54 0.60 1",
 }
 HOSTS = ("chassis_link", "torso_column", "neck_pan_link", "head_link")
 

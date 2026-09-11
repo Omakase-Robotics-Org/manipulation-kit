@@ -58,3 +58,25 @@ upper and lower visual panels are rebuilt with beveled edges at the CAD
 bounds, retaining the blue roof and the separation between chassis levels.
 Small front sensor bezels reproduce the reference appearance; these are
 visuals only and do not relocate sensor frames.
+
+## Pricing-gallery lower chassis and forehead window
+
+All seven pricing-gallery views at https://omakaserobotics.ai/en/ were
+compared, including the direct rear view and both side views. The lower
+apron now follows a rounded rectangular perimeter (52 mm corner radius),
+with a curved rear lower cutout rising from 36 to 103 mm above the floor.
+A recessed silver deck, broad curved front sensor insert, and round caster
+hubs/treads reproduce the visible construction. These profile/radius values
+are fitted from the photos within the CAD envelope; they are not claimed as
+factory measurements. The original joint and collision geometry is preserved.
+
+The forehead optical window is a thin capsule, 79 × 22 mm, with a fine trim
+and three small optical elements behind dark glass. Its rounded outline is
+constructed independently of its 2 mm depth; a generic cube bevel previously
+clamped to the thickness and left square corners. Optical frames stay fixed.
+
+The apron rebuild removes lower decorative CAD fragments so they cannot
+occlude the wheel cutout. Six round visual wheels replace the decimated
+surfaces: four caster wheels and two drive wheels with white hubs and dark
+treads. Their visual radii/locations follow the original CAD bounds; the
+physical collision and joint definitions remain unchanged.

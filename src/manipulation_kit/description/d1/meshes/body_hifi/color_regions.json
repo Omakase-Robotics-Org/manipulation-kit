@@ -7,23 +7,26 @@
     "dark": "0.015 0.020 0.026 1",
     "silver": "0.48 0.54 0.60 1",
     "cyan": "0.02 0.48 0.90 1",
-    "red": "0.72 0.02 0.025 1"
+    "red": "0.72 0.02 0.025 1",
+    "optic": "0.008 0.024 0.021 1",
+    "gray": "0.48 0.54 0.60 1"
   },
   "hosts": {
     "chassis_link": {
-      "source_sha256": "493aead0fc193269ce5566e89411751b7a9145de5d251deaafca3b07878fce1d",
-      "source_faces": 155181,
-      "source_area_m2": 6.709326384117402,
-      "result_area_m2": 6.709326384117402,
+      "source_sha256": "dcb0acfefe6ac898897495dffe41794fb08f91eaac1efc3793220300c02a0976",
+      "source_faces": 39063,
+      "source_area_m2": 4.92723931963149,
+      "result_area_m2": 4.92723931963149,
       "faces": {
-        "white": 129439,
+        "white": 28607,
         "navy": 1221,
-        "dark": 3200,
-        "silver": 34458
+        "dark": 14524,
+        "silver": 23998,
+        "gray": 33
       }
     },
     "torso_column": {
-      "source_sha256": "cb619bf41df621eae0df2ac1750048cb5db1822a218429dabc20074c259f9bdf",
+      "source_sha256": "e98eeaf51b5fd826c342e2a42458f968dc6d9a1d6b6f489c09466f2ee337aad1",
       "source_faces": 110970,
       "source_area_m2": 1.350545845185772,
       "result_area_m2": 1.3505458451857715,
@@ -45,17 +48,18 @@
       }
     },
     "head_link": {
-      "source_sha256": "61ae5e39f9a784c4f2dc43b3c64ad7c3d1778a120b59c3c7f166ed26c2dcf551",
-      "source_faces": 11782,
-      "source_area_m2": 0.23156900402540864,
-      "result_area_m2": 0.23156900402540864,
+      "source_sha256": "60db383d54ea4e7c9ee0b6fe15fa68aa99c90ebdc4a8f78a8937ce7933eac219",
+      "source_faces": 9596,
+      "source_area_m2": 0.22958126919436353,
+      "result_area_m2": 0.22958126919436353,
       "faces": {
         "white": 2122,
         "navy": 3126,
-        "dark": 5688,
-        "silver": 4856,
+        "dark": 1668,
+        "silver": 260,
         "cyan": 1542,
-        "red": 1170
+        "red": 1170,
+        "optic": 4020
       }
     }
   }
