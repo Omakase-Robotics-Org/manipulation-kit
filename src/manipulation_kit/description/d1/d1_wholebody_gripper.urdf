@@ -51,7 +51,7 @@
     </inertial>
   </link>
   <joint name="lift" type="prismatic">
-    <origin xyz="0 0 0.52678" rpy="0 0 0"/>
+    <origin xyz="0 0 0.484" rpy="0 0 0"/>
     <parent link="base_footprint"/>
     <child link="dual_base"/>
     <axis xyz="0 0 1"/>

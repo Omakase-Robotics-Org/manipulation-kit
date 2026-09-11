@@ -440,14 +440,13 @@ def test_mirror_pose_wrist_180_tcp_and_hand_exact_mirror(model, qR):
 
 
 # ------------------------------------------------ wholebody vendor anchors
-def test_wholebody_fk_matches_vendor_body_urdf():
-    """d1_wholebody.urdf at lift=0 reproduces the vendor body URDF
-    (urdf2026072302) world positions."""
+def test_wholebody_fk_uses_calibrated_lift_mount():
+    """Preserve vendor relative anchors with the published-height zero correction."""
     wb = UrdfModel(D1_WB)
     tfs = wb.link_transforms({})
-    assert _close(tfs["Base_R"].t, (0.0, 0.037, 1.02678), 1e-5)
-    assert _close(tfs["neck_pan_link"].t, (0.0016171, 0.0, 1.14778), 1e-5)
-    assert _close(tfs["head_link"].t, (0.0016171, 0.0285, 1.20328), 1e-5)
+    assert _close(tfs["Base_R"].t, (0.0, 0.037, .984), 1e-5)
+    assert _close(tfs["neck_pan_link"].t, (0.0016171, 0.0, 1.105), 1e-5)
+    assert _close(tfs["head_link"].t, (0.0016171, 0.0285, 1.1605), 1e-5)
 
 
 # ------------------------------------- d1_wholebody_gripper: the stock gripper

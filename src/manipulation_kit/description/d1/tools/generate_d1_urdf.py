@@ -465,8 +465,9 @@ BASE_LINK_TO_SLIDER = 0.28831       # vendor sliderjoint origin, lift = 0
 DUAL_BASE_IN_SLIDER = (-0.0016171, 0.0, -0.032)   # from the arm-mount match
 
 # dual_base above the floor with the lift fully retracted.
-DUAL_BASE_GROUND_Z = (GROUND_TO_BASE_LINK + BASE_LINK_TO_SLIDER
-                      + DUAL_BASE_IN_SLIDER[2])            # 0.52678
+# Calibrated against the published 1.293–1.593 m height range and refined
+# neutral head geometry (head top is 0.809 m above dual_base).
+DUAL_BASE_GROUND_Z = 0.484
 
 # Vendor sliderjoint: axis +z, 0 … 0.300 m, effort 80 N, 0.03 m/s.  The
 # 0.300 stroke independently confirms the spec sheet (整机高度 1293–1593 mm).
@@ -1454,10 +1455,9 @@ END_EFFECTORS = {
 # Whole-body variant (d1_wholebody.urdf): mobile base + lift as JOINTS.
 #
 # Lift travel comes straight from the vendor body URDF (see VENDOR BODY):
-# q_lift = 0 is the retracted rail with dual_base 0.52678 above the floor,
-# q_lift = 0.300 the top.  Head top then sweeps 1.337 … 1.637 m, against a
-# spec sheet of 整机高度 1293–1593 mm — 44 mm taller, which is the pan-swept
-# corner of the box rather than the nominal head top.
+# q_lift = 0 is the retracted rail with calibrated dual_base 0.484 m above
+# the floor. Refined neutral head top sweeps 1.293–1.593 m, matching the
+# published specification. No command offset is added.
 #
 # Base: planar x/y/yaw joints under a ground-level `world` root. The REAL
 # chassis is a differential 2-wheel drive (nonholonomic — no lateral slide);

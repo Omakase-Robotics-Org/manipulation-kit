@@ -214,8 +214,8 @@ for host in hosts:
             bpy.context.view_layer.objects.active=o
             bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
         # Sliding inner cover follows the torso, overlapping the static column
-        # across the full 0–300 mm travel (world z=.527+q+local z).
-        box('Moving lift sleeve',(0.010,0.0016,.0225),(0.122,0.162,.345),.003)
+        # across the full 0–300 mm travel (world z=.484+q+local z).
+        box('Moving lift sleeve',(0.010,0.0016,.137),(0.122,0.162,.116),.003)
     elif host=='chassis_link':
         # Remove disconnected CAD rail covers and their floating top cap.
         bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.separate(type='LOOSE'); bpy.ops.object.mode_set(mode='OBJECT')
@@ -227,6 +227,8 @@ for host in hosts:
             if lo[2]<.275 and hi[2]>.54 and hi[1]-lo[1]>.47:
                 bm=bmesh.new();bm.from_mesh(part.data)
                 bmesh.ops.delete(bm,geom=[v for v in bm.verts if v.co.z<.467],context='VERTS')
+                # Annotated photograph: blue mast boot is 84 mm above roof.
+                for v in bm.verts:v.co.z=.468+(v.co.z-.468)*(.084/(hi[2]-.468))
                 bm.to_mesh(part.data);bm.free()
                 continue
             rail = hi[2]>.59 and lo[0]>-.1 and hi[0]<.11
@@ -235,7 +237,7 @@ for host in hosts:
             caster = hi[2]<.122 and lo[2]>.025 and (lo[0]>.17 or hi[0]<-.17)
             if rail or upper_shell or lower_wall or caster or hi[2]<.274:
                 bpy.data.objects.remove(part,do_unlink=True)
-        box('Static lift cover',(.010,.0016,.51),(.106,.143,.42),.002)
+        box('Static lift cover',(.010,.0016,.6815),(.106,.143,.403),.002)
         # Clean outer sheet-metal covers at the existing CAD envelope. Old
         # triangulated walls contained inward folds visible under white paint.
         upper_chassis_cover()

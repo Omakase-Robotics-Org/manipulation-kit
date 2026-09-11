@@ -101,3 +101,19 @@ The blue roof now shares the rounded white housing perimeter, with a 1.5 mm
 covering lip and a smoothly rolled top. The old recovered roof and attached
 upper-wall fragments are removed while retaining the raised rear mast boot.
 This eliminates the exposed white corner ledges and overlapping old sidewalls.
+
+
+## Physical lift zero calibration (supersedes earlier cover dimensions)
+
+The official height range is 1293–1593 mm, with a 300 mm stroke. The neutral
+refined head is 809 mm above dual_base, so its fully lowered mounting height
+is corrected to 484 mm above the floor (previously 526.78 mm). This changes
+upper-body mounting height, not arm lengths, relative joint axes, or stroke.
+The previous Isaac command offset of +20 mm must not be applied.
+
+The annotated September 10 photo places the moving sleeve lower edge 95 mm
+above the chassis roof at zero, and 295 mm above it at +200 mm. The moving
+sleeve therefore spans torso-local Z 79–195 mm. Its static counterpart spans
+world Z 480–883 mm and remains overlapped throughout the stroke. Neutral-head
+height and sleeve zero are measured from the resulting geometry in Isaac tests.
+The preserved blue rear mast boot is about 84 mm above the chassis roof.
