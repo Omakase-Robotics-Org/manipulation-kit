@@ -42,8 +42,9 @@ mujoco = [
     "mujoco>=3.0,<=3.3.7; python_version < '3.10'",
     "mujoco>=3.0; python_version >= '3.10'",
 ]
-# Mesh work: the vendoring/decimation tools under hands/*/*/tools/ and
-# description/d1/tools/prepare_visual_meshes.py.
+# Mesh work: the CAD vendoring/decimation tools under tools/vendoring/ (which
+# are outside the wheel, and need the private assets repository — see
+# tools/vendoring/README.md).
 meshes = ["trimesh", "fast-simplification"]
 # yourdfpy is a TEST dependency, not a runtime one: two gripper tests load the
 # vendor URDF through a third-party parser to confirm our own reading of it is
@@ -59,6 +60,10 @@ mkit-toolconfig = "manipulation_kit.hands.cli:main"
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
+# Only src/ is packaged. contrib/, examples/ and tools/ are deliberately
+# top-level and outside the wheel: research demos, runnable examples and CAD
+# vendoring are not things a consumer imports, and two of the three need
+# either mujoco or assets that are not in this repository.
 where = ["src"]
 
 [tool.setuptools.package-data]
@@ -93,7 +98,6 @@ where = ["src"]
     "descriptions/*.xml", "descriptions/README.md", "descriptions/meshes/*.STL",
 ]
 "manipulation_kit.hands.linkerbot.o30" = ["README.md"]
-"manipulation_kit.scripts" = ["*.csv"]
 
 [tool.pytest.ini_options]
 # Test files live in tests/<area>/ with no __init__.py, so two areas cannot both

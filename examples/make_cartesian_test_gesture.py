@@ -29,9 +29,11 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-#: Package-relative anchors — assets ship inside manipulation_kit, so these
-#: work from a checkout and from an installed wheel alike.
-KIT = os.path.dirname(HERE)
+#: Package-relative anchors. This script lives OUTSIDE the wheel (examples/),
+#: so the anchor comes from the import rather than from this file's location;
+#: the assets themselves still ship inside manipulation_kit, so this works from
+#: a checkout and from an installed wheel alike.
+KIT = os.path.dirname(os.path.abspath(__import__("manipulation_kit").__file__))
 DEFAULT_URDF = os.path.join(KIT, "description", "d1", "d1.urdf")
 DEFAULT_HOME = os.path.join(KIT, "config", "home_pose.json")
 
