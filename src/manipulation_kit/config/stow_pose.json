@@ -1,0 +1,36 @@
+{
+  "_comment": "D1 dual-arm STOW (compact tuck) pose -- arms folded so no movable arm/elbow/hand link extends beyond the AMR chassis footprint (chassis_body CAD bbox x -0.3273..0.3181, |y| 0.2455 m applied symmetrically, dual_base frame; movable-link worst overhang 4.3 mm, inside the FIXED shoulder-barrel envelope |y|+r = 0.251 m) and nothing violates the 30 mm body keep-out incl. the normally-lift-dependent chassis_cover/chassis_body/lift_pole boxes. Elbow sits at (-0.195, 0.205, 0.322) m. Derived from home_pose.json by numeric search against pyguard (description/d1/d1.urdf); the straight joint-space path HOME -> STOW is guard-clean at 101/101 interpolation samples, so stow_goto can move directly between the two. NOTE: unlike gestures this pose is an ENDPOINT -- the arm parks here and does not return to HOME. Same conventions as home_pose.json: 14 arm joint angles in DEGREES, order ArmSide::A then ArmSide::B (A = physical left, B = physical right), symmetric between arms. Gripper is controlled separately (close it for minimum width). Limits (Lite, deg): J1/J3/J5 +/-173, J2 +/-118, J4 -145..+45, J6 +/-60, J7 +/-90.",
+  "units": "degrees",
+  "joint_order": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "B5",
+    "B6",
+    "B7"
+  ],
+  "home_pose": [
+    -42.5,
+    88.0,
+    90.0,
+    -82.1,
+    89.3,
+    -1.4,
+    80.0,
+    42.5,
+    88.0,
+    -90.0,
+    -82.1,
+    -89.3,
+    -1.4,
+    -80.0
+  ]
+}

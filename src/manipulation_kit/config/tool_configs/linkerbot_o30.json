@@ -1,0 +1,37 @@
+{
+  "_comment": "LinkerBot LinkerHand O30 20-DoF hand on the D1 flange (replaced the DH116S 2026-08). PROVISIONAL registration: mass 0.75 kg is the only measured number (weighed at the robot by the user 2026-08-10; vendor spec sheet says 730 g for the bare hand, the ~20 g difference is mounting hardware). COM is composed from the vendor URDF linker-bot/linkerhand-urdf O30/urdf_0803-right at the zero pose, whose own total mass is 0.1824 kg (~4x light, motors missing) and which excludes the mounting adapter offset \u2014 order-of-magnitude only. TCP is registered as the flange origin because the grasp center has not been chosen or measured. Inertia is deliberately zero (vendor marks it optional). Settle TCP/COM/inertia with the arm engineer or by measurement before relying on compliance or torque modes.",
+  "schema": "omakase_hands.tool_config.v1",
+  "model": "linkerbot/o30",
+  "provisional": true,
+  "unmeasured": [
+    "tcp",
+    "com",
+    "inertia"
+  ],
+  "units": {
+    "kinematics": "mm (xyz), deg (rpy, XYZ order)",
+    "mass": "kg",
+    "com": "mm",
+    "inertia": "kg*m^2, row-major upper-triangular (Ixx,Ixy,Ixz,Iyy,Iyz,Izz)"
+  },
+  "kinematics": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "dynamics": [
+    0.75,
+    6.5,
+    12.2,
+    80.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ]
+}

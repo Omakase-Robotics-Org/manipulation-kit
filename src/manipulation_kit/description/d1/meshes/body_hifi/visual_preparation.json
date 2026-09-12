@@ -1,0 +1,98 @@
+{
+  "head_features": {
+    "0": {
+      "color": "cyan",
+      "faces": 704,
+      "bounds": [
+        [
+          0.10404311,
+          -0.04189377,
+          0.00458273
+        ],
+        [
+          0.11244566,
+          -0.00103871,
+          0.02136296
+        ]
+      ]
+    },
+    "12541": {
+      "color": "red",
+      "faces": 1170,
+      "bounds": [
+        [
+          0.06710745,
+          -0.00455365,
+          -0.03952379
+        ],
+        [
+          0.12271409,
+          0.02116993,
+          -0.01440221
+        ]
+      ]
+    },
+    "119161": {
+      "color": "cyan",
+      "faces": 838,
+      "bounds": [
+        [
+          0.10404838,
+          -0.04188313,
+          -0.07516205
+        ],
+        [
+          0.11244081,
+          -0.00103841,
+          -0.0583928
+        ]
+      ]
+    }
+  },
+  "torso_changes": [
+    {
+      "removed_insert_faces": 1860
+    },
+    {
+      "removed_insert_faces": 2
+    },
+    {
+      "removed_insert_faces": 2
+    },
+    {
+      "removed_insert_faces": 2
+    },
+    {
+      "removed_insert_faces": 2
+    },
+    {
+      "removed_insert_faces": 1
+    },
+    {
+      "removed_insert_faces": 1
+    },
+    {
+      "removed_insert_faces": 3486
+    },
+    {
+      "removed_insert_faces": 182
+    },
+    {
+      "removed_insert_faces": 1
+    },
+    {
+      "removed_insert_faces": 1280
+    },
+    {
+      "removed_insert_faces": 128
+    },
+    {
+      "removed_insert_faces": 1
+    },
+    {
+      "joined_front_panels": 2,
+      "source_faces": 30878,
+      "replacement_faces": 2792
+    }
+  ]
+}

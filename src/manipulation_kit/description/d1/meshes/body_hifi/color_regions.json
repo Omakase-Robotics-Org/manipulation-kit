@@ -1,0 +1,66 @@
+{
+  "reference": "Robot back and middle part / IMG_1384\u20131391 (2026-09-10)",
+  "boundary_method": "surface triangle clipping",
+  "palette": {
+    "white": "0.90 0.91 0.92 1",
+    "navy": "0.012 0.032 0.16 1",
+    "dark": "0.015 0.020 0.026 1",
+    "silver": "0.48 0.54 0.60 1",
+    "cyan": "0.02 0.48 0.90 1",
+    "red": "0.72 0.02 0.025 1",
+    "optic": "0.008 0.024 0.021 1",
+    "gray": "0.48 0.54 0.60 1"
+  },
+  "hosts": {
+    "chassis_link": {
+      "source_sha256": "c25eb237a7dfe3e5b0df208afc00bfb89201a4792632f1697a77d71182c3c2c2",
+      "source_faces": 41917,
+      "source_area_m2": 4.233900478632865,
+      "result_area_m2": 4.233900478632865,
+      "faces": {
+        "white": 36236,
+        "navy": 1809,
+        "dark": 14524,
+        "silver": 23926,
+        "gray": 1008
+      }
+    },
+    "torso_column": {
+      "source_sha256": "4abe87a3c08c9dbc372cf681117e795ec6fbce9be1354e800083a4ba23f63dfb",
+      "source_faces": 110970,
+      "source_area_m2": 1.2216809160570885,
+      "result_area_m2": 1.221680916057088,
+      "faces": {
+        "white": 33041,
+        "navy": 43034,
+        "dark": 42279,
+        "silver": 3064,
+        "red": 1532
+      }
+    },
+    "neck_pan_link": {
+      "source_sha256": "36d4485c084fdfc83e235acf145c74e3363b9b2ead71fef80189d8a8e5cc5f7d",
+      "source_faces": 59999,
+      "source_area_m2": 0.07906492772714178,
+      "result_area_m2": 0.07906492772714178,
+      "faces": {
+        "silver": 59972
+      }
+    },
+    "head_link": {
+      "source_sha256": "08a54016286163fafbae8719774a6a525c1f46760358cf1a99b9af815c0e4b29",
+      "source_faces": 9596,
+      "source_area_m2": 0.22958126919436353,
+      "result_area_m2": 0.22958126919436353,
+      "faces": {
+        "white": 2122,
+        "navy": 3126,
+        "dark": 1668,
+        "silver": 260,
+        "cyan": 1542,
+        "red": 1170,
+        "optic": 4020
+      }
+    }
+  }
+}

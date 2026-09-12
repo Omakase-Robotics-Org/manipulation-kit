@@ -1,0 +1,39 @@
+{
+  "_comment": "D1 dual-arm COLLISION-REACTIVE PLAYBACK thresholds. During position-mode playback (gesture_play) a CollisionMonitor reads per-joint feedback_torque and the position tracking error every control cycle; if EITHER exceeds its per-joint threshold for `trigger_cycles` consecutive cycles the motion halts and the arm switches to compliance (goes soft). CONSERVATIVE BY DESIGN: Shu's directive is that a false-trigger-stop is far better than missing a real human bump. Tune on the REAL ROBOT with the calibration procedure in GESTURES.md (record feedback_torque during a normal safe playback to find the per-joint baseline + headroom, then set torque thresholds above the observed |torque| envelope but below a human-bump). Units: torque in the SDK's feedback_torque units (m_FB_Joint_SToq, Nm-equivalent sensor torque), tracking error in DEGREES. All values are scaled at runtime by --collision-threshold-scale (default 1.0). NOTE: torque_baseline is OPTIONAL static gravity/holding offset per joint; if you leave it all-zero the monitor auto-learns a baseline from the first `baseline_warmup_cycles` cycles of each playback instead (recommended -- the holding torque depends on pose). [2026-07-10] enabled=false again (guard false-fired on J7 own-motion torque 2.5-2.8 during playback, halting gestures). Force-compliance (0 N) playback is the physical safety.",
+  "version": 1,
+  "units": {
+    "torque": "Nm-sensor",
+    "tracking_error": "deg"
+  },
+  "enabled": false,
+  "trigger_cycles": 3,
+  "baseline_warmup_cycles": 25,
+  "torque_threshold_nm": {
+    "J1": 8.0,
+    "J2": 10.0,
+    "J3": 6.0,
+    "J4": 9.0,
+    "J5": 2.5,
+    "J6": 2.5,
+    "J7": 2.5
+  },
+  "torque_baseline_nm": {
+    "J1": 0.0,
+    "J2": 0.0,
+    "J3": 0.0,
+    "J4": 0.0,
+    "J5": 0.0,
+    "J6": 0.0,
+    "J7": 0.0
+  },
+  "tracking_error_threshold_deg": {
+    "J1": 8.0,
+    "J2": 8.0,
+    "J3": 8.0,
+    "J4": 8.0,
+    "J5": 15.0,
+    "J6": 12.0,
+    "J7": 15.0
+  },
+  "tracking_error_enabled": false
+}

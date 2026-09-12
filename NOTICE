@@ -1,0 +1,30 @@
+manipulation-kit
+Copyright 2026 Omakase Robotics
+
+This product includes software developed at Omakase Robotics, licensed under
+the Apache License, Version 2.0 (see the LICENSE file).
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+This repository redistributes the following third-party robot descriptions,
+each under the Apache License, Version 2.0. Their upstream package metadata is
+kept intact alongside the files.
+
+1. YUBI parallel-jaw hand description
+   Files: src/manipulation_kit/description/d1_arm/yubi_description/**
+          src/manipulation_kit/description/d1_yubi_description_v2/yubi_description/**
+   Origin: Toyota Motor Corporation / AIRoA (maintainer: Jumpei Arima)
+   License: Apache-2.0 (declared in the package's package.xml)
+
+2. Leadshine DH116S hand description (meshes + MJCF)
+   Files: src/manipulation_kit/hands/leadshine/dh116s/**
+   Origin: sorrowfeng/leadtron_hand_descriptions
+           https://github.com/sorrowfeng/leadtron_hand_descriptions  @ bd9c573
+   License: Apache-2.0
+
+The D1 robot's own CAD geometry is NOT distributed here. URDFs in this
+repository name mesh files but do not include vendor CAD; the geometry is
+withheld and each mesh-free export lists its absent references in
+PROVENANCE.json (field "absent_external").

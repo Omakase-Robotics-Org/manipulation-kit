@@ -1,0 +1,150 @@
+name: CI
+
+# Everything here runs on a PUBLIC FORK with no secrets: the only inputs are
+# this checkout and PyPI. No org secret, no private submodule, no self-hosted
+# runner, no `pull_request_target`. A contributor who forks this repository
+# gets the same signal we do.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # The advertised install: `pip install -e .` and nothing else. Inverse
+  # kinematics runs on the numpy substrate, so this job is not a reduced
+  # smoke test — it is the configuration most consumers actually have, and it
+  # must stay green on its own.
+  test-no-mujoco:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor declared in pyproject (robots run old images);
+        # 3.12 is what a fresh install gets. Both, or the floor rots.
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install without the mujoco extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+      - name: mujoco really is absent
+        # Otherwise a transitive dependency could quietly install it and this
+        # job would stop testing the thing it exists to test.
+        run: python -c "import importlib.util,sys; sys.exit(importlib.util.find_spec('mujoco') is not None)"
+      - name: Tests
+        # -rs: the mujoco-only checks skip here by design and the summary has
+        # to SAY so. A run that is green because it quietly tested nothing is
+        # the failure mode.
+        run: pytest -q -rs
+      - name: IK with nothing but the package
+        # The whole claim of the default substrate, from /: no checkout, no
+        # $D1_SDK_DIR, no physics engine.
+        run: |
+          cd /
+          python -c "
+          import sys
+          from manipulation_kit.arms import get_arm_kinematics
+          from manipulation_kit.guard import MotionGuard
+          MotionGuard()
+          arm = get_arm_kinematics('d1/arm', find_ready=False, quiet=True)
+          p, r = arm.ee_pose('left')
+          assert arm.solve_ee('left', p, r).ok
+          assert 'mujoco' not in sys.modules, 'the default IK path imported mujoco'
+          print('ok')
+          "
+
+  test-mujoco:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install with the mujoco extra
+        # [mujoco] adds the alternative IK substrate: without it the checks
+        # that compare the two substrates against each other skip, and the
+        # numpy default would be unverified against anything.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[mujoco,dev]'
+      - name: Tests
+        # -rs on purpose: this runner has no CAD (it is not in this
+        # repository — LICENSE-STATUS.md), so the checks that OPEN a mesh skip
+        # themselves and the summary has to SAY which. To run them, add
+        # MKIT_ASSETS_DIR pointing at a manipulation-kit-assets checkout.
+        run: pytest -q -rs
+      - name: The URDFs are what the generator emits
+        run: |
+          mkit-urdf build
+          git diff --exit-code -- src/manipulation_kit/description
+      - name: No unlicensed CAD has come back
+        # The history was rewritten to remove it (2026-09-10). This is the
+        # gate that stops it returning one convenient copy at a time.
+        run: pytest -q tests/test_no_vendor_cad.py
+
+      - name: The committed dist/ exports have not drifted
+        run: |
+          mkit-urdf export d1-collision --dest dist/d1-collision --check
+          mkit-urdf export d1-wholebody-gripper --dest dist/d1-wholebody-gripper --check
+
+  wheel:
+    # What a consumer installs is only the package. Research demos, runnable
+    # examples and the CAD vendoring tools are top-level on purpose; if one of
+    # them slips back under src/ this is what notices.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel -o dist-wheel
+      - name: It carries the package and nothing else
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          names = zipfile.ZipFile(sorted(glob.glob("dist-wheel/*.whl"))[-1]).namelist()
+          leaked = [n for n in names
+                    if "/wholebody/" in n or "/scripts/" in n
+                    or "vendor_" in n or "prepare_visual_meshes" in n]
+          print(f"{len(names)} entries")
+          if leaked:
+              sys.exit("research/vendoring code is in the wheel: " + ", ".join(leaked))
+          assert any(n.endswith("description/d1/d1.urdf") for n in names), \
+              "the guard URDF must ship inside the wheel"
+          print("ok")
+          PY
+
+  version-bump:
+    # Consumers pin this repository by COMMIT; pip decides whether to reinstall
+    # by VERSION. A change that moves what consumers import while leaving
+    # project.version unchanged therefore installs "successfully" on a robot
+    # and changes nothing — see docs/HISTORY.md for the day that happened.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # This gate is a DIFF against the base branch. The default depth-1
+          # checkout has no base commit on disk to diff against, and the check
+          # would skip itself on every run.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: A change consumers must pick up carries a version bump
+        # stdlib only, and no install step: the gate has to be able to run even
+        # when the package itself does not build.
+        run: python tools/check_version_bump.py
