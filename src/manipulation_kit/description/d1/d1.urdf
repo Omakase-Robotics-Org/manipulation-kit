@@ -16,27 +16,27 @@
     </inertial>
     <!-- legacy keep-out column (safety_zones.json torso_keepout_box, chest-bracket width) - kept for continuity with the C++/JS validators -->
     <collision name="torso_core">
-      <origin xyz="0 0 0.245" rpy="0 0 0"/>
-      <geometry><box size="0.09 0.11 0.49"/></geometry>
+      <origin xyz="0 0 0.271915" rpy="0 0 0"/>
+      <geometry><box size="0.09 0.11 0.54383"/></geometry>
     </collision>
     <!-- robot support frame 1120100258 between the shoulders - CAD bbox X+/-85 Y+/-85 Z-115..60 -->
     <collision name="torso_frame">
-      <origin xyz="0 0.003 0.4725" rpy="0 0 0"/>
+      <origin xyz="0 0.003 0.52633" rpy="0 0 0"/>
       <geometry><box size="0.17 0.17 0.175"/></geometry>
     </collision>
     <!-- M260C smart speaker, front of chest - CAD bbox X+/-59.5 Y-100.3..-68 Z-64.5..54.5 -->
     <collision name="torso_speaker">
-      <origin xyz="0.08415 0.003 0.495" rpy="0 0 0"/>
+      <origin xyz="0.08415 0.003 0.54883" rpy="0 0 0"/>
       <geometry><box size="0.0323 0.119 0.119"/></geometry>
     </collision>
     <!-- _omakase body shell, belly band - CAD shell z-slices -310..-50 (X+/-120 Y-127..130) -->
     <collision name="torso_belly">
-      <origin xyz="-0.0013 0.003 0.32" rpy="0 0 0"/>
+      <origin xyz="-0.0013 0.003 0.37383" rpy="0 0 0"/>
       <geometry><box size="0.2568 0.2402 0.26"/></geometry>
     </collision>
     <!-- body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out -->
     <collision name="torso_shoulder_shell_exempt">
-      <origin xyz="-0.0015 0.003 0.5425" rpy="0 0 0"/>
+      <origin xyz="-0.0015 0.003 0.59633" rpy="0 0 0"/>
       <geometry><box size="0.249 0.3 0.185"/></geometry>
     </collision>
   </link>
@@ -56,7 +56,7 @@
     </inertial>
     <!-- vendor dhead+uphead+headcamera mesh union at the parked neck pose (pan=tilt=0) -->
     <collision name="head_shell">
-      <origin xyz="0.0159 0 0.7109" rpy="0 0 0"/>
+      <origin xyz="0.0159 0 0.76473" rpy="0 0 0"/>
       <geometry><box size="0.2008 0.19 0.185"/></geometry>
     </collision>
   </link>
@@ -98,7 +98,7 @@
 
   <!-- ===== Arm R (SDK ArmSide::A, physical LEFT, +y) — D1 arm chain ===== -->
   <joint name="mount_R" type="fixed">
-    <origin xyz="0 0.037 0.5" rpy="-1.5708 0 0"/>
+    <origin xyz="0 0.037 0.55383" rpy="-1.5708 0 0"/>
     <parent link="torso_column"/>
     <child link="Base_R"/>
   </joint>
@@ -379,7 +379,7 @@
 
   <!-- ===== Arm L (SDK ArmSide::B, physical RIGHT, -y) — D1 arm chain ===== -->
   <joint name="mount_L" type="fixed">
-    <origin xyz="0 -0.037 0.5" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.037 0.55383" rpy="1.5708 0 0"/>
     <parent link="torso_column"/>
     <child link="Base_L"/>
   </joint>

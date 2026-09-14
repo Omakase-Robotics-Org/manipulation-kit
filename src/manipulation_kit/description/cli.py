@@ -168,6 +168,8 @@ def cmd_fetch_assets(args) -> int:
                 total += 1
             print(f"  {len(names):3d} -> manipulation_kit/{rel}/")
         print(f"fetched {total} file(s) from {src}")
+        if assets.OPTIONAL_VISUAL_DIR in found:
+            _derive_lift_cover()
         missing = [r for r in assets.EXTERNAL_ASSET_DIRS if r not in found]
         if missing:
             print("still incomplete: " + ", ".join(missing), file=sys.stderr)
@@ -185,6 +187,11 @@ def cmd_fetch_visuals(args) -> int:
     never sees them, and their redistribution rights are unresolved (see
     LICENSE-STATUS.md). The URDFs reference them verbatim, so dropping the
     files in is all it takes — no regeneration.
+
+    One mesh is DERIVED rather than copied: the extended moving lift cover
+    (see :mod:`manipulation_kit.description.d1.tools.extend_lift_column`).
+    Deriving it here rather than expecting it upstream keeps the source tree
+    the maintained CAD split and still leaves a complete robot on disk.
     """
     src = Path(args.from_d1_sdk).expanduser() / VISUAL_SOURCE
     if not src.is_dir():
@@ -198,7 +205,17 @@ def cmd_fetch_visuals(args) -> int:
         shutil.copy2(obj, VISUAL_DIR / obj.name)
         n += 1
     print(f"fetched {n} visual mesh(es) -> {VISUAL_DIR}")
+    _derive_lift_cover()
     return 0
+
+
+def _derive_lift_cover() -> None:
+    """Write the extended moving lift cover next to the fetched visuals."""
+    from .d1.tools import extend_lift_column  # noqa: PLC0415
+
+    out = extend_lift_column.extend_in(VISUAL_DIR)
+    if out is not None:
+        print(f"derived {out.name} (moving lift cover, extended at its top)")
 
 
 def main(argv=None) -> int:
