@@ -48,7 +48,7 @@ own. What a consumer needs to know:
 |---|---|
 | Path | `description/d1/d1_wholebody_gripper.urdf` |
 | Generated? | Yes — by `description/d1/tools/generate_d1_urdf.py`. Never hand-edit it; a test fails if it drifts from the generator |
-| Root link | `world`, **at floor level**. Spawn at z = 0. At `lift = 0`, `dual_base` is 0.52678 m above the floor |
+| Root link | `world`, **at floor level**. Spawn at z = 0. At `lift = 0`, `dual_base` is 0.484 m above the floor — the rail's own zero. The upper body sits a further 53.829712 mm up the moving cover; see **The moving lift column** below |
 | Actuated | `base_x`, `base_y`, `base_yaw` (planar; the real chassis is differential-drive, so command it as (v, ω) — see `wholebody/`), `lift` (0…0.300 m), `neck_pan`, `neck_tilt`, `Joint1..7_{R,L}`, `gripper_{R,L}_tcp_{r,l}_joint` |
 | Mesh paths | **relative to the URDF file** — `meshes/body/base_link.STL`, `meshes/gripper/base_link.STL`, `../d1_arm/right/meshes/Link3_R.STL`. Never `package://`, never absolute, never cwd-relative, so it resolves outside ROS from any working directory |
 | Meshes present | **the whole robot**, as `<visual>`: 34 refs — body CAD (10), both arms (18), gripper (6). Arm and YUBI meshes are referenced IN PLACE from their own packages via `../`, so nothing is duplicated; the body CAD lives in `meshes/body/` |
@@ -92,20 +92,50 @@ a generator in this codebase before.
 
 ## Frame
 
-Root link `dual_base`: **z up, +x forward, +y robot's left**, shoulders at
-`y = ±0.037 m, z = 0.50 m` — identical to the `mount_R` / `mount_L` joints of
-`d1_yubi_description_v2/urdf/d1_yubi.urdf` (which is what d1-manip-sim loads),
-omakaseos `d1_dual_description`, `config/safety_zones.json`, and the C++
-validators `safety_zones.h` / `collision_model.h`. Keep them in sync.
+Root link `dual_base`: **z up, +x forward, +y robot's left**. It is the LIFT
+frame — where the rail reports `q = 0` — and the shoulders sit on the moving
+cover above it, at `y = ±0.037 m, z = 0.553829712 m` (the CAD's 0.50 m plus the
+measured cover extension; see **The moving lift column**). The ±0.037 m
+half-width is the same one `d1_yubi_description_v2/urdf/d1_yubi.urdf` (which is
+what d1-manip-sim loads), omakaseos `d1_dual_description`,
+`config/safety_zones.json` and the C++ validators `safety_zones.h` /
+`collision_model.h` carry. Keep them in sync.
 (d1-manip-sim's `assets/d1_dual/d1_dual.urdf` used to be named here; it
 was deleted when that repo stopped keeping a private copy of the geometry.)
+
+## The moving lift column
+
+The D1 lift telescopes: a fixed lower section on the AMR, and a **moving cover**
+carrying the torso, both arms and the neck. The built robot's cover is
+**53.829712 mm longer** than any CAD in this repository models it, which is why
+every height on it — arm mounts, `neck_pan`, the torso boxes and the two torso
+cameras — is the CAD number **plus** `LIFT_COLUMN_EXTENSION`.
+
+Measured on the physical D1 (2026-09-13): at the real 0.201 m lift and the SDK
+HOME arm pose, the lowest point of the complete open gripper assembly —
+including the wrist-camera plate, which is what actually reaches lowest — is
+**0.904 m** above the floor, 20 mm over an 884 mm wagon top. Before the
+correction this model said 0.850 m.
+
+The correction is a **longer cover**, not a different rail zero: the `lift`
+joint origin stays at 0.484 m and its 0…0.300 m travel is untouched, so the
+cover's bottom lip still sits 0.563 m above the floor at full down, 11 mm clear
+of the fixed AMR cover at 0.552 m. Raising the joint origin instead would move
+a number the hardware owns and open that gap to 64.8 mm.
+
+d1-isaaclab carries the same geometry (PR #43, commit `d5a71ec`), and its
+`assets/d1/d1_bimanual_gripper.urdf` is built from this repository's
+`d1_wholebody_gripper.urdf`. The one visual that cannot be expressed as an
+offset — the cover mesh itself, whose lip stays put while its walls lengthen —
+is derived by `description/d1/tools/extend_lift_column.py`, which
+`mkit-urdf fetch-visuals` runs for you.
 
 ## Where the numbers come from
 
 | What | Source |
 |---|---|
 | Arm joint origins / axes / limits | vendor URDFs `description/d1_arm/{right,left}` (D1 arm D1 arm) |
-| Arm mounts (±0.037 m, z 0.50, roll ∓90°) | measured from the D1 STEP assembly (d1-face/extract_arm_mounts.py); carried by `d1_yubi_description_v2/urdf/d1_yubi.urdf` |
+| Arm mounts (±0.037 m, z 0.553829712, roll ∓90°) | measured from the D1 STEP assembly (d1-face/extract_arm_mounts.py), z = CAD 0.50 + the measured cover extension; carried by `d1_yubi_description_v2/urdf/d1_yubi.urdf` |
 | Link capsule radii | `config/safety_zones.json` (conservative mesh bounds; same as `collision_model.h`) |
 | YUBI mounts + palm/camera geometry | d1-manip-sim `assets/d1_yubi.urdf` (merged main) / `yubi_description` xacro |
 | YUBI finger boxes | bounding boxes of the `yubi_description` finger collision STLs |
@@ -271,7 +301,8 @@ no rotation is needed anywhere downstream.
   `dual_base` +y) and only 27 mm deep — and a bar like that faces along its
   shallow axis. `head_camera_link` sits at the centre of that +x face, **solved
   from the mesh at generation time**, so a vendor mesh revision moves the frame
-  with it. That puts it 1.2765 m above the floor with the lift retracted.
+  with it. That puts it 1.3303 m above the floor with the lift retracted
+  (1.2765 m of vendor geometry plus the moving-cover extension).
 - *Wrists (YUBI).* The YUBI camera housing is a 35 × 32 × 42 mm box centred at
   (−0.0175, 0, 0) — it extends *backwards* along −x, so the link origin plane
   already is the lens face — and the fingers reach +x (tips at x = +0.109). The
@@ -326,16 +357,19 @@ needs them.
 
 ## Frame heights (vendor `urdf2026072302`)
 
-The floor is at `dual_base` z = −0.52678 with the lift retracted. Derived
-from the vendor wheel placement (axle at base_link −0.18517, mesh radius
-0.0853 ⇒ base_link 0.27047 above the floor) and cross-checked against the
-`base_link` mesh, which bottoms out at ground z = +0.0002.
+The floor is at `dual_base` z = −0.484 with the lift retracted (the
+calibrated rail zero). The vendor wheel placement — axle at base_link
+−0.18517, mesh radius 0.0853 ⇒ base_link 0.27047 above the floor,
+cross-checked against the `base_link` mesh bottoming out at ground
+z = +0.0002 — is what fixes the chassis geometry under it.
 
 `dual_base` itself is 32 mm below the vendor `slider_Link` frame: the vendor
-arm plates sit at slider (−0.0016171, ±0.037, 0.468) with roll ∓90°, and we
-put the same arm bases at (0, ±0.037, 0.50) with the same roll signs — the
-±0.037 half-width and both roll signs agree with the 2026-07-01 CAD
-measurement, so equating the two frames fixes the offset.
+arm plates sit at slider (−0.0016171, ±0.037, 0.468) with roll ∓90°, and the
+same arm bases are at (0, ±0.037, 0.50) with the same roll signs in that CAD —
+the ±0.037 half-width and both roll signs agree with the 2026-07-01 CAD
+measurement, so equating the two frames fixes the offset. (Both CADs model the
+short cover; on the built robot those plates ride 53.829712 mm higher, which is
+why the emitted mounts are at 0.553829712.)
 
 **Vendor side naming is the opposite of ours**: vendor `rarmbase` is at
 y = −0.037 = the robot's physical RIGHT, which is our `_L` tree.

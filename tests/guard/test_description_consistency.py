@@ -441,12 +441,21 @@ def test_mirror_pose_wrist_180_tcp_and_hand_exact_mirror(model, qR):
 
 # ------------------------------------------------ wholebody vendor anchors
 def test_wholebody_fk_uses_calibrated_lift_mount():
-    """Preserve vendor relative anchors with the published-height zero correction."""
+    """Preserve vendor relative anchors on the EXTENDED moving lift cover.
+
+    The rail zero stays where the hardware reports it (dual_base 0.484 m above
+    the floor at q_lift = 0) and everything the cover carries sits
+    53.829712 mm higher than the vendor CAD put it — the measured correction,
+    see the MOVING LIFT COLUMN EXTENSION block in the generator. These are the
+    same world heights d1-isaaclab's d1_bimanual_gripper.urdf reports for the
+    same links (commit d5a71ec), to within the six significant digits this
+    generator emits.
+    """
     wb = UrdfModel(D1_WB)
     tfs = wb.link_transforms({})
-    assert _close(tfs["Base_R"].t, (0.0, 0.037, .984), 1e-5)
-    assert _close(tfs["neck_pan_link"].t, (0.0016171, 0.0, 1.105), 1e-5)
-    assert _close(tfs["head_link"].t, (0.0016171, 0.0285, 1.1605), 1e-5)
+    assert _close(tfs["Base_R"].t, (0.0, 0.037, 1.03783), 1e-5)
+    assert _close(tfs["neck_pan_link"].t, (0.0016171, 0.0, 1.15883), 1e-5)
+    assert _close(tfs["head_link"].t, (0.0016171, 0.0285, 1.21433), 1e-5)
 
 
 # ------------------------------------- d1_wholebody_gripper: the stock gripper
@@ -830,7 +839,8 @@ def _f3(text):
 def test_body_cad_lands_where_the_generator_measured_independently():
     """The hifi body visuals are pre-baked in LINK-LOCAL coordinates (split out
     of the 2026-08-23 full-robot CAD), so two things must hold or the robot
-    renders askew: every hifi visual mounts at IDENTITY, and the chassis mesh's
+    renders askew: every hifi visual mounts at IDENTITY (except the torso
+    column's — see below), and the chassis mesh's
     own geometry stands on the floor — its wheels bottom out at z=0 in
     chassis_link, which IS the floor frame. The z-extents also pin the
     static/moving split of the lift column: the STATIC chassis mesh includes
@@ -847,6 +857,14 @@ def test_body_cad_lands_where_the_generator_measured_independently():
                                    "neck_pan_link", "torso_column"], \
         f"hifi visuals on {sorted(hifi_mounts)}"
     for name, xyz in hifi_mounts.items():
+        if name == "torso_column":
+            # The one exception, and it is the point of the exception: the
+            # torso visuals ride the MOVING LIFT COVER, which the built robot
+            # has 53.829712 mm longer than this CAD (generate_d1_urdf.py,
+            # MOVING LIFT COLUMN EXTENSION). The vest regions are carried up
+            # by that offset and the cover itself is a longer, derived mesh.
+            # tests/test_lift_column_extension.py checks both.
+            continue
         assert _close(xyz, (0.0, 0.0, 0.0), 1e-9), \
             f"{name} hifi visual not at identity: {xyz}"
     hifi = os.path.join(DESCRIPTION, "d1", "meshes", "body_hifi",
@@ -926,6 +944,13 @@ def test_wholebody_gripper_export_is_the_whole_robot():
         f"meshes/body_hifi/{host}_{color}.obj"
         for host, data in regions["hosts"].items() for color in data["faces"]
     }
+    # One region is not shipped as split: the white torso region IS the moving
+    # lift cover, and the built robot's cover is 53.829712 mm longer than the
+    # CAD it was split out of, so the URDF names the DERIVED, extended mesh
+    # instead (generate_d1_urdf.py MOVING LIFT COLUMN EXTENSION;
+    # description/d1/tools/extend_lift_column.py writes it).
+    expected_body.remove("meshes/body_hifi/torso_column_white.obj")
+    expected_body.add("meshes/body_hifi/torso_column_white_extended.obj")
     assert body == expected_body, sorted(body)
     assert len(arms) == 18, sorted(arms)
     assert len(grip) == 4, sorted(grip)

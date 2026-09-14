@@ -17,3 +17,20 @@ this copy on 2026-09-10, along with every other occurrence in the repository
 (Shu, CTO: the public kit does not name the arm vendor). Only comment prose
 changed — every number, type and function here is still the header's, which is
 what `test_safety_zones_export.py` reads.
+
+**The shoulder height in this header is the CAD one.** `safety_zones.h` (and
+therefore `config/safety_zones.json`) puts the arm mounts at `z = 0.50` in the
+torso frame and the torso keep-out at `z = 0…0.49`. The URDFs now place the
+same mounts at `0.553829712`, because the D1's telescoping lift cover is that
+much longer on the built robot than in the CAD — see **The moving lift column**
+in `docs/d1-description-README.md`.
+
+Nothing in the header is wrong as a result, and nothing here was changed: every
+number it authors is SHOULDER-RELATIVE — the arm chain, the capsule radii, and
+a keep-out box the arms are checked against — and the whole set moved together,
+so a validator built from these numbers rejects and accepts exactly what it did
+before. What changed is only where that rigid set sits above the floor, which
+this header never says. Re-expressing it (here, in the JSON, and in
+`d1-firmwared`'s Rust guard, which is validated against golden vectors from
+this geometry) is a coordinated change across repositories, not a drive-by edit
+in a frozen copy.
