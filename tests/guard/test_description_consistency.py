@@ -457,9 +457,14 @@ def test_wholebody_fk_uses_calibrated_lift_mount():
 # two things that are easy to get wrong and invisible in a position-only check:
 # the mount frame, and the HANDEDNESS (a wrist mount in this codebase has
 # already shipped with the two per-arm rotations swapped).
-GRIPPER_JAW_STROKE = 0.035          # per jaw, m
-GRIPPER_TCP_Z = 0.136               # registered tool config, m along flange +z
-GRIPPER_JAW_TIP_Z = 0.1435          # CAD jaw tips, m along flange +z
+# All MEASURED on d1-3 2026-09-16 (Shu, callipers). The CAD/d1-sdk values
+# they replace were 0.035 / 0.136 / 0.1435.
+GRIPPER_JAW_STROKE = 0.032          # per jaw, m -> a 64 mm pad-to-pad opening
+GRIPPER_TCP_Z = 0.129               # registered tool config = the pad TIP
+GRIPPER_JAW_TIP_Z = 0.129           # pad tip, m along flange +z
+GRIPPER_JAW_CENTRE_Z = 0.100        # pad centre = where the jaw joints hang
+GRIPPER_CAD_JAW_TIP_Z = 0.1435      # what the CAD said, and what its MESH is
+YUBI_JAW_TIP_Z = 0.09343            # YUBI tip midpoint along the hand root +x
 
 
 def _gripper_model():
@@ -493,10 +498,12 @@ def test_no_double_hyphen_inside_comments():
                 f"{os.path.basename(path)}: double hyphen inside an XML comment"
 
 
-def test_gripper_jaw_joints_match_the_vendor_cad():
-    """Jaw joints are the CAD's: same origin and axis for both, ±35 mm of
-    travel, and a velocity limit that is not zero (the CAD shipped
-    velocity="0", which planners read as an immovable joint)."""
+def test_gripper_jaw_joints_match_the_measured_geometry():
+    """Both jaw joints share one origin and axis (they are one rail), sit on
+    the MEASURED pad centre (100 mm, not the CAD's 108.47 mm), travel ±32 mm
+    (a 64 mm pad-to-pad opening, not the CAD's 70 mm), and keep a velocity
+    limit that is not zero (the CAD shipped velocity="0", which planners read
+    as an immovable joint)."""
     root = ET.parse(D1_WB_GRIPPER).getroot()
     for side in ("R", "L"):
         origins = []
@@ -513,13 +520,14 @@ def test_gripper_jaw_joints_match_the_vendor_cad():
             origins.append((xyz, axis))
         assert origins[0] == origins[1], \
             f"the two {side} jaws must share origin and axis (they are one rail)"
-        assert _close(origins[0][0], (0.0, 0.0, 0.10847), 1e-9)
+        assert _close(origins[0][0], (0.0, 0.0, GRIPPER_JAW_CENTRE_Z), 1e-9)
 
 
-def test_gripper_jaws_open_70mm_and_close_to_zero():
-    """q = 0 is the OPEN 70 mm gap and |q| = 0.035 is CLOSED — the opposite
-    polarity to the CAN 2.0 wire command, where 0.0 is closed. Derived from the
-    committed jaw boxes, so it fails if a sign is flipped anywhere."""
+def test_gripper_jaws_open_64mm_and_close_to_zero():
+    """q = 0 is the MEASURED OPEN 64 mm gap and |q| = 0.032 is CLOSED — the
+    opposite polarity to the CAN 2.0 wire command, where 0.0 is closed.
+    Derived from the committed jaw boxes, so it fails if a sign is flipped
+    anywhere."""
     root = ET.parse(D1_WB_GRIPPER).getroot()
     for side in ("R", "L"):
         faces, travel = {}, {}
@@ -543,17 +551,24 @@ def test_gripper_jaws_open_70mm_and_close_to_zero():
             travel[jaw] = q_closed * (1.0 if along < 0 else -1.0)
         assert _close((faces["r"], faces["l"]),
                       (GRIPPER_JAW_STROKE, GRIPPER_JAW_STROKE), 1e-4), \
-            f"{side} inner jaw faces at {faces}, expected 35 mm each at q = 0"
+            f"{side} inner jaw faces at {faces}, expected 32 mm each at q = 0"
         assert travel["r"] > 0 and travel["l"] > 0, (
-            f"{side} jaws do not both close INWARD at |q| = 0.035: {travel}")
+            f"{side} jaws do not both close INWARD at |q| = 0.032: {travel}")
 
 
 def test_gripper_mount_frame_is_the_tool_flange():
-    """The gripper is bolted to TCP_Link with no translation, so its registered
-    TCP (136 mm along flange +z) lands where the tool really is. Cross-checked
-    against the YUBI jaw tips the same arm used to carry: the two agree to
-    within 5 mm along the approach axis, which is what makes the 136 mm tool
-    config valid for both."""
+    """The gripper is bolted to TCP_Link with NO translation, and the jaw
+    joints hang at the MEASURED pad centre, so the registered TCP (129 mm =
+    the pad tip) lands where the tool really is.
+
+    The mount claim is the one this test exists for, and it is unchanged. What
+    IS gone is the old cross-check: the registered TCP used to be "confirmed"
+    by sitting within 5 mm of the YUBI jaw tips this arm used to carry, and
+    that only ever compared two CAD numbers. With the pads measured on d1-3
+    (2026-09-16) the gripper tip is 19.4 mm SHORTER than the YUBI tips, so the
+    two end effectors are not interchangeable at one tool config — which is
+    the finding, not a failure. The delta is pinned here so a future change to
+    either model has to face it."""
     tfs = _gripper_model().link_transforms({})
     yubi = UrdfModel(D1_WB).link_transforms({})
     for side in ("R", "L"):
@@ -563,19 +578,23 @@ def test_gripper_mount_frame_is_the_tool_flange():
         approach = tuple(base.R[i][2] for i in range(3))
         assert _close(approach, tuple(flange.R[i][2] for i in range(3)), 1e-9)
 
-        tcp = tuple(base.t[i] + GRIPPER_TCP_Z * approach[i] for i in range(3))
+        jaw = _joint_transform(D1_WB_GRIPPER, f"gripper_{side}_tcp_r_joint")[0]
+        assert _close(jaw, (0.0, 0.0, GRIPPER_JAW_CENTRE_Z), 1e-9), (
+            f"{side} jaw joints are not on the measured pad centre")
+
         tip = tuple(base.t[i] + GRIPPER_JAW_TIP_Z * approach[i] for i in range(3))
         # YUBI jaw-tip midpoint: 93.43 mm along the hand root's +x
         hand = yubi[f"yubi_{side}_hand_root"]
-        yubi_tip = tuple(hand.t[i] + 0.09343 * hand.R[i][0] for i in range(3))
+        yubi_tip = tuple(hand.t[i] + YUBI_JAW_TIP_Z * hand.R[i][0]
+                         for i in range(3))
         along = sum((yubi_tip[i] - tip[i]) * approach[i] for i in range(3))
-        assert abs(along) < 5e-3, (
-            f"{side} gripper jaw tips are {along * 1000:.1f} mm from where the "
-            "YUBI jaw tips were — the mount frame is probably wrong")
-        # the TCP sits between the flange and the jaw tips, on the tool axis
-        assert 0.0 < GRIPPER_TCP_Z < GRIPPER_JAW_TIP_Z
-        assert _close(tcp, tuple(base.t[i] + GRIPPER_TCP_Z * approach[i]
-                                 for i in range(3)), 1e-12)
+        assert abs(along - 0.0194) < 1e-3, (
+            f"{side} gripper pad tips are {along * 1000:.1f} mm short of the "
+            "YUBI jaw tips; the measured geometry puts the gap at 19.4 mm")
+        # the TCP is ON the pad tip, and both are out along the tool axis
+        assert 0.0 < GRIPPER_TCP_Z <= GRIPPER_JAW_TIP_Z < GRIPPER_CAD_JAW_TIP_Z
+        tcp = tuple(base.t[i] + GRIPPER_TCP_Z * approach[i] for i in range(3))
+        assert _close(tcp, tip, 1e-12)
 
 
 def test_gripper_handedness_is_mirrored_pose_identical_part():
@@ -1223,13 +1242,24 @@ def test_no_unmodelled_void_between_the_flange_and_the_gripper():
         assert reach > 0.070, f"{side}: collision only reaches {reach * 1000:.1f} mm"
 
 
-def test_the_assumed_adapter_is_labelled_as_assumed():
-    """It is not vendor geometry and must never read as though it were.
-    Since the arm-end camera plate arrived, the assumed part is only the
-    gripper-end plate spanning z = 8 .. 16.5 mm."""
+def test_the_flange_spacer_is_labelled_measured():
+    """The band between the camera plate and the gripper body used to be an
+    ASSUMED 8 .. 16.5 mm gripper-end plate. Shu put callipers on it on d1-3
+    (2026-09-16): 2 mm of camera plate then a 7 mm spacer, so the band is
+    2 .. 9 mm and is no longer an assumption. Its FOOTPRINT is still a CAD
+    bound rather than a measured shape, and the file has to say which is
+    which."""
     text = open(D1_WB_GRIPPER).read()
-    assert text.count("gripper_adapter_ASSUMED") == 2
-    assert "ASSUMED gripper-end plate spanning the camera plate" in text
+    assert "gripper_adapter_ASSUMED" not in text, (
+        "the assumed adapter band was replaced by the measured spacer")
+    # one material + one collision per side
+    assert text.count("gripper_spacer") == 4
+    assert "MEASURED 7 mm spacer block" in text
+    assert "footprint is still the CAD's own mount-plate square" in text
+    # the only thing still ASSUMED about the gripper is the plate's DENSITY,
+    # which is a mass claim, not a geometry one
+    assert text.count("ASSUMED") == 2
+    assert "density ASSUMED, part not yet weighed" in text
 
 
 # ---------------------------------------------------------------------------

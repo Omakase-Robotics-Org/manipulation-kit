@@ -71,7 +71,7 @@ VARIANTS: Dict[str, Variant] = {
                 "  Building this variant needs, in order:\n"
                 "    1. vendor CAD (STEP or STL) + its mount flange frame;\n"
                 "    2. a TCP measured on the robot, the way the gripper's "
-                "136 mm was;\n"
+                "129 mm was (callipers, d1-3, 2026-09-16);\n"
                 "    3. a primitive collision approximation for the guard;\n"
                 "    4. an END_EFFECTORS entry in "
                 "description/d1/tools/generate_d1_urdf.py.\n"

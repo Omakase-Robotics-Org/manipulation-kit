@@ -2,17 +2,20 @@
 (see :mod:`manipulation_kit.hands.toolconfig`).
 
 The REGISTERED values — what an arm controller is told is bolted to the
-flange — are the exact ones d1-sdk hardcoded as
-``omakase_arm::ToolConfig::defaultGripper()`` (arm.h), carried over verbatim
-so the stock default is data like every other tool, not code:
+flange:
 
-    TCP 136 mm along flange Z, mass 1.5 kg, COM z 68 mm,
+    TCP 129 mm along flange Z, mass 1.5 kg, COM z 68 mm,
     cylinder-approximated inertia 0.003 / 0.003 / 0.001.
 
 Provenance of each: mass 1.5 kg 【MEASURED — Shu weighed the gripper at the
-robot 2026-07-29 (「グリッパーは1.5kg」)】. TCP 136 mm 【confirmed by the
-vendor CAD: the jaw tips are at Z = 143.5 mm, so 136 mm lands on the pad
-face】. COM at 68 mm along Z 【validated on the real D1 as a LEVER: the
+robot 2026-07-29 (「グリッパーは1.5kg」)】. TCP 129 mm 【MEASURED on d1-3
+2026-09-16 by Shu with callipers: flange face to pad TIP. The previous
+136 mm came from ``d1-sdk``'s hardcoded
+``omakase_arm::ToolConfig::defaultGripper()`` and was "confirmed" against the
+vendor CAD's 143.5 mm jaw tips — i.e. one CAD number checking another. The
+calliper stack (2 mm camera plate + 7 mm spacer + 42 mm body + 20 mm finger
+base plate + 58 mm pads) puts the tip at 129 mm, so the registered TCP was
+7 mm long】. COM at 68 mm along Z 【validated on the real D1 as a LEVER: the
 earlier meter-valued variant was read by the controller as ~0 mm, so the
 tool was modelled at the flange and the wrist visibly sagged in
 compliance/torque modes; moving the COM out to 68 mm fixed it — see the
@@ -86,16 +89,24 @@ CAD_MASS_KG = 0.327917
 #: assembly COM at 38 mm, contradicting the validated 68 mm by 30 mm.
 CAD_COM_MM = (0.14, -7.60, 51.06)
 
-#: Distance from the flange to the jaw TIPS along +Z, mm. This one the CAD got
-#: right, and it is what confirms the registered 136 mm TCP (7.5 mm inside the
-#: tips, on the pad face).
+#: Distance from the flange to the pad TIPS along +Z, mm — MEASURED on d1-3
+#: 2026-09-16 by Shu with callipers, and the registered TCP below. The pad
+#: CENTRE (where the jaw links hang) is 100 mm and the pad root 71 mm; see
+#: :mod:`~manipulation_kit.hands.d1.parallel_gripper.description`.
+MEASURED_JAW_TIP_Z_MM = 129.0
+
+#: What the vendor CAD claimed for the same distance. Kept as a RECORD of a
+#: superseded number, like ``CAD_MASS_KG`` above: the CAD jaw meshes still
+#: reach this far, so anything comparing a mesh against the measurement needs
+#: to know the CAD is 14.5 mm long here.
 CAD_JAW_TIP_Z_MM = 143.5
 
 _PROVENANCE = (
-    "D1 stock parallel gripper — registered values carried over verbatim "
-    "from d1-sdk omakase_arm::ToolConfig::defaultGripper(). Mass 1.5 kg "
+    "D1 stock parallel gripper. Mass 1.5 kg "
     "MEASURED at the robot (Shu 2026-07-29), confirming the long-registered "
-    "value; TCP 136 mm confirmed by the vendor CAD (jaw tips at 143.5 mm); "
+    "value; TCP 129 mm MEASURED on d1-3 2026-09-16 (Shu, callipers) — the "
+    "flange-to-pad-tip stack, superseding the 136 mm carried over from "
+    "d1-sdk defaultGripper() and the vendor CAD's 143.5 mm jaw tips; "
     "the 68 mm COM lever was validated on the real D1. The vendor CAD's own "
     "0.328 kg is a shell-only export and is 4.6x light — see toolconfig.py. "
     "Inertia is a cylinder-approximation estimate."
@@ -106,7 +117,7 @@ def tool_config() -> ToolConfig:
     """Standard per-model factory (see ``manipulation_kit.hands.get_tool_config``)."""
     return ToolConfig(
         model="d1/parallel_gripper",
-        tcp_xyz_mm=(0.0, 0.0, 136.0),
+        tcp_xyz_mm=(0.0, 0.0, MEASURED_JAW_TIP_Z_MM),
         mass_kg=MEASURED_MASS_KG,
         com_mm=(0.0, 0.0, 68.0),
         inertia_kgm2=(0.003, 0.0, 0.0, 0.003, 0.0, 0.001),  # estimated
