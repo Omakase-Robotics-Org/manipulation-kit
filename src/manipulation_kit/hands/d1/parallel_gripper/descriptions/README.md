@@ -37,15 +37,34 @@ ROS package and the two joint names it lists are already in the URDF.
 | | |
 |---|---|
 | Links | `base_link` (body + rails), `tcp_r_Link`, `tcp_l_Link` |
-| Joints | `tcp_r_joint` prismatic 0 … 0.035 m; `tcp_l_joint` prismatic −0.035 … 0, `mimic` of `tcp_r_joint` with multiplier −1 |
-| Jaw travel | 35 mm per jaw ⇒ **70 mm** total gap range |
+| Joints | `tcp_r_joint` prismatic 0 … 0.032 m; `tcp_l_joint` prismatic −0.032 … 0, `mimic` of `tcp_r_joint` with multiplier −1 |
+| Jaw travel | 32 mm per jaw ⇒ **64 mm** total gap range (MEASURED) |
 | Frame | flange at `base_link` origin; fingers extend along **+Z**; jaws travel along **±X** |
-| Jaw tips | Z = 143.5 mm; registered TCP is Z = 136 mm |
-| Envelope | body 57 × 58 × 64 mm (Z 16.5 → 80 mm), rail bar 160 mm across X in the top 18.5 mm |
+| Pads | root Z = 71 mm, centre Z = 100 mm (the jaw joints), tip Z = 129 mm; 58 mm of graspable depth. Registered TCP is the tip, Z = 129 mm |
+| Envelope | body 57 × 58 mm across, Z 9 → 71 mm (2 mm camera plate + 7 mm spacer ahead of it) |
 | Mass (as committed) | **1.5 kg** — measured, see below. The CAD claimed 0.327917 kg |
 
-**Jaw polarity trap.** `q = 0` is the fully **OPEN** 70 mm gap and
-`|q| = 0.035` is fully **CLOSED** — the opposite of the CAN 2.0 wire command,
+**Every Z above is a CALLIPER MEASUREMENT** taken by Shu on d1-3 on
+2026-09-16, not the vendor CAD. Measured outward from the Marvin arm flange
+face: 2 mm camera mounting plate, 7 mm spacer block, 42 mm gripper body,
+20 mm finger base plate, 58 mm pads — so the pad tip is at 129 mm and the pad
+centre at 100 mm. The CAD's 108.47 mm jaw centre, 143.5 mm jaw tips, 70 mm
+opening and the 136 mm TCP that `d1-sdk` carried over with them were long by
+8.5 / 14.5 / 6 / 7 mm respectively.
+
+**What the measurement does NOT fix.** The jaw meshes (`tcp_{r,l}_Link.STL`)
+still reach 6 mm past the measured pad tip, and `camera_plate.STL` still
+models an 8 mm disc against a measured 2 mm. Meshes are vendor CAD; only a
+new CAD drop replaces one. The constants, the joint origins and the primitive
+collision boxes follow the measurement, so anything planning against a TCP or
+a collision primitive is right and anything rendering a mesh is ~6 mm
+generous. Also unresolved: with 51.96 mm at the driver's 1.16 rad ceiling
+(d1-3, 2026-08-24) and 64 mm wide open, a linear rad→mm map through zero puts
+the open stop at 1.43 rad rather than the ~1.55 rad of travel the CAD implied.
+Both gaps are measured; the map between them is not.
+
+**Jaw polarity trap.** `q = 0` is the fully **OPEN** 64 mm gap and
+`|q| = 0.032` is fully **CLOSED** — the opposite of the CAN 2.0 wire command,
 where 0.0 rad is closed and ~1.16 rad is open. Anything wiring a commanded
 gripper state to this URDF has to invert.
 
@@ -63,7 +82,7 @@ fresh drop rather than hand-editing the committed files.
    velocity limit is a CAD-export artefact; MoveIt, Drake, Isaac and PyBullet
    all read it as *this joint cannot move* and will refuse to plan or actuate
    the jaws. 0.05 m/s is **not a measured spec** — it is a permissive
-   placeholder of the right order (35 mm stroke in well under a second),
+   placeholder of the right order (32 mm stroke in well under a second),
    chosen so the limit never binds. Replace it with the real datasheet figure
    when we have one.
 4. **Header comment replaced.** The vendor header named `j6_Link.STL` and
@@ -83,6 +102,15 @@ fresh drop rather than hand-editing the committed files.
    `leadshine/dh116s/descriptions`.
 6. **`base_link`'s inertial replaced** — the CAD's masses are wrong by 4.6×.
    See below.
+7. **Jaw joints retargeted to the measured tool geometry** (2026-09-16). Both
+   `tcp_*_joint` origins move from the CAD's `z = 0.10847` to the measured pad
+   centre `z = 0.100`, and both stroke limits from ±0.035 to the measured
+   ±0.032 (a 64 mm pad-to-pad opening). `base_link`'s solved COM follows,
+   because the jaw COMs ride the joint origin and the ASSEMBLY COM has to stay
+   on the hardware-validated 68 mm: 66.155 → 66.652 mm. This is the only local
+   change that alters vendor *kinematics* rather than an export artefact, and
+   it is deliberate: a CAD number that a calliper contradicts on the assembled
+   robot is wrong about the robot.
 
 ## Mass: the CAD said 0.328 kg, the scale says 1.5 kg
 
@@ -132,8 +160,10 @@ mass; weigh the thing.
 
 The gripper bolts to the flange through a two-plate stack that the vendor
 gripper CAD leaves as an EMPTY 16.5 mm gap (the body mesh starts at
-z = 16.5 mm — that is where the plates live, and why the registered 136 mm
-TCP needs **no change** when they are modelled). `gripper_with_camera.urdf`
+z = 16.5 mm — that is where the plates live). Measured, that stack is
+**2 mm camera plate + 7 mm spacer = 9 mm**, so the CAD's void is 7.5 mm too
+deep, in the same direction as its 8.5 mm-long jaw centre.
+`gripper_with_camera.urdf`
 is `gripper.urdf` plus the arm-end plate and the wrist camera, generated by
 `tools/vendoring/vendor_camera_plate.py` (repository root); re-run it rather than hand-editing.
 

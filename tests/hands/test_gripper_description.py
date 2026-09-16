@@ -17,6 +17,9 @@ from manipulation_kit.hands.d1.parallel_gripper.description import (
     JAW_OPEN_GAP_M,
     JAW_STROKE_M,
     JAW_TIP_Z_M,
+    PAD_CENTRE_Z_M,
+    PAD_DEPTH_M,
+    PAD_ROOT_Z_M,
     load_urdf,
     mesh_paths,
 )
@@ -105,6 +108,21 @@ def test_finger_joints_can_actually_move():
         assert float(limit.get("effort")) > 0.0
 
 
+def test_measured_pad_stack_is_self_consistent():
+    """The calliper stack (d1-3, Shu, 2026-09-16) has to close: pad root plus
+    pad depth is the pad tip, the centre is halfway, and the registered TCP is
+    the tip. Cheap, but this is the arithmetic a transcription error hides in,
+    and every one of these numbers is now load-bearing for planning."""
+    from manipulation_kit.hands.d1.parallel_gripper import toolconfig as tc
+
+    assert (PAD_ROOT_Z_M, PAD_DEPTH_M) == (0.071, 0.058)
+    assert PAD_ROOT_Z_M + PAD_DEPTH_M == pytest.approx(JAW_TIP_Z_M, abs=1e-12)
+    assert PAD_CENTRE_Z_M == pytest.approx(
+        PAD_ROOT_Z_M + PAD_DEPTH_M / 2.0, abs=1e-12)
+    assert tc.tool_config().tcp_xyz_mm[2] == pytest.approx(JAW_TIP_Z_M * 1000)
+    assert JAW_OPEN_GAP_M == pytest.approx(0.064, abs=1e-12)
+
+
 def test_jaw_stroke_and_mimic():
     root = _root()
     limits = {j.get("name"): j.find("limit") for j in root.findall("joint")}
@@ -139,12 +157,23 @@ def test_jaws_are_mirror_images_across_the_travel_axis():
 
 
 @needs_assets
-def test_geometry_constants_match_the_meshes():
-    """JAW_TIP_Z_M is the number consumers place a TCP against — derive it
-    from the committed mesh rather than trusting the constant."""
+def test_the_jaw_mesh_overshoots_the_measured_pad_tip():
+    """JAW_TIP_Z_M is the number consumers place a TCP against, and since
+    2026-09-16 it is a CALLIPER MEASUREMENT (129 mm), not a mesh derivation.
+
+    The vendor jaw mesh still reaches further — 6 mm further with the joint on
+    the measured pad centre — because a mesh is only replaced by a CAD drop.
+    That residual is a fact about the shipped file, so pin it here rather than
+    letting it surface as a mystery in a viewer: anything planning against the
+    TCP or a collision primitive is right, anything rendering the mesh is
+    ~6 mm generous.
+    """
+    from manipulation_kit.hands.d1.parallel_gripper import toolconfig as tc
+
     root = _root()
     joint = root.find("joint[@name='tcp_r_joint']")
     origin_z = float(joint.find("origin").get("xyz").split()[2])
+    assert origin_z == pytest.approx(PAD_CENTRE_Z_M, abs=1e-9)
     # joint rpy (pi, -pi/2, 0) maps the jaw's local +x onto base +z
     rpy = [float(v) for v in joint.find("origin").get("rpy").split()]
     assert rpy[0] == pytest.approx(math.pi, abs=1e-3)
@@ -155,7 +184,15 @@ def test_geometry_constants_match_the_meshes():
     count = struct.unpack("<I", blob[80:84])[0]
     local_x = [struct.unpack_from("<f", blob, 84 + 50 * t + 12 + 4 * c)[0]
                for t in range(count) for c in (0, 3, 6)]
-    assert origin_z + max(local_x) == pytest.approx(JAW_TIP_Z_M, abs=1e-4)
+    mesh_tip = origin_z + max(local_x)
+    assert mesh_tip > JAW_TIP_Z_M, (
+        "the jaw mesh no longer overshoots the measured pad tip — if a new "
+        "CAD drop landed, re-derive this test instead of loosening it")
+    assert mesh_tip - JAW_TIP_Z_M == pytest.approx(0.006, abs=1e-3)
+    # ... and the mesh is still the CAD's own length: the overshoot is exactly
+    # the CAD tip carried back to the measured joint origin.
+    assert mesh_tip == pytest.approx(
+        tc.CAD_JAW_TIP_Z_MM / 1000.0 - (0.10847 - PAD_CENTRE_Z_M), abs=1e-4)
 
 
 def test_urdf_mass_is_the_measured_mass_not_the_cad_mass():
@@ -170,7 +207,12 @@ def test_urdf_mass_is_the_measured_mass_not_the_cad_mass():
     assert total == pytest.approx(tc.tool_config().mass_kg, abs=1e-6), (
         "the URDF and the registered tool config must describe one object")
     assert tc.CAD_MASS_KG == pytest.approx(0.327917, abs=1e-6)  # kept as a record
-    assert tc.CAD_JAW_TIP_Z_MM == pytest.approx(JAW_TIP_Z_M * 1000, abs=1e-3)
+    assert tc.MEASURED_JAW_TIP_Z_MM == pytest.approx(JAW_TIP_Z_M * 1000, abs=1e-3)
+    # The CAD tip is kept as a record and must NOT be mistaken for the model:
+    # it is 14.5 mm past the measured pad tip, which is also how far the jaw
+    # MESHES overshoot.
+    assert tc.CAD_JAW_TIP_Z_MM == pytest.approx(143.5, abs=1e-3)
+    assert tc.CAD_JAW_TIP_Z_MM > tc.MEASURED_JAW_TIP_Z_MM
 
 
 def test_urdf_com_matches_the_validated_registered_com():

@@ -6,13 +6,22 @@
      descriptions/README.md.
 
      Frame: base_link is the arm tool flange, fingers extend along +Z, the
-     jaws travel along +/-X. Registered TCP is 136 mm along +Z (see
-     toolconfig.py); the jaw tips reach Z = 143.5 mm.
+     jaws travel along +/-X.
 
-     Jaw convention: tcp_r_joint spans 0 .. 0.035 m and tcp_l_joint mimics it
-     with multiplier minus one over 0.035 .. 0 m. Both jaws move inward as
-     |q| grows, so q = 0 is the 70 mm OPEN gap and |q| = 0.035 is fully
-     CLOSED. This is the OPPOSITE polarity to the CAN 2.0 wire command,
+     GEOMETRY along +Z is MEASURED, not CAD: Shu put callipers on d1-3 on
+     2026-09-16 and read 2 mm camera plate, 7 mm spacer, 42 mm body, 20 mm
+     finger base plate, 58 mm pads. So the pads run 71 .. 129 mm from the
+     flange face, the jaw links hang at their CENTRE (Z = 100 mm) and the
+     registered TCP is the pad TIP, Z = 129 mm (see toolconfig.py). The
+     earlier 108.5 mm centre, 143.5 mm tip and 136 mm TCP were vendor CAD and
+     a d1-sdk default carried over with it, and were long by 8.5 / 14.5 / 7 mm.
+     The jaw MESHES still reach the CAD's 143.5 mm; replacing a mesh needs a
+     CAD drop, so that residual is recorded rather than hidden.
+
+     Jaw convention: tcp_r_joint spans 0 .. 0.032 m and tcp_l_joint mimics it
+     with multiplier minus one over 0.032 .. 0 m. Both jaws move inward as
+     |q| grows, so q = 0 is the MEASURED 64 mm OPEN gap and |q| = 0.032 is
+     fully CLOSED. This is the OPPOSITE polarity to the CAN 2.0 wire command,
      where 0.0 is closed. Do not wire one to the other without inverting.
 
      MASS: the link masses here sum to the MEASURED 1.5 kg (scale, Shu
@@ -39,7 +48,7 @@
            (0.000188064059438092, -0.0101851841222577,
            0.0346226600011052). -->
       <origin
-        xyz="0 0 0.0661547344675"
+        xyz="0 0 0.0666518017257"
         rpy="0 0 0" />
       <mass
         value="1.41685119941" />
@@ -119,7 +128,7 @@
     name="tcp_r_joint"
     type="prismatic">
     <origin
-      xyz="0 0 0.10847"
+      xyz="0 0 0.1"
       rpy="3.1416 -1.5708 0" />
     <parent
       link="base_link" />
@@ -129,7 +138,7 @@
       xyz="0 0 -1" />
     <limit
       lower="0"
-      upper="0.035"
+      upper="0.032"
       effort="3"
       velocity="0.05" />
   </joint>
@@ -177,7 +186,7 @@
     name="tcp_l_joint"
     type="prismatic">
     <origin
-      xyz="0 0 0.10847"
+      xyz="0 0 0.1"
       rpy="3.1416 -1.5708 0" />
     <parent
       link="base_link" />
@@ -186,7 +195,7 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="-0.035"
+      lower="-0.032"
       upper="0"
       effort="3"
       velocity="0.05" />
@@ -200,9 +209,12 @@
        tools/vendoring/vendor_camera_plate.py; do not hand
        edit, re-run the script. Provenance: descriptions/README.md.
 
-       The plate (arm-end connection plate V2.0) fills the first 8 mm of the
-       16.5 mm flange gap the vendor gripper CAD leaves empty; the remaining
-       8.5 mm is the gripper-end plate, separate hardware not yet modelled.
+       The plate (arm-end connection plate V2.0) is the first 2 mm of the
+       flange stack: Shu measured it at 2 mm with callipers on d1-3
+       (2026-09-16), against the 8 mm of the CAD drop. Behind it sits a 7 mm
+       spacer block, also measured, which is why the gripper body starts
+       at 9 mm. The plate MESH here still models the CAD's 8 mm disc; only a
+       new CAD drop replaces a mesh, so the residual is recorded, not hidden.
        The camera arm extends along +Y; PER-ARM CLOCKING (which way +Y points
        on the robot) is robot composition and is NOT encoded here: on the D1
        the camera sits on top of the wrist on both arms, so the physical LEFT

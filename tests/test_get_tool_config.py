@@ -39,13 +39,20 @@ def test_dh116s_tool_config_values():
     assert ixx < 0.01 and iyy < 0.01
 
 
-def test_parallel_gripper_matches_dsdk_default():
-    # The stock D1 gripper is data too — must equal the values that were
-    # hardcoded as d1-sdk ToolConfig::defaultGripper(). The 1.5 kg was
-    # confirmed on a scale 2026-07-29; do not "correct" it towards the
-    # shell-only vendor CAD's 0.328 kg.
+def test_parallel_gripper_registers_the_measured_tcp():
+    # TCP 129 mm is the flange-to-pad-TIP distance MEASURED on d1-3
+    # 2026-09-16 (Shu, callipers). It supersedes the 136 mm that d1-sdk
+    # ToolConfig::defaultGripper() hardcoded and that was only ever checked
+    # against the vendor CAD's own 143.5 mm jaw tips.
+    # Mass/COM are unchanged and stay that way: the 1.5 kg was confirmed on a
+    # scale 2026-07-29 and the 68 mm COM lever was validated on the robot; do
+    # not "correct" either towards the shell-only vendor CAD.
+    from manipulation_kit.hands.d1.parallel_gripper import toolconfig as grip
+
     tc = oh.get_tool_config("d1/parallel_gripper")
-    assert tc.kinematics() == [0.0, 0.0, 136.0, 0.0, 0.0, 0.0]
+    assert tc.kinematics() == [0.0, 0.0, 129.0, 0.0, 0.0, 0.0]
+    assert tc.kinematics()[2] == grip.MEASURED_JAW_TIP_Z_MM
+    assert grip.CAD_JAW_TIP_Z_MM == 143.5      # kept as a record, not used
     assert tc.dynamics() == [1.5, 0.0, 0.0, 68.0,
                              0.003, 0.0, 0.0, 0.003, 0.0, 0.001]
 
