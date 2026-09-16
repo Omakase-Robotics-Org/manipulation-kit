@@ -51,7 +51,7 @@
     </inertial>
   </link>
   <joint name="lift" type="prismatic">
-    <origin xyz="0 0 0.484" rpy="0 0 0"/>
+    <origin xyz="0 0 0.513" rpy="0 0 0"/>
     <parent link="base_footprint"/>
     <child link="dual_base"/>
     <axis xyz="0 0 1"/>
@@ -74,52 +74,52 @@
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><mesh filename="meshes/body_hifi/torso_column_white_extended.obj"/></geometry>
+      <geometry><mesh filename="meshes/body_hifi/torso_column_white.obj"/></geometry>
       <material name="d1_white"><color rgba="0.90 0.91 0.92 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.0538297" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/torso_column_navy.obj"/></geometry>
       <material name="d1_navy"><color rgba="0.012 0.032 0.16 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.0538297" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/torso_column_dark.obj"/></geometry>
       <material name="d1_dark"><color rgba="0.015 0.020 0.026 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.0538297" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/torso_column_silver.obj"/></geometry>
       <material name="d1_silver"><color rgba="0.48 0.54 0.60 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.0538297" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry><mesh filename="meshes/body_hifi/torso_column_red.obj"/></geometry>
       <material name="d1_red"><color rgba="0.72 0.02 0.025 1"/></material>
     </visual>
     <!-- legacy keep-out column (safety_zones.json torso_keepout_box, chest-bracket width) - kept for continuity with the C++/JS validators -->
     <collision name="torso_core">
-      <origin xyz="0 0 0.271915" rpy="0 0 0"/>
-      <geometry><box size="0.09 0.11 0.54383"/></geometry>
+      <origin xyz="0 0 0.245" rpy="0 0 0"/>
+      <geometry><box size="0.09 0.11 0.49"/></geometry>
     </collision>
     <!-- robot support frame 1120100258 between the shoulders - CAD bbox X+/-85 Y+/-85 Z-115..60 -->
     <collision name="torso_frame">
-      <origin xyz="0 0.003 0.52633" rpy="0 0 0"/>
+      <origin xyz="0 0.003 0.4725" rpy="0 0 0"/>
       <geometry><box size="0.17 0.17 0.175"/></geometry>
     </collision>
     <!-- M260C smart speaker, front of chest - CAD bbox X+/-59.5 Y-100.3..-68 Z-64.5..54.5 -->
     <collision name="torso_speaker">
-      <origin xyz="0.08415 0.003 0.54883" rpy="0 0 0"/>
+      <origin xyz="0.08415 0.003 0.495" rpy="0 0 0"/>
       <geometry><box size="0.0323 0.119 0.119"/></geometry>
     </collision>
     <!-- _omakase body shell, belly band - CAD shell z-slices -310..-50 (X+/-120 Y-127..130) -->
     <collision name="torso_belly">
-      <origin xyz="-0.0013 0.003 0.37383" rpy="0 0 0"/>
+      <origin xyz="-0.0013 0.003 0.32" rpy="0 0 0"/>
       <geometry><box size="0.2568 0.2402 0.26"/></geometry>
     </collision>
     <!-- body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out -->
     <collision name="torso_shoulder_shell_exempt">
-      <origin xyz="-0.0015 0.003 0.59633" rpy="0 0 0"/>
+      <origin xyz="-0.0015 0.003 0.5425" rpy="0 0 0"/>
       <geometry><box size="0.249 0.3 0.185"/></geometry>
     </collision>
   </link>
@@ -131,7 +131,7 @@
 
   <!-- Neck PTU + head, vendor urdf2026072302 (dheadjoint/upheadjoint). -->
   <joint name="neck_pan" type="revolute">
-    <origin xyz="0.0016171 0 0.67483" rpy="0 0 0"/>
+    <origin xyz="0.0016171 0 0.621" rpy="0 0 0"/>
     <parent link="torso_column"/>
     <child link="neck_pan_link"/>
     <axis xyz="0 0 -1"/>
@@ -259,7 +259,7 @@
        bandwidth — enable them in simulation. CAD-measured
        nominal poses, not calibrated extrinsics. -->
   <joint name="chest_camera_mount" type="fixed">
-    <origin xyz="0.0891 0.0002 0.61913" rpy="0 -0.245367 0"/>
+    <origin xyz="0.0891 0.0002 0.5653" rpy="0 -0.245367 0"/>
     <parent link="torso_column"/>
     <child link="chest_camera_link"/>
   </joint>
@@ -287,7 +287,7 @@
     </inertial>
   </link>
   <joint name="back_fisheye_mount" type="fixed">
-    <origin xyz="-0.1093 0.0015 0.53603" rpy="0 0 3.14159"/>
+    <origin xyz="-0.1093 0.0015 0.4822" rpy="0 0 3.14159"/>
     <parent link="torso_column"/>
     <child link="back_fisheye_link"/>
   </joint>
@@ -372,7 +372,7 @@
 
   <!-- ===== Arm R (SDK ArmSide::A, physical LEFT, +y) — D1 arm chain ===== -->
   <joint name="mount_R" type="fixed">
-    <origin xyz="0 0.037 0.55383" rpy="-1.5708 0 0"/>
+    <origin xyz="0 0.037 0.5" rpy="-1.5708 0 0"/>
     <parent link="torso_column"/>
     <child link="Base_R"/>
   </joint>
@@ -809,7 +809,7 @@
 
   <!-- ===== Arm L (SDK ArmSide::B, physical RIGHT, -y) — D1 arm chain ===== -->
   <joint name="mount_L" type="fixed">
-    <origin xyz="0 -0.037 0.55383" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.037 0.5" rpy="1.5708 0 0"/>
     <parent link="torso_column"/>
     <child link="Base_L"/>
   </joint>

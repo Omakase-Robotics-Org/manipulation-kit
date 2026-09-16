@@ -68,28 +68,19 @@ def test_left_right_symmetric_limits(model):
     assert r == l
 
 
-#: Shoulder height in the root frame, exactly as the generator emits it: the
-#: CAD's 0.50 m plus the MEASURED moving-cover extension (53.829712 mm),
-#: rounded to the generator's six significant digits. See the MOVING LIFT
-#: COLUMN EXTENSION block in description/d1/tools/generate_d1_urdf.py — the
-#: D1's telescoping lift cover is longer on the built robot than in any CAD,
-#: so the whole upper body sits that much higher on it.
-SHOULDER_Z = 0.55383
-
-
 def test_fk_zero_pose(model):
     """All joints zero = T-pose: arms straight out laterally at shoulder
     height; chain y-offsets are mount 0.037 + Base 0.1586 + 2x 0.264 +
     TCP 0.087."""
     tfs = model.link_transforms({})
-    assert _close(tfs["Link1_R"].t, (0.0, 0.1956, SHOULDER_Z))
-    assert _close(tfs["Link3_R"].t, (0.0, 0.4596, SHOULDER_Z))
-    assert _close(tfs["Link7_R"].t, (0.0, 0.7236, SHOULDER_Z))
-    assert _close(tfs["TCP_Link_R"].t, (0.0, 0.8106, SHOULDER_Z))
-    assert _close(tfs["Link7_L"].t, (0.0, -0.7236, SHOULDER_Z))
-    assert _close(tfs["TCP_Link_L"].t, (0.0, -0.8106, SHOULDER_Z))
+    assert _close(tfs["Link1_R"].t, (0.0, 0.1956, 0.5))
+    assert _close(tfs["Link3_R"].t, (0.0, 0.4596, 0.5))
+    assert _close(tfs["Link7_R"].t, (0.0, 0.7236, 0.5))
+    assert _close(tfs["TCP_Link_R"].t, (0.0, 0.8106, 0.5))
+    assert _close(tfs["Link7_L"].t, (0.0, -0.7236, 0.5))
+    assert _close(tfs["TCP_Link_L"].t, (0.0, -0.8106, 0.5))
     # yubi flange offset: +0.055 along tool axis, 0.019 lateral
-    assert _close(tfs["yubi_R_hand_root"].t, (0.0, 0.8656, SHOULDER_Z + 0.019))
+    assert _close(tfs["yubi_R_hand_root"].t, (0.0, 0.8656, 0.519))
 
 
 def test_fk_home_pose(model):
@@ -103,11 +94,9 @@ def test_fk_home_pose(model):
     # Pinned against the wrist-up home pose (config/home_pose.json). The FK
     # math itself is validated number-for-number against the C++ model in
     # test_cpp_crosscheck; these values pin the measured pose geometry.
-    # (z = the pose height measured on the arm, + the moving-cover extension
-    # that raised the shoulder it hangs from: SHOULDER_Z - 0.50.)
-    assert _close(tfs["Link4_R"].t, (-0.147177, 0.208201, 0.334284), 1e-4)
-    assert _close(tfs["Link7_R"].t, (0.105498, 0.211328, 0.255762), 1e-4)
-    assert _close(tfs["TCP_Link_R"].t, (0.192492, 0.210477, 0.255286), 1e-4)
+    assert _close(tfs["Link4_R"].t, (-0.147177, 0.208201, 0.280454), 1e-4)
+    assert _close(tfs["Link7_R"].t, (0.105498, 0.211328, 0.201932), 1e-4)
+    assert _close(tfs["TCP_Link_R"].t, (0.192492, 0.210477, 0.201456), 1e-4)
     # mirror symmetry of the measured home pose
     for r, l in (("Link4_R", "Link4_L"), ("Link7_R", "Link7_L"),
                  ("TCP_Link_R", "TCP_Link_L")):

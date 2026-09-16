@@ -106,21 +106,9 @@ DEFAULT_DISABLED_BODY_BOXES = (
 # lo/hi are root-frame AABBs (metres).  Arm 'A' = physical LEFT (+y): it may
 # keep its +y shoulder space, so its box covers y in [-0.13, +0.06].  Arm
 # 'B' = physical RIGHT (-y): mirror, y in [-0.06, +0.13].
-#
-# The band is defined RELATIVE TO THE SHOULDERS (it is the notch just below
-# them), and the shoulders ride the moving lift cover, which the built robot
-# has 53.829712 mm longer than the CAD every number here was read off — see
-# the MOVING LIFT COLUMN EXTENSION block in
-# description/d1/tools/generate_d1_urdf.py.  So the band rides up with them:
-# the authored 0.45..0.60 becomes 0.503829712..0.653829712 in the root frame,
-# and the keep-out covers exactly the same part of the robot as before.
-# tests/test_lift_column_extension.py pins this constant to the generator's.
-LIFT_COLUMN_EXTENSION = 0.053829712
 DEFAULT_CHEST_KEEPOUT = {
-    "A": ((-0.1245, -0.13, 0.45 + LIFT_COLUMN_EXTENSION),
-          (0.1245, 0.06, 0.60 + LIFT_COLUMN_EXTENSION)),
-    "B": ((-0.1245, -0.06, 0.45 + LIFT_COLUMN_EXTENSION),
-          (0.1245, 0.13, 0.60 + LIFT_COLUMN_EXTENSION)),
+    "A": ((-0.1245, -0.13, 0.45), (0.1245, 0.06, 0.60)),
+    "B": ((-0.1245, -0.06, 0.45), (0.1245, 0.13, 0.60)),
 }
 # Shoulder-mount links whose barrels live inside the chest band at HOME and
 # so are exempt from the chest keep-out (Base is already globally body-exempt;

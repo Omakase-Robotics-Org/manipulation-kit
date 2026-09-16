@@ -38,20 +38,19 @@ d1_yubi_description_v2.  Edit them upstream, never here.
 FRAME
 -----
 Root link `dual_base`: z up, +x forward (robot's facing), +y robot's LEFT.
-It is the LIFT frame — where the rail reports q = 0 — and the two arm
-shoulders sit on the moving cover above it, at y = ±0.037 m and
-z = 0.50 + LIFT_COLUMN_EXTENSION = 0.553829712 m.  The ±0.037 m half-width is
-the same one `mount_R` / `mount_L` carry in d1_yubi_description_v2's
-d1_yubi.urdf (which is what d1-manip-sim loads), omakaseos d1_dual_description,
-safety_zones.json and include/omakase_arm/{safety_zones.h,
-collision_model.h}.  Keep them all in sync.  The shoulder HEIGHT is the one
-number that moved: see the MOVING LIFT COLUMN EXTENSION block for what it
-means for each of those consumers (short version: everything on the cover
-moved together, so shoulder-relative geometry — which is all the guard and
-the validators use — is unchanged).  (This used to name d1-manip-sim
-assets/d1_dual/d1_dual.urdf; that file was deleted when d1-manip-sim stopped
-keeping a private copy of the D1 geometry and started vendoring this
-directory's export instead.)
+The two arm shoulders sit at y = ±0.037 m, z = 0.50 m — identical to the
+`mount_R` / `mount_L` joints of d1_yubi_description_v2's d1_yubi.urdf (which is
+what d1-manip-sim loads), omakaseos d1_dual_description, safety_zones.json
+and include/omakase_arm/{safety_zones.h, collision_model.h}.  Keep them all in
+sync.  (This used to name d1-manip-sim assets/d1_dual/d1_dual.urdf;
+that file was deleted when d1-manip-sim stopped keeping a private copy of the
+D1 geometry and started vendoring this directory's export instead.)
+
+`dual_base` itself sits 0.513 m above the floor at q_lift = 0, not the CAD
+chain's 0.484 m: the built robot's AMR cover is 29 mm taller than the CAD,
+and everything above it is carried up by that one offset.  See the AMR COVER
+HEIGHT OFFSET block.  Nothing INSIDE this frame moved, so every consumer that
+works shoulder-relative (the guard, safety_zones.json, IK) is unaffected.
 
 PROVENANCE OF NUMBERS
 ---------------------
@@ -85,12 +84,12 @@ PROVENANCE OF NUMBERS
   2026-07-23 from "…装配URDF去双目的.SLDASM"; Drive: D1/URDF/
   urdf2026072302.zip).  See VENDOR BODY block below for each number and
   how it was derived.
-* Moving-cover extension (+53.829712 mm on everything the lift carries):
-  MEASURED on the physical D1 (Shu, 2026-09-13) from the gripper's clearance
-  over an 884 mm wagon at 201 mm lift.  See the MOVING LIFT COLUMN EXTENSION
-  block.  The vendor CAD models the cover shorter than the built robot, so
-  every vendor height below is the CAD one and the extension is applied on
-  top of it.
+* AMR cover height offset (+29 mm at the lift joint origin, i.e. the only
+  height in this file that is NOT from CAD): MEASURED with a tape on the
+  physical d1-3 (Shu, 2026-09-16, lift at 0, ±2 mm) — the built robot's AMR
+  cover is taller than the CAD models it and lifts the whole upper body.
+  See the AMR COVER HEIGHT OFFSET block for the four floor-referenced frames
+  it was fitted to and their residuals.
 * D1 stock parallel gripper (mount, jaw joints, boxes, masses): the vendor
   CAD in dx-manipulator `hands/d1/parallel_gripper/descriptions/`, received
   2026-07-29.  See the GRIPPER block below.
@@ -108,50 +107,6 @@ import struct
 import xml.etree.ElementTree as ET
 
 DESC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-
-# --------------------------------------------------------------------------
-# MOVING LIFT COLUMN EXTENSION — why everything on the column sits 53.83 mm
-# higher than the vendor CAD put it.
-#
-# The D1 lift is TELESCOPING: a thin fixed lower section standing on the AMR,
-# and a thicker MOVING COVER that carries the torso, both arms and the neck.
-# Every vendor number below (mounts, neck PTU, torso boxes, torso cameras) was
-# transcribed from CAD that models the cover SHORTER than the built robot, so
-# the whole upper body rode 53.829712 mm too low.
-#
-# MEASUREMENT (Shu, 2026-09-13, on the physical D1).  With the lift at its real
-# 0.201 m and the arm at the SDK HOME height/orientation, the lowest point of
-# the COMPLETE open gripper assembly — jaws, body, and the wrist-camera plate,
-# which is the part that actually reaches lowest — clears the 884 mm wagon top
-# by 20 mm, i.e. it sits at 904 mm above the floor.  This model put it at
-# 850.170 mm.  The difference is the extension.
-#
-# WHY AT THE TOP OF THE COVER AND NOT AT THE JOINT ORIGIN.  The lift joint
-# origin is the ACTUATOR ZERO: base_footprint -> dual_base at 0.484 m is where
-# the rail reports q = 0, and the cover's bottom lip hangs 0.079 m above that
-# frame, 11 mm clear of the fixed AMR cover at full down.  Raising the joint
-# origin (d1-isaaclab PR #42) lifts the upper body correctly and opens that
-# 11 mm gap to 64.8 mm, exposing the inner pole at full down and moving a
-# number that hardware owns.  Extending the cover AT ITS TOP (d1-isaaclab PR
-# #43, commit d5a71ec, which is the geometry that repo ships today) reproduces
-# the same measured gripper height with the actuator zero and the full-down
-# clearance both untouched, because a longer cover is what the robot has.
-#
-# So: the lift origin, LIFT_RANGE and every chassis number are unchanged, and
-# everything mounted ON the moving cover is raised by this constant.
-LIFT_COLUMN_EXTENSION = 0.053829712
-
-#: Bottom lip of the moving cover in ``torso_column``, MEASURED off the column
-#: visual mesh (``meshes/body_hifi/torso_column_white.obj`` bottoms out at
-#: z = 0.079).  Nothing below it rides the lift.  The extension does NOT move
-#: it — that is the whole point — so at q_lift = 0 the lip stays
-#: 0.484 + 0.079 = 0.563 m above the floor, 11 mm above the fixed AMR cover
-#: top at 0.552 m (``meshes/body_hifi/chassis_link_navy.obj``).
-MOVING_COLUMN_BOTTOM_Z = 0.079
-
-#: Arm shoulder height on the moving cover.  0.50 m is the CAD-measured value
-#: (see PROVENANCE OF NUMBERS); the extension is what the built robot adds.
-SHOULDER_Z = 0.50 + LIFT_COLUMN_EXTENSION
 
 # --------------------------------------------------------------------------
 # VISUAL MESHES
@@ -202,14 +157,8 @@ BODY_URDF = os.path.join(DESC_DIR, "meshes", "body", "merged_robot.urdf")
 # THE CHECK: vendor `rarmbase_Link` is at y = -0.037 = the robot's physical
 # RIGHT, which is our `_L` tree, and `larmbase_Link` is our `_R`.  Aligning on
 # the matching NAME instead of the matching MOUNT mirrors the whole robot.
-#
-# The z is SHOULDER_Z, not the CAD's 0.50: the plates are bolted to the moving
-# cover, so :func:`vendor_body` re-expresses them on the EXTENDED column (see
-# MOVING LIFT COLUMN EXTENSION) exactly as it does every other mesh the lift
-# carries. The check therefore still compares like with like, and still fails
-# if the frame mapping drifts.
-ARM_PLATE_CHECK = {"rarmbase_Link": ("L", (0.0, -0.037, SHOULDER_Z)),
-                   "larmbase_Link": ("R", (0.0, 0.037, SHOULDER_Z))}
+ARM_PLATE_CHECK = {"rarmbase_Link": ("L", (0.0, -0.037, 0.50)),
+                   "larmbase_Link": ("R", (0.0, 0.037, 0.50))}
 ARM_PLATE_TOLERANCE_M = 0.005
 
 #: Every file this generator owns: name -> (wholebody?, end effector id).
@@ -271,8 +220,8 @@ LINK_SEGMENT = {
 # Arm mounts (see PROVENANCE OF NUMBERS).  SDK ArmSide::A = "_R" = physical LEFT
 # (+y); ArmSide::B = "_L" tree = physical RIGHT (-y).
 MOUNTS = {
-    "R": ((0.0, 0.037, SHOULDER_Z), (-1.5708, 0.0, 0.0)),
-    "L": ((0.0, -0.037, SHOULDER_Z), (1.5708, 0.0, 0.0)),
+    "R": ((0.0, 0.037, 0.50), (-1.5708, 0.0, 0.0)),
+    "L": ((0.0, -0.037, 0.50), (1.5708, 0.0, 0.0)),
 }
 
 # YUBI flange mounts (d1-manip-sim assets/d1_yubi.urdf, merged main).
@@ -534,10 +483,7 @@ WRIST_CAM_MASS = 0.030
 # puts the same arm bases at (0, ±0.037, 0.50) with the same roll signs — the
 # ±0.037 half-width and both roll signs agree exactly with the 2026-07-01 CAD
 # measurement.  Equating them gives dual_base = slider + (-0.0016171, 0,
-# -0.032), i.e. dual_base is 32 mm below the vendor slider frame.  (That
-# equality is between the two CADs and stays as it is; the built robot's
-# cover is LIFT_COLUMN_EXTENSION longer than either of them models, which is
-# why SHOULDER_Z is not 0.50.)
+# -0.032), i.e. dual_base is 32 mm below the vendor slider frame.
 #
 # NOTE ON SIDE NAMING: vendor `rarmbase` is at y = -0.037 = the robot's
 # physical RIGHT, which is our "_L" tree.  Vendor r/l is physical; the SDK's
@@ -553,15 +499,51 @@ GROUND_TO_BASE_LINK = 0.27047       # wheel axle 0.18517 + wheel radius 0.0853
 BASE_LINK_TO_SLIDER = 0.28831       # vendor sliderjoint origin, lift = 0
 DUAL_BASE_IN_SLIDER = (-0.0016171, 0.0, -0.032)   # from the arm-mount match
 
-# dual_base above the floor with the lift fully retracted.  This is the
-# ACTUATOR ZERO and it does not move: the measured upper-body correction is a
-# longer moving cover (LIFT_COLUMN_EXTENSION), not a different rail zero.
-# Originally calibrated against the published 1.293–1.593 m height range and
-# refined neutral head geometry (head top 0.809 m above dual_base); with the
-# measured extension the head top sweeps 1.347–1.647 m instead, i.e. the
-# published range and the measured gripper height disagree by the extension.
-# The measurement on the physical robot wins; the spec sheet is stale.
-DUAL_BASE_GROUND_Z = 0.484
+# --------------------------------------------------------------------------
+# AMR COVER HEIGHT OFFSET — why the whole upper body starts 29 mm higher than
+# the CAD chain says it does.
+#
+# The vendor chain above (wheel axle + radius + sliderjoint origin + the
+# arm-mount match) puts dual_base 0.484 m above the floor at q_lift = 0.  The
+# BUILT robot's AMR cover is taller than the CAD models it, and everything
+# above the cover — column, torso, both arms, neck, head — is simply carried
+# up by that difference.  Nothing inside the upper body changes shape.
+#
+# MEASUREMENT (Shu, 2026-09-16, tape on the physical d1-3, lift at 0,
+# floor-referenced, ±2 mm).  The robot stands 1322 mm to the top of its head
+# where the spec says 1293 mm, and the 29 mm appears at the top of the AMR:
+#
+#   frame (floor-referenced, mm)      URDF (main)   measured   URDF + 29
+#   torso body bottom                      660          700         689
+#   torso top                             1080.6       1120        1109.6
+#   head RealSense (head_camera_link)     1233.7       1266        1262.7
+#   head top                              1293         1322        1322
+#
+# i.e. residuals of -11, -10, -3, 0 mm — flat across a 660 mm span, which is
+# what a single offset at the base looks like.  (The rejected alternative, a
+# +53.83 mm extension of the moving column, gives 714 / 1134 / 1287 / 1347:
+# +14…+27 mm too high, and rising with height, because it was fitted to one
+# gripper-clearance reading rather than to the body.)
+#
+# WHERE IT IS APPLIED.  At the lift joint origin, which is where the hardware
+# has it: base_footprint -> dual_base.  Every number in the dual_base frame
+# below — mounts at 0.50, neck_pan at 0.621, the torso boxes, the torso
+# cameras — stays exactly as the CAD measured it, and so does the 0…0.300 m
+# lift travel.  Consequently NOTHING that is expressed relative to the
+# shoulders changes: the guard's keep-outs, safety_zones.json, the frozen
+# safety_zones.h and every IK result are bit-for-bit what they were.
+#
+# The chassis boxes stay authored floor-relative (CHASSIS_BOXES below) and are
+# NOT re-measured here: they model the CAD cover, whose top sits at 0.4987 m
+# — above the 0.460 m deck the tape found — so they remain conservative
+# keep-out volumes, which is all they are used for.
+AMR_COVER_HEIGHT_OFFSET = 0.029
+
+# dual_base above the floor with the lift fully retracted, i.e. the rail's
+# own zero.  CAD chain 0.484 m plus the measured AMR cover offset above.
+# (The published 1.293–1.593 m height range is the CAD one and is stale: with
+# the offset the head top sweeps 1.322–1.622 m, which is what the tape reads.)
+DUAL_BASE_GROUND_Z = 0.484 + AMR_COVER_HEIGHT_OFFSET
 
 # Vendor sliderjoint: axis +z, 0 … 0.300 m, effort 80 N, 0.03 m/s.  The
 # 0.300 stroke independently confirms the spec sheet (整机高度 1293–1593 mm).
@@ -586,8 +568,7 @@ LIFT_EFFORT, LIFT_VELOCITY = 80.0, 0.03
 # ENCODERS WHEREVER THEY BOOT, so a raw status read is meaningless until
 # the neck has been homed — map real neck state through omakaseos, not the
 # raw encoder.
-NECK_PAN = ((0.0016171, 0.0, 0.621 + LIFT_COLUMN_EXTENSION),
-            (0.0, 0.0, 0.0), (0.0, 0.0, -1.0),
+NECK_PAN = ((0.0016171, 0.0, 0.621), (0.0, 0.0, 0.0), (0.0, 0.0, -1.0),
             (-1.57, 1.57))
 NECK_TILT = ((0.0, 0.0285, 0.0555), (-1.5708, 0.0, 0.0), (0.0, 0.0, 1.0),
              (-0.35, 0.65))
@@ -707,23 +688,17 @@ HEAD_CAMERA_AABB = (
 #: Both origins sit on the LENS FACE (the housing's outer surface along its
 #: thin axis), not the housing centre — the centre is inside the torso shell
 #: and a camera rendered from there sees the shell interior.
-#: (Both bolt THROUGH the moving cover, so both carry the column extension:
-#: the CAD-measured heights are 0.5653 and 0.4822.)
-CHEST_CAMERA_XYZ = (0.0891, 0.0002, 0.5653 + LIFT_COLUMN_EXTENSION)
+CHEST_CAMERA_XYZ = (0.0891, 0.0002, 0.5653)
 CHEST_CAMERA_PITCH = -math.atan2(0.2429, 0.97)   # negative Ry = up
-BACK_FISHEYE_XYZ = (-0.1093, 0.0015, 0.4822 + LIFT_COLUMN_EXTENSION)
+BACK_FISHEYE_XYZ = (-0.1093, 0.0015, 0.4822)
 
 # --------------------------------------------------------------------------
 # Body boxes, dual_base frame, MEASURED from the CAD STEP (see header).
 # Each: (name, (xlo,ylo,zlo), (xhi,yhi,zhi), comment)
 # Boxes named *_exempt are modeled but skipped by the pyguard keep-out check
 # (the arms coexist with them by construction).
-#
-# These are the CAD heights, i.e. BEFORE the moving-cover extension; every one
-# of them is bolted to the cover and rides it, so BODY_BOXES below re-expresses
-# them on the extended column.
 # --------------------------------------------------------------------------
-BODY_BOXES_CAD = [
+BODY_BOXES = [
     ("torso_core",
      (-0.045, -0.055, 0.0), (0.045, 0.055, 0.49),
      "legacy keep-out column (safety_zones.json torso_keepout_box, chest-bracket width) - kept for continuity with the C++/JS validators"),
@@ -740,28 +715,6 @@ BODY_BOXES_CAD = [
      (-0.126, -0.147, 0.45), (0.123, 0.153, 0.635),
      "body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out"),
 ]
-#: The same boxes as they ride the EXTENDED moving cover (see
-#: LIFT_COLUMN_EXTENSION). Everything the CAD measured is bolted to the cover,
-#: so it goes up with the shoulders and the torso keeps its shape relative to
-#: them — the arm-vs-torso geometry the guard checks is unchanged.
-#:
-#: ``torso_core`` is the exception, at its LOWER bound only. It is the legacy
-#: keep-out column the C++/JS validators mirror (safety_zones.json
-#: torso_keepout_box), and a keep-out volume may grow but must never silently
-#: shrink, so its floor stays at the frame origin while its top follows the
-#: torso up. (d1-isaaclab instead pulls that floor up to
-#: MOVING_COLUMN_BOTTOM_Z, the visible cover lip — it is rendering and
-#: contact, not a safety gate. Shrinking a keep-out here is a safety-behaviour
-#: change and wants its own review against real teleop poses, exactly like the
-#: swept-head box below.)
-BODY_BOXES = [
-    (name,
-     (lo[0], lo[1],
-      lo[2] if name == "torso_core" else lo[2] + LIFT_COLUMN_EXTENSION),
-     (hi[0], hi[1], hi[2] + LIFT_COLUMN_EXTENSION),
-     comment)
-    for name, lo, hi, comment in BODY_BOXES_CAD
-]
 # Static head keep-out for d1.urdf, at the PARKED neck pose (pan = tilt = 0):
 # the union of the vendor dhead / uphead / headcamera meshes.  Like-for-like
 # with the 2026-07-01 CAD box it replaces — x and y agree within 13 mm — but
@@ -775,17 +728,9 @@ BODY_BOXES = [
 # it).  Widening the keep-out is a safety-behavior change that needs its own
 # review against real teleop poses; until then the guard models the parked
 # head, and d1_wholebody.urdf carries the articulated neck for planners.
-#
-# Like the torso boxes, the CAD heights predate the moving-cover extension:
-# the head sits on the neck, the neck sits on the cover, so the box rides up
-# with them (HEAD_BOX below).
-HEAD_BOX_CAD = ("head_shell",
-                (-0.0845, -0.0950, 0.6184), (0.1163, 0.0950, 0.8034),
-                "vendor dhead+uphead+headcamera mesh union at the parked neck pose (pan=tilt=0)")
-HEAD_BOX = (HEAD_BOX_CAD[0],
-            HEAD_BOX_CAD[1][:2] + (HEAD_BOX_CAD[1][2] + LIFT_COLUMN_EXTENSION,),
-            HEAD_BOX_CAD[2][:2] + (HEAD_BOX_CAD[2][2] + LIFT_COLUMN_EXTENSION,),
-            HEAD_BOX_CAD[3])
+HEAD_BOX = ("head_shell",
+            (-0.0845, -0.0950, 0.6184), (0.1163, 0.0950, 0.8034),
+            "vendor dhead+uphead+headcamera mesh union at the parked neck pose (pan=tilt=0)")
 # Chassis-side boxes, authored in the CAD frame where the floor sat at
 # dual_base z = -0.4887, re-expressed GROUND-RELATIVE (z += 0.4887) so they
 # no longer depend on the lift extension: they hang off the floor, and the
@@ -958,34 +903,13 @@ def vendor_body():
     # base_link -> dual_base
     to_db = _minv(_mmul(slider_origin, _mat(DUAL_BASE_IN_SLIDER)))
 
-    def rides_lift(link):
-        """True for the vendor links carried by the moving cover.
-
-        Everything at or above ``slider_Link`` is bolted to the cover and
-        therefore sits LIFT_COLUMN_EXTENSION higher on the built robot than in
-        the vendor CAD; everything below it (base_link, the wheels, the AMR
-        camera) is chassis and does not move. Getting this wrong is silent and
-        expensive: the head camera frame is SOLVED from these meshes, so a
-        head mesh left behind while the head link rose would quietly re-aim
-        the camera by 54 mm.
-        """
-        while link in joints:
-            if link == "slider_Link":
-                return True
-            link = joints[link][0]
-        return link == "slider_Link"
-
     def fk(link):
         m = _mat()
-        moving = rides_lift(link)
         while link in joints:
             parent, origin = joints[link]
             m = _mmul(origin, m)
             link = parent
-        m = _mmul(to_db, m)
-        if moving:
-            m = _mmul(_mat((0.0, 0.0, LIFT_COLUMN_EXTENSION)), m)
-        return m
+        return _mmul(to_db, m)
 
     out = {}
     for link in root.findall("link"):
@@ -1042,23 +966,6 @@ BODY_HIFI = {
 }
 BODY_HIFI_DIR = "meshes/body_hifi"
 
-#: The moving cover is one colour region of the torso mesh — the white sleeve
-#: — and the extension (LIFT_COLUMN_EXTENSION) treats it differently from
-#: everything else on the link:
-#:
-#:   * the vest regions are BOLTED TO the cover, so they are simply carried up
-#:     by the extension (a visual origin, nothing else changes);
-#:   * the sleeve IS the cover: its bottom lip stays put and its straight
-#:     walls get LONGER, which no origin can express. The URDF therefore names
-#:     a DERIVED mesh, written next to the fetched source by
-#:     :mod:`manipulation_kit.description.d1.tools.extend_lift_column` (which
-#:     ``mkit-urdf fetch-visuals`` runs for you). Shipping the derived file
-#:     rather than an origin is also what d1-isaaclab does (its
-#:     ``assets/d1/meshes/telescoping/torso_column_white.obj``).
-MOVING_COLUMN_HOST = "torso_column"
-MOVING_COLUMN_COLOR = "white"
-MOVING_COLUMN_MESH = "torso_column_white_extended.obj"
-
 
 def body_mesh_visuals(host, host_in_dual_base, indent="    "):
     """Visual elements for ``host``: the CAD-split high-fidelity mesh when one
@@ -1071,18 +978,11 @@ def body_mesh_visuals(host, host_in_dual_base, indent="    "):
         palette_path = os.path.join(DESC_DIR, BODY_HIFI_DIR, "color_regions.json")
         with open(palette_path) as palette_file:
             palette = json.load(palette_file)
-        out = ""
-        for color in palette["hosts"][host]["faces"]:
-            mesh, at = f"{host}_{color}.obj", _mat()
-            if host == MOVING_COLUMN_HOST:
-                if color == MOVING_COLUMN_COLOR:
-                    mesh = MOVING_COLUMN_MESH          # longer, not moved
-                else:
-                    at = _mat((0.0, 0.0, LIFT_COLUMN_EXTENSION))
-            out += mesh_visual_elem(f"{BODY_HIFI_DIR}/{mesh}", at,
-                                    palette["palette"][color], f"d1_{color}",
-                                    None, indent)
-        return out
+        return "".join(
+            mesh_visual_elem(f"{BODY_HIFI_DIR}/{host}_{color}.obj", _mat(),
+                             palette["palette"][color], f"d1_{color}", None, indent)
+            for color in palette["hosts"][host]["faces"]
+        )
     names = dict(BODY_MESH_HOSTS).get(host, ())
     if not names:
         return ""
@@ -1638,10 +1538,12 @@ END_EFFECTORS = {
 # Whole-body variant (d1_wholebody.urdf): mobile base + lift as JOINTS.
 #
 # Lift travel comes straight from the vendor body URDF (see VENDOR BODY):
-# q_lift = 0 is the retracted rail with calibrated dual_base 0.484 m above
-# the floor. No command offset is added — and none is added by the moving-
-# cover extension either, which lengthens the cover above dual_base and
-# leaves this joint exactly as the hardware reports it (0 … 0.300 m).
+# q_lift = 0 is the retracted rail, with dual_base 0.513 m above the floor —
+# the CAD chain's 0.484 m plus the MEASURED AMR_COVER_HEIGHT_OFFSET (see the
+# AMR COVER HEIGHT OFFSET block). Neutral head top therefore sweeps
+# 1.322–1.622 m, which is what the tape reads on the built robot; the
+# published 1.293–1.593 m is the CAD figure and is stale. The TRAVEL is
+# untouched and no command offset is added: the rail still reports 0…0.300 m.
 #
 # Base: planar x/y/yaw joints under a ground-level `world` root. The REAL
 # chassis is a differential 2-wheel drive (nonholonomic — no lateral slide);

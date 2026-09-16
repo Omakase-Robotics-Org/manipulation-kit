@@ -19,11 +19,8 @@ regenerates and diffs, so a hand-edited URDF fails the suite.
   whose STLs are byte-identical copies of the ``d1_arm`` ones (the
   consistency test asserts that, so the two trees cannot silently fork).
 - **Torso column and shoulder mounts** — measured from the D1 STEP assembly:
-  each arm base sits at y = ±0.037 m (74 mm shoulder separation) on the
-  column, rolled ∓90° so the base axis points laterally outward. The CAD
-  height is 0.50 m; the shoulders ride 53.829712 mm higher than that on the
-  built robot, because its telescoping lift cover is longer than the CAD
-  models it (see ``generate_d1_urdf.py``, MOVING LIFT COLUMN EXTENSION).
+  each arm base sits at y = ±0.037 m (74 mm shoulder separation), z = 0.50 m
+  on the column, rolled ∓90° so the base axis points laterally outward.
 - **YUBI hand** — the AIRoA ``yubi_description`` ``yubi_hand`` macro
   reproduced inline, with two deliberate deviations: inertials are added
   (the macro is visual-only) and the ``<mimic>`` left finger is emitted as an
@@ -81,16 +78,9 @@ ARM_MESH_URI = {s: f"package://{PKG_NAME}/d1_arm_yubi_description/meshes/"
                 for s in ("R", "L")}
 YUBI_MESH_URI = f"package://{PKG_NAME}/yubi_description/meshes"
 
-# Torso column + shoulder mounts, measured from the D1 STEP assembly, plus the
-# MOVING LIFT COLUMN EXTENSION: the built robot's telescoping cover is
-# 53.829712 mm longer than the CAD models, so the shoulders (and the stylised
-# column below them) sit that much higher on it. One number, one source —
-# generate_d1_urdf.py::LIFT_COLUMN_EXTENSION; test_description_consistency
-# pins the two together.
-LIFT_COLUMN_EXTENSION = 0.053829712
-SHOULDER_Z = 0.50 + LIFT_COLUMN_EXTENSION
-TORSO_MOUNT = {"R": (f"0 0.037 {SHOULDER_Z:.6g}", "-1.5708 0 0"),
-               "L": (f"0 -0.037 {SHOULDER_Z:.6g}", "1.5708 0 0")}
+# Torso column + shoulder mounts, measured from the D1 STEP assembly.
+TORSO_MOUNT = {"R": ("0 0.037 0.50", "-1.5708 0 0"),
+               "L": ("0 -0.037 0.50", "1.5708 0 0")}
 
 # TCP_Link_{side} -> hand_root.  R keeps the vendor transform; L is the same
 # mount rotated 180 deg about its own x axis with the y offset sign flipped.
@@ -282,12 +272,12 @@ def torso() -> str:
   <link name="dual_base"/>
   <link name="torso_column">
     <visual>
-      <origin xyz="0 0 {SHOULDER_Z / 2:.6g}" rpy="0 0 0"/>
-      <geometry><box size="0.09 0.11 {SHOULDER_Z:.6g}"/></geometry>
+      <origin xyz="0 0 0.25" rpy="0 0 0"/>
+      <geometry><box size="0.09 0.11 0.50"/></geometry>
       <material name="torso_grey"><color rgba="0.35 0.38 0.42 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 {SHOULDER_Z:.6g}" rpy="1.5708 0 0"/>
+      <origin xyz="0 0 0.50" rpy="1.5708 0 0"/>
       <geometry><cylinder radius="0.045" length="0.085"/></geometry>
       <material name="shoulder_grey"><color rgba="0.30 0.33 0.37 1"/></material>
     </visual>

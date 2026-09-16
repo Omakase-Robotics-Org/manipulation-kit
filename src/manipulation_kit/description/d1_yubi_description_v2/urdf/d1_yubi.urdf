@@ -7,12 +7,12 @@
   <link name="dual_base"/>
   <link name="torso_column">
     <visual>
-      <origin xyz="0 0 0.276915" rpy="0 0 0"/>
-      <geometry><box size="0.09 0.11 0.55383"/></geometry>
+      <origin xyz="0 0 0.25" rpy="0 0 0"/>
+      <geometry><box size="0.09 0.11 0.50"/></geometry>
       <material name="torso_grey"><color rgba="0.35 0.38 0.42 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.55383" rpy="1.5708 0 0"/>
+      <origin xyz="0 0 0.50" rpy="1.5708 0 0"/>
       <geometry><cylinder radius="0.045" length="0.085"/></geometry>
       <material name="shoulder_grey"><color rgba="0.30 0.33 0.37 1"/></material>
     </visual>
@@ -23,12 +23,12 @@
     <child link="torso_column"/>
   </joint>
   <joint name="mount_R" type="fixed">
-    <origin xyz="0 0.037 0.55383" rpy="-1.5708 0 0"/>
+    <origin xyz="0 0.037 0.50" rpy="-1.5708 0 0"/>
     <parent link="torso_column"/>
     <child link="Base_R"/>
   </joint>
   <joint name="mount_L" type="fixed">
-    <origin xyz="0 -0.037 0.55383" rpy="1.5708 0 0"/>
+    <origin xyz="0 -0.037 0.50" rpy="1.5708 0 0"/>
     <parent link="torso_column"/>
     <child link="Base_L"/>
   </joint>
