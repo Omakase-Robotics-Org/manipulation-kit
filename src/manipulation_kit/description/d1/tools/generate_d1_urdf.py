@@ -237,11 +237,28 @@ FINGER_BOX = {
 # it zero mass and an empty mesh, i.e. it is a pure frame at the end of the
 # chain, and FK confirms its +z points straight out along the arm.  The
 # gripper's `base_link` origin IS its mounting flange, so the mount translation
-# is ZERO — no adapter thickness is modelled, and the CAD's own 16.5 mm of
-# clearance before its shell begins covers the plate.  Cross-check that this is
-# the right frame: the registered tool config puts the TCP 136 mm along flange
-# +z, and this CAD puts the jaw tips at 143.5 mm, so 136 mm lands on the jaw
-# pad face.  (For comparison the YUBI jaw tips sit at 148.4 mm.)
+# is ZERO — no adapter thickness is modelled, and the flange stack (2 mm camera
+# plate + 7 mm spacer) lives inside the gap the CAD shell leaves.
+#
+# MEASURED TOOL GEOMETRY (d1-3, 2026-09-16, Shu, callipers).  Along the tool
+# axis outward from the Marvin arm flange face:
+#
+#      0 …   2 mm   camera mounting plate       (CAD drop said 8 mm)
+#      2 …   9 mm   spacer block                (was an ASSUMED 8 … 16.5 band)
+#      9 …  51 mm   gripper body
+#     51 …  71 mm   finger base plate
+#     71 … 129 mm   pads, 58 mm of graspable depth
+#                   pad CENTRE 100 mm (the jaw joints), pad TIP 129 mm
+#     maximum opening, pad face to pad face: 64 mm
+#
+# The registered tool config is the pad TIP, 129 mm.  Previously the jaw joints
+# sat at the CAD's 108.47 mm, the CAD jaw tips at 143.5 mm and the registered
+# TCP at 136 mm — the last carried over from d1-sdk defaultGripper() and
+# "confirmed" against the CAD, i.e. one CAD number checking another.  The
+# calliper supersedes all three.  (For comparison the YUBI jaw tips sit at
+# 148.4 mm, which is 19.4 mm past the measured gripper pad tip: the two end
+# effectors are NOT interchangeable at one TCP, which the CAD numbers made
+# them look like.)
 #
 # HANDEDNESS.  A parallel gripper is its own mirror image about the jaw-travel
 # axis, so unlike the YUBI hand there is no left/right part — but the two
@@ -260,16 +277,19 @@ GRIPPER_FLANGE = {
     "L": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
 }
 
-# Jaw joints, verbatim from the CAD URDF (`tcp_r_joint` / `tcp_l_joint`).
-# Both jaws hang off the same origin with the same axis and travel inward as
-# |q| grows: q = 0 is the 70 mm OPEN gap, |q| = 0.035 is CLOSED.  That is the
-# OPPOSITE polarity to the CAN 2.0 wire command, where 0.0 is closed.
+# Jaw joints.  Both jaws hang off the same origin with the same axis and travel
+# inward as |q| grows: q = 0 is the MEASURED 64 mm OPEN gap, |q| = 0.032 is
+# CLOSED.  That is the OPPOSITE polarity to the CAN 2.0 wire command, where 0.0
+# is closed.  Origin and limits are the measured pad centre and half-opening
+# (see MEASURED TOOL GEOMETRY above), not the CAD's 0.10847 / 0.035, and they
+# match `hands/d1/parallel_gripper/descriptions/gripper.urdf` — a test pins the
+# two together.
 # The vendor couples the second jaw with <mimic>; this file emits both as
 # independent joints, the same choice d1_yubi.urdf made and for the same
 # reason (Genesis, and several other loaders, ignore <mimic>).
-GRIPPER_JAW_ORIGIN = ((0.0, 0.0, 0.10847), (3.1416, -1.5708, 0.0))
+GRIPPER_JAW_ORIGIN = ((0.0, 0.0, 0.100), (3.1416, -1.5708, 0.0))
 GRIPPER_JAW_AXIS = (0.0, 0.0, -1.0)
-GRIPPER_JAW_LIMITS = {"r": (0.0, 0.035), "l": (-0.035, 0.0)}
+GRIPPER_JAW_LIMITS = {"r": (0.0, 0.032), "l": (-0.032, 0.0)}
 GRIPPER_JAW_EFFORT = 3.0
 # The CAD shipped velocity="0" (an export artefact that reads as an immovable
 # joint); dx-manipulator's vendoring replaced it with this permissive
@@ -280,46 +300,43 @@ GRIPPER_JAW_VELOCITY = 0.05
 # boxes rather than one AABB because a single one would be a 160 x 58 x 64 mm
 # slab, most of it air: the mesh splits into an actuator body and a wide jaw
 # guide rail sitting across the top of it.
+# The AXIAL bands are the 2026-09-16 calliper stack (see MEASURED TOOL
+# GEOMETRY above); the LATERAL footprints are unchanged CAD bounds, because
+# the whiteboard sketch gives no lateral numbers.  The spacer band that used
+# to be an ASSUMED 8 .. 16.5 mm is now the MEASURED 2 .. 9 mm block, so the
+# only thing still assumed about it is its footprint.
+#
+# The vendor body mesh has ZERO vertices below z = 16.5 mm, i.e. the CAD
+# leaves an empty 16.5 mm void where the measurement finds 9 mm of real
+# hardware; that 7.5 mm is the same direction and order as the 8.5 mm the CAD
+# was long at the pad centre.  The collision primitives follow the calliper,
+# the VISUAL mesh still follows the CAD, and the difference is recorded rather
+# than split.
 GRIPPER_BODY_BOXES = [
-    # ASSUMED, not from the CAD.  The vendor mesh has ZERO vertices below
-    # z = 16.5 mm: it starts at the gripper's own 57 mm mount plate and models
-    # nothing reaching back to the arm, so a 16.5 mm void sits between the
-    # D1 arm tool flange face (z = 0, where Link7's mesh ends exactly) and the
-    # first modelled gripper feature.  That void is real hardware, not a
-    # mounting error — the registered TCP of 136 mm and the YUBI jaw tips it
-    # replaces (148.4 mm vs this CAD's 143.5 mm) both confirm the gripper sits
-    # where it is; shifting it 16.5 mm flusher would put the TCP at ~119.5 mm
-    # and contradict the value validated on the robot.
-    #
-    # The first 8 mm of that gap is now REAL: the arm-end camera plate V2.0
-    # (GRIPPER_PLATE_BOXES / camera_plate.STL, on its own link).  What is
-    # still assumed is only the remaining z = 8 .. 16.5 mm — the gripper-end
-    # plate (夹爪端), separate hardware with no CAD drop yet.  The footprint
-    # is the CAD's own mount-plate square (57 x 57 mm), which BOUNDS the
-    # candidate shapes.  It carries no mass — the missing 1.17 kg is already
-    # on this link's inertial.
-    #
-    # REPLACE THIS with the vendor's gripper-end plate STL when it arrives;
-    # see description/d1/README.md for the exact part being requested.
-    ("gripper_adapter_ASSUMED", (-0.0285, -0.0285, 0.008), (0.0285, 0.0285, 0.0165),
-     "ASSUMED gripper-end plate spanning the camera plate (z=8mm) to the "
-     "CAD's mount plate (z=16.5mm); footprint bounds a round collar or a "
-     "square plate. The 2026-08-23 full-robot CAD models neither this band "
-     "in the plate part nor in the claw part — a caliper on the physical "
-     "spacer (or the vendor gripper CAD) replaces it"),
-    ("gripper_body", (-0.0285, -0.0285, 0.0165), (0.0285, 0.0285, 0.0725),
-     "actuator body + mount plate + jaw carriage (CAD components >= 3.6 cm3)"),
-    ("gripper_rails", (-0.0800, -0.0288, 0.0615), (0.0800, 0.0288, 0.0800),
-     "jaw guide rail bar spanning the full 160 mm of jaw travel"),
+    ("gripper_spacer", (-0.0285, -0.0285, 0.002), (0.0285, 0.0285, 0.009),
+     "MEASURED 7 mm spacer block between the camera plate and the gripper "
+     "body (d1-3, Shu, callipers, 2026-09-16); footprint is still the CAD's "
+     "own mount-plate square, which bounds a round collar or a square plate"),
+    ("gripper_body", (-0.0285, -0.0285, 0.009), (0.0285, 0.0285, 0.051),
+     "MEASURED 42 mm actuator body: motor, gearbox, leadscrew, mount plate"),
+    ("gripper_rails", (-0.0800, -0.0288, 0.051), (0.0800, 0.0288, 0.071),
+     "MEASURED 20 mm finger base plate — the jaw carriage and the guide rail "
+     "bar spanning the full 160 mm of jaw travel"),
 ]
-#: The assumed-adapter box, so the render shows the part rather than a hole.
-#: Drawn in a distinct colour precisely because it is NOT vendor geometry.
-GRIPPER_ADAPTER_VISUAL = ((-0.0285, -0.0285, 0.008), (0.0285, 0.0285, 0.0165))
-GRIPPER_ADAPTER_COLOUR = ("gripper_adapter_assumed", "0.55 0.42 0.16 1")
-# Jaw AABBs from tcp_{r,l}_Link.STL, each in its own link frame.
+#: The spacer box, so the render shows the part rather than a hole.  Drawn in
+#: a distinct colour because its FOOTPRINT is still a bound, not a shape.
+GRIPPER_ADAPTER_VISUAL = ((-0.0285, -0.0285, 0.002), (0.0285, 0.0285, 0.009))
+GRIPPER_ADAPTER_COLOUR = ("gripper_spacer", "0.55 0.42 0.16 1")
+# Jaw boxes = the MEASURED pads, each in its own link frame.  The link's local
+# +x is the base +z (joint rpy pi, -pi/2, 0) and its local z is the travel
+# axis, so along +x the box spans the pad depth about the joint origin
+# (-29 .. +29 mm = base z 71 .. 129 mm) and along z it starts at the
+# half-opening (32 mm) and is 40 mm thick.  The CAD jaw MESH is longer than
+# this — it reaches base z 135 mm at the joint's measured origin — which is
+# the mesh residual recorded in descriptions/README.md.
 GRIPPER_JAW_BOX = {
-    "r": ((-0.03297, -0.019, 0.035), (0.03503, 0.019, 0.075)),
-    "l": ((-0.03297, -0.019, -0.075), (0.03503, 0.019, -0.035)),
+    "r": ((-0.029, -0.019, 0.032), (0.029, 0.019, 0.072)),
+    "l": ((-0.029, -0.019, -0.072), (0.029, 0.019, -0.032)),
 }
 # MASS.  Shu weighed the gripper at the robot 2026-07-29: 1.5 kg per side,
 # confirming the value this SDK has always registered (defaultGripper()).  The
@@ -338,7 +355,7 @@ GRIPPER_JAW_BOX = {
 GRIPPER_TOTAL_MASS = 1.5            # measured
 GRIPPER_JAW_MASS = 0.0415744003      # CAD, kept verbatim
 GRIPPER_BODY_MASS = 1.4168511994     # 1.5 - 2 jaws, exact
-GRIPPER_BODY_COM = (0.0, 0.0, 0.0661547)   # solved -> assembly COM z = 68 mm
+GRIPPER_BODY_COM = (0.0, 0.0, 0.0666518)   # solved -> assembly COM z = 68 mm
 GRIPPER_BODY_INERTIA = (0.000344766, 1.21239e-06, 9.16011e-07,
                         0.000863569, 3.29511e-08, 0.00108376)
 # Jaw inertia (Ixx, Ixy, Ixz, Iyy, Iyz, Izz) and COM, CAD verbatim, in the jaw
@@ -380,9 +397,9 @@ GRIPPER_COLOUR = {"base": ("gripper_housing", "0.180392 0.180392 0.180392 1"),
 # dx-manipulator hands/d1/parallel_gripper by its tools/vendoring/vendor_camera_plate.py
 # and copied byte-identical into meshes/gripper/ like the rest).
 #
-# This is the first REAL geometry inside the 16.5 mm flange gap: an 8 mm
-# aluminium disc (diam 72 mm, 12-hole diam-24.9 bolt circle) whose CAD origin
-# IS the flange centre, so it mounts on the gripper base frame at IDENTITY —
+# This is the first REAL geometry inside the 16.5 mm flange gap: an aluminium
+# disc (diam 72 mm, 12-hole diam-24.9 bolt circle) whose CAD origin IS the
+# flange centre, so it mounts on the gripper base frame at IDENTITY —
 # and its arm rises along the gripper's +y ("up" on both arms, exactly the
 # axis GRIPPER_FLANGE already normalises) to hold the wide-angle UVC wrist
 # camera 79 mm up, its mount face pitched 15 deg toward the fingers.
@@ -412,13 +429,19 @@ GRIPPER_PLATE_INERTIA = (1.6509e-04, -1.4487e-07, -3.0461e-09,
 # CAD of 2026-08-23 (Reo): the flange disc lost its +y tab, and the camera
 # arm became a discrete 33 mm riser — the new camera position.
 GRIPPER_PLATE_BOXES = [
-    ("camera_plate_disc", (-0.036, -0.036, 0.0), (0.036, 0.036, 0.008),
-     "arm-end plate V2.0: 8 mm flange disc, the first 8 mm of the 16.5 mm gap"),
+    ("camera_plate_disc", (-0.036, -0.036, 0.0), (0.036, 0.036, 0.002),
+     "arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the "
+     "flange stack (d1-3, Shu, callipers, 2026-09-16). The CAD drop and the "
+     "committed camera_plate.STL both model an 8 mm disc; only the primitive "
+     "follows the calliper, because replacing a mesh needs a CAD drop"),
     ("camera_plate_arm", (-0.021, 0.049, 0.0), (0.021, 0.0999, 0.033),
      "camera-mount riser up the gripper's +y — 33 mm tall in the 2026-08-23 CAD"),
 ]
 #: Camera MOUNT-face centre (the plate's 4-hole pattern) in the gripper base
-#: frame, and the face tilt toward the fingers.  RE-VERIFIED against the
+#: frame, and the face tilt toward the fingers.  UNCHANGED by the 2026-09-16
+#: measurement: the sketch gives no lateral and no camera numbers, and the
+#: mount face is held by the plate's 33 mm riser, not by the disc thickness
+#: that did change.  RE-VERIFIED against the
 #: 2026-08-23 full-robot CAD: the new plate's 4-hole mount face sits at
 #: (0, 0.07894, 0.01446) with the same 15 deg tilt — 0.3 mm from these
 #: values, so they stand.  The 33 mm riser is structure AROUND the camera
@@ -1303,8 +1326,13 @@ def parallel_gripper(side, meshes=False, cameras=False):
     p = f"gripper_{side}"
     up = "+y up on both arms; _R takes the half turn" if side == "R" else "+y already up"
     s = (f"\n  <!-- D1 stock parallel gripper on arm {side} — vendor CAD via\n"
-         f"       dx-manipulator hands/d1/parallel_gripper. base_link IS the tool\n"
-         f"       flange, so the mount is TCP_Link with no translation ({up}).\n"
+         f"       hands/d1/parallel_gripper, with the tool geometry MEASURED on\n"
+         f"       d1-3 2026-09-16 (Shu, callipers): pad root 71 mm, pad CENTRE\n"
+         f"       100 mm (the jaw joints), pad TIP 129 mm (the registered TCP),\n"
+         f"       58 mm pads, 64 mm maximum opening. The previous 108.5 mm\n"
+         f"       centre and 136 mm TCP came from vendor CAD and a d1-sdk\n"
+         f"       default carried over with it. base_link IS the tool flange, so\n"
+         f"       the mount is TCP_Link with no translation ({up}).\n"
          f"       Mass 1.5 kg MEASURED (Shu 2026-07-29); the CAD's own 0.3279 kg\n"
          f"       was a shell-only export. Per-link split is an estimate, the\n"
          f"       total and the assembly COM (68 mm) are not. -->\n")
@@ -1350,7 +1378,8 @@ def parallel_gripper(side, meshes=False, cameras=False):
                               "CAD inertial, verbatim (41.6 g, 5.5% of the tool)")
               + (mesh_visual(GRIPPER_MESH[jaw], "jaw") if meshes else "")
               + box_elem(f"{p}_tcp_{jaw}_jaw", blo, bhi,
-                         f"AABB of the CAD tcp_{jaw}_Link mesh; q=0 is OPEN")
+                         f"MEASURED pad on tcp_{jaw}_Link: 58 mm deep, root at 71 mm, "
+                         f"tip at 129 mm from the flange; q=0 is the 64 mm OPEN gap")
               + "  </link>\n")
     return s + gripper_camera_plate(side, meshes, cameras)
 
@@ -1371,11 +1400,12 @@ def gripper_camera_plate(side, meshes=False, cameras=False):
     generation time rather than transcribed.
     """
     p = f"gripper_{side}"
-    s = (f"\n  <!-- Arm-end camera plate V2.0 on gripper {side} — the first REAL\n"
-         f"       geometry in the 16.5 mm flange gap (its remaining 8.5 mm is the\n"
-         f"       still-ASSUMED gripper-end plate).  105 g at aluminium book\n"
-         f"       density, tensor exact from the mesh.  See the GRIPPER\n"
-         f"       WRIST-CAMERA PLATE block in the generator. -->\n")
+    s = (f"\n  <!-- Arm-end camera plate V2.0 on gripper {side} — the first 2 mm\n"
+         f"       of the flange stack, MEASURED on d1-3 2026-09-16 (the CAD drop\n"
+         f"       and the committed mesh both model an 8 mm disc; the collision\n"
+         f"       primitive follows the calliper, the visual mesh does not).\n"
+         f"       105 g at aluminium book density, tensor exact from the mesh.\n"
+         f"       See the GRIPPER WRIST-CAMERA PLATE block in the generator. -->\n")
     s += (f"  <joint name=\"{p}_camera_plate_joint\" type=\"fixed\">\n"
           f"    <origin xyz=\"0 0 0\" rpy=\"0 0 0\"/>\n"
           f"    <parent link=\"{p}_base_link\"/>\n"

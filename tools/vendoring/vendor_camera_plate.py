@@ -80,7 +80,8 @@ SOURCE_SHA256 = "3d2ba4b71da48057b21ed86cf8cee6574ce8aa4a8d979ee7aaaf36ac00caea6
 # --------------------------------------------------------------------------
 CAM_TILT_RAD = math.radians(15.0)
 CAM_MOUNT_XYZ_M = (0.0, 0.079236, 0.014543)
-PLATE_THICKNESS_M = 0.008          # the disc; the arm rises to z = 18.6 mm
+PLATE_THICKNESS_M = 0.002          # MEASURED (d1-3, Shu, callipers, 2026-09-16)
+CAD_PLATE_THICKNESS_M = 0.008      # what the V2.0 mesh models; the arm rises to z = 18.6 mm
 
 #: The gripper-end plate (夹爪端) that fills the REMAINING 8.5 mm of the
 #: vendor CAD's 16.5 mm flange gap is separate hardware with no CAD drop yet;
@@ -201,9 +202,12 @@ HEADER_NOTE = """
        tools/vendoring/vendor_camera_plate.py; do not hand
        edit, re-run the script. Provenance: descriptions/README.md.
 
-       The plate (arm-end connection plate V2.0) fills the first 8 mm of the
-       16.5 mm flange gap the vendor gripper CAD leaves empty; the remaining
-       8.5 mm is the gripper-end plate, separate hardware not yet modelled.
+       The plate (arm-end connection plate V2.0) is the first 2 mm of the
+       flange stack: Shu measured it at 2 mm with callipers on d1-3
+       (2026-09-16), against the 8 mm of the CAD drop. Behind it sits a 7 mm
+       spacer block, also measured, which is why the gripper body starts
+       at 9 mm. The plate MESH here still models the CAD's 8 mm disc; only a
+       new CAD drop replaces a mesh, so the residual is recorded, not hidden.
        The camera arm extends along +Y; PER-ARM CLOCKING (which way +Y points
        on the robot) is robot composition and is NOT encoded here: on the D1
        the camera sits on top of the wrist on both arms, so the physical LEFT

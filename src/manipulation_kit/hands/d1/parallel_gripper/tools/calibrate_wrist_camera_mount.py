@@ -64,15 +64,17 @@ import numpy as np
 #: a bare robot python with no package install (importing the package pulls
 #: in the CAN driver chain). tests/test_calibrate_wrist_camera_mount.py
 #: asserts these against the package, so they cannot drift.
-JAW_STROKE_M = 0.035
-JAW_TIP_Z_M = 0.14350
+#: All three MEASURED on d1-3 2026-09-16 (Shu, callipers); they were
+#: 0.035 / 0.14350 / 0.090 from the vendor CAD before that.
+JAW_STROKE_M = 0.032
+JAW_TIP_Z_M = 0.129
 
 #: Claw body half-width across the jaw gap's transverse axis (base_link y),
 #: measured off the vendored tcp mesh AABB (+/-0.019 in the jaw link frame).
 CLAW_HALF_WIDTH_M = 0.019
-#: Claw pad root, along +Z from the flange — the near end of the pad face
-#: (the registered TCP neighbourhood; tips are JAW_TIP_Z_M).
-PAD_ROOT_Z_M = 0.090
+#: Claw pad root, along +Z from the flange — the near end of the 58 mm pad
+#: face (tips are JAW_TIP_Z_M, and the registered TCP is the tip).
+PAD_ROOT_Z_M = 0.071
 
 #: Nominal camera mount in base_link — MUST match description.py /
 #: vendor_camera_plate.py. The OPTICAL frame is this mount rotated so

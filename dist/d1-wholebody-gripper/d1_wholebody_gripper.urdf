@@ -602,7 +602,7 @@
   <link name="gripper_R_base_link">
     
     <inertial>
-      <origin xyz="0 0 0.0661547" rpy="0 0 0" />
+      <origin xyz="0 0 0.0666518" rpy="0 0 0" />
       <mass value="1.4168512" />
       <inertia ixx="0.000344766" ixy="1.21239e-06" ixz="9.16011e-07" iyy="0.000863569" iyz="3.29511e-08" izz="0.00108376" />
     </inertial>
@@ -612,32 +612,32 @@
       <material name="gripper_housing"><color rgba="0.180392 0.180392 0.180392 1" /></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.01225" rpy="0 0 0" />
-      <geometry><box size="0.057 0.057 0.0085" /></geometry>
-      <material name="gripper_adapter_assumed"><color rgba="0.55 0.42 0.16 1" /></material>
+      <origin xyz="0 0 0.0055" rpy="0 0 0" />
+      <geometry><box size="0.057 0.057 0.007" /></geometry>
+      <material name="gripper_spacer"><color rgba="0.55 0.42 0.16 1" /></material>
     </visual>
     
-    <collision name="gripper_R_gripper_adapter_ASSUMED">
-      <origin xyz="0 0 0.01225" rpy="0 0 0" />
-      <geometry><box size="0.057 0.057 0.0085" /></geometry>
+    <collision name="gripper_R_gripper_spacer">
+      <origin xyz="0 0 0.0055" rpy="0 0 0" />
+      <geometry><box size="0.057 0.057 0.007" /></geometry>
     </collision>
     
     <collision name="gripper_R_gripper_body">
-      <origin xyz="0 0 0.0445" rpy="0 0 0" />
-      <geometry><box size="0.057 0.057 0.056" /></geometry>
+      <origin xyz="0 0 0.03" rpy="0 0 0" />
+      <geometry><box size="0.057 0.057 0.042" /></geometry>
     </collision>
     
     <collision name="gripper_R_gripper_rails">
-      <origin xyz="0 0 0.07075" rpy="0 0 0" />
-      <geometry><box size="0.16 0.0576 0.0185" /></geometry>
+      <origin xyz="0 0 0.061" rpy="0 0 0" />
+      <geometry><box size="0.16 0.0576 0.02" /></geometry>
     </collision>
   </link>
   <joint name="gripper_R_tcp_r_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0" />
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0" />
     <parent link="gripper_R_base_link" />
     <child link="gripper_R_tcp_r_link" />
     <axis xyz="0 0 -1" />
-    <limit lower="0" upper="0.035" effort="3" velocity="0.05" />
+    <limit lower="0" upper="0.032" effort="3" velocity="0.05" />
   </joint>
   <link name="gripper_R_tcp_r_link">
     
@@ -653,16 +653,16 @@
     </visual>
     
     <collision name="gripper_R_tcp_r_jaw">
-      <origin xyz="0.00103 0 0.055" rpy="0 0 0" />
-      <geometry><box size="0.068 0.038 0.04" /></geometry>
+      <origin xyz="0 0 0.052" rpy="0 0 0" />
+      <geometry><box size="0.058 0.038 0.04" /></geometry>
     </collision>
   </link>
   <joint name="gripper_R_tcp_l_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0" />
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0" />
     <parent link="gripper_R_base_link" />
     <child link="gripper_R_tcp_l_link" />
     <axis xyz="0 0 -1" />
-    <limit lower="-0.035" upper="0" effort="3" velocity="0.05" />
+    <limit lower="-0.032" upper="0" effort="3" velocity="0.05" />
   </joint>
   <link name="gripper_R_tcp_l_link">
     
@@ -678,8 +678,8 @@
     </visual>
     
     <collision name="gripper_R_tcp_l_jaw">
-      <origin xyz="0.00103 0 -0.055" rpy="0 0 0" />
-      <geometry><box size="0.068 0.038 0.04" /></geometry>
+      <origin xyz="0 0 -0.052" rpy="0 0 0" />
+      <geometry><box size="0.058 0.038 0.04" /></geometry>
     </collision>
   </link>
 
@@ -703,8 +703,8 @@
     </visual>
     
     <collision name="gripper_R_camera_plate_disc">
-      <origin xyz="0 0 0.004" rpy="0 0 0" />
-      <geometry><box size="0.072 0.072 0.008" /></geometry>
+      <origin xyz="0 0 0.001" rpy="0 0 0" />
+      <geometry><box size="0.072 0.072 0.002" /></geometry>
     </collision>
     
     <collision name="gripper_R_camera_plate_arm">
@@ -1014,7 +1014,7 @@
   <link name="gripper_L_base_link">
     
     <inertial>
-      <origin xyz="0 0 0.0661547" rpy="0 0 0" />
+      <origin xyz="0 0 0.0666518" rpy="0 0 0" />
       <mass value="1.4168512" />
       <inertia ixx="0.000344766" ixy="1.21239e-06" ixz="9.16011e-07" iyy="0.000863569" iyz="3.29511e-08" izz="0.00108376" />
     </inertial>
@@ -1024,32 +1024,32 @@
       <material name="gripper_housing"><color rgba="0.180392 0.180392 0.180392 1" /></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.01225" rpy="0 0 0" />
-      <geometry><box size="0.057 0.057 0.0085" /></geometry>
-      <material name="gripper_adapter_assumed"><color rgba="0.55 0.42 0.16 1" /></material>
+      <origin xyz="0 0 0.0055" rpy="0 0 0" />
+      <geometry><box size="0.057 0.057 0.007" /></geometry>
+      <material name="gripper_spacer"><color rgba="0.55 0.42 0.16 1" /></material>
     </visual>
     
-    <collision name="gripper_L_gripper_adapter_ASSUMED">
-      <origin xyz="0 0 0.01225" rpy="0 0 0" />
-      <geometry><box size="0.057 0.057 0.0085" /></geometry>
+    <collision name="gripper_L_gripper_spacer">
+      <origin xyz="0 0 0.0055" rpy="0 0 0" />
+      <geometry><box size="0.057 0.057 0.007" /></geometry>
     </collision>
     
     <collision name="gripper_L_gripper_body">
-      <origin xyz="0 0 0.0445" rpy="0 0 0" />
-      <geometry><box size="0.057 0.057 0.056" /></geometry>
+      <origin xyz="0 0 0.03" rpy="0 0 0" />
+      <geometry><box size="0.057 0.057 0.042" /></geometry>
     </collision>
     
     <collision name="gripper_L_gripper_rails">
-      <origin xyz="0 0 0.07075" rpy="0 0 0" />
-      <geometry><box size="0.16 0.0576 0.0185" /></geometry>
+      <origin xyz="0 0 0.061" rpy="0 0 0" />
+      <geometry><box size="0.16 0.0576 0.02" /></geometry>
     </collision>
   </link>
   <joint name="gripper_L_tcp_r_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0" />
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0" />
     <parent link="gripper_L_base_link" />
     <child link="gripper_L_tcp_r_link" />
     <axis xyz="0 0 -1" />
-    <limit lower="0" upper="0.035" effort="3" velocity="0.05" />
+    <limit lower="0" upper="0.032" effort="3" velocity="0.05" />
   </joint>
   <link name="gripper_L_tcp_r_link">
     
@@ -1065,16 +1065,16 @@
     </visual>
     
     <collision name="gripper_L_tcp_r_jaw">
-      <origin xyz="0.00103 0 0.055" rpy="0 0 0" />
-      <geometry><box size="0.068 0.038 0.04" /></geometry>
+      <origin xyz="0 0 0.052" rpy="0 0 0" />
+      <geometry><box size="0.058 0.038 0.04" /></geometry>
     </collision>
   </link>
   <joint name="gripper_L_tcp_l_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0" />
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0" />
     <parent link="gripper_L_base_link" />
     <child link="gripper_L_tcp_l_link" />
     <axis xyz="0 0 -1" />
-    <limit lower="-0.035" upper="0" effort="3" velocity="0.05" />
+    <limit lower="-0.032" upper="0" effort="3" velocity="0.05" />
   </joint>
   <link name="gripper_L_tcp_l_link">
     
@@ -1090,8 +1090,8 @@
     </visual>
     
     <collision name="gripper_L_tcp_l_jaw">
-      <origin xyz="0.00103 0 -0.055" rpy="0 0 0" />
-      <geometry><box size="0.068 0.038 0.04" /></geometry>
+      <origin xyz="0 0 -0.052" rpy="0 0 0" />
+      <geometry><box size="0.058 0.038 0.04" /></geometry>
     </collision>
   </link>
 
@@ -1115,8 +1115,8 @@
     </visual>
     
     <collision name="gripper_L_camera_plate_disc">
-      <origin xyz="0 0 0.004" rpy="0 0 0" />
-      <geometry><box size="0.072 0.072 0.008" /></geometry>
+      <origin xyz="0 0 0.001" rpy="0 0 0" />
+      <geometry><box size="0.072 0.072 0.002" /></geometry>
     </collision>
     
     <collision name="gripper_L_camera_plate_arm">

@@ -136,39 +136,61 @@ which shows up as a visible gap between the arm and the gripper in any render.
 The frames are **not** wrong. `gripper_<S>_base_link`'s origin sits at 0.00 mm
 from the flange frame on both arms, and the 16.5 mm is real hardware:
 
-| | |
+**MEASURED, 2026-09-16** (Shu, d1-3, callipers), along the tool axis outward
+from the Marvin arm flange face — this supersedes every CAD figure below:
+
+| band | measured |
 |---|---|
-| registered TCP (validated on the robot) | 136.0 mm |
-| this CAD's jaw tips | 143.5 mm — TCP lands 7.5 mm inside, on the pad face |
-| the YUBI jaw tips it replaces | 148.4 mm — agrees to 4.9 mm |
+| camera mounting plate | 0 … 2 mm |
+| spacer block | 2 … 9 mm |
+| gripper body | 9 … 51 mm |
+| finger base plate | 51 … 71 mm |
+| pads (graspable depth 58 mm) | 71 … 129 mm |
+| pad centre — where the jaw joints hang | 100.0 mm |
+| pad tip — the registered TCP | 129.0 mm |
+| maximum opening, pad face to pad face | 64 mm |
 
-Bolting it 16.5 mm flusher would put the tips at 127 mm and require a ~119.5 mm
-TCP, contradicting the registered value by 16.5 mm and YUBI by 21.4 mm. So the
-gap is a missing *part*, not a mounting error — the same defect as the mass
-(a shell-only export), showing up visually instead of numerically.
+| superseded | was | measured | error |
+|---|---|---|---|
+| registered TCP | 136.0 mm | 129.0 mm | +7.0 mm |
+| jaw joint origin (pad centre) | 108.47 mm | 100.0 mm | +8.5 mm |
+| CAD jaw tips | 143.5 mm | 129.0 mm | +14.5 mm |
+| jaw opening | 70 mm | 64 mm | +6 mm |
+| camera plate thickness | 8 mm | 2 mm | +6 mm |
 
-This is also **not new**: the YUBI hand leaves an 11.0 mm gap in the same place
-(its palm box starts at 11.0 mm). The gripper's is 5.5 mm wider.
+The 136 mm was carried over from `d1-sdk`'s hardcoded `defaultGripper()` and
+"validated" against the CAD's own 143.5 mm jaw tips and the YUBI jaw tips at
+148.4 mm — three numbers, none of them a calliper on this gripper. With the
+pads measured, the gripper tip is **19.4 mm shorter** than the YUBI tips: the
+two end effectors are NOT interchangeable at one tool config, which the CAD
+numbers made them look like.
 
-Until the gripper-end plate arrives, its z = 8 … 16.5 mm band is filled with
-`gripper_<S>_gripper_adapter_ASSUMED`, a 57 × 57 × 8.5 mm box whose footprint
-**bounds** both candidate shapes (a round collar of any diameter up to 57 mm, or
-a square plate). It carries no mass — the missing 1.17 kg is already on the
-link's inertial. Left as a void this band was a real hole: a volume the motion
-guard could not see (the arm capsules are only 30 mm in radius, while the
-mount-plate corners reach 40.3 mm). Camera plate + assumed box together tile
-the axis from the flange face outward with no gap, pinned by
+The measured stack also puts only **9 mm** of hardware in front of the flange
+where the CAD mesh leaves a 16.5 mm void, so the CAD void is 7.5 mm too deep —
+the same direction and order as its 8.5 mm-long pad centre. The band is now
+filled by the 2 mm camera plate plus `gripper_<S>_gripper_spacer`, a
+57 × 57 × 7 mm box whose thickness is measured and whose footprint still
+**bounds** the candidate shapes (a round collar up to 57 mm, or a square
+plate). It carries no mass — the missing 1.17 kg is already on the link's
+inertial. Left as a void this band was a real hole: a volume the motion guard
+could not see (the arm capsules are only 30 mm in radius, while the
+mount-plate corners reach 40.3 mm). Camera plate + spacer together tile the
+axis from the flange face outward with no gap, pinned by
 `test_no_unmodelled_void_between_the_flange_and_the_gripper`.
+
+Two residuals are NOT resolved by the sketch and are deliberately visible:
+the jaw MESHES still reach 6 mm past the measured pad tip, and
+`camera_plate.STL` still models an 8 mm disc. Meshes are vendor CAD; only a
+new CAD drop replaces one. Constants, joint origins and collision primitives
+follow the calliper, so planning is right and rendering is ~6 mm generous.
 
 ### The gripper, and what is still unknown about it
 
 `TCP_Link_<S>` is the arm's tool flange (the vendor D1 arm URDF gives it zero
 mass and an empty mesh — a pure frame), and the gripper's `base_link` origin
 IS its own mounting flange, so the mount transform is a **pure rotation, zero
-translation**. Cross-check: the registered tool config puts the TCP 136 mm
-along flange +z, this CAD puts the jaw tips at 143.5 mm, and the YUBI jaw tips
-the same arm used to carry sit at 148.4 mm — the two hands agree to 4.9 mm
-along the approach axis, which is why one 136 mm tool config covers both.
+translation**. The registered tool config puts the TCP on the MEASURED pad tip,
+129 mm along flange +z.
 
 Handedness: `TCP_Link_R` has +y DOWN and `TCP_Link_L` has +y UP, so mounting
 the same part identically on both flanges would put it upside down on one arm.
@@ -176,8 +198,9 @@ the same part identically on both flanges would put it upside down on one arm.
 which lands the gripper's +y up and the jaws travelling fore/aft on both.
 (`_R` is the vendor unit on the PHYSICAL LEFT arm.) Tested, not assumed.
 
-Jaw polarity: `q = 0` is the fully **OPEN** 70 mm gap and `|q| = 0.035` is
-**CLOSED** — the opposite of the CAN 2.0 wire command, where 0.0 is closed.
+Jaw polarity: `q = 0` is the fully **OPEN** 64 mm gap (measured) and
+`|q| = 0.032` is **CLOSED** — the opposite of the CAN 2.0 wire command, where
+0.0 is closed.
 
 Not modelled, and it matters if you use this file as a keep-out volume:
 

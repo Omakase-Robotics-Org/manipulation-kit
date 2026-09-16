@@ -11,6 +11,31 @@ composition and belongs to the robot repo, not here).
 
 ``xml.etree`` is in the standard library, so unlike ``dh116s.description``
 this loader needs no optional third-party package.
+
+MEASURED TOOL GEOMETRY (d1-3, 2026-09-16, Shu, callipers)
+---------------------------------------------------------
+Everything along the tool axis below is now a CALLIPER MEASUREMENT taken on
+the assembled robot, not the vendor CAD. Measured from the Marvin arm flange
+face outward, the stack is::
+
+    0 …   2 mm   camera mounting plate       (CAD said 8 mm)
+    2 …   9 mm   spacer block                (was an ASSUMED 8 … 16.5 mm band)
+    9 …  51 mm   gripper body
+   51 …  71 mm   finger base plate
+   71 … 129 mm   pads — the graspable depth, 58 mm
+                 pad CENTRE 100 mm, pad TIP 129 mm
+   max opening, pad face to pad face: 64 mm
+
+The previous 108.5 mm jaw centre, 143.5 mm jaw tip, 136 mm registered TCP and
+70 mm opening came from the vendor CAD export (and, for the 136 mm, from
+``d1-sdk``'s hardcoded default carried over with it). The CAD is 8.5 mm long
+at the jaw centre and 14.5 mm long at the tip; the measurement wins.
+
+Residuals the sketch does NOT resolve, kept visible rather than smoothed
+over: the vendored ``tcp_{r,l}_Link.STL`` jaw meshes are ~10 mm longer than
+the measured 58 mm pads, and ``camera_plate.STL`` still models an 8 mm disc.
+The constants and the primitive collision boxes follow the measurement; the
+meshes are vendor CAD and are only replaced by a new CAD drop.
 """
 from __future__ import annotations
 
@@ -22,45 +47,70 @@ from . import description_path
 
 #: Jaw travel of ONE finger, metres. ``tcp_r_joint`` spans ``[0, STROKE]``
 #: and ``tcp_l_joint`` mimics it with multiplier -1 over ``[-STROKE, 0]``.
-JAW_STROKE_M = 0.035
+#: MEASURED: the pad faces are 64 mm apart wide open and meet closed, so one
+#: finger travels half of that (d1-3, 2026-09-16, callipers). The vendor CAD
+#: claimed 35 mm per finger / a 70 mm gap.
+JAW_STROKE_M = 0.032
 
 #: Gap between the jaw faces at ``q = 0``. Both jaws close inward as ``|q|``
 #: grows, so ``q = 0`` is OPEN and ``|q| = JAW_STROKE_M`` is CLOSED — the
 #: opposite polarity to the CAN 2.0 position command, where 0.0 is closed.
+#: MEASURED pad-to-pad maximum opening: 64 mm.
 JAW_OPEN_GAP_M = 2 * JAW_STROKE_M
 
-#: The gap the DRIVEN gripper actually reaches. The mechanism travels
-#: ~1.55 rad (= the CAD's 70 mm above), but the driver's commanded ceiling
-#: is OPEN_RAD = 1.16 rad, and d1-3 measures 51.96 mm there (2026-08-24) —
-#: the linear map is ~44.8 mm/rad, so both numbers are right and the gap
-#: between them is UNUSED TRAVEL, not a modelling error. Planning and sim
-#: must use THIS opening, not JAW_OPEN_GAP_M: a 48 mm tape leaves 11 mm of
-#: clearance per side on paper and 2 mm in reality. Raising OPEN_RAD would
-#: recover margin, but 1.16 was field-tuned on d1-2 — a hardware decision,
-#: not one for this file.
+#: The gap the DRIVEN gripper actually reaches: d1-3 measures 51.96 mm at the
+#: driver's commanded ceiling OPEN_RAD = 1.16 rad (2026-08-24), against the
+#: 64 mm the mechanism reaches wide open (2026-09-16). The difference is
+#: UNUSED TRAVEL, not a modelling error. Planning and sim must use THIS
+#: opening, not JAW_OPEN_GAP_M: a 48 mm tape leaves 8 mm of clearance per
+#: side on paper and 2 mm in reality. Raising OPEN_RAD would recover margin,
+#: but 1.16 was field-tuned on d1-2 — a hardware decision, not one for this
+#: file.
+#:
+#: UNRESOLVED, and left visible on purpose: the rad->mm map implied by these
+#: two points is 44.8 mm/rad through zero, which would put the 64 mm stop at
+#: 1.43 rad rather than the ~1.55 rad of mechanism travel the CAD implied. So
+#: either the travel is shorter than the CAD said or the map is not linear
+#: through zero. Both endpoint GAPS are measured; the map between them is
+#: not, and nothing here depends on it.
 DRIVEN_OPEN_GAP_M = 0.05196
 #: The jaw joint value at the driven-open stop: q = (JAW_OPEN_GAP_M -
 #: DRIVEN_OPEN_GAP_M) / 2 per finger. Sim "fully open" is this, not 0.
 DRIVEN_OPEN_Q = (JAW_OPEN_GAP_M - DRIVEN_OPEN_GAP_M) / 2.0
 
-#: Distance from the mounting flange (``base_link`` origin) to the jaw tips,
-#: along the gripper's +Z approach axis. The REGISTERED TCP is 136 mm (see
-#: :mod:`~manipulation_kit.hands.d1.parallel_gripper.toolconfig`), 7.5 mm short of the
-#: tips, i.e. on the pad face rather than the extreme corner.
-JAW_TIP_Z_M = 0.14350
+#: Distance from the mounting flange (``base_link`` origin) to the PAD ROOT,
+#: PAD CENTRE and PAD TIP along the gripper's +Z approach axis, and the
+#: graspable pad depth between the first two. MEASURED on d1-3 2026-09-16 by
+#: Shu with callipers; the previous 108.5 mm centre / 143.5 mm tip came from
+#: the vendor CAD export. The jaw links hang off PAD_CENTRE_Z_M and the
+#: REGISTERED TCP is PAD_TIP_Z_M (see
+#: :mod:`~manipulation_kit.hands.d1.parallel_gripper.toolconfig`).
+PAD_ROOT_Z_M = 0.071
+PAD_CENTRE_Z_M = 0.100
+PAD_DEPTH_M = 0.058
+PAD_TIP_Z_M = PAD_ROOT_Z_M + PAD_DEPTH_M      # 0.129
+
+#: Backwards-compatible name for the pad tip — the number consumers place a
+#: TCP against. MEASURED 129 mm (was the CAD's 143.5 mm).
+JAW_TIP_Z_M = PAD_TIP_Z_M
 
 #: The arm-end connection plate (V2.0, 2026-08-21) that carries the
-#: wide-angle UVC wrist camera. It fills the first 8 mm of the 16.5 mm
-#: flange gap the vendor gripper CAD leaves empty; its camera arm extends
-#: along ``base_link`` +Y. See ``tools/vendoring/vendor_camera_plate.py`` for the
-#: derivation of every number and ``descriptions/README.md`` for provenance.
-CAMERA_PLATE_THICKNESS_M = 0.008
+#: wide-angle UVC wrist camera; its camera arm extends along ``base_link``
+#: +Y. MEASURED at 2 mm on d1-3 2026-09-16 (callipers), not the 8 mm of the
+#: CAD drop this file used to quote: the plate is the first 2 mm of the
+#: flange stack and the spacer block behind it accounts for the next 7 mm.
+#: ``descriptions/camera_plate.STL`` still models an 8 mm disc — that mesh is
+#: vendor CAD and only a new drop replaces it. See ``descriptions/README.md``.
+CAMERA_PLATE_THICKNESS_M = 0.002
 
 #: Camera MOUNT-face frame in ``base_link``: origin at the centre of the
 #: plate's 4-hole camera pattern, local +Z the face normal (15 deg from the
 #: flange +Z toward -Y, i.e. toward the fingers), local +Y up the arm. The
 #: ROS optical frame is this rotated pi about local Z (fingers at the image
-#: bottom, as the real wrist streams show).
+#: bottom, as the real wrist streams show). UNCHANGED by the 2026-09-16
+#: measurement: the sketch gives no lateral numbers and no camera numbers,
+#: and the mount face is held by the plate's 33 mm riser, not by the disc
+#: thickness that did change.
 CAMERA_MOUNT_XYZ_M = (0.0, 0.079236, 0.014543)
 CAMERA_TILT_RAD = 0.2617993877991494  # 15 deg
 

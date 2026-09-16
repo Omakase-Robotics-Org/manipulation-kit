@@ -624,8 +624,13 @@
   </joint>
 
   <!-- D1 stock parallel gripper on arm R — vendor CAD via
-       dx-manipulator hands/d1/parallel_gripper. base_link IS the tool
-       flange, so the mount is TCP_Link with no translation (+y up on both arms; _R takes the half turn).
+       hands/d1/parallel_gripper, with the tool geometry MEASURED on
+       d1-3 2026-09-16 (Shu, callipers): pad root 71 mm, pad CENTRE
+       100 mm (the jaw joints), pad TIP 129 mm (the registered TCP),
+       58 mm pads, 64 mm maximum opening. The previous 108.5 mm
+       centre and 136 mm TCP came from vendor CAD and a d1-sdk
+       default carried over with it. base_link IS the tool flange, so
+       the mount is TCP_Link with no translation (+y up on both arms; _R takes the half turn).
        Mass 1.5 kg MEASURED (Shu 2026-07-29); the CAD's own 0.3279 kg
        was a shell-only export. Per-link split is an estimate, the
        total and the assembly COM (68 mm) are not. -->
@@ -637,7 +642,7 @@
   <link name="gripper_R_base_link">
     <!-- measured 1.5 kg assembly minus the two CAD jaws; COM solved so the assembly COM is the validated 68 mm; tensor = CAD tensor x mass ratio (ESTIMATE) -->
     <inertial>
-      <origin xyz="0 0 0.0661547" rpy="0 0 0"/>
+      <origin xyz="0 0 0.0666518" rpy="0 0 0"/>
       <mass value="1.4168512"/>
       <inertia ixx="0.000344766" ixy="1.21239e-06" ixz="9.16011e-07" iyy="0.000863569" iyz="3.29511e-08" izz="0.00108376"/>
     </inertial>
@@ -647,32 +652,32 @@
       <material name="gripper_housing"><color rgba="0.180392 0.180392 0.180392 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.01225" rpy="0 0 0"/>
-      <geometry><box size="0.057 0.057 0.0085"/></geometry>
-      <material name="gripper_adapter_assumed"><color rgba="0.55 0.42 0.16 1"/></material>
+      <origin xyz="0 0 0.0055" rpy="0 0 0"/>
+      <geometry><box size="0.057 0.057 0.007"/></geometry>
+      <material name="gripper_spacer"><color rgba="0.55 0.42 0.16 1"/></material>
     </visual>
-    <!-- ASSUMED gripper-end plate spanning the camera plate (z=8mm) to the CAD's mount plate (z=16.5mm); footprint bounds a round collar or a square plate. The 2026-08-23 full-robot CAD models neither this band in the plate part nor in the claw part — a caliper on the physical spacer (or the vendor gripper CAD) replaces it -->
-    <collision name="gripper_R_gripper_adapter_ASSUMED">
-      <origin xyz="0 0 0.01225" rpy="0 0 0"/>
-      <geometry><box size="0.057 0.057 0.0085"/></geometry>
+    <!-- MEASURED 7 mm spacer block between the camera plate and the gripper body (d1-3, Shu, callipers, 2026-09-16); footprint is still the CAD's own mount-plate square, which bounds a round collar or a square plate -->
+    <collision name="gripper_R_gripper_spacer">
+      <origin xyz="0 0 0.0055" rpy="0 0 0"/>
+      <geometry><box size="0.057 0.057 0.007"/></geometry>
     </collision>
-    <!-- actuator body + mount plate + jaw carriage (CAD components >= 3.6 cm3) -->
+    <!-- MEASURED 42 mm actuator body: motor, gearbox, leadscrew, mount plate -->
     <collision name="gripper_R_gripper_body">
-      <origin xyz="0 0 0.0445" rpy="0 0 0"/>
-      <geometry><box size="0.057 0.057 0.056"/></geometry>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry><box size="0.057 0.057 0.042"/></geometry>
     </collision>
-    <!-- jaw guide rail bar spanning the full 160 mm of jaw travel -->
+    <!-- MEASURED 20 mm finger base plate — the jaw carriage and the guide rail bar spanning the full 160 mm of jaw travel -->
     <collision name="gripper_R_gripper_rails">
-      <origin xyz="0 0 0.07075" rpy="0 0 0"/>
-      <geometry><box size="0.16 0.0576 0.0185"/></geometry>
+      <origin xyz="0 0 0.061" rpy="0 0 0"/>
+      <geometry><box size="0.16 0.0576 0.02"/></geometry>
     </collision>
   </link>
   <joint name="gripper_R_tcp_r_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0"/>
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0"/>
     <parent link="gripper_R_base_link"/>
     <child link="gripper_R_tcp_r_link"/>
     <axis xyz="0 0 -1"/>
-    <limit lower="0" upper="0.035" effort="3" velocity="0.05"/>
+    <limit lower="0" upper="0.032" effort="3" velocity="0.05"/>
   </joint>
   <link name="gripper_R_tcp_r_link">
     <!-- CAD inertial, verbatim (41.6 g, 5.5% of the tool) -->
@@ -686,18 +691,18 @@
       <geometry><mesh filename="meshes/gripper/tcp_r_Link.STL"/></geometry>
       <material name="gripper_jaw"><color rgba="0 0.501961 0.250980 1"/></material>
     </visual>
-    <!-- AABB of the CAD tcp_r_Link mesh; q=0 is OPEN -->
+    <!-- MEASURED pad on tcp_r_Link: 58 mm deep, root at 71 mm, tip at 129 mm from the flange; q=0 is the 64 mm OPEN gap -->
     <collision name="gripper_R_tcp_r_jaw">
-      <origin xyz="0.00103 0 0.055" rpy="0 0 0"/>
-      <geometry><box size="0.068 0.038 0.04"/></geometry>
+      <origin xyz="0 0 0.052" rpy="0 0 0"/>
+      <geometry><box size="0.058 0.038 0.04"/></geometry>
     </collision>
   </link>
   <joint name="gripper_R_tcp_l_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0"/>
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0"/>
     <parent link="gripper_R_base_link"/>
     <child link="gripper_R_tcp_l_link"/>
     <axis xyz="0 0 -1"/>
-    <limit lower="-0.035" upper="0" effort="3" velocity="0.05"/>
+    <limit lower="-0.032" upper="0" effort="3" velocity="0.05"/>
   </joint>
   <link name="gripper_R_tcp_l_link">
     <!-- CAD inertial, verbatim (41.6 g, 5.5% of the tool) -->
@@ -711,18 +716,19 @@
       <geometry><mesh filename="meshes/gripper/tcp_l_Link.STL"/></geometry>
       <material name="gripper_jaw"><color rgba="0 0.501961 0.250980 1"/></material>
     </visual>
-    <!-- AABB of the CAD tcp_l_Link mesh; q=0 is OPEN -->
+    <!-- MEASURED pad on tcp_l_Link: 58 mm deep, root at 71 mm, tip at 129 mm from the flange; q=0 is the 64 mm OPEN gap -->
     <collision name="gripper_R_tcp_l_jaw">
-      <origin xyz="0.00103 0 -0.055" rpy="0 0 0"/>
-      <geometry><box size="0.068 0.038 0.04"/></geometry>
+      <origin xyz="0 0 -0.052" rpy="0 0 0"/>
+      <geometry><box size="0.058 0.038 0.04"/></geometry>
     </collision>
   </link>
 
-  <!-- Arm-end camera plate V2.0 on gripper R — the first REAL
-       geometry in the 16.5 mm flange gap (its remaining 8.5 mm is the
-       still-ASSUMED gripper-end plate).  105 g at aluminium book
-       density, tensor exact from the mesh.  See the GRIPPER
-       WRIST-CAMERA PLATE block in the generator. -->
+  <!-- Arm-end camera plate V2.0 on gripper R — the first 2 mm
+       of the flange stack, MEASURED on d1-3 2026-09-16 (the CAD drop
+       and the committed mesh both model an 8 mm disc; the collision
+       primitive follows the calliper, the visual mesh does not).
+       105 g at aluminium book density, tensor exact from the mesh.
+       See the GRIPPER WRIST-CAMERA PLATE block in the generator. -->
   <joint name="gripper_R_camera_plate_joint" type="fixed">
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <parent link="gripper_R_base_link"/>
@@ -740,10 +746,10 @@
       <geometry><mesh filename="meshes/gripper/camera_plate_full.STL"/></geometry>
       <material name="gripper_camera_plate"><color rgba="0.75 0.75 0.78 1"/></material>
     </visual>
-    <!-- arm-end plate V2.0: 8 mm flange disc, the first 8 mm of the 16.5 mm gap -->
+    <!-- arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the flange stack (d1-3, Shu, callipers, 2026-09-16). The CAD drop and the committed camera_plate.STL both model an 8 mm disc; only the primitive follows the calliper, because replacing a mesh needs a CAD drop -->
     <collision name="gripper_R_camera_plate_disc">
-      <origin xyz="0 0 0.004" rpy="0 0 0"/>
-      <geometry><box size="0.072 0.072 0.008"/></geometry>
+      <origin xyz="0 0 0.001" rpy="0 0 0"/>
+      <geometry><box size="0.072 0.072 0.002"/></geometry>
     </collision>
     <!-- camera-mount riser up the gripper's +y — 33 mm tall in the 2026-08-23 CAD -->
     <collision name="gripper_R_camera_plate_arm">
@@ -1055,8 +1061,13 @@
   </joint>
 
   <!-- D1 stock parallel gripper on arm L — vendor CAD via
-       dx-manipulator hands/d1/parallel_gripper. base_link IS the tool
-       flange, so the mount is TCP_Link with no translation (+y already up).
+       hands/d1/parallel_gripper, with the tool geometry MEASURED on
+       d1-3 2026-09-16 (Shu, callipers): pad root 71 mm, pad CENTRE
+       100 mm (the jaw joints), pad TIP 129 mm (the registered TCP),
+       58 mm pads, 64 mm maximum opening. The previous 108.5 mm
+       centre and 136 mm TCP came from vendor CAD and a d1-sdk
+       default carried over with it. base_link IS the tool flange, so
+       the mount is TCP_Link with no translation (+y already up).
        Mass 1.5 kg MEASURED (Shu 2026-07-29); the CAD's own 0.3279 kg
        was a shell-only export. Per-link split is an estimate, the
        total and the assembly COM (68 mm) are not. -->
@@ -1068,7 +1079,7 @@
   <link name="gripper_L_base_link">
     <!-- measured 1.5 kg assembly minus the two CAD jaws; COM solved so the assembly COM is the validated 68 mm; tensor = CAD tensor x mass ratio (ESTIMATE) -->
     <inertial>
-      <origin xyz="0 0 0.0661547" rpy="0 0 0"/>
+      <origin xyz="0 0 0.0666518" rpy="0 0 0"/>
       <mass value="1.4168512"/>
       <inertia ixx="0.000344766" ixy="1.21239e-06" ixz="9.16011e-07" iyy="0.000863569" iyz="3.29511e-08" izz="0.00108376"/>
     </inertial>
@@ -1078,32 +1089,32 @@
       <material name="gripper_housing"><color rgba="0.180392 0.180392 0.180392 1"/></material>
     </visual>
     <visual>
-      <origin xyz="0 0 0.01225" rpy="0 0 0"/>
-      <geometry><box size="0.057 0.057 0.0085"/></geometry>
-      <material name="gripper_adapter_assumed"><color rgba="0.55 0.42 0.16 1"/></material>
+      <origin xyz="0 0 0.0055" rpy="0 0 0"/>
+      <geometry><box size="0.057 0.057 0.007"/></geometry>
+      <material name="gripper_spacer"><color rgba="0.55 0.42 0.16 1"/></material>
     </visual>
-    <!-- ASSUMED gripper-end plate spanning the camera plate (z=8mm) to the CAD's mount plate (z=16.5mm); footprint bounds a round collar or a square plate. The 2026-08-23 full-robot CAD models neither this band in the plate part nor in the claw part — a caliper on the physical spacer (or the vendor gripper CAD) replaces it -->
-    <collision name="gripper_L_gripper_adapter_ASSUMED">
-      <origin xyz="0 0 0.01225" rpy="0 0 0"/>
-      <geometry><box size="0.057 0.057 0.0085"/></geometry>
+    <!-- MEASURED 7 mm spacer block between the camera plate and the gripper body (d1-3, Shu, callipers, 2026-09-16); footprint is still the CAD's own mount-plate square, which bounds a round collar or a square plate -->
+    <collision name="gripper_L_gripper_spacer">
+      <origin xyz="0 0 0.0055" rpy="0 0 0"/>
+      <geometry><box size="0.057 0.057 0.007"/></geometry>
     </collision>
-    <!-- actuator body + mount plate + jaw carriage (CAD components >= 3.6 cm3) -->
+    <!-- MEASURED 42 mm actuator body: motor, gearbox, leadscrew, mount plate -->
     <collision name="gripper_L_gripper_body">
-      <origin xyz="0 0 0.0445" rpy="0 0 0"/>
-      <geometry><box size="0.057 0.057 0.056"/></geometry>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry><box size="0.057 0.057 0.042"/></geometry>
     </collision>
-    <!-- jaw guide rail bar spanning the full 160 mm of jaw travel -->
+    <!-- MEASURED 20 mm finger base plate — the jaw carriage and the guide rail bar spanning the full 160 mm of jaw travel -->
     <collision name="gripper_L_gripper_rails">
-      <origin xyz="0 0 0.07075" rpy="0 0 0"/>
-      <geometry><box size="0.16 0.0576 0.0185"/></geometry>
+      <origin xyz="0 0 0.061" rpy="0 0 0"/>
+      <geometry><box size="0.16 0.0576 0.02"/></geometry>
     </collision>
   </link>
   <joint name="gripper_L_tcp_r_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0"/>
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0"/>
     <parent link="gripper_L_base_link"/>
     <child link="gripper_L_tcp_r_link"/>
     <axis xyz="0 0 -1"/>
-    <limit lower="0" upper="0.035" effort="3" velocity="0.05"/>
+    <limit lower="0" upper="0.032" effort="3" velocity="0.05"/>
   </joint>
   <link name="gripper_L_tcp_r_link">
     <!-- CAD inertial, verbatim (41.6 g, 5.5% of the tool) -->
@@ -1117,18 +1128,18 @@
       <geometry><mesh filename="meshes/gripper/tcp_r_Link.STL"/></geometry>
       <material name="gripper_jaw"><color rgba="0 0.501961 0.250980 1"/></material>
     </visual>
-    <!-- AABB of the CAD tcp_r_Link mesh; q=0 is OPEN -->
+    <!-- MEASURED pad on tcp_r_Link: 58 mm deep, root at 71 mm, tip at 129 mm from the flange; q=0 is the 64 mm OPEN gap -->
     <collision name="gripper_L_tcp_r_jaw">
-      <origin xyz="0.00103 0 0.055" rpy="0 0 0"/>
-      <geometry><box size="0.068 0.038 0.04"/></geometry>
+      <origin xyz="0 0 0.052" rpy="0 0 0"/>
+      <geometry><box size="0.058 0.038 0.04"/></geometry>
     </collision>
   </link>
   <joint name="gripper_L_tcp_l_joint" type="prismatic">
-    <origin xyz="0 0 0.10847" rpy="3.1416 -1.5708 0"/>
+    <origin xyz="0 0 0.1" rpy="3.1416 -1.5708 0"/>
     <parent link="gripper_L_base_link"/>
     <child link="gripper_L_tcp_l_link"/>
     <axis xyz="0 0 -1"/>
-    <limit lower="-0.035" upper="0" effort="3" velocity="0.05"/>
+    <limit lower="-0.032" upper="0" effort="3" velocity="0.05"/>
   </joint>
   <link name="gripper_L_tcp_l_link">
     <!-- CAD inertial, verbatim (41.6 g, 5.5% of the tool) -->
@@ -1142,18 +1153,19 @@
       <geometry><mesh filename="meshes/gripper/tcp_l_Link.STL"/></geometry>
       <material name="gripper_jaw"><color rgba="0 0.501961 0.250980 1"/></material>
     </visual>
-    <!-- AABB of the CAD tcp_l_Link mesh; q=0 is OPEN -->
+    <!-- MEASURED pad on tcp_l_Link: 58 mm deep, root at 71 mm, tip at 129 mm from the flange; q=0 is the 64 mm OPEN gap -->
     <collision name="gripper_L_tcp_l_jaw">
-      <origin xyz="0.00103 0 -0.055" rpy="0 0 0"/>
-      <geometry><box size="0.068 0.038 0.04"/></geometry>
+      <origin xyz="0 0 -0.052" rpy="0 0 0"/>
+      <geometry><box size="0.058 0.038 0.04"/></geometry>
     </collision>
   </link>
 
-  <!-- Arm-end camera plate V2.0 on gripper L — the first REAL
-       geometry in the 16.5 mm flange gap (its remaining 8.5 mm is the
-       still-ASSUMED gripper-end plate).  105 g at aluminium book
-       density, tensor exact from the mesh.  See the GRIPPER
-       WRIST-CAMERA PLATE block in the generator. -->
+  <!-- Arm-end camera plate V2.0 on gripper L — the first 2 mm
+       of the flange stack, MEASURED on d1-3 2026-09-16 (the CAD drop
+       and the committed mesh both model an 8 mm disc; the collision
+       primitive follows the calliper, the visual mesh does not).
+       105 g at aluminium book density, tensor exact from the mesh.
+       See the GRIPPER WRIST-CAMERA PLATE block in the generator. -->
   <joint name="gripper_L_camera_plate_joint" type="fixed">
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <parent link="gripper_L_base_link"/>
@@ -1171,10 +1183,10 @@
       <geometry><mesh filename="meshes/gripper/camera_plate_full.STL"/></geometry>
       <material name="gripper_camera_plate"><color rgba="0.75 0.75 0.78 1"/></material>
     </visual>
-    <!-- arm-end plate V2.0: 8 mm flange disc, the first 8 mm of the 16.5 mm gap -->
+    <!-- arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the flange stack (d1-3, Shu, callipers, 2026-09-16). The CAD drop and the committed camera_plate.STL both model an 8 mm disc; only the primitive follows the calliper, because replacing a mesh needs a CAD drop -->
     <collision name="gripper_L_camera_plate_disc">
-      <origin xyz="0 0 0.004" rpy="0 0 0"/>
-      <geometry><box size="0.072 0.072 0.008"/></geometry>
+      <origin xyz="0 0 0.001" rpy="0 0 0"/>
+      <geometry><box size="0.072 0.072 0.002"/></geometry>
     </collision>
     <!-- camera-mount riser up the gripper's +y — 33 mm tall in the 2026-08-23 CAD -->
     <collision name="gripper_L_camera_plate_arm">
