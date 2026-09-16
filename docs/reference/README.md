@@ -17,3 +17,13 @@ this copy on 2026-09-10, along with every other occurrence in the repository
 (Shu, CTO: the public kit does not name the arm vendor). Only comment prose
 changed — every number, type and function here is still the header's, which is
 what `test_safety_zones_export.py` reads.
+
+**The 2026-09-16 height correction did not touch this header, and could not.**
+The built robot's AMR cover is 29 mm taller than the CAD, so the URDFs moved
+`dual_base` from 0.484 m to 0.513 m above the floor (see **The AMR cover
+offset** in `docs/d1-description-README.md`). Every number `safety_zones.h`
+authors — the arm chain, the capsule radii, the torso keep-out box — is
+expressed in the torso / shoulder frame, and that frame moved rigidly, so a
+validator built from these numbers accepts and rejects exactly what it did
+before. The arm mounts here are still at `z = 0.50` and the torso keep-out
+still spans `z = 0…0.49`, which is still what the URDFs emit.

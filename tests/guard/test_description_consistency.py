@@ -441,12 +441,19 @@ def test_mirror_pose_wrist_180_tcp_and_hand_exact_mirror(model, qR):
 
 # ------------------------------------------------ wholebody vendor anchors
 def test_wholebody_fk_uses_calibrated_lift_mount():
-    """Preserve vendor relative anchors with the published-height zero correction."""
+    """Preserve vendor relative anchors on the measured lift zero.
+
+    Floor-referenced heights at q = 0, i.e. the CAD anchors (0.984 / 1.105 /
+    1.1605) plus the measured AMR_COVER_HEIGHT_OFFSET of 29 mm — the offset
+    is the only thing between the CAD chain and the built robot, and it is
+    applied once, at the lift joint origin.  See
+    tests/test_lift_origin_amr_cover_offset.py.
+    """
     wb = UrdfModel(D1_WB)
     tfs = wb.link_transforms({})
-    assert _close(tfs["Base_R"].t, (0.0, 0.037, .984), 1e-5)
-    assert _close(tfs["neck_pan_link"].t, (0.0016171, 0.0, 1.105), 1e-5)
-    assert _close(tfs["head_link"].t, (0.0016171, 0.0285, 1.1605), 1e-5)
+    assert _close(tfs["Base_R"].t, (0.0, 0.037, 1.013), 1e-5)
+    assert _close(tfs["neck_pan_link"].t, (0.0016171, 0.0, 1.134), 1e-5)
+    assert _close(tfs["head_link"].t, (0.0016171, 0.0285, 1.1895), 1e-5)
 
 
 # ------------------------------------- d1_wholebody_gripper: the stock gripper

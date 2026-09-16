@@ -46,6 +46,12 @@ sync.  (This used to name d1-manip-sim assets/d1_dual/d1_dual.urdf;
 that file was deleted when d1-manip-sim stopped keeping a private copy of the
 D1 geometry and started vendoring this directory's export instead.)
 
+`dual_base` itself sits 0.513 m above the floor at q_lift = 0, not the CAD
+chain's 0.484 m: the built robot's AMR cover is 29 mm taller than the CAD,
+and everything above it is carried up by that one offset.  See the AMR COVER
+HEIGHT OFFSET block.  Nothing INSIDE this frame moved, so every consumer that
+works shoulder-relative (the guard, safety_zones.json, IK) is unaffected.
+
 PROVENANCE OF NUMBERS
 ---------------------
 * Arm kinematics (joint origins / axes / limits): byte-derived from the
@@ -78,6 +84,12 @@ PROVENANCE OF NUMBERS
   2026-07-23 from "…装配URDF去双目的.SLDASM"; Drive: D1/URDF/
   urdf2026072302.zip).  See VENDOR BODY block below for each number and
   how it was derived.
+* AMR cover height offset (+29 mm at the lift joint origin, i.e. the only
+  height in this file that is NOT from CAD): MEASURED with a tape on the
+  physical d1-3 (Shu, 2026-09-16, lift at 0, ±2 mm) — the built robot's AMR
+  cover is taller than the CAD models it and lifts the whole upper body.
+  See the AMR COVER HEIGHT OFFSET block for the four floor-referenced frames
+  it was fitted to and their residuals.
 * D1 stock parallel gripper (mount, jaw joints, boxes, masses): the vendor
   CAD in dx-manipulator `hands/d1/parallel_gripper/descriptions/`, received
   2026-07-29.  See the GRIPPER block below.
@@ -487,10 +499,51 @@ GROUND_TO_BASE_LINK = 0.27047       # wheel axle 0.18517 + wheel radius 0.0853
 BASE_LINK_TO_SLIDER = 0.28831       # vendor sliderjoint origin, lift = 0
 DUAL_BASE_IN_SLIDER = (-0.0016171, 0.0, -0.032)   # from the arm-mount match
 
-# dual_base above the floor with the lift fully retracted.
-# Calibrated against the published 1.293–1.593 m height range and refined
-# neutral head geometry (head top is 0.809 m above dual_base).
-DUAL_BASE_GROUND_Z = 0.484
+# --------------------------------------------------------------------------
+# AMR COVER HEIGHT OFFSET — why the whole upper body starts 29 mm higher than
+# the CAD chain says it does.
+#
+# The vendor chain above (wheel axle + radius + sliderjoint origin + the
+# arm-mount match) puts dual_base 0.484 m above the floor at q_lift = 0.  The
+# BUILT robot's AMR cover is taller than the CAD models it, and everything
+# above the cover — column, torso, both arms, neck, head — is simply carried
+# up by that difference.  Nothing inside the upper body changes shape.
+#
+# MEASUREMENT (Shu, 2026-09-16, tape on the physical d1-3, lift at 0,
+# floor-referenced, ±2 mm).  The robot stands 1322 mm to the top of its head
+# where the spec says 1293 mm, and the 29 mm appears at the top of the AMR:
+#
+#   frame (floor-referenced, mm)      URDF (main)   measured   URDF + 29
+#   torso body bottom                      660          700         689
+#   torso top                             1080.6       1120        1109.6
+#   head RealSense (head_camera_link)     1233.7       1266        1262.7
+#   head top                              1293         1322        1322
+#
+# i.e. residuals of -11, -10, -3, 0 mm — flat across a 660 mm span, which is
+# what a single offset at the base looks like.  (The rejected alternative, a
+# +53.83 mm extension of the moving column, gives 714 / 1134 / 1287 / 1347:
+# +14…+27 mm too high, and rising with height, because it was fitted to one
+# gripper-clearance reading rather than to the body.)
+#
+# WHERE IT IS APPLIED.  At the lift joint origin, which is where the hardware
+# has it: base_footprint -> dual_base.  Every number in the dual_base frame
+# below — mounts at 0.50, neck_pan at 0.621, the torso boxes, the torso
+# cameras — stays exactly as the CAD measured it, and so does the 0…0.300 m
+# lift travel.  Consequently NOTHING that is expressed relative to the
+# shoulders changes: the guard's keep-outs, safety_zones.json, the frozen
+# safety_zones.h and every IK result are bit-for-bit what they were.
+#
+# The chassis boxes stay authored floor-relative (CHASSIS_BOXES below) and are
+# NOT re-measured here: they model the CAD cover, whose top sits at 0.4987 m
+# — above the 0.460 m deck the tape found — so they remain conservative
+# keep-out volumes, which is all they are used for.
+AMR_COVER_HEIGHT_OFFSET = 0.029
+
+# dual_base above the floor with the lift fully retracted, i.e. the rail's
+# own zero.  CAD chain 0.484 m plus the measured AMR cover offset above.
+# (The published 1.293–1.593 m height range is the CAD one and is stale: with
+# the offset the head top sweeps 1.322–1.622 m, which is what the tape reads.)
+DUAL_BASE_GROUND_Z = 0.484 + AMR_COVER_HEIGHT_OFFSET
 
 # Vendor sliderjoint: axis +z, 0 … 0.300 m, effort 80 N, 0.03 m/s.  The
 # 0.300 stroke independently confirms the spec sheet (整机高度 1293–1593 mm).
@@ -1485,9 +1538,12 @@ END_EFFECTORS = {
 # Whole-body variant (d1_wholebody.urdf): mobile base + lift as JOINTS.
 #
 # Lift travel comes straight from the vendor body URDF (see VENDOR BODY):
-# q_lift = 0 is the retracted rail with calibrated dual_base 0.484 m above
-# the floor. Refined neutral head top sweeps 1.293–1.593 m, matching the
-# published specification. No command offset is added.
+# q_lift = 0 is the retracted rail, with dual_base 0.513 m above the floor —
+# the CAD chain's 0.484 m plus the MEASURED AMR_COVER_HEIGHT_OFFSET (see the
+# AMR COVER HEIGHT OFFSET block). Neutral head top therefore sweeps
+# 1.322–1.622 m, which is what the tape reads on the built robot; the
+# published 1.293–1.593 m is the CAD figure and is stale. The TRAVEL is
+# untouched and no command offset is added: the rail still reports 0…0.300 m.
 #
 # Base: planar x/y/yaw joints under a ground-level `world` root. The REAL
 # chassis is a differential 2-wheel drive (nonholonomic — no lateral slide);
