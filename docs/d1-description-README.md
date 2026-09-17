@@ -315,7 +315,13 @@ no rotation is needed anywhere downstream.
   shallow axis. `head_camera_link` sits at the centre of that +x face, **solved
   from the mesh at generation time**, so a vendor mesh revision moves the frame
   with it. That puts it 1.2627 m above the floor with the lift retracted —
-  3 mm under the 1.266 m the tape read on d1-3 (2026-09-16).
+  3 mm under the 1.266 m the tape read on d1-3 (2026-09-16). The *tilt* cannot
+  come from that mesh — an axis-aligned bar's AABB carries no rotation — so it
+  is the **design value from the head-part CAD section**: the D435 mounting
+  face is 15° below horizontal, aiming the field of view down at the
+  workspace (Shu, 2026-09-17). That supersedes the 17.25° previously read off
+  the D435 slab normal (0.955, 0.005, −0.297) in the 2026-08-23 full-robot
+  CAD.
 - *Wrists (YUBI).* The YUBI camera housing is a 35 × 32 × 42 mm box centred at
   (−0.0175, 0, 0) — it extends *backwards* along −x, so the link origin plane
   already is the lens face — and the fingers reach +x (tips at x = +0.109). The
@@ -330,7 +336,7 @@ no rotation is needed anywhere downstream.
   against the head camera's view of the physical bracket.
 
 **What is still uncalibrated.** These are *nominal* frames from vendor
-geometry. Two things are genuinely unknown and a consumer must not read them as
+geometry. Three things are genuinely unknown and a consumer must not read them as
 a calibrated extrinsic:
 
 1. the **lens position within the housing**. The head housing is a 90 mm
@@ -344,13 +350,23 @@ a calibrated extrinsic:
    already known to need a 180° rotation on the real head-camera stream
    somewhere. Do not trust image-space left/right from these frames until they
    are checked against a real frame.
+3. the **pitch on a particular robot**. 15° is what the part is designed to;
+   the ArUco calibration on d1-3 (`d1-inference`
+   `calibrate_head_aruco.py`, session `d1-3-tokyo-20260916`, neck sweep) reads
+   the optical axis 12.2–12.8° below `head_link` forward with −1.3…−1.9° of
+   lateral yaw. The ~2.5° gap is the neck-tilt zero and gravity sag, not the
+   mount. A consumer that needs the real extrinsic reads the per-robot
+   `cameras_<robot>.json` (an absolute `head_link` → camera transform); this
+   nominal exists to seed those calibration sweeps and to render an
+   uncalibrated robot.
 
 **A consequence worth knowing before you use the head camera.** At the parked
-neck pose it looks straight ahead and **level**. A tabletop 0.36 m in front of
-the robot at 0.885 m is then ~48° below the optical axis, i.e. outside the
-frame. That is a fact about the robot: seeing a close work surface is what
-`neck_tilt` is for. A sim that teleports the camera downwards instead of
-tilting the neck is modelling a robot that does not exist.
+neck pose it looks straight ahead, pitched **15° below horizontal** — and that
+is not enough to see the near workspace. A tabletop 0.36 m in front of the
+robot at 0.885 m sits ~48° below horizontal, so it is still ~33° below the
+optical axis, i.e. outside the frame. That is a fact about the robot: seeing a
+close work surface is what `neck_tilt` is for. A sim that teleports the camera
+downwards instead of tilting the neck is modelling a robot that does not exist.
 
 Four tests pin all of this (`test_description_consistency.py`):
 `test_camera_frames_exist_only_where_they_should`,

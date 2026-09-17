@@ -220,14 +220,18 @@
        (+z out of the lens, +x image right, +y image down) so a
        renderer mounted there needs no extra rotation. At the
        parked neck pose it looks straight ahead pitched
-       17.3 deg BELOW horizontal — the mount tilt measured
-       off the D435 slab in the 2026-08-23 full-robot CAD, which
-       the axis-aligned housing mesh cannot carry. A close
+       15.0 deg BELOW horizontal — the design mount tilt
+       from the head-part CAD section (2026-09-17), which the
+       axis-aligned housing mesh cannot carry. That is a DESIGN
+       value, not a calibrated one: the d1-3 ArUco calibration
+       reads 12.2-12.8 deg below head_link forward, and a
+       consumer that needs the real extrinsic reads the
+       per-robot cameras_*.json calibration instead. A close
        tabletop still needs neck_tilt on top of this.
        See the CAMERAS block in the generator and
        description/d1/README.md. -->
   <joint name="head_camera_mount" type="fixed">
-    <origin xyz="0.0966561 -0.0732024 -0.0282995" rpy="0 0 0.301131"/>
+    <origin xyz="0.0966561 -0.0732024 -0.0282995" rpy="0 0 0.261799"/>
     <parent link="head_link"/>
     <child link="head_camera_link"/>
   </joint>
