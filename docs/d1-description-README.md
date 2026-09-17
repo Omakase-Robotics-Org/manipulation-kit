@@ -117,11 +117,13 @@ bit-for-bit unaffected; only the robot's height above the floor changed.
 
 The one thing that did move with the torso is decorative: the moving lift
 sleeve is a visual cover authored in the torso frame, so it rose 29 mm off the
-chassis mast boot. It was extended downward to torso-local Z -275…195 mm
-(height 470 mm) so that it stays inserted across the whole stroke — lower lip
-at world Z 238 mm at lift 0, still 13.3 mm below the 551.3 mm boot top at lift
-300 — with no collision or inertial geometry involved. See
-`docs/ROBOT_BACK_VISUALS.md`.
+chassis mast boot and was extended 29 mm downward to stay over it — height
+116 → 145 mm, torso-local Z 50…195 mm, lower lip back at world Z 563 mm with
+11.7 mm of clearance over the boot; no collision or inertial geometry involved.
+A longer, full-stroke variant (Z −275…195 mm, 470 mm) that kept the lip
+permanently inside the AMR shell was tried on 2026-09-16 and rejected by Shu
+the next day as a visual regression — it hides the telescoping motion — so do
+not lengthen the sleeve again. See `docs/ROBOT_BACK_VISUALS.md`.
 
 **Measured** by Shu with a tape on d1-3, 2026-09-16, at `lift = 0`,
 floor-referenced, ±2 mm. `132.2 cm` where the spec says `129.3 cm`, and the
