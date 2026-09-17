@@ -112,8 +112,43 @@ upper-body mounting height, not arm lengths, relative joint axes, or stroke.
 The previous Isaac command offset of +20 mm must not be applied.
 
 The annotated September 10 photo places the moving sleeve lower edge 95 mm
-above the chassis roof at zero, and 295 mm above it at +200 mm. The moving
-sleeve therefore spans torso-local Z 79–195 mm. Its static counterpart spans
-world Z 480–883 mm and remains overlapped throughout the stroke. Neutral-head
-height and sleeve zero are measured from the resulting geometry in Isaac tests.
-The preserved blue rear mast boot is about 84 mm above the chassis roof.
+above the chassis roof at zero, and 295 mm above it at +200 mm. Its static
+counterpart spans world Z 480–883 mm and remains overlapped throughout the
+stroke. Neutral-head height and sleeve zero are measured from the resulting
+geometry in Isaac tests. The preserved blue rear mast boot is about 84 mm
+above the chassis roof.
+
+
+## Full-stroke sleeve insertion (2026-09-16)
+
+The moving sleeve is authored in the torso frame, so moving the lift origin
+moves it too. When the measured AMR cover height moved `base_footprint ->
+dual_base` from 0.484 m to 0.513 m (see **The AMR cover offset** in
+`docs/d1-description-README.md`), the sleeve's 79 mm bottom rose with the
+torso and floated 40.7 mm above the chassis mast boot at lift 0, with a 9 mm
+see-through gap over the static column at lift 300.
+
+Sizing the sleeve to clear the boot at lift 0 is not enough: a cover that only
+just reaches the boot when retracted lifts clear of it as soon as the stroke
+moves, and Shu still read a ~1 cm gap between the AMR top and the sleeve bottom
+at lift 0. A real telescoping outer tube stays swallowed by the body over the
+whole stroke, so the sleeve is long enough that its lower lip is never exposed:
+
+| | value |
+|---|---|
+| torso-local Z span | **-275 … 195 mm** (height 470 mm) |
+| lower lip, lift 0 | world Z **238 mm** — inside the opaque AMR shell |
+| lower lip, lift 300 | world Z **538 mm** — 13.3 mm below the 551.3 mm boot top |
+| static-column overlap | 308 mm at lift 0, 345 mm at lift 300 (column Z 400–883 mm) |
+
+At low lift the extra length sits inside the AMR shell, whose X/Y envelope over
+Z 238–550 mm is 279 × 243 mm against the sleeve's 122 × 162 mm, so the
+interpenetration (2682 chassis vertices at lift 0) never shows. The navy mast
+boot ring itself (Z 438–470 mm) is 114 × 145 mm, slightly narrower than the
+sleeve, so the sleeve passes outside it like an outer tube and hides it at low
+lift.
+
+This is a visual cover only: no joint, limit, inertial or collision primitive
+changes, and the guard is unaffected. The authoring constant is the
+`Moving lift sleeve` box in `tools/vendoring/refine_back_and_lift.py`; the
+shipped OBJ carries the same edit in `manipulation-kit-assets` PR #5.
