@@ -8,7 +8,7 @@
   },
   "flavour": "d1_collision",
   "mesh_prefix": "",
-  "source_commit": "356bb61e8208cdb5193522b82a798434184ce29c",
+  "source_commit": "e70ccb80d0f1da3dd760a3f5f2a46c32f49f4bf5",
   "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",
