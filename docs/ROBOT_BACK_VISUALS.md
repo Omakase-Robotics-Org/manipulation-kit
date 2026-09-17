@@ -119,7 +119,7 @@ geometry in Isaac tests. The preserved blue rear mast boot is about 84 mm
 above the chassis roof.
 
 
-## Full-stroke sleeve insertion (2026-09-16)
+## Sleeve extension for the 29 mm AMR cover offset (2026-09-16)
 
 The moving sleeve is authored in the torso frame, so moving the lift origin
 moves it too. When the measured AMR cover height moved `base_footprint ->
@@ -128,27 +128,39 @@ dual_base` from 0.484 m to 0.513 m (see **The AMR cover offset** in
 torso and floated 40.7 mm above the chassis mast boot at lift 0, with a 9 mm
 see-through gap over the static column at lift 300.
 
-Sizing the sleeve to clear the boot at lift 0 is not enough: a cover that only
-just reaches the boot when retracted lifts clear of it as soon as the stroke
-moves, and Shu still read a ~1 cm gap between the AMR top and the sleeve bottom
-at lift 0. A real telescoping outer tube stays swallowed by the body over the
-whole stroke, so the sleeve is long enough that its lower lip is never exposed:
+The sleeve is therefore 29 mm longer at the BOTTOM: height 116 -> 145 mm,
+bottom torso-local Z 79 -> 50 mm, top unchanged at 195 mm. It now spans
+torso-local Z 50–195 mm, which puts the lower lip back at world Z 563 mm —
+the 11 mm boot clearance the sleeve had before the origin moved — and makes
+lift 300 overlap the static column by 20 mm.
 
 | | value |
 |---|---|
-| torso-local Z span | **-275 … 195 mm** (height 470 mm) |
-| lower lip, lift 0 | world Z **238 mm** — inside the opaque AMR shell |
-| lower lip, lift 300 | world Z **538 mm** — 13.3 mm below the 551.3 mm boot top |
-| static-column overlap | 308 mm at lift 0, 345 mm at lift 300 (column Z 400–883 mm) |
-
-At low lift the extra length sits inside the AMR shell, whose X/Y envelope over
-Z 238–550 mm is 279 × 243 mm against the sleeve's 122 × 162 mm, so the
-interpenetration (2682 chassis vertices at lift 0) never shows. The navy mast
-boot ring itself (Z 438–470 mm) is 114 × 145 mm, slightly narrower than the
-sleeve, so the sleeve passes outside it like an outer tube and hides it at low
-lift.
+| torso-local Z span | **50 … 195 mm** (height 145 mm) |
+| lower lip, lift 0 | world Z **563 mm** — 11.7 mm above the 551.3 mm boot top |
+| lower lip, lift 300 | world Z **863 mm** |
+| static-column overlap | 145 mm at lift 0, 20 mm at lift 300 (column Z 400–883 mm) |
 
 This is a visual cover only: no joint, limit, inertial or collision primitive
 changes, and the guard is unaffected. The authoring constant is the
 `Moving lift sleeve` box in `tools/vendoring/refine_back_and_lift.py`; the
-shipped OBJ carries the same edit in `manipulation-kit-assets` PR #5.
+shipped OBJ carries the same edit in `manipulation-kit-assets` PR #5, restored
+by PR #6.
+
+### Rejected: full-stroke insertion (2026-09-17)
+
+A longer sleeve was tried and **rejected — do not retry it.** The variant put
+the bottom cap at torso-local Z **−275 mm** (470 mm tall,
+`box('Moving lift sleeve',(0.010,0.0016,-.040),(0.122,0.162,.470),.003)`), so
+the lower lip stayed buried in the opaque AMR shell at every lift value: world
+Z 238 mm at lift 0, still 13.3 mm below the boot top at lift 300. That is what
+a real telescoping outer tube does, and it looks worse. Shu, 2026-09-17:
+
+> これは劣化してる。隙間があるままの方がまし
+> ("this is a regression; leaving the gap is better")
+
+The long cover reads as a solid slab rather than a telescoping one, and the
+visible gap that shows the lift moving disappears. The 11 mm clearance over the
+boot at lift 0 is wanted, not a defect to design out. It shipped briefly as
+`manipulation-kit` `3d77521` and `manipulation-kit-assets` `c26707b`, both
+reverted.
