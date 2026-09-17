@@ -213,19 +213,21 @@ for host in hosts:
             o.rotation_quaternion=Vector((1,0,0)).rotation_difference(Vector((-.707,0,.707)))
             bpy.context.view_layer.objects.active=o
             bpy.ops.object.transform_apply(location=False,rotation=True,scale=False)
-        # Sliding inner cover follows the torso, overlapping the static column
-        # across the full 0–300 mm travel (world z=.513+q+local z).
-        # Extended 29 mm DOWNWARD — height .116 -> .145, bottom local z .079 ->
-        # .050, top unchanged at .195 — because the lift origin moved
-        # 0.484 -> 0.513 m for the measured AMR cover height (kit #10).  The
-        # sleeve is authored in the torso frame, so it rose with that origin and
-        # floated 40.7 mm above the chassis mast boot at lift 0, leaving a 9 mm
-        # see-through gap over the static column at lift 300.  The longer sleeve
-        # puts the lower lip back at world z .563: the 11 mm boot clearance is
-        # restored and lift 300 overlaps the static column by 20 mm.  The shipped
-        # OBJ carries the same edit (manipulation-kit-assets PR #5); this is the
-        # authoring constant that would otherwise undo it on the next refine.
-        box('Moving lift sleeve',(0.010,0.0016,.1225),(0.122,0.162,.145),.003)
+        # Telescoping outer cover for the lift, authored in the torso frame
+        # (world z = .513 + q + local z).  It is sized for the WHOLE stroke, not
+        # for one lift value: local z -.275 to +.195, so the lower lip is at
+        # world z .238 at lift 0 and .538 at lift .300, always below the .5513
+        # chassis mast-boot top — 13 mm inserted even fully raised.  Sizing it to
+        # clear the boot at lift 0 (the earlier .050 bottom) re-opened the gap as
+        # soon as the lift moved; a real outer tube stays swallowed instead.  At
+        # low lift the extra length is hidden inside the opaque AMR shell, whose
+        # x/y envelope over z .238-.550 is 279 x 243 mm against this 122 x 162 mm
+        # box, so the interpenetration never shows.  Visual only: no collision,
+        # inertial or joint geometry, and the motion guard is untouched.  The
+        # shipped OBJ carries the same edit (manipulation-kit-assets PR #5); this
+        # is the authoring constant that would otherwise undo it on the next
+        # refine.
+        box('Moving lift sleeve',(0.010,0.0016,-.040),(0.122,0.162,.470),.003)
     elif host=='chassis_link':
         # Remove disconnected CAD rail covers and their floating top cap.
         bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.separate(type='LOOSE'); bpy.ops.object.mode_set(mode='OBJECT')
