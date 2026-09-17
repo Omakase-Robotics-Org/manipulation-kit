@@ -206,7 +206,7 @@
 
   
   <joint name="head_camera_mount" type="fixed">
-    <origin xyz="0.0966561 -0.0732024 -0.0282995" rpy="0 0 0.301131" />
+    <origin xyz="0.0966561 -0.0732024 -0.0282995" rpy="0 0 0.261799" />
     <parent link="head_link" />
     <child link="head_camera_link" />
   </joint>

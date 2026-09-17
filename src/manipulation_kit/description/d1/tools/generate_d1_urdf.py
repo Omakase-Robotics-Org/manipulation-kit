@@ -650,13 +650,28 @@ HEAD_TILT_BOX = ((-0.0861, -0.1269, -0.1235), (0.1147, 0.0581, 0.0665))
 # what is still placeholder (the module housing and lens offset — the d1-2
 # unit has no nameplate).
 CAMERA_OPTICAL_RPY = (0.0, math.pi / 2.0, 0.0)   # link +x -> optical +z
-#: Downward pitch of the head camera, radians.  The vendor housing mesh the
-#: mount is solved from is an axis-aligned bar, so the AABB cannot carry a
-#: tilt — but the 2026-08-23 full-robot CAD models the D435 body as a slab
-#: whose normal is (0.955, 0.005, -0.297) in robot coordinates: the lens
-#: looks 17.3 deg BELOW horizontal at the parked neck pose.  Applied about
-#: head_link +z (the lateral axis; head_link +y points down).
-HEAD_CAMERA_PITCH = math.atan2(0.2966, 0.955)
+#: Downward pitch of the head camera, radians.  DESIGN VALUE, read off the
+#: head-part CAD section Shu supplied on 2026-09-17: the D435 module is
+#: bolted to a face 15 deg below horizontal, deliberately, so that the field
+#: of view is aimed down at the workspace rather than at the far wall.  This
+#: SUPERSEDES the 17.25 deg previously read off the D435 slab normal
+#: (0.955, 0.005, -0.297) in the 2026-08-23 full-robot CAD — the mesh the
+#: mount is solved from is an axis-aligned bar whose AABB cannot carry a
+#: tilt, so the slab normal was the best available source until the head-part
+#: section arrived.
+#:
+#: STILL NOMINAL, and not a substitute for calibration.  The d1-3 head ArUco
+#: calibration (d1-inference ``calibrate_head_aruco.py``, session
+#: d1-3-tokyo-20260916, neck sweep) puts the optical axis 12.2-12.8 deg below
+#: head_link forward, with -1.3...-1.9 deg of lateral yaw; the remaining
+#: ~2.5 deg against this nominal is attributed to the neck-tilt zero and
+#: gravity sag, not to the mount.  What a simulator actually consumes is the
+#: PER-ROBOT calibration (``cameras_<robot>.json``, an absolute
+#: head_link -> camera extrinsic), so this constant only seeds calibration
+#: sweeps and uncalibrated renders.
+#:
+#: Applied about head_link +z (the lateral axis; head_link +y points down).
+HEAD_CAMERA_PITCH = math.radians(15.0)
 HEAD_CAMERA_MESH = "headcamera_Link.STL"
 #: Host link of the head camera, and the vendor mesh whose front face locates
 #: it.  The mesh rides `head_link` at identity (BODY_MESH_HOSTS), so the AABB
@@ -1190,9 +1205,13 @@ def head_camera():
             "       (+z out of the lens, +x image right, +y image down) so a\n"
             "       renderer mounted there needs no extra rotation. At the\n"
             "       parked neck pose it looks straight ahead pitched\n"
-            f"       {math.degrees(HEAD_CAMERA_PITCH):.1f} deg BELOW horizontal — the mount tilt measured\n"
-            "       off the D435 slab in the 2026-08-23 full-robot CAD, which\n"
-            "       the axis-aligned housing mesh cannot carry. A close\n"
+            f"       {math.degrees(HEAD_CAMERA_PITCH):.1f} deg BELOW horizontal — the design mount tilt\n"
+            "       from the head-part CAD section (2026-09-17), which the\n"
+            "       axis-aligned housing mesh cannot carry. That is a DESIGN\n"
+            "       value, not a calibrated one: the d1-3 ArUco calibration\n"
+            "       reads 12.2-12.8 deg below head_link forward, and a\n"
+            "       consumer that needs the real extrinsic reads the\n"
+            "       per-robot cameras_*.json calibration instead. A close\n"
             "       tabletop still needs neck_tilt on top of this.\n"
             "       See the CAMERAS block in the generator and\n"
             "       description/d1/README.md. -->\n"

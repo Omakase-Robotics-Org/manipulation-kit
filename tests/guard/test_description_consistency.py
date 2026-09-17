@@ -1044,14 +1044,16 @@ def test_head_camera_is_the_front_face_of_the_vendor_housing():
         assert _close(xyz, want, 1e-6), (
             f"{os.path.basename(path)}: head_camera_link at {xyz}, but the "
             f"vendor housing's front-face centre is {want}")
-        # The mount carries ONE real rotation: the 17.3 deg downward pitch
-        # measured off the D435 slab in the 2026-08-23 full-robot CAD (about
-        # head_link +z, the lateral axis). Everything optical still belongs
-        # on head_camera_optical_frame.
-        c, sn = math.cos(0.301131), math.sin(0.301131)
+        # The mount carries ONE real rotation: the 15 deg downward pitch the
+        # head-part CAD section gives for the D435 mounting face (about
+        # head_link +z, the lateral axis). Written out rather than imported
+        # from the generator so this stays an independent check of the
+        # design value. Everything optical still belongs on
+        # head_camera_optical_frame.
+        c, sn = math.cos(math.radians(15.0)), math.sin(math.radians(15.0))
         assert _R_close(R, ((c, -sn, 0), (sn, c, 0), (0, 0, 1))), \
-            "head_camera_mount must pitch the lens 17.3 deg down (CAD-" \
-            "measured); optical rotation belongs on the optical frame"
+            "head_camera_mount must pitch the lens 15 deg down (CAD design " \
+            "value); optical rotation belongs on the optical frame"
 
 
 #: What a camera frame is allowed to weigh, in kg. Not zero, and not absent —
