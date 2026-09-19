@@ -48,7 +48,7 @@ is published, install it explicitly first** — this step is interim, and Shu
 decides publication separately:
 
 ```sh
-pip install "git+ssh://git@github.com/Omakase-Robotics-Org/d1-firmware-client-py.git@bfd6a678"
+pip install "git+https://github.com/Omakase-Robotics-Org/d1-firmware-client-py.git@bfd6a678"
 pip install -e '.[firmware]'
 ```
 
