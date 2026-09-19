@@ -128,15 +128,26 @@ repository.
 ### 6. Execute, re-observe, verify
 
 ```python
+import json
 from manipulation_kit.executor import run
 from manipulation_kit.executors.firmware import FirmwareExecutor
+from manipulation_kit.primitives import Grasp, Lift
 
-with FirmwareExecutor(base_url="http://d1-2:4750") as robot:
+# examples/agent/live.py — the robot half from RawState, the things from the
+# scene file you measured in step 3
+from live import LiveRobot, load_scene
+
+with FirmwareExecutor(base_url="http://d1-2:4750") as executor:
+    source = LiveRobot(executor, kin, load_scene("examples/agent/scenes/tabletop.json"))
+    world = source.world()
+
     verb = Grasp(object="red_block", side="left")
     plan = verb.plan(world, kin)          # pure: nothing has moved
-    report = run(plan, robot)             # lease, mode, barriers, transport
+    assert plan.ok, plan                  # a refusal names the waypoint and the residual
+    source.expect("left", "red_block")    # what the next stroke is closing on
+    report = run(plan, executor)          # lease, mode, barriers, transport
     after = source.world()                # RE-OBSERVE. Always.
-    print(report.completed, verb.verifier(world)(after).to_json())
+    print(report.completed, json.dumps(verb.verifier(world)(after).to_json()))
 ```
 
 `report.completed` is about the **executor**: every step was sent and every
@@ -147,11 +158,17 @@ To verify the pickup rather than the stroke, ask for the thing you actually
 want — the block went up, and it is the block:
 
 ```python
-from manipulation_kit.primitives import Lift
-lift = Lift(object="red_block", side="left", height_m=0.10)
-run(lift.plan(after, kin), robot)
-print(lift.verifier(after)(source.world()).to_json())
+    lift = Lift(object="red_block", side="left", height_m=0.10)   # still inside the `with`
+    run(lift.plan(after, kin), executor)
+    print(json.dumps(lift.verifier(after)(source.world()).to_json()))
 ```
+<!-- the two blocks above are one `with` body; kept apart so the prose can
+     sit between them -->
+
+`ObjectRose` is the pickup predicate: the **object** went up by most of what
+was asked, it is off whatever it was standing on, and the hand still holds it —
+and it is still the named object. A hand that closed on air fails the first
+clause; a hand that lifted the table fails the second.
 
 ### FALSE versus UNKNOWN, and what to do about each
 
