@@ -52,7 +52,14 @@ def wire(joints: Dict[str, Sequence[float]],
 
 @dataclass(frozen=True)
 class RawState:
-    """What an executor can say about the robot without interpreting it."""
+    """What an executor can say about the robot without interpreting it.
+
+    ``grippers`` is MEASURED — where the jaws are. ``commanded_grippers`` is
+    what they are currently being ASKED for, which after a grasp is NOT the
+    same number and must not be confused with it: a jaw that stopped on a 40 mm
+    cube measures 0.41 while it is still being commanded to 1.0, and it is the
+    command that keeps the squeeze on. Empty when the executor cannot say.
+    """
 
     joints: Dict[str, np.ndarray]          # side -> 7 radians, MEASURED
     grippers: Dict[str, float] = field(default_factory=dict)   # side -> closedness
@@ -60,6 +67,8 @@ class RawState:
     stationary: bool = True
     stamp: float = 0.0
     extra: Dict[str, Any] = field(default_factory=dict)
+    #: side -> the closedness currently COMMANDED, when the executor knows it
+    commanded_grippers: Dict[str, float] = field(default_factory=dict)
 
     def vector(self) -> np.ndarray:
         return wire(self.joints, self.grippers)
@@ -165,7 +174,18 @@ def run_steps(plan: Plan, executor: Executor, *, hz: float = 50.0) -> RunReport:
             f"is commanded at its measured pose in every dual-arm vector, and "
             f"there is nothing to command it at")
     joints = {side: np.array(q, dtype=float) for side, q in state.joints.items()}
-    grippers = dict(state.grippers)
+    # A plan that does not touch the jaws still has to put a number in every
+    # 16-vector it sends, and that number is the COMMAND the hand is already
+    # under — never where the jaws happen to be. Seeding it from the
+    # measurement tells a force- or torque-limited gripper to stop squeezing
+    # and hold position, which is how a held object is dropped by a Lift that
+    # never mentioned the gripper: MEASURED 2026-09-19, three trials out of
+    # three — grasp verified holding at a 41.2 mm gap, the first knot of the
+    # Lift re-commanded 0.41 (where the jaws had stopped), the squeeze went to
+    # zero, and the cube stayed on the wagon while the arm went up. The same
+    # rule as F5 one level out: a measurement is not a command.
+    grippers = {side: float(state.commanded_grippers.get(side, value))
+                for side, value in state.grippers.items()}
     for step in plan.steps:
         if isinstance(step, JointStep):
             joints[step.side] = np.asarray(step.q, dtype=float)

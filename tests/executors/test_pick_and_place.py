@@ -156,6 +156,39 @@ def test_a_refused_plan_runs_nothing_and_says_why(d1_arm, observe):
     assert plan.reason in report.error
 
 
+def test_a_plan_that_never_mentions_the_jaws_carries_the_COMMAND_not_the_measurement(
+        d1_arm, observe):
+    """F9. A Lift sends joint knots only, and every one of them still has to
+    put a gripper number on the wire. That number is the command the hand is
+    already under — 1.0 — and never where the jaws stopped, 0.41: commanding a
+    force-limited gripper to the position it has reached tells it to stop
+    squeezing, and the held object is on the table before the arm has moved.
+    MEASURED on the Isaac harness, three trials out of three, 2026-09-19."""
+    from manipulation_kit.executor import RawState, run_steps
+
+    world = observe(d1_arm, block_p=REACHABLE, closed={"left": 0.41},
+                    held={"left": "red_block"})
+    plan = Lift(object="red_block", side="left", height_m=0.10).plan(world, d1_arm)
+    assert getattr(plan, "ok", False)
+    assert not any(isinstance(s, GripStep) for s in plan.steps)
+
+    measured = {s: np.array(d1_arm.joints(s), dtype=float) for s in ("left", "right")}
+
+    stalled = RecordingExecutor(RawState(
+        joints=measured, grippers={"left": 0.41, "right": 0.0},
+        commanded_grippers={"left": 1.0, "right": 0.0}))
+    run_steps(plan, stalled)
+    assert stalled.sent
+    assert all(v[GRIPPER_INDEX["left"]] == 1.0 for _t, v in stalled.sent)
+
+    # and an executor that cannot say what it commanded still gets a number:
+    # the measurement, which is the honest fallback and is documented as one
+    blind = RecordingExecutor(RawState(
+        joints=measured, grippers={"left": 0.41, "right": 0.0}))
+    run_steps(plan, blind)
+    assert all(v[GRIPPER_INDEX["left"]] == 0.41 for _t, v in blind.sent)
+
+
 def test_the_gripper_closedness_travels_in_the_wire_vector(d1_arm, observe):
     world = observe(d1_arm, block_p=REACHABLE)
     plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
