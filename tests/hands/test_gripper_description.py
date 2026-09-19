@@ -8,7 +8,6 @@ with it gets full validation and a bare machine still gets the structure
 checks."""
 import math
 import struct
-import xml.etree.ElementTree as ET
 
 import pytest
 

@@ -281,6 +281,15 @@ class PlanBinding:
     joint_tol_rad: float = 0.05
     #: how old the observation may be when the plan runs [s]; NaN = no limit
     max_age_s: float = float("nan")
+    #: was the COLLISION GUARD installed and consulted for every step?
+    #:
+    #: An analytical plan made against a guard-disabled model is a perfectly
+    #: good answer to "could the arm hold this pose" and is NOT an executable
+    #: checked plan — and ``Plan.ok`` was ``True`` for both
+    #: (``tests/primitives/test_plans.py`` had the case). The distinction now
+    #: travels with the plan, and the hardware boundary refuses the unguarded
+    #: kind unless the caller says so explicitly.
+    guarded: bool = True
 
     @classmethod
     def of(cls, world, kin=None, *, joint_tol_rad: float = 0.05,
@@ -288,12 +297,14 @@ class PlanBinding:
         from .approach import tool_revision  # noqa: PLC0415 - cycle at import
         q0 = {side: tuple(float(v) for v in arm.joints)
               for side, arm in world.arms.items()}
+        gate = getattr(kin, "gate", None)
         return cls(q0=q0, observation=world.observation_id(),
                    world_stamp=float(world.stamp),
                    frames_now=float(world.frames.now),
                    tool_revision=tool_revision(),
                    joint_tol_rad=float(joint_tol_rad),
-                   max_age_s=float(max_age_s))
+                   max_age_s=float(max_age_s),
+                   guarded=bool(getattr(gate, "installed", False)))
 
     def drift(self, *, joints=None, world=None, now: float = float("nan"),
               tool_revision: str = "") -> Optional[str]:
@@ -343,6 +354,7 @@ class PlanBinding:
             "frames_now": round(float(self.frames_now), 3),
             "tool_revision": self.tool_revision,
             "joint_tol_deg": round(math.degrees(self.joint_tol_rad), 2),
+            "guarded": bool(self.guarded),
         }
         if math.isfinite(self.max_age_s):
             out["max_age_s"] = round(float(self.max_age_s), 3)

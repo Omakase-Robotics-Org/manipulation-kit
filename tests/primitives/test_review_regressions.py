@@ -21,7 +21,6 @@ from scipy.spatial.transform import Rotation as R
 from manipulation_kit.primitives import (Approach, Carry, Grasp, Lift, Nudge,
                                          Place, Pour, Release, Retreat)
 from manipulation_kit.primitives import approach as ap
-from manipulation_kit.primitives import verifiers as V
 from manipulation_kit.primitives.types import (BAD_ARGUMENT, GRIPPER_UNKNOWN,
                                                NOT_HOLDING, OBJECT_TOO_WIDE,
                                                PRECONDITION_UNMET, Verdict)

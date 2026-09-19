@@ -27,13 +27,11 @@ from . import verifiers as V
 from .arguments import check_arguments
 from .planning import IncompleteObservation, Kin, joint_ramp, solve_path
 from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
-                    FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, GRIPS,
-                    INCOMPLETE_OBSERVATION, LearnedPrimitive,
+                    FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, INCOMPLETE_OBSERVATION, LearnedPrimitive,
                     LEARNED_POLICY_REQUIRED, NO_FIT, NO_MOTION, NO_SUCH_OBJECT,
-                    NOT_HOLDING, NUDGE_FRAMES,
-                    NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, OBJECT_TILTED,
+                    NOT_HOLDING, NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, OBJECT_TILTED,
                     OBJECT_TOO_FLAT, OBJECT_TOO_WIDE, PlanBinding, PlanError,
-                    Plan, Primitive, SIDE_CHOICES, SIDES, TOP_DOWN,
+                    Plan, Primitive, SIDES, TOP_DOWN,
                     UNREACHABLE_DESTINATION, UNKNOWN_FRAME,
                     UNSUPPORTED_GEOMETRY, Unmet,
                     Verifier, GripStep, SettleStep, Waypoint)
@@ -198,7 +196,7 @@ def _holder_of(world: WorldView, name: str, want: str) -> Tuple[Optional[str],
         return None, [Unmet(
             NOT_HOLDING,
             f"both hands are holding something and neither reports {name!r}",
-            f"name the side explicitly, or re-observe the held object")]
+            "name the side explicitly, or re-observe the held object")]
     if unknown:
         return None, [Unmet(
             GRIPPER_UNKNOWN,

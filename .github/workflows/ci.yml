@@ -128,6 +128,83 @@ jobs:
           print("ok")
           PY
 
+  fresh-install:
+    # OUTSIDE THE CHECKOUT, from the BUILT WHEEL. Every other job installs
+    # `-e .` from the work tree, which cannot catch a module that never made
+    # it into the package or an asset that only resolves from a source
+    # directory. This one builds the wheel, installs it into a clean venv in
+    # an empty directory, and runs the documented first steps from there.
+    #
+    # It deliberately does NOT install `[firmware]`: that extra names
+    # `d1fw-client`, which is not published, and a job that pretended
+    # otherwise would be testing a fiction. The planning half of the
+    # Quickstart is what an outside reader can run today, and it is what this
+    # checks.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel -o dist-wheel
+      - name: Install it somewhere else entirely
+        run: |
+          mkdir -p /tmp/outsider && cd /tmp/outsider
+          python -m venv venv
+          ./venv/bin/pip install --upgrade pip
+          ./venv/bin/pip install "$GITHUB_WORKSPACE"/dist-wheel/*.whl
+      - name: The Quickstart's planning half runs from the wheel
+        run: |
+          cd /tmp/outsider
+          ./venv/bin/python - <<'PY'
+          from manipulation_kit.arms import get_arm_kinematics
+          from manipulation_kit.primitives import Grasp
+          from manipulation_kit.primitives.offer import (candidates_for, offer,
+                                                         why_nothing)
+          from manipulation_kit.primitives.schema import decode, tool_schemas
+          from manipulation_kit.world import (ArmView, ContainerView, GripperView,
+                                              ObjectView, SurfaceView, WorldView)
+
+          kin = get_arm_kinematics("d1/arm", quiet=True)
+          world = WorldView.of(
+              [ObjectView("red_block", p=(0.38, 0.25, 0.035), size=(0.05, 0.04, 0.05)),
+               ContainerView("box", p=(0.33, 0.34, 0.05), size=(0.16, 0.14, 0.08),
+                             interior=(0.14, 0.12, 0.07)),
+               SurfaceView("table", p=(0.40, 0.0, 0.0), size=(0.9, 0.8, 0.02))],
+              arms=[ArmView(s, joints=kin.joints(s)) for s in ("left", "right")],
+              grippers=[GripperView(s, 0.0, jaw_gap_m=0.04)
+                        for s in ("left", "right")])
+
+          offered, refused = offer(candidates_for(world), world, kin)
+          assert offered, why_nothing(refused)
+          assert any(o.primitive.name() == "grasp" for o in offered)
+
+          schemas = {s["name"]: s for s in tool_schemas(world)}
+          names = schemas["grasp"]["parameters"]["properties"]["object"]["enum"]
+          assert names == ["red_block"], names
+          call = decode("grasp", {"object": "red_block", "side": "left"}, world)
+          assert isinstance(call, Grasp)
+          plan = call.plan(world, kin)
+          assert plan.ok and plan.binding is not None and plan.binding.guarded
+          print(f"ok: {len(offered)} offered, {len(plan.joint_steps())} joint steps")
+          PY
+      - name: The firmware extra is honest about needing a client
+        run: |
+          cd /tmp/outsider
+          ./venv/bin/python -c "
+          from manipulation_kit.executors.firmware import FirmwareUnavailable, _client_class
+          try:
+              _client_class()
+          except FirmwareUnavailable as exc:
+              assert 'd1fw-client' in str(exc)
+              print('ok:', exc)
+          else:
+              raise SystemExit('d1fw-client should not be installed here')
+          "
+
   version-bump:
     # Consumers pin this repository by COMMIT; pip decides whether to reinstall
     # by VERSION. A change that moves what consumers import while leaving

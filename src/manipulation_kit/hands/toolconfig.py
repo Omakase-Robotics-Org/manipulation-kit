@@ -26,7 +26,7 @@ zz, ...)`` — matching ``m_ToolDyn[10]``.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple
 
 SCHEMA = "manipulation_kit.hands.tool_config.v1"

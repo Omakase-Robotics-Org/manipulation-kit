@@ -7,7 +7,7 @@ deltas has to maintain an integrator across turns that it cannot see; and the
 per-arm convention is mirrored, so the same words mean opposite turns on the
 two hands (using the LEFT hand's top-down quaternion on the RIGHT wrist put
 the wrist camera against the torso, twin 2026-09-08). Translation has none of
-those problems, which is why :class:`~manipulation_kit.primitives.motion.Nudge`
+those problems, which is why :class:`~manipulation_kit.primitives.verbs.Nudge`
 still carries dx/dy/dz.
 
 So the vocabulary is four named approaches, and the one remaining degree of

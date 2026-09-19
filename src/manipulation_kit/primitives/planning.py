@@ -33,8 +33,7 @@ from ..arms import safety
 from ..arms.ik import clamp_joint_step
 from ..world import ArmView, WorldView
 from . import approach as ap
-from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanBinding,
-                    PlanError, UNREACHABLE_OBJECT, Waypoint)
+from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanError, UNREACHABLE_OBJECT, Waypoint)
 
 #: How many clamped ``solve_ee`` calls ONE INTERPOLATION KNOT may take before
 #: the path is declared not to be converging. A knot is at most one

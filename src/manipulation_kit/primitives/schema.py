@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from ..world import WorldView
 from .arguments import ARGUMENTS, ROLE_ANY, argument, check_arguments, names_for
 from .types import BAD_ARGUMENT, PlanError, Primitive, Unmet
-from .verbs import BY_VERB, PRIMITIVES, by_verb
+from .verbs import BY_VERB, PRIMITIVES
 
 
 def verbs() -> List[type]:

@@ -32,3 +32,4 @@ Run them from a checkout with the kit installed::
 
     python examples/agent/astra_loop.py --dry-run
     python examples/agent/jev_menu.py --task "put the red block in the box"
+"""

@@ -27,8 +27,7 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, runtime
 import numpy as np
 
 from .primitives.approach import tool_revision
-from .primitives.types import (GripStep, JointStep, Plan, PlanError, SettleStep,
-                               STALE_PLAN)
+from .primitives.types import (GripStep, JointStep, Plan, SettleStep)
 
 #: wire layout — see the module docstring
 ARM_DOF = 7
@@ -197,12 +196,13 @@ class Executor(Protocol):
 
 #: Why a run stopped, when it was not "every step was sent".
 NOT_BOUND = "not_bound"
+UNGUARDED = "unguarded_plan"
 STALE_BINDING = "stale_binding"
 REFUSED_PLAN = "refused_plan"
 BARRIER_FAILED = "barrier_failed"
 TRANSPORT_ERROR = "transport_error"
-STOP_REASONS: Tuple[str, ...] = (NOT_BOUND, STALE_BINDING, REFUSED_PLAN,
-                                 BARRIER_FAILED, TRANSPORT_ERROR)
+STOP_REASONS: Tuple[str, ...] = (NOT_BOUND, UNGUARDED, STALE_BINDING,
+                                 REFUSED_PLAN, BARRIER_FAILED, TRANSPORT_ERROR)
 
 
 @dataclass(frozen=True)
@@ -296,7 +296,7 @@ def _stroke_of(executor: "Executor", side: str, *, timeout_s: float
 
 
 def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
-        allow_unbound: bool = False,
+        allow_unbound: bool = False, allow_unguarded: bool = False,
         arrive_tol_rad: float = ARRIVE_TOL_RAD,
         arrive_timeout_s: float = ARRIVE_TIMEOUT_S,
         stroke_timeout_s: float = STROKE_TIMEOUT_S) -> RunReport:
@@ -312,6 +312,14 @@ def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
         return RunReport(getattr(plan, "primitive", "?"),
                          getattr(plan, "side", ""), False, 0,
                          error=str(plan), stop_reason=REFUSED_PLAN)
+    binding = getattr(plan, "binding", None)
+    if binding is not None and not binding.guarded and not allow_unguarded:
+        return RunReport(
+            plan.primitive, plan.side, False, 0, stop_reason=UNGUARDED,
+            error=("this plan was made against a model with NO COLLISION "
+                   "GUARD installed. That is a valid analytical answer and it "
+                   "is not an executable checked plan; build it with a guarded "
+                   "kinematic model, or pass allow_unguarded=True and own it"))
     drift = check_binding(plan, executor, allow_unbound=allow_unbound)
     if drift is not None:
         return RunReport(

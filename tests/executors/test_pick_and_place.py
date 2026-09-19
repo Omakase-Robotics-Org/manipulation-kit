@@ -276,3 +276,33 @@ def test_an_unbound_plan_is_refused_unless_the_caller_owns_it(d1_arm, observe):
     executor = _recorder(world)
     assert run(hand_made, executor).stop_reason == "not_bound"
     assert run(hand_made, executor, allow_unbound=True).completed
+
+
+def test_an_unguarded_plan_is_not_an_executable_plan(d1_arm, observe):
+    """R, section 5: "A guard-disabled kinematic model can still produce
+    Plan.ok=True. Keep analytical unguarded planning possible, but distinguish
+    it from an executable checked plan and require guard provenance at the
+    hardware boundary."."""
+    from manipulation_kit.executor import run
+
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    assert plan.binding.guarded
+
+    class Unguarded:
+        """The kit's own model with the guard gate reporting absent."""
+
+        class gate:
+            installed = False
+
+        def __getattr__(self, name):
+            return getattr(d1_arm, name)
+
+    unguarded = Grasp(object="red_block", side="left").plan(world, Unguarded())
+    assert unguarded.ok, "analytical planning must stay possible"
+    assert not unguarded.binding.guarded
+
+    executor = _recorder(world)
+    assert run(unguarded, executor).stop_reason == "unguarded_plan"
+    assert not executor.sent
+    assert run(unguarded, executor, allow_unguarded=True).completed

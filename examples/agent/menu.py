@@ -30,9 +30,9 @@ are all rendering:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
-from manipulation_kit.primitives.offer import (Offered, Refused, candidates_for,
+from manipulation_kit.primitives.offer import (Offered, candidates_for,
                                                offer, why_nothing)
 
 #: A readable menu is about twenty labels. Jev itself allows up to 255 choices,

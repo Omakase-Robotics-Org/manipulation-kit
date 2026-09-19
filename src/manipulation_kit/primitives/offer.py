@@ -29,7 +29,7 @@ a right-hand recovery action could vanish because the left arm went first.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from ..world import ContainerView, SurfaceView, WorldView
 from .types import Plan, PlanError, Primitive

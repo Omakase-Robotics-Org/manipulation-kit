@@ -47,7 +47,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

@@ -15,7 +15,6 @@ well formed, and no fidelity at all for whether a grasp holds.
 
 from __future__ import annotations
 
-from typing import Optional
 
 import numpy as np
 
