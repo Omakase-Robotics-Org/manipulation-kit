@@ -4,7 +4,7 @@ The near-hand rule — the sign of the block's y — was the whole rule until
 2026-09-19, and it cost the agent-eval harness two trials out of five: the
 block was picked up cleanly by the arm nearest it and the bin it had to go in
 was on the other side of the wagon, so ``Carry`` was refused after the lift
-with the block already in the jaws. ``examples/agent/chain.py`` plans the whole
+with the block already in the jaws. ``manipulation_kit.primitives.reach`` plans the whole
 Approach -> Grasp -> Lift -> Carry -> Place for BOTH arms first, with the kit's
 own pure ``plan()``, and the arm whose chain plans is the one that grasps.
 
@@ -80,9 +80,8 @@ def _scene(kin, boxes):
     ("block_red", "box_blue", "right"),      # both on the robot's right
     ("block_blue", "box_red", "left"),       # the bin is on the left; go left
 ])
-def test_both_directions_pick_the_arm_that_can_deliver(d1_arm, agent_examples,
-                                                       obj, destination, expected):
-    from chain import choose_side
+def test_both_directions_pick_the_arm_that_can_deliver(d1_arm, obj, destination, expected):
+    from manipulation_kit.primitives.reach import choose_side
 
     world = _scene(d1_arm, REACHABLE_BOXES)
     pick = choose_side(world, d1_arm, obj=obj, destination=destination)
@@ -95,7 +94,7 @@ def test_both_directions_pick_the_arm_that_can_deliver(d1_arm, agent_examples,
 
 
 def test_the_hand_flips_away_from_the_near_one_when_it_cannot_deliver(
-        d1_arm, agent_examples):
+        d1_arm):
     """The exhibit, and it is the trial the harness lost twice.
 
     ``block_blue`` sits on the centre line at y = +0.002, so the near-hand rule
@@ -104,7 +103,7 @@ def test_the_hand_flips_away_from_the_near_one_when_it_cannot_deliver(
     arm can do both, because the centre line is inside both arms' workspaces.
     The chain picks the right.
     """
-    from chain import _near_hand, choose_side
+    from manipulation_kit.primitives.reach import _near_hand, choose_side
 
     world = _scene(d1_arm, REACHABLE_BOXES)
     assert _near_hand(world, "block_blue") == "left"
@@ -119,7 +118,7 @@ def test_the_hand_flips_away_from_the_near_one_when_it_cannot_deliver(
 
 
 def test_a_block_and_a_bin_on_OPPOSITE_sides_is_refused_by_both_arms(
-        d1_arm, agent_examples):
+        d1_arm):
     """The case no arm choice can rescue, stated rather than discovered again.
 
     ``block_red`` is at y = -0.105 and ``box_red`` at y = +0.180. The LEFT arm
@@ -132,7 +131,7 @@ def test_a_block_and_a_bin_on_OPPOSITE_sides_is_refused_by_both_arms(
     (``reachable`` False) instead of picking a hand and letting the run
     discover it four verbs later.
     """
-    from chain import choose_side
+    from manipulation_kit.primitives.reach import choose_side
 
     world = _scene(d1_arm, REACHABLE_BOXES)
     pick = choose_side(world, d1_arm, obj="block_red", destination="box_red")
@@ -145,7 +144,7 @@ def test_a_block_and_a_bin_on_OPPOSITE_sides_is_refused_by_both_arms(
 
 
 def test_the_served_bins_are_out_of_reach_for_both_arms_and_it_says_so(
-        d1_arm, agent_examples):
+        d1_arm):
     """The measured state of ``blocks-eval`` on 2026-09-19.
 
     Not a reason to pick a hand quietly: ``reachable`` is False, both chains
@@ -153,7 +152,7 @@ def test_the_served_bins_are_out_of_reach_for_both_arms_and_it_says_so(
     residual. A chooser that returned a side and said nothing would have
     turned a scene fact into a mystery model failure.
     """
-    from chain import choose_side
+    from manipulation_kit.primitives.reach import choose_side
 
     world = _scene(d1_arm, SERVED_BOXES)
     for obj, destination in (("block_red", "box_blue"),
@@ -172,9 +171,9 @@ def test_the_served_bins_are_out_of_reach_for_both_arms_and_it_says_so(
 # what the chain is allowed to claim
 # --------------------------------------------------------------------------- #
 
-def test_the_chain_stops_at_the_first_refusal(d1_arm, agent_examples):
+def test_the_chain_stops_at_the_first_refusal(d1_arm, ):
     """No link is planned against a world that never happened."""
-    from chain import plan_chain
+    from manipulation_kit.primitives.reach import plan_chain
 
     world = _scene(d1_arm, SERVED_BOXES)
     chain = plan_chain(world, d1_arm, obj="block_red", destination="box_blue",
@@ -187,7 +186,7 @@ def test_the_chain_stops_at_the_first_refusal(d1_arm, agent_examples):
 
 def test_planning_a_chain_leaves_both_arms_where_it_found_them(d1_arm,
                                                                agent_examples):
-    from chain import choose_side
+    from manipulation_kit.primitives.reach import choose_side
 
     world = _scene(d1_arm, REACHABLE_BOXES)
     before = {s: np.array(d1_arm.joints(s)) for s in ("left", "right")}
@@ -199,11 +198,12 @@ def test_planning_a_chain_leaves_both_arms_where_it_found_them(d1_arm,
 
 
 def test_the_world_the_chain_rolls_forward_holds_the_block_it_grasped(
-        d1_arm, agent_examples):
+        d1_arm):
     """The hypothetical is a prediction about REACH, and it is built the only
     way that makes that prediction mean anything: the arm at the joint vector
     the previous plan ended on, the object carried with the tool."""
-    from chain import _grasped, _moved, _posed, _tool_of
+    from manipulation_kit.primitives.reach import (_grasped, _moved, _posed,
+                                                 _tool_of)
 
     world = _scene(d1_arm, REACHABLE_BOXES)
     q = np.array(world.arm("right").joints) * 0.0 + np.array(d1_arm.ready("right"))

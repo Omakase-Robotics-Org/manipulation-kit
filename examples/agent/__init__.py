@@ -1,30 +1,34 @@
-"""examples.agent — rendering the kit's primitives to a model, and back.
+"""examples.agent — the part that knows a MODEL exists. Nothing else.
 
 OUTSIDE THE WHEEL, on purpose. Shu, 2026-09-19: 「agent 的なのは examples フォルダ
 に切り離す」 — the agent-shaped code is split out into examples.
 
-The reason it is a good split and not merely a preference: the primitives are a
-robot capability and the agent layer is one way of driving them. Scripts,
-teleop assists, collection macros and learned pipelines all want
-``Grasp(...).plan(world, kin)`` and none of them want a JSON tool schema. If
-the schema lived in the package, every consumer of the kinematics would carry
-it, and — worse — the vocabulary would start growing toward whatever the
-current model happens to find easy. Here, it cannot: these files IMPORT
-``manipulation_kit.primitives`` and add nothing to it.
+What moved INTO the wheel on 2026-09-19, after the review: the offer gate and
+its result types, the canonical argument metadata and the JSON Schema export,
+and the reach/arm-selection. Those are capability questions — *what can this
+robot do right now*, *what may an argument be*, *which hand can deliver* — and
+a script, a teleop assist or a collection macro needs all three without ever
+meeting a model. They live in ``manipulation_kit.primitives.{offer,schema,
+arguments,reach}`` and they add no dependency: the package still installs as
+numpy + scipy.
 
-What is here:
+What is left here is genuinely about a model:
 
-``offer.py``   the gate — IK + guard before a candidate becomes a word in the
-               prompt, with the refusals kept and reported
-``schema.py``  one definition set, two exports: JSON Schema for Astra-style
-               function calling, a choice menu for Jev-style typed answers
-``trace.py``   one JSONL record per decision, including the MEASURED verdict
-               beside the model's claim
-``astra_loop.py`` a runnable function-calling loop (scripted stub with no key)
-``jev_menu.py``   the same offer rendered as a typed-choice request
+``astra_loop.py`` a runnable function-calling loop — the prompt, the provider
+                  client, the scripted stand-in, the message bookkeeping, and
+                  the three stop reasons
+``menu.py``       the Jev-style typed-choice RENDERER: ranking, the cap, the
+                  wait/rescan/stop answers, the question itself
+``jev_menu.py``   print one such request
+``mirror.py``     the demo robot: a KinematicExecutor plus a scene the block
+                  moves in
+``live.py``       a real D1: the firmware transport plus a measured scene file
+                  turned into a WorldView
+``scene.py``      the small shared scene the examples compare against
+``trace.py``      one JSONL record per decision, the model's claim beside the
+                  measurement
 
 Run them from a checkout with the kit installed::
 
     python examples/agent/astra_loop.py --dry-run
-    python examples/agent/jev_menu.py
-"""
+    python examples/agent/jev_menu.py --task "put the red block in the box"

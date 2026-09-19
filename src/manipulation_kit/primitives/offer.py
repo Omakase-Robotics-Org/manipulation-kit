@@ -1,7 +1,14 @@
-"""The gate: an unreachable candidate never becomes a word in the prompt.
+"""The gate: an unreachable candidate never becomes a word in a prompt.
 
-This is the one rule that separates a robot agent that works from one that
-spends thirty turns asking for a move the guard already refused
+**Why this is in the wheel.** Shu's rule is "primitives are kit capabilities,
+not agent internals" (design note 7.1), and *what can this robot do right now*
+is a capability question, not a model question. A script, a teleop assist, a
+collection macro and a learned pipeline all want it, and none of them wants a
+JSON tool schema. The bit that IS model-specific — ranking, menu capping,
+provider envelopes, prompts — stays in ``examples/agent/``.
+
+The rule itself is the one that separates a robot agent that works from one
+that spends thirty turns asking for a move the guard already refused
 (dx-inspect-robots PR #17, where the MotionGuard stopped a -y move after 19 mm
 and the model was told "executing move_by over 4 steps", unchanged, thirty
 times). Every candidate is planned — same IK, same joint clamp, same collision
@@ -11,22 +18,23 @@ The refusals are returned, not discarded. They are what the caller renders when
 NOTHING is offerable: "the left hand cannot reach the red block: guard_reject
 at the pregrasp, 19 mm short" is a sentence a model can act on, and an empty
 menu with no explanation is not.
+
+NO CAP HERE. ``offer()`` plans what it is given and returns all of it. Capping
+is a rendering decision and it belongs where the rendering is: the old
+``cap=20`` silently truncated the OFFERED list after planning every candidate,
+so the cap bounded neither the computation nor what the caller could see, and
+a right-hand recovery action could vanish because the left arm went first.
 """
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from manipulation_kit.primitives import (Approach, Carry, GoHome, Grasp, Lift,
-                                         Nudge, Place, Primitive, Release,
-                                         Retreat)
-from manipulation_kit.world import ContainerView, SurfaceView, WorldView
-
-#: A readable menu is about twenty labels. Jev itself allows up to 255 choices,
-#: but a model choosing among 200 near-identical options is not choosing.
-DEFAULT_CAP = 20
+from ..world import ContainerView, SurfaceView, WorldView
+from .types import Plan, PlanError, Primitive
+from .verbs import (Approach, Carry, GoHome, Grasp, Lift, Nudge, NUDGE_GRID_M,
+                    Place, Release, Retreat)
 
 
 @dataclass(frozen=True)
@@ -34,12 +42,24 @@ class Offered:
     """A candidate that PLANS. The plan is kept so accepting it costs nothing."""
 
     primitive: Primitive
-    plan: Any
+    plan: Plan
     label: str
 
+    @property
+    def id(self) -> str:
+        """A stable identity for this bound action, independent of menu order.
+
+        An index into a list changes meaning the moment the list is rebuilt
+        from a newer observation, which is exactly when a model is answering
+        with one.
+        """
+        args = ",".join(f"{k}={v!r}" for k, v in sorted(arguments(
+            self.primitive).items()))
+        return f"{self.primitive.name()}({args})"
+
     def to_json(self) -> Dict[str, Any]:
-        return {"verb": self.primitive.name(), "label": self.label,
-                "arguments": _arguments(self.primitive),
+        return {"id": self.id, "verb": self.primitive.name(),
+                "label": self.label, "arguments": arguments(self.primitive),
                 "plan": self.plan.to_json()}
 
 
@@ -48,26 +68,30 @@ class Refused:
     """A candidate that does not, and the typed reason why."""
 
     primitive: Primitive
-    error: Any
+    error: PlanError
     label: str
 
+    @property
+    def id(self) -> str:
+        return Offered(self.primitive, None, self.label).id  # type: ignore[arg-type]
+
     def to_json(self) -> Dict[str, Any]:
-        return {"verb": self.primitive.name(), "label": self.label,
-                "arguments": _arguments(self.primitive),
+        return {"id": self.id, "verb": self.primitive.name(),
+                "label": self.label, "arguments": arguments(self.primitive),
                 "refusal": self.error.to_json()}
 
     def sentence(self) -> str:
         return f"{self.label}: {self.error}"
 
 
-def _arguments(primitive: Primitive) -> Dict[str, Any]:
+def arguments(primitive: Primitive) -> Dict[str, Any]:
     return {name: getattr(primitive, name) for name in primitive.arguments()}
 
 
 def label_for(primitive: Primitive) -> str:
     """A short imperative a person (and a typed-choice model) can read."""
     verb = primitive.name()
-    args = _arguments(primitive)
+    args = arguments(primitive)
     if verb in ("approach", "grasp"):
         return (f"{verb} {args['object']} with the {args['side']} hand, "
                 f"{args['approach'].replace('_', ' ')}")
@@ -92,24 +116,28 @@ def label_for(primitive: Primitive) -> str:
     return verb
 
 
-def offer(candidates: Iterable[Primitive], world: WorldView, kin, *,
-          cap: int = DEFAULT_CAP) -> Tuple[List[Offered], List[Refused]]:
-    """Plan every candidate; return what survives and what did not, with reasons.
-
-    ``cap`` bounds the OFFERED list only. Every refusal is kept, because the
-    caller needs all of them the moment the offered list comes back empty.
-    """
+def offer(candidates: Iterable[Primitive], world: WorldView, kin
+          ) -> Tuple[List[Offered], List[Refused]]:
+    """Plan every candidate; return what survives and what did not, with reasons."""
     offered: List[Offered] = []
     refused: List[Refused] = []
     for candidate in candidates:
         label = label_for(candidate)
         plan = candidate.plan(world, kin)
         if getattr(plan, "ok", False):
-            if len(offered) < cap:
-                offered.append(Offered(candidate, plan, label))
+            offered.append(Offered(candidate, plan, label))
         else:
             refused.append(Refused(candidate, plan, label))
     return offered, refused
+
+
+def check(call: Primitive, world: WorldView, kin) -> Any:
+    """Plan ONE bound call. The gate applied to what a model actually said.
+
+    A model may ask for anything; it does not get to skip the guard. This is
+    the step dx-inspect-robots PR #17 was missing.
+    """
+    return call.plan(world, kin)
 
 
 def why_nothing(refused: Sequence[Refused], limit: int = 6) -> str:
@@ -130,65 +158,55 @@ def why_nothing(refused: Sequence[Refused], limit: int = 6) -> str:
 
 def candidates_for(world: WorldView, *,
                    approaches: Sequence[str] = ("top_down", "front"),
-                   nudge_frame: str = "tool") -> List[Primitive]:
+                   nudge_frame: str = "tool",
+                   corrections: bool = True) -> List[Primitive]:
     """Everything worth TRYING in this world, before any of it is checked.
 
-    Generous on purpose: generating a candidate is free and
-    :func:`offer` is what decides. The expensive mistake is the other one —
-    not generating the option that would have worked.
+    Role-aware: containers and surfaces are destinations, loose objects are
+    grasp candidates. It is generous within those roles on purpose —
+    generating a candidate is free and :func:`offer` is what decides — and the
+    expensive mistake is the other one, not generating the option that would
+    have worked.
+
+    A hand whose gripper reports NOTHING gets no candidates at all: the kit
+    cannot tell whether it is free, and offering both "grasp" and "release"
+    for it would be offering to guess.
     """
     task: List[Primitive] = []
-    corrections: List[Primitive] = []
+    fine: List[Primitive] = []
     destinations = [o.name for o in world.objects
                     if isinstance(o, (ContainerView, SurfaceView))]
-    holders = {side: g.held_object for side, g in world.grippers.items()
-               if g.holding}
     graspable = [o.name for o in world.objects
                  if not isinstance(o, (ContainerView, SurfaceView))]
     for side in ("left", "right"):
-        held = holders.get(side)
-        if held is None:
+        gripper = world.gripper(side)
+        if gripper is None:
+            continue
+        held = gripper.held_object if gripper.holding else None
+        if not gripper.holding:
             for name in graspable:
                 for how in approaches:
                     task.append(Approach(object=name, side=side, approach=how))
                     task.append(Grasp(object=name, side=side, approach=how))
-        else:
+        elif held:
             task.append(Lift(object=held, side=side))
             for name in destinations:
                 task.append(Carry(object=held, to=name, side=side))
                 task.append(Place(object=held, to=name, side=side))
             task.append(Release(side=side))
+        if not corrections:
+            continue
         for axis in ("dx", "dy", "dz"):
-            for step in (0.010, 0.030, 0.050):
+            for step in NUDGE_GRID_M:
                 for sign in (1.0, -1.0):
-                    corrections.append(Nudge(side=side, frame=nudge_frame,
-                                             **{axis: sign * step}))
-        corrections.append(Retreat(side=side))
-    corrections.append(GoHome())
-    # Task verbs first, corrections after: the cap trims the TAIL, and a menu
-    # that spent its twenty slots on nudges has hidden the grasp.
-    return task + corrections
-
-
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Print the offer for a small hard-coded scene. ``python offer.py``."""
-    from scene import demo_scene  # noqa: PLC0415 - sibling example module
-
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--cap", type=int, default=DEFAULT_CAP)
-    args = parser.parse_args(argv)
-
-    world, kin = demo_scene()
-    offered, refused = offer(candidates_for(world), world, kin, cap=args.cap)
-    print(world.to_text())
-    print(f"\n{len(offered)} offered of {len(offered) + len(refused)} tried:")
-    for item in offered:
-        print(f"  - {item.label}  [{len(item.plan.joint_steps())} joint steps]")
-    print("\nrefused (first 8):")
-    for item in refused[:8]:
-        print(f"  - {item.sentence()}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+                    fine.append(Nudge(side=side, frame=nudge_frame,
+                                      **{axis: sign * step}))
+        # the yaw corrections the menu never had (R, section 3)
+        for dyaw in (0.15, -0.15):
+            fine.append(Nudge(side=side, frame=nudge_frame, dyaw=dyaw))
+        fine.append(Retreat(side=side))
+    if corrections:
+        fine.append(GoHome())
+    # Task verbs first, corrections after: a caller that trims the tail has
+    # trimmed the fine adjustments, not the grasp.
+    return task + fine

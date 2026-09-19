@@ -30,28 +30,60 @@ primitive touches the IK and the guard.
 The verbs: ``Approach Grasp Lift Carry Place Release Nudge Retreat GoHome``,
 plus the ``Pour`` CONTRACT whose body is a learned policy
 (:class:`~.types.LearnedPrimitive`).
+
+Beside them, three modules that are about CAPABILITY rather than about any
+model, and are therefore here rather than in ``examples/agent/``:
+
+``offer.py``      what can this robot do right now — every candidate planned
+                  through the same IK, clamp and guard before it is offered,
+                  with the refusals kept
+``schema.py``     the canonical argument metadata and a dependency-free JSON
+                  Schema export, plus ``decode`` for the way back
+``arguments.py``  the one table both of those and every ``preconditions`` read
+``reach.py``      which hand can do the WHOLE task, planned before anything
+                  moves
+
+None of them imports a provider SDK and none of them adds a dependency: the
+package still installs as numpy + scipy. What stays outside the wheel is the
+part that knows a model exists — prompts, authentication, request envelopes,
+ranking, menu capping, the scripted policy and the runnable loops.
 """
 
-from .approach import (APPROACH_DIRECTION, APPROACH_DOC, JAW_OPEN_M, TOOL_Z_M,
-                       choose_side, grasp_orientation, link7_from_tool,
-                       tool_from_link7)
-from .planning import ARRIVE_TOL_M, Kin, joint_ramp, solve_path
+from .approach import (APPROACH_DIRECTION, APPROACH_DOC, GRASPABLE_WIDTH_M,
+                       JAW_OPEN_M, TOOL_Z_M, choose_side, grasp_orientation,
+                       grasp_width, jaw_axis, link7_from_tool, tool_from_link7,
+                       tool_revision)
+from .arguments import ARGUMENTS, Argument, check_arguments, names_for
+from .offer import (Offered, Refused, candidates_for, label_for, offer,
+                    why_nothing)
+from .planning import (ARRIVE_TOL_M, PATH_TOL_M, PATH_TOL_RAD, Kin,
+                       joint_ramp, missing_arms, solve_path)
+from .reach import ChainLink, ChainPlan, SideChoice, plan_chain
+from .reach import choose_side as choose_side_for_task
+from .schema import decode, domains, domains_in, tool_schemas, verbs_in
 from .types import (APPROACHES, AUTO, BOTH, GOHOME_SIDE_CHOICES, GRIPS,
                     NUDGE_FRAMES, NUDGE_GRID_M,
                     NUDGE_MAX_YAW_RAD, PLAN_REASONS, PRIMITIVE_CONTRACT, SIDES,
-                    SIDE_CHOICES, GripStep, JointStep, LearnedPrimitive, Plan,
-                    PlanError, Primitive, SettleStep, Unmet, Verdict,
+                    SIDE_CHOICES, UNMET_CODES, GripStep, JointStep,
+                    LearnedPrimitive, Plan, PlanBinding,
+                    PlanError, Primitive, SettleStep, Step, Unmet, Verdict,
                     VerdictReport, Verifier, Waypoint)
 from .verbs import (BY_VERB, PRIMITIVES, Approach, Carry, GoHome, Grasp, Lift,
                     Nudge, Place, Pour, Release, Retreat, by_verb, snap)
 
 __all__ = [
+    # the model-independent action boundary (offer / schema / reach)
+    "offer", "Offered", "Refused", "candidates_for", "label_for", "why_nothing",
+    "tool_schemas", "decode", "domains", "domains_in", "verbs_in",
+    "ARGUMENTS", "Argument", "check_arguments", "names_for",
+    "plan_chain", "choose_side_for_task", "ChainPlan", "ChainLink", "SideChoice",
     # verbs
     "Approach", "Grasp", "Lift", "Carry", "Place", "Release", "Nudge",
     "Retreat", "GoHome", "Pour", "PRIMITIVES", "BY_VERB", "by_verb",
     # contract
     "Primitive", "LearnedPrimitive", "PRIMITIVE_CONTRACT",
-    "Plan", "PlanError", "Waypoint", "JointStep", "GripStep", "SettleStep",
+    "Plan", "PlanBinding", "PlanError", "Waypoint", "JointStep", "GripStep",
+    "SettleStep", "Step", "UNMET_CODES",
     "Unmet", "Verdict", "VerdictReport", "Verifier",
     # vocabulary
     "APPROACHES", "APPROACH_DIRECTION", "APPROACH_DOC", "AUTO", "BOTH",
@@ -59,8 +91,10 @@ __all__ = [
     "NUDGE_FRAMES", "NUDGE_GRID_M", "NUDGE_MAX_YAW_RAD", "PLAN_REASONS",
     "SIDES", "SIDE_CHOICES", "snap",
     # geometry helpers consumers legitimately need
-    "JAW_OPEN_M", "TOOL_Z_M", "choose_side", "grasp_orientation",
-    "link7_from_tool", "tool_from_link7",
+    "GRASPABLE_WIDTH_M", "JAW_OPEN_M", "TOOL_Z_M", "choose_side",
+    "grasp_orientation", "grasp_width", "jaw_axis",
+    "link7_from_tool", "tool_from_link7", "tool_revision",
     # planning
-    "Kin", "solve_path", "joint_ramp", "ARRIVE_TOL_M",
+    "Kin", "solve_path", "joint_ramp", "missing_arms",
+    "ARRIVE_TOL_M", "PATH_TOL_M", "PATH_TOL_RAD",
 ]

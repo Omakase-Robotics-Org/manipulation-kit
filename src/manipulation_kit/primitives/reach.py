@@ -1,14 +1,18 @@
-"""Plan the WHOLE pick-and-place before choosing which arm does the picking.
+"""Which hand can do the WHOLE task? Planned before anything moves.
 
-The gate in :mod:`offer` asks "can this one verb be done right now?". That is
+**Why this is in the wheel.** It is task feasibility, not provider behaviour:
+a script, a teleop assist and a learned pipeline all need to avoid picking
+something up with the hand that cannot deliver it, and none of them is a
+model. F10 measured what skipping it costs.
+
+The gate in :mod:`.offer` asks "can this one verb be done right now?". That is
 the right question for a turn and the wrong one for a task: a block on the
 robot's right is nearest the right hand, the right hand grasps it, and three
 verbs later the bin it has to go in turns out to be on the far left and out of
 that arm's reach. Measured on ``blocks-eval`` 2026-09-19: three trials in a row
 grasped and lifted cleanly and then refused ``Carry`` with ``ik_fail`` at
 ``over_destination`` — two of them because the block had been picked up by the
-arm that could not deliver it (the third was the fixed 100 mm transit height,
-fixed in the kit by :data:`~manipulation_kit.primitives.verbs.CARRY_CLEARANCE_LADDER_M`).
+arm that could not deliver it.
 
 So the task planner plans the chain — Approach, Grasp, Lift, Carry, Place —
 for BOTH arms, with the kit's own pure ``plan()``, and picks the arm whose
@@ -20,7 +24,9 @@ hidden.** ``Carry`` cannot be planned against the world as it is now, because
 right now nothing is held: its preconditions say so, correctly. So each link
 of the chain is planned against a world rolled FORWARD by the previous link —
 the arm posed at the last joint step the plan produced, the gripper marked
-holding, the object carried along with the tool. That is a prediction, not a
+holding, the object carried along with the tool. Every rolled-forward world is
+stamped and revisioned so it can never be mistaken for an observation, and
+``ChainPlan.hypothetical`` says so out loud. That is a prediction, not a
 measurement, and the difference matters:
 
 * what it gets right is REACH, which is the question being asked — the joint
@@ -30,21 +36,20 @@ measurement, and the difference matters:
   measured, one verb at a time, by the verifiers, and a chain that plans is
   never evidence that a trial succeeded.
 
-Used by ``run_trials`` in d1-isaaclab and by ``astra_loop`` here. It answers
-one question — *which hand?* — and answers it before the first move.
+It answers one question — *which hand?* — and answers it before the first move.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from manipulation_kit.primitives import (Approach, Carry, Grasp, JointStep,
-                                         Lift, Place, Primitive)
-from manipulation_kit.primitives.approach import tool_from_link7
-from manipulation_kit.world import ArmView, GripperView, ObjectView, WorldView
+from ..world import ArmView, GripperView, WorldView
+from .approach import tool_from_link7
+from .types import JointStep, Plan, PlanError, Primitive
+from .verbs import Approach, Carry, Grasp, Lift, Place
 
 SIDES: Tuple[str, ...] = ("left", "right")
 
@@ -58,7 +63,7 @@ class ChainLink:
     """One verb of the chain, and what the kit said about it."""
 
     primitive: Primitive
-    result: Any                      # Plan or PlanError
+    result: Union[Plan, PlanError]
 
     @property
     def verb(self) -> str:
@@ -80,6 +85,10 @@ class ChainPlan:
 
     side: str
     links: Tuple[ChainLink, ...]
+    #: every link after the first was planned against a world this module
+    #: PREDICTED, not one anybody observed. Published so a caller cannot
+    #: mistake a planned chain for a measured outcome.
+    hypothetical: bool = True
 
     @property
     def ok(self) -> bool:
@@ -109,6 +118,10 @@ class ChainPlan:
 
     def to_json(self) -> Dict[str, Any]:
         return {"side": self.side, "ok": self.ok, "planned": self.planned,
+                "hypothetical": bool(self.hypothetical),
+                "note": ("reach only: every link after the first was planned "
+                         "against a predicted world, and a chain that plans "
+                         "is not evidence that a trial succeeded"),
                 "links": [link.to_json() for link in self.links]}
 
 
@@ -156,7 +169,7 @@ def _posed(world: WorldView, kin, side: str, q) -> WorldView:
                          tool_p=p_tool, tool_r=r_tool,
                          mode=was.mode if was is not None else "unknown",
                          stationary=True)
-    return world.with_(arms=arms)
+    return world.with_(arms=arms, revision=int(world.revision) + 1)
 
 
 def _grasped(world: WorldView, side: str, name: str) -> WorldView:
@@ -173,17 +186,35 @@ def _grasped(world: WorldView, side: str, name: str) -> WorldView:
         side, 1.0, holding=True, held_object=name,
         jaw_gap_m=None if item is None else item.min_horizontal_extent(),
         grip=was.grip if was is not None else "firm", jaw_stalled=True)
-    return world.with_(grippers=grippers)
+    return world.with_(grippers=grippers, revision=int(world.revision) + 1)
 
 
 def _moved(world: WorldView, name: str, delta) -> WorldView:
-    """The same world with one object translated — a rigid grasp, in a value."""
+    """The same world with one object translated — a rigid grasp, in a value.
+
+    ``delta`` is a BASE-frame displacement and ``o.p`` is in the object's OWN
+    frame, so it is rotated into that frame before it is added. Adding one to
+    the other directly is the same mistake as R1, one module along: on a
+    wagon frame yawed 25 degrees it moved the predicted object sideways.
+    An object whose frame will not resolve is left alone rather than moved by
+    a number that means nothing.
+    """
     import dataclasses
-    objects = tuple(dataclasses.replace(o, p=np.asarray(o.p, dtype=float)
-                                        + np.asarray(delta, dtype=float))
-                    if o.name == name else o
-                    for o in world.objects)
-    return world.with_(objects=objects)
+    delta = np.asarray(delta, dtype=float)
+    objects = []
+    for item in world.objects:
+        if item.name != name:
+            objects.append(item)
+            continue
+        try:
+            _p, r = item.pose_in_base(world.frames)
+            local = r.inv().apply(delta) if item.frame_id != "base" else delta
+        except LookupError:
+            objects.append(item)
+            continue
+        objects.append(dataclasses.replace(
+            item, p=np.asarray(item.p, dtype=float) + local))
+    return world.with_(objects=tuple(objects))
 
 
 # --------------------------------------------------------------------------- #
