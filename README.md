@@ -21,6 +21,7 @@ extend and plan against.
 pip install -e .            # everything below: numpy + scipy, nothing else
 pip install -e '.[dev]'     # + pytest, for the test suite
 pip install -e '.[mujoco]'  # + the OPTIONAL alternative IK substrate
+pip install -e '.[firmware]'  # + d1fw-client, for executors/firmware.py ONLY
 ```
 
 **MuJoCo is not required.** Inverse kinematics runs on numpy over the URDF this
@@ -145,6 +146,14 @@ src/manipulation_kit/     the installed package — this, and only this, is the 
   arms/          DLS IK + null-space, the numpy URDF substrate, joint clamps
                  and safety limits (single source of truth), ArmClutch target
                  shaping, filters, frames, side conventions; d1/arm/ binding
+  world/         ObjectView / ContainerView / SurfaceView / ArmView /
+                 GripperView / WorldView and the FrameGraph — the perception
+                 RESULTS the kit reads. It never imports a camera
+  primitives/    Approach Grasp Lift Carry Place Release Nudge Retreat GoHome
+                 (+ the Pour contract): preconditions, a pure plan(), and a
+                 measured verifier(). See docs/PRIMITIVE_CONTRACT.md
+  executor.py    the Executor protocol and two pure test doubles
+  executors/     the ONE place with a wire: firmware.py, behind [firmware]
   guard/         MotionGuard — stdlib-only joint limits + torso keep-out +
                  self-collision over the primitives-only whole-body URDF
   hands/         "<maker>/<model>" identity: tool configs, CAD descriptions,
@@ -152,10 +161,99 @@ src/manipulation_kit/     the installed package — this, and only this, is the 
   description/   the D1 URDF family, its generator, the exporter, the assets
   config/        the exported JSON a controller consumes
 contrib/         research, not installed (whole-body IK: base + lift + neck)
-examples/        runnable scripts: gesture generation, preview, click-to-move IK
+examples/        runnable scripts: gesture generation, preview, click-to-move
+                 IK, and agent/ — rendering the primitives to a model
 tools/vendoring/ CAD re-import; needs the private assets repo, not installed
 dist/            prebuilt, provenance-tracked exports
 docs/            the institutional notes, verbatim
+```
+
+## Primitives and the agent examples
+
+Above the IK there is a small set of **verbs**: `Approach Grasp Lift Carry
+Place Release Nudge Retreat GoHome`, plus the `Pour` contract whose body is a
+learned policy. Each is a frozen dataclass with the same three parts —
+`preconditions(world)`, a pure `plan(world, kin)`, and a `verifier(world0)`
+that returns a **measured** verdict from a later observation. The full contract
+is [`docs/PRIMITIVE_CONTRACT.md`](docs/PRIMITIVE_CONTRACT.md).
+
+```python
+from manipulation_kit.arms import get_arm_kinematics
+from manipulation_kit.executor import KinematicExecutor, run
+from manipulation_kit.primitives import Grasp
+from manipulation_kit.world import ArmView, GripperView, ObjectView, WorldView
+
+kin = get_arm_kinematics("d1/arm", quiet=True)
+world = WorldView.of(
+    [ObjectView("red_block", p=(0.38, 0.25, 0.05), size=(0.05, 0.04, 0.05))],
+    arms=[ArmView(s, joints=kin.joints(s)) for s in ("left", "right")],
+    grippers=[GripperView(s, 0.0) for s in ("left", "right")])
+
+verb = Grasp(object="red_block", side="left", approach="top_down")
+plan = verb.plan(world, kin)                 # pure — nothing has moved
+print(plan if not plan.ok else run(plan, KinematicExecutor(kin)))
+print(verb.verifier(world)(world).verdict)   # 'false': nothing was measured yet
+```
+
+Three things are load-bearing, and each is a bug somebody shipped:
+
+- **`ObjectView.size` is mandatory and `frame_id` travels with the pose.**
+  Every clearance is computed from the extent, and a frame that has gone stale
+  refuses (`frame_stale`) rather than returning a plausible number — the
+  `table_frame` homography lesson, in the type system.
+- **`plan()` is checked end to end before the first joint moves.** Every
+  waypoint is split into per-tick knots and each one passes the same
+  `solve_ee` the teleop stack runs, guard included. A refusal is a typed
+  `PlanError` with the waypoint and the residual, never a silent no-op.
+- **Orientation is derived, not emitted.** A caller names one of four
+  approaches; the kit computes the wrist from the approach axis and the
+  object's principal axis. `Nudge` is the only free-numeric verb — ±10/30/50 mm
+  and ±15° of yaw about the approach axis.
+
+### Running a plan
+
+`manipulation_kit.executor` holds the `Executor` protocol
+(`state` / `send_joints` / `set_gripper` / `settle`) and two pure doubles:
+`RecordingExecutor`, which accepts everything and moves nothing, and
+`KinematicExecutor`, which mirrors the plan onto the model.
+
+`manipulation_kit.executors.firmware` is **the one module in this repository
+that opens a socket** — a deliberate exception to the promise at the top of
+this file, decided by Shu on 2026-09-19, so that lease handling, mode entry and
+the rate clamp exist once instead of in every consumer. It is behind the
+optional `[firmware]` extra (`d1fw-client`), nothing else in the package
+imports it, and its tests run against a fake client. Its default transport is
+`POST /v1/arm/trajectory/start`: a plan is already fully checked, so uploading
+it once puts the timing on the component with a real-time loop and adds a
+second, independent guard pass over the whole path. Streaming
+`move_joints_both` at 50 Hz stays available for the case that genuinely is a
+stream.
+
+### Why the agent code is in `examples/`, not in the package
+
+Shu, 2026-09-19: 「approach とか少し高次のスキルも manip kit に実装するわけで、
+それは agent の中ではなくて、普通に primitive の中に入れる」 and 「agent 的なのは
+examples フォルダに切り離す」. So the split runs between *capability* and *one way
+of driving it*:
+
+| in the wheel | in `examples/agent/` |
+|---|---|
+| `world/` — the perception-result types | `offer.py` — the IK+guard gate that decides what a model is even shown |
+| `primitives/` — the verbs, their plans and their verifiers | `schema.py` — JSON Schema for function calling, and the Jev choice menu, from the same dataclasses |
+| `executor.py`, `executors/` — how a plan reaches a robot | `trace.py` — one JSONL record per decision, the model's claim beside the measurement |
+| | `astra_loop.py`, `jev_menu.py` — runnable loops |
+
+The primitives are a robot capability: scripts, teleop assists, collection
+macros and learned pipelines all want `Grasp(...).plan(world, kin)` and none of
+them want a JSON tool schema. Putting the schema in the package would make
+every consumer of the kinematics carry it — and, worse, would let the verb set
+start drifting toward whatever the current model finds easy. The examples
+*import* the kit and add nothing to it, so that cannot happen; a test asserts
+the two exports still enumerate the same verbs and the same argument domains.
+
+```sh
+python examples/agent/astra_loop.py --dry-run   # scripted; no API key needed
+python examples/agent/jev_menu.py               # the same offer as a menu
 ```
 
 ## The two guards

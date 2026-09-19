@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.4.1"
-description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs (pure computation; hardware via d1-firmwared)"
+version = "0.5.0"
+description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]
 classifiers = [
@@ -46,6 +46,19 @@ mujoco = [
     "mujoco>=3.0,<=3.3.7; python_version < '3.10'",
     "mujoco>=3.0; python_version >= '3.10'",
 ]
+# The ONE module in this package that opens a socket:
+# manipulation_kit.executors.firmware, which runs a planned primitive on a real
+# D1 through the d1-firmwared REST daemon. It is an extra so the base install
+# keeps the repository's no-socket promise, and nothing else in the package
+# imports it.
+#
+# The distribution is named here and NOT pinned to a git URL on purpose: this
+# wheel is publishable, and a direct reference to a private repository in its
+# metadata is neither installable for an outside reader nor honest about what
+# they would get. Consumers pin the source themselves, by commit:
+#
+#   d1fw-client @ git+ssh://git@github.com/Omakase-Robotics-Org/d1-firmware-client-py.git@bfd6a678
+firmware = ["d1fw-client"]
 # Mesh work: the CAD vendoring/decimation tools under tools/vendoring/ (which
 # are outside the wheel, and need the private assets repository — see
 # tools/vendoring/README.md).

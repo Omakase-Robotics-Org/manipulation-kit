@@ -1,0 +1,117 @@
+# The primitive contract
+
+Every verb in `manipulation_kit.primitives` keeps the same three-part contract.
+That uniformity is the whole value of the package: a consumer — a script, a
+teleop assist, a collection macro, an LLM loop — can treat any verb like any
+other, and adding a tenth verb costs no consumer a change.
+
+```python
+preconditions(world) -> list[Unmet]
+plan(world, kin)     -> Plan | PlanError      # pure
+verifier(world0)     -> Verifier              # measured
+```
+
+## 1. `preconditions(world) -> list[Unmet]`
+
+Cheap. No kinematics, no IK, no guard. It answers *is this verb applicable as
+asked*, which is a different question from *can the arm get there*:
+
+* `no_such_object` — and the `Unmet.remedy` lists what the world does hold
+* `frame_stale` / `unknown_frame` — the pose exists but cannot be resolved
+* `not_holding` / `already_holding` — the hand is in the wrong state
+* `object_too_wide` — the driven jaws open 51.96 mm and this is wider
+* `bad_side`, `bad_approach`, `bad_grip`, `bad_frame`, `no_motion` — the
+  arguments themselves
+
+Keeping these separate from the reach problem matters because the two want
+different reactions. A misnamed object needs a different word; an unreachable
+one needs a different approach, a different hand, or a nudge.
+
+## 2. `plan(world, kin) -> Plan | PlanError`
+
+**Pure.** It borrows the kinematic model, poses it to solve, and puts it back
+exactly as it found it — on success and on every refusal. Planning twice from
+the same world gives the same plan.
+
+**Fully checked before anything moves.** Each pose waypoint is split into
+per-tick knots bounded by `safety.MAX_STEP_M` / `MAX_STEP_RAD`, and each knot
+goes through `GuardedArm.solve_ee`: damped-least-squares IK with the joint
+limits enforced *inside* the iteration, a forward-kinematics re-check that the
+solution reaches the pose it was asked for, the per-tick joint-step clamp, and
+the `MotionGuard` collision check over the **two-arm** posture. The knots exist
+because the solver is local: from HOME, a single call to a top-down grasp pose
+lands in a local minimum and returns `None` even though random restarts solve
+it. Walked in small steps, every knot converges — and the knots are also
+exactly the 50 Hz targets the robot wants.
+
+**A refusal is a typed value, never a silent no-op.** `PlanError` carries the
+reason, the waypoint index and label, and the residual:
+
+```
+grasp refused: guard_reject at waypoint 1 (grasp), 19 mm short —
+the motion guard refused the left arm's posture at 'grasp' — it would hit the
+body, the other arm or itself
+```
+
+The reason vocabulary is closed (`PLAN_REASONS`): `ik_fail`, `infeasible`,
+`guard_reject`, `unreachable_object`, `no_such_object`, `frame_stale`,
+`unknown_frame`, `precondition_unmet`, `learned_policy_required`. A consumer
+switches on it; it never parses a message.
+
+## 3. `verifier(world0) -> Verifier`
+
+Built from the world **before**, called with a world **after**, returns a
+`VerdictReport` with one of three verdicts and the numbers it was read off.
+
+* `TRUE` needs evidence in the later world.
+* `FALSE` is evidence of the opposite.
+* `UNKNOWN` is what a verifier says when the robot cannot produce the evidence
+  at all — an object nobody is detecting any more, a gripper with no report, a
+  pour on a vessel with no scale under it.
+
+Two rules hold for every verb, and both are tested:
+
+* **Never TRUE by default.** A verifier handed the world it was built from — an
+  executor that did nothing — returns `FALSE` or `UNKNOWN`.
+* **Measured, not intended.** `Grasp` reads `GripperReport.holding`, the
+  torque-stop verdict off the wire, and cross-checks the jaw gap against the
+  object's width so a gripper stalled on its own pads does not pass. `Place`
+  wants the object inside the container's interior AABB *and* out of the jaws.
+
+## Kinematic and learned verbs
+
+Two kinds under one contract.
+
+**Kinematic** verbs plan their own motion: `Approach`, `Grasp`, `Lift`,
+`Carry`, `Place`, `Release`, `Nudge`, `Retreat`, `GoHome`.
+
+**Learned** verbs subclass `LearnedPrimitive`. The kit still owns their
+preconditions and their measured verifier; `plan()` returns
+`PlanError("learned_policy_required")` naming the policy. That is the contract,
+not a stub: a consumer holding an executor that can run the policy handles that
+reason by running it, and one that cannot reports it as the reason the verb is
+unavailable.
+
+`Pour` is the first, and the reason the split exists (Shu, 2026-09-19:
+「Pour は ACT」). Its executor lives in `d1-inference`, with the checkpoint: it
+cannot live in the kit, which has no model runtime, and it cannot live in
+`omakase-core`, which must not depend on `d1-inference`.
+
+## Orientation is derived, never emitted
+
+The model names a verb, an object and one of four approaches
+(`top_down`, `front`, `side_left`, `side_right`). The kit derives the wrist
+quaternion from the approach direction plus the object's principal axis — the
+jaws close *across* the long side — and the per-arm mirror convention lives in
+one constant. `Nudge` is the only verb that takes free numbers: translations
+snapped to the ±10/30/50 mm grid, and a yaw clamped to ±15° about the approach
+axis.
+
+## Executors
+
+`plan()` produces a `Plan`; an `Executor` runs one. The protocol
+(`state` / `send_joints` / `set_gripper` / `settle`) lives in
+`manipulation_kit.executor` with two pure test doubles. The only implementation
+that opens a socket is `manipulation_kit.executors.firmware`, behind the
+`[firmware]` extra — see its module docstring for why the default transport is
+a daemon-played trajectory rather than a 50 Hz stream.
