@@ -89,6 +89,15 @@ INFEASIBLE = "infeasible"
 GUARD_REJECT = "guard_reject"
 #: ...and the ones that are about the WORLD rather than the arm
 UNREACHABLE_OBJECT = "unreachable_object"
+#: the DESTINATION of a carry/place is outside this arm's reachable set at
+#: every transit height the primitive is allowed to try. Distinct from
+#: ``ik_fail`` on purpose: ``ik_fail`` is one waypoint the solver could not
+#: reach and a different waypoint may work, while this one has already tried
+#: the whole ladder and is a statement about the ARM and the destination.
+#: The caller's answer is another arm (or moving the destination), never a
+#: smaller clearance — measured 2026-09-19, the blocks-eval bin rim plus a
+#: constant 100 mm sits 109 mm outside the holding arm's reach.
+UNREACHABLE_DESTINATION = "unreachable_destination"
 NO_SUCH_OBJECT = "no_such_object"
 FRAME_STALE = "frame_stale"
 UNKNOWN_FRAME = "unknown_frame"
@@ -97,8 +106,9 @@ PRECONDITION_UNMET = "precondition_unmet"
 LEARNED_POLICY_REQUIRED = "learned_policy_required"
 
 PLAN_REASONS: Tuple[str, ...] = (
-    IK_FAIL, INFEASIBLE, GUARD_REJECT, UNREACHABLE_OBJECT, NO_SUCH_OBJECT,
-    FRAME_STALE, UNKNOWN_FRAME, PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED)
+    IK_FAIL, INFEASIBLE, GUARD_REJECT, UNREACHABLE_OBJECT,
+    UNREACHABLE_DESTINATION, NO_SUCH_OBJECT, FRAME_STALE, UNKNOWN_FRAME,
+    PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED)
 
 
 @dataclass(frozen=True)

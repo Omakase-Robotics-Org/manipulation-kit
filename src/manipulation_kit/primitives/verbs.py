@@ -28,14 +28,35 @@ from .types import (AUTO, BOTH, FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPS,
                     LearnedPrimitive,
                     LEARNED_POLICY_REQUIRED, NO_SUCH_OBJECT, NUDGE_FRAMES,
                     NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, PlanError, Plan, Primitive,
-                    SIDE_CHOICES, SIDES, TOP_DOWN, UNKNOWN_FRAME, Unmet,
+                    SIDE_CHOICES, SIDES, TOP_DOWN,
+                    UNREACHABLE_DESTINATION, UNKNOWN_FRAME, Unmet,
                     Verifier, GripStep, SettleStep, Waypoint)
 
 #: default standoff along the approach axis [m] — far enough that the descent
 #: is a straight line the guard can clear, short enough to stay in reach
 DEFAULT_STANDOFF_M = 0.08
-#: how far above a destination a carried object travels [m]
+#: how far above a destination a carried object travels [m] — the LARGEST
+#: rung of :data:`CARRY_CLEARANCE_LADDER_M`, not a fixed height
 DEFAULT_CLEARANCE_M = 0.10
+#: Transit clearances above a destination's rim a carry will TRY, largest
+#: first. The transit height is CHOSEN FROM THE REACHABLE SET rather than
+#: fixed, because a constant is a statement about the robot's arm that nobody
+#: measured: on the ``blocks-eval`` wagon (2026-09-19) the bin rim plus a
+#: constant 100 mm lands **109 mm outside** the holding arm's reachable set,
+#: and every trial that got as far as a lift then lost both ``Carry`` and
+#: ``Place`` to ``ik_fail`` at ``over_destination``. The rungs step down 20 mm
+#: at a time and the ladder STOPS at :data:`RIM_MARGIN_M` above what the
+#: carried object itself needs — the clearance exists to clear the rim, so it
+#: is floored by the rim and the object, never shrunk until the IK stops
+#: complaining. A destination no rung reaches is refused with
+#: :data:`~.types.UNREACHABLE_DESTINATION`, which is the caller's cue to use
+#: the other arm rather than the kit's cue to try harder.
+CARRY_CLEARANCE_LADDER_M: Tuple[float, ...] = (0.10, 0.08, 0.06, 0.04)
+#: the carried object's own UNDERSIDE must stay this far above the rim [m]
+RIM_MARGIN_M = 0.010
+#: how far above the RIM a placed object is let go when the set-down inside
+#: the container cannot be reached [m]
+PLACE_RELEASE_MARGIN_M = 0.010
 #: default lift [m]
 DEFAULT_LIFT_M = 0.10
 
@@ -118,6 +139,108 @@ def _plan_for(primitive: Primitive, world: WorldView, kin, side: str,
         return error
     return Plan(primitive.name(), side, tuple(waypoints), tuple(steps),
                 tuple(notes) + tuple(detours))
+
+
+def _hang_below_tool(world: WorldView, name: str, p_tool) -> float:
+    """How far a held object's UNDERSIDE hangs below the tool point [m].
+
+    MEASURED off the world rather than assumed, because the tool point is the
+    pad CENTRE and a top-down grasp sits it ABOVE the object's centre (F6,
+    :func:`~.approach.grasp_point`): "the object's half height" is only the
+    right number when the two coincide, and it silently under-states the hang
+    by 12 mm on a 40 mm cube. With the tool at the object's centre this
+    reduces to exactly ``height / 2``, which is the form the rule is stated in.
+
+    A frame that will not resolve falls back to the half height: a carry whose
+    object cannot be located has bigger problems, and the precondition that
+    catches them has already run.
+    """
+    item = world.find(name)
+    if item is None:
+        return 0.0
+    try:
+        p_obj, _ = item.pose_in_base(world.frames)
+    except FrameError:
+        return item.height() / 2.0
+    return float(p_tool[2]) - (float(p_obj[2]) - item.height() / 2.0)
+
+
+def _clearance_ladder(asked_m: float, floor_m: float) -> Tuple[float, ...]:
+    """The transit clearances to try, largest first, floored and de-duplicated.
+
+    The caller's own ``clearance_m`` is the FIRST rung — asking for 150 mm
+    still gets 150 mm when it plans — and the ladder below it is the fixed
+    descending list. Nothing below ``floor_m`` is ever tried; if the ask is
+    itself below the floor, the floor is the single rung, because the floor is
+    about the object and the rim and the ask is not.
+    """
+    rungs = [float(asked_m)] + [c for c in CARRY_CLEARANCE_LADDER_M
+                                if c < float(asked_m) - 1e-9]
+    out: List[float] = []
+    for rung in rungs:
+        if rung < float(floor_m) - 1e-9:
+            continue
+        if not out or abs(rung - out[-1]) > 1e-9:
+            out.append(float(rung))
+    return tuple(out) if out else (float(floor_m),)
+
+
+def _first_reachable(primitive: Primitive, world: WorldView, kin, side: str,
+                     attempts):
+    """Try each ``(clearance, notes, waypoints)`` in order; first that plans wins.
+
+    Returns ``(plan, best_clearance, best_error)`` with ``plan`` ``None`` when
+    every attempt was refused. "Best" is the SMALLEST residual, so the number
+    handed to the caller is how close this arm ever got rather than how close
+    the last thing tried got.
+
+    Deterministic by construction, like the via search it sits on top of: a
+    fixed ordered list, each attempt planned by the same ``_plan_for``, and
+    ``plan()`` stays pure because ``Kin`` restores the mirror every time.
+    """
+    best_error = None
+    best_clearance = float("nan")
+    best_residual = float("inf")
+    for clearance, notes, waypoints in attempts:
+        result = _plan_for(primitive, world, kin, side, waypoints, notes=notes)
+        if getattr(result, "ok", False):
+            return result, float(clearance), None
+        residual = (float(result.residual_m)
+                    if math.isfinite(result.residual_m) else float("inf"))
+        if best_error is None or residual < best_residual:
+            best_error, best_residual, best_clearance = (result, residual,
+                                                         float(clearance))
+    return None, best_clearance, best_error
+
+
+def _unreachable_destination(primitive: Primitive, side: str,
+                             ladder: Tuple[float, ...], best_clearance: float,
+                             error) -> PlanError:
+    """Every rung was refused — report it as ONE reason, with the numbers.
+
+    The min residual and the rung that came closest travel with the refusal,
+    because "unreachable" without a number is the refusal a model cannot act
+    on. The underlying stage reason (``ik_fail`` / ``guard_reject``) is named
+    in the detail rather than returned, so a caller can tell "this arm cannot
+    get there at all" apart from "this one waypoint was rejected" without
+    replaying the ladder itself.
+    """
+    to = getattr(primitive, "to", "") or "the destination"
+    residual = float(error.residual_m) if error is not None else float("nan")
+    gap = (f"{residual * 1000:.0f} mm short" if math.isfinite(residual)
+           else "no residual measured")
+    return PlanError(
+        UNREACHABLE_DESTINATION,
+        f"the {side} arm cannot reach over {to} at any transit height from "
+        f"{ladder[0] * 1000:.0f} down to {ladder[-1] * 1000:.0f} mm above its "
+        f"rim; the closest was {best_clearance * 1000:.0f} mm, {gap} "
+        f"({error.reason if error is not None else 'nothing tried'}). "
+        f"Lowering it further would drive the object into the rim — use the "
+        f"other arm, or bring the destination closer",
+        waypoint_index=error.waypoint_index if error is not None else -1,
+        waypoint_label=(error.waypoint_label if error is not None
+                        else "over_destination"),
+        residual_m=residual, primitive=primitive.name(), side=side)
 
 
 # --------------------------------------------------------------------------- #
@@ -366,7 +489,8 @@ class Carry(Primitive):
     def _side(self, world: WorldView) -> Optional[str]:
         return Lift(object=self.object, side=self.side)._side(world)
 
-    def _goal(self, world: WorldView):
+    def _destination_top(self, world: WorldView) -> Tuple[np.ndarray, float]:
+        """``(destination centre in base, the z a carried object must clear)``."""
         dest = world.find(self.to)
         dest_p, _ = dest.pose_in_base(world.frames)
         if isinstance(dest, ContainerView):
@@ -375,8 +499,23 @@ class Carry(Primitive):
             top = dest.top_z(world.frames)
         else:
             top = float(dest_p[2]) + float(dest.size[2]) / 2.0
-        return np.array([float(dest_p[0]), float(dest_p[1]),
-                         top + float(self.clearance_m)])
+        return np.asarray(dest_p, dtype=float), float(top)
+
+    def _goal(self, world: WorldView, clearance_m: Optional[float] = None):
+        dest_p, top = self._destination_top(world)
+        clearance = (float(self.clearance_m) if clearance_m is None
+                     else float(clearance_m))
+        return np.array([float(dest_p[0]), float(dest_p[1]), top + clearance])
+
+    def ladder(self, world: WorldView, p_tool) -> Tuple[float, ...]:
+        """The transit clearances this carry may use, largest first.
+
+        Public because it is the number a caller has to be able to read back:
+        a refusal names the rungs it tried, and the chain planner that chooses
+        an arm by reachability has to ask the same question the plan asks.
+        """
+        floor = _hang_below_tool(world, self.object, p_tool) + RIM_MARGIN_M
+        return _clearance_ladder(self.clearance_m, floor)
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
@@ -385,13 +524,31 @@ class Carry(Primitive):
         side = self._side(world)
         with Kin(kin, world) as borrowed:
             p_tool, r_tool = borrowed.tool_pose(side)
-        goal = self._goal(world)
-        # rise first, then travel: the two-waypoint path is what keeps the
-        # object over the clearance height for the whole horizontal move
-        rise = np.array([p_tool[0], p_tool[1], max(float(p_tool[2]), float(goal[2]))])
-        waypoints = [Waypoint("clearance", rise, r_tool),
-                     Waypoint("over_destination", goal, r_tool)]
-        return _plan_for(self, world, kin, side, waypoints)
+        dest_p, top = self._destination_top(world)
+        ladder = self.ladder(world, p_tool)
+        attempts = []
+        for clearance in ladder:
+            goal = np.array([float(dest_p[0]), float(dest_p[1]),
+                             top + float(clearance)])
+            # Rise first, then travel: the horizontal leg is what keeps the
+            # object over the clearance height for the whole move. When the
+            # chosen transit height is BELOW where the tool already is the
+            # rise is a no-op and the leg descends — monotonically, to a
+            # height that is itself already clear of the rim, so the object
+            # never passes under the height it is going to end at.
+            rise = np.array([p_tool[0], p_tool[1],
+                             max(float(p_tool[2]), float(goal[2]))])
+            attempts.append((
+                clearance,
+                (f"transit {clearance * 1000:.0f} mm above {self.to}'s rim"
+                 + ("" if clearance >= ladder[0] - 1e-9 else
+                    f" (the {ladder[0] * 1000:.0f} mm rung is out of reach)"),),
+                [Waypoint("clearance", rise, r_tool),
+                 Waypoint("over_destination", goal, r_tool)]))
+        plan, best, error = _first_reachable(self, world, kin, side, attempts)
+        if plan is not None:
+            return plan
+        return _unreachable_destination(self, side, ladder, best, error)
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
@@ -435,15 +592,28 @@ class Place(Primitive):
     def _side(self, world: WorldView) -> Optional[str]:
         return Lift(object=self.object, side=self.side)._side(world)
 
-    def _drop_pose(self, world: WorldView):
+    def _drop_pose(self, world: WorldView, *, from_rim: bool = False):
+        """Where the object's CENTRE ends up when it is let go.
+
+        Two rungs, and the difference between them is what the descent is for:
+        ``set_down`` puts the object's underside on the container's own floor,
+        which is what "placed" should mean and is tried first; ``from_rim``
+        lets it go one :data:`PLACE_RELEASE_MARGIN_M` above the RIM, which is
+        a shallower reach for an arm that cannot get down into the bin. The
+        verifier does not change for either — the object still has to be
+        inside the interior AABB and at rest.
+        """
         obj = world.find(self.object)
         dest = world.find(self.to)
         dest_p, _ = dest.pose_in_base(world.frames)
         if isinstance(dest, ContainerView):
             floor = float(dest_p[2]) - float(dest.interior[2]) / 2.0
+            rim = dest.rim_z(world.frames)
         else:
-            floor = dest.top_z(world.frames)
-        z = floor + obj.height() / 2.0 + float(self.clearance_m)
+            floor = rim = dest.top_z(world.frames)
+        base = rim if from_rim else floor
+        margin = (PLACE_RELEASE_MARGIN_M if from_rim else float(self.clearance_m))
+        z = base + obj.height() / 2.0 + margin
         return np.array([float(dest_p[0]), float(dest_p[1]), z])
 
     def plan(self, world: WorldView, kin) -> Any:
@@ -455,20 +625,39 @@ class Place(Primitive):
             p_tool, r_tool = borrowed.tool_pose(side)
         # The tool point is at the object's grasp point, so the tool descends
         # to the object's resting centre — not to the container floor.
-        drop = self._drop_pose(world)
         offset = np.asarray(p_tool) - world.find(self.object).pose_in_base(
             world.frames)[0]
-        above = drop + offset + np.array([0.0, 0.0, DEFAULT_CLEARANCE_M])
-        waypoints = [Waypoint("over_destination", above, r_tool),
-                     Waypoint("set_down", drop + offset, r_tool)]
-        with Kin(kin, world) as borrowed:
-            steps, error, detours = solve_path(borrowed, side, waypoints,
-                                               primitive=self.name())
-        if error is not None:
-            return error
-        all_steps = tuple(steps) + (GripStep(side, 0.0, "soft", 1), SettleStep(1.0))
-        return Plan(self.name(), side, tuple(waypoints), all_steps,
-                    tuple(detours))
+        carry = Carry(object=self.object, to=self.to, side=side)
+        _dest_p, top = carry._destination_top(world)
+        ladder = carry.ladder(world, p_tool)
+        releases = [("set_down", self._drop_pose(world) + offset)]
+        rim_release = self._drop_pose(world, from_rim=True) + offset
+        if rim_release[2] > releases[0][1][2] + 1e-6:
+            releases.append(("rim_release", rim_release))
+        attempts = []
+        for label, release in releases:
+            for clearance in ladder:
+                above = np.array([float(release[0]), float(release[1]),
+                                  top + float(clearance)])
+                if above[2] <= release[2] + 1e-6:
+                    continue
+                how = ("setting it down on the floor of " + self.to
+                       if label == "set_down" else
+                       f"letting go {PLACE_RELEASE_MARGIN_M * 1000:.0f} mm "
+                       f"above {self.to}'s rim, which the arm can reach and "
+                       f"the floor of it is not")
+                attempts.append((
+                    clearance,
+                    (f"transit {clearance * 1000:.0f} mm above {self.to}'s "
+                     f"rim, {how}",),
+                    [Waypoint("over_destination", above, r_tool),
+                     Waypoint(label, release, r_tool)]))
+        plan, best, error = _first_reachable(self, world, kin, side, attempts)
+        if plan is None:
+            return _unreachable_destination(self, side, ladder, best, error)
+        all_steps = (tuple(plan.steps)
+                     + (GripStep(side, 0.0, "soft", 1), SettleStep(1.0)))
+        return Plan(self.name(), side, plan.waypoints, all_steps, plan.notes)
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)

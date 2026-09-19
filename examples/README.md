@@ -25,6 +25,7 @@ to it, which is what keeps one vocabulary instead of one per consumer.
 | script | what it does | extra needs |
 |---|---|---|
 | `offer.py` | the gate: plan every candidate through the real IK and the real guard, return what survives **and every refusal with its reason**. An unreachable option never becomes a word in the prompt | — |
+| `chain.py` | the task planner's one question: plan the WHOLE pick-and-place (Approach → Grasp → Lift → Carry → Place) for **both** arms before anything moves, and grasp with the arm that can deliver. The near hand is only the tie-break | — |
 | `schema.py` | one definition set, two exports: `tool_schemas()` (JSON Schema, for Astra-style function calling) and `choice_menu()` (already-bound options, for Jev-style typed answers). A test asserts they do not drift | — |
 | `trace.py` | one JSONL record per decision: offers, refusals, the model's claim, and the **measured** verdict beside it | — |
 | `astra_loop.py` | observe → offer → tool call → execute → verify, with two stop conditions. Runs a scripted stub when `OPENAI_API_KEY` is unset | `openai` only for a real run |

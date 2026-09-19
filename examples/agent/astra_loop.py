@@ -40,6 +40,7 @@ from manipulation_kit.executor import KinematicExecutor, wire  # noqa: E402
 from manipulation_kit.primitives import (GripStep, JointStep,  # noqa: E402
                                          Place, by_verb)
 from manipulation_kit.primitives.approach import tool_from_link7  # noqa: E402
+from chain import choose_side  # noqa: E402
 from offer import offer, why_nothing  # noqa: E402
 from scene import BLOCK_P, demo_scene, observe  # noqa: E402
 from schema import tool_schemas  # noqa: E402
@@ -80,6 +81,12 @@ class ScriptedModel:
                                             "side": "left"}},
         ]
         self.turn = 0
+
+    def use_side(self, side: str) -> None:
+        """Play the script with the hand the task planner chose."""
+        for call in self.script:
+            if "side" in call["arguments"]:
+                call["arguments"]["side"] = side
 
     def __call__(self, messages, tools) -> Dict[str, Any]:
         if self.turn >= len(self.script):
@@ -160,13 +167,22 @@ class Mirror:
 
 
 def loop(model, *, max_turns: int = 8, trace_path: Optional[Path] = None,
-         goal=Place(object="red_block", to="box", side="left")) -> DecisionTrace:
-    _world, kin = demo_scene()
+         goal=None) -> DecisionTrace:
+    world0, kin = demo_scene()
+    # WHICH HAND — decided before anything moves, by planning the whole chain
+    # (Approach, Grasp, Lift, Carry, Place) for BOTH arms and taking the one
+    # that can DELIVER. The near hand is only the tie-break; see chain.py for
+    # what that cost on the blocks-eval wagon (2026-09-19, F10).
+    hand = choose_side(world0, kin, obj="red_block", destination="box")
+    if goal is None:
+        goal = Place(object="red_block", to="box", side=hand.side)
     mirror = Mirror(kin)
     trace = DecisionTrace(trace_path)
     messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM}]
     tools = tool_schemas(mirror.world())
 
+    if isinstance(model, ScriptedModel):
+        model.use_side(hand.side)
     for turn in range(max_turns):
         world = mirror.world()
         messages.append({"role": "user", "content": world.to_text()})

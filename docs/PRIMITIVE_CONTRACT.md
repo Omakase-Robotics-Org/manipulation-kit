@@ -86,9 +86,21 @@ body, the other arm or itself
 ```
 
 The reason vocabulary is closed (`PLAN_REASONS`): `ik_fail`, `infeasible`,
-`guard_reject`, `unreachable_object`, `no_such_object`, `frame_stale`,
-`unknown_frame`, `precondition_unmet`, `learned_policy_required`. A consumer
-switches on it; it never parses a message.
+`guard_reject`, `unreachable_object`, `unreachable_destination`,
+`no_such_object`, `frame_stale`, `unknown_frame`, `precondition_unmet`,
+`learned_policy_required`. A consumer switches on it; it never parses a
+message.
+
+`unreachable_destination` is the one worth reading twice, because it is a
+different KIND of answer. `ik_fail` names one waypoint the solver could not
+reach, and a caller's sensible response is a different waypoint.
+`unreachable_destination` means `Carry`/`Place` already tried the whole
+transit ladder (`CARRY_CLEARANCE_LADDER_M`, 100 → 40 mm above the destination's
+rim, floored at what the carried object needs to clear it) and this **arm**
+cannot get over this **destination** at any of them. It carries the smallest
+residual seen and the rung that came closest. The answer is the other arm, or
+a nearer destination — never a smaller clearance, which is why the floor is
+part of the primitive rather than part of the caller.
 
 ## 3. `verifier(world0) -> Verifier`
 
