@@ -168,13 +168,18 @@ def grasp_orientation(side: str, approach: str, obj: Optional[ObjectView] = None
     bounded correction ``Nudge`` may carry — a roll about the approach axis,
     the one rotation with an obvious visual meaning ("turn the hand a little").
 
-    With no object, or an object with a square footprint, the approach set's
-    own default jaw orientation is kept: the kit does not invent a principal
-    axis for a cube.
+    With no object the approach set's own default jaw orientation is kept.
+    With one, the jaws are squared to the object's own faces — its long axis
+    where it has one, its widest horizontal axis where it does not
+    (``ObjectView.footprint_axis``). A square footprint has no PREFERRED grasp
+    and it still has a wrong one: a 40 mm cube yawed 11.7 deg presents 47.3 mm
+    across base-aligned jaws, more than the 43.96 mm the driven gripper can
+    take, so the pads meet two corners and hold nothing (measured over five
+    blocks-eval trials, 2026-09-19).
     """
     d = direction(approach)
     r = _seed(side, d)
-    axis = None if obj is None or frames is None else obj.principal_axis(frames)
+    axis = None if obj is None or frames is None else obj.footprint_axis(frames)
     if axis is not None:
         # The jaws must close ACROSS the object's long axis: the gap direction
         # is perpendicular to both the approach and that axis.

@@ -103,22 +103,51 @@ class ObjectView:
         """Unit vector along the LONGEST horizontal body axis, base frame.
 
         ``None`` when the two horizontal extents differ by less than ``tie_m``:
-        a square footprint has no principal axis, and inventing one rolls the
-        wrist for nothing. Primitives then keep the approach set's own default
-        jaw orientation.
+        a square footprint has no LONG axis, and picking one at random would
+        roll the wrist for nothing. It still has faces, though — see
+        :meth:`footprint_axis`, which is what a parallel gripper has to square
+        itself to.
         """
+        span, axis = self._horizontal_axes(frames)[0]
+        second = self._horizontal_axes(frames)[1][0]
+        if span - second < tie_m:
+            return None
+        return axis
+
+    def _horizontal_axes(self, frames: FrameGraph):
+        """The body axes by horizontal span, longest first, each flattened
+        into the ground plane and normalised. Degenerate (vertical) axes drop
+        out, because a jaw gap along them means nothing."""
         axes = self.axes_in_base(frames)
-        horizontal = []
+        out = []
         for i in range(3):
             axis = axes[:, i]
-            span = float(self.size[i]) * math.hypot(axis[0], axis[1])
-            horizontal.append((span, axis))
-        horizontal.sort(key=lambda item: item[0], reverse=True)
-        if horizontal[0][0] - horizontal[1][0] < tie_m:
-            return None
-        axis = np.array([horizontal[0][1][0], horizontal[0][1][1], 0.0])
-        norm = float(np.linalg.norm(axis))
-        return None if norm < 1e-9 else axis / norm
+            flat = np.array([axis[0], axis[1], 0.0])
+            norm = float(np.linalg.norm(flat))
+            if norm < 1e-9:
+                continue
+            out.append((float(self.size[i]) * math.hypot(axis[0], axis[1]),
+                        flat / norm))
+        out.sort(key=lambda item: item[0], reverse=True)
+        while len(out) < 2:
+            out.append((0.0, np.array([1.0, 0.0, 0.0])))
+        return out
+
+    def footprint_axis(self, frames: FrameGraph) -> Optional[np.ndarray]:
+        """A horizontal body axis to square the jaws to, base frame.
+
+        The same axis as :meth:`principal_axis` when there IS a long one, and
+        the widest horizontal axis when the footprint is square — because a
+        square prism has no preferred grasp but it certainly has a wrong one.
+        MEASURED, 2026-09-19: a 40 mm cube yawed 11.7 deg on the blocks-eval
+        wagon presents **47.3 mm** across base-frame-aligned jaws (53.2 mm at
+        the arrangement's 25 deg limit) against a driven opening of 51.96 mm
+        and a 43.96 mm graspable width. The jaws closed on two corners, stalled
+        at a 46 mm gap and the env reported nothing held — five trials in a
+        row. Keeping "the approach set's own default" is only harmless when
+        the object happens to be axis-aligned.
+        """
+        return self._horizontal_axes(frames)[0][1]
 
     def min_horizontal_extent(self) -> float:
         """Smallest of the three measured extents — what the jaws must span.

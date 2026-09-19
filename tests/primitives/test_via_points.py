@@ -220,3 +220,31 @@ def test_carry_gets_the_detour_too(d1_arm):
         world, d1_arm)
     assert plan.ok, str(plan)
     assert plan.joint_steps()
+
+
+def test_the_jaws_are_squared_to_a_yawed_cube_not_to_the_base_frame(d1_arm):
+    """The grasp is planned across a FACE, whatever the cube's yaw.
+
+    A 40 mm cube fits the driven jaws with 2 mm a side; the same cube presented
+    corner-first does not, and the pads stall on two corners holding nothing —
+    which is what five blocks-eval trials measured before the kit started
+    reading the object's own footprint axis.
+    """
+    from scipy.spatial.transform import Rotation as R
+
+    from manipulation_kit.primitives import approach as ap
+
+    for yaw in (0.0, 11.7, 25.0):
+        cube = ObjectView("cube", p=(0.44, -0.05, 0.19), size=CUBE_SIZE,
+                          r=R.from_euler("z", yaw, degrees=True), colour="red")
+        world = WorldView.of(
+            [cube, SurfaceView("wagon_top", p=WAGON_TOP, size=(0.4, 0.6, 0.002))],
+            arms=[ArmView(s, joints=d1_arm.joints(s)) for s in ("left", "right")],
+            grippers=[GripperView(s, 0.0) for s in ("left", "right")])
+        r_tcp = ap.grasp_orientation("right", "top_down", cube, world.frames)
+        gap = r_tcp.as_matrix()[:, 0]
+        half = cube.axes_in_base(world.frames) * np.array(cube.size) / 2.0
+        width = 2 * sum(abs(float(np.dot(half[:, i], gap))) for i in range(3))
+        assert width == pytest.approx(CUBE_SIZE[0], abs=1e-6), (
+            f"a cube yawed {yaw} deg presents {width * 1000:.1f} mm to the jaws")
+        assert width <= ap.JAW_OPEN_M - 2 * ap.JAW_CLEARANCE_M

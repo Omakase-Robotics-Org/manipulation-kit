@@ -43,6 +43,31 @@ def test_a_square_footprint_has_no_principal_axis():
     assert cube.principal_axis(frames) is None
 
 
+def test_a_square_footprint_still_has_faces_to_square_the_jaws_to():
+    """No PREFERRED grasp is not the same as no wrong one.
+
+    MEASURED (blocks-eval, 2026-09-19): a 40 mm cube yawed 11.7 deg presents
+    47.3 mm across base-aligned jaws, and the driven gripper can take 43.96.
+    The pads met two corners, stalled at a 46 mm gap and held nothing, five
+    trials out of five.
+    """
+    frames = FrameGraph()
+    for yaw in (0.0, 11.7, 25.0, 44.0):
+        cube = ObjectView("cube", p=(0.44, -0.05, 0.19), size=(0.04,) * 3,
+                          r=R.from_euler("z", yaw, degrees=True))
+        assert cube.principal_axis(frames) is None
+        axis = cube.footprint_axis(frames)
+        assert axis is not None and abs(float(axis[2])) < 1e-9
+        # it IS one of the cube's own horizontal faces' normals
+        body = cube.axes_in_base(frames)
+        assert min(abs(abs(float(np.dot(axis, body[:, i]))) - 1.0)
+                   for i in (0, 1)) < 1e-9
+    # where there IS a long axis, nothing changes
+    block = ObjectView("block", p=(0.4, 0.1, 0.05), size=(0.09, 0.04, 0.05))
+    assert np.allclose(block.footprint_axis(frames),
+                       block.principal_axis(frames))
+
+
 def test_a_container_tests_membership_in_its_own_axes():
     frames = FrameGraph()
     box = ContainerView("box", p=(0.4, 0.0, 0.05), size=(0.20, 0.10, 0.10),

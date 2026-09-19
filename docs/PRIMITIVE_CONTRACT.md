@@ -60,6 +60,13 @@ says so in `Plan.notes`. Nothing else changes: when no candidate works the
 refusal is the straight line's own, with the same reason, waypoint index and
 residual, and `solve_path(..., allow_via=False)` is the straight line alone.
 
+**The jaws are squared to the object, not to the base frame.** `Approach`'s
+roll comes from `ObjectView.footprint_axis` — the long horizontal axis where
+there is one, the widest where the footprint is square. A square prism has no
+*preferred* grasp and it does have a wrong one: a 40 mm cube yawed 11.7° is
+47.3 mm across base-aligned jaws, past the 43.96 mm the driven gripper can
+take, so the pads meet two corners and stall holding nothing.
+
 **A refusal is a typed value, never a silent no-op.** `PlanError` carries the
 reason, the waypoint index and label, and the residual:
 
