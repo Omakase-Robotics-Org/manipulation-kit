@@ -19,8 +19,10 @@ import math
 from typing import Optional, Sequence
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
-from ..world import ContainerView, ObjectView, SurfaceView, WorldView
+from ..world import (ContainerView, FrameError, ObjectView, SurfaceView,
+                     WorldView)
 from .approach import JAW_CLEARANCE_M
 from .types import Verdict, VerdictReport, Verifier
 
@@ -51,6 +53,19 @@ OPEN_CLOSEDNESS = 0.15
 GRIP_WIDTH_TOL_M = JAW_CLEARANCE_M
 #: Base of a lifted object within this of a surface top = still standing on it.
 RESTING_TOL_M = 0.003
+#: How far a measured tool orientation may be from the commanded one [rad].
+#: 5 degrees: wider than the IK's own convergence, tight enough that a wrist
+#: 90 degrees out fails.
+FACING_TOL_RAD = math.radians(5.0)
+#: ...and the same for a commanded TURN. A yaw nudge is bounded at 15 degrees,
+#: so the window is a fraction of the ask with a floor, exactly as
+#: :func:`moved_tol` is for a translation.
+TURN_TOL_FRACTION = 0.4
+MIN_TURN_TOL_RAD = math.radians(2.0)
+#: How near the pads a named object has to be to count as the thing between
+#: them, when the producer does not report ``held_object`` [m]. Generous: it
+#: is a corroboration, not a grasp-quality metric.
+ASSOCIATION_TOL_M = 0.08
 
 
 def grip_width_window(width_m: float, tol_m: float = GRIP_WIDTH_TOL_M):
@@ -118,6 +133,12 @@ def _false(reason: str, **measured) -> VerdictReport:
     return VerdictReport(Verdict.FALSE, reason, measured)
 
 
+#: A parallel gripper is its own mirror image under a half turn about its
+#: approach axis (TCP +z), so both of these are the SAME grasp and a verifier
+#: that only knows one of them fails a correct wrist half the time.
+_JAW_SYMMETRY = (R.identity(), R.from_rotvec([0.0, 0.0, math.pi]))
+
+
 def _tool_point(world: WorldView, side: str) -> Optional[np.ndarray]:
     arm = world.arm(side)
     return None if arm is None or arm.tool_p is None else np.asarray(arm.tool_p)
@@ -131,6 +152,31 @@ def _object_p(world: WorldView, name: str) -> Optional[np.ndarray]:
         return item.pose_in_base(world.frames)[0]
     except LookupError:
         return None
+
+
+def _why_missing(world: WorldView, name: str) -> str:
+    """Why ``name`` has no base-frame position — absent, or a bad frame.
+
+    ``ObjectIn`` caught the object's own frame failure and let the
+    DESTINATION's escape as a raw ``FrameError`` out of ``contains`` (R12).
+    Both go through here now, and both produce UNKNOWN rather than a
+    traceback.
+    """
+    item = world.find(name)
+    if item is None:
+        return f"{name!r} is not in the later observation"
+    try:
+        item.pose_in_base(world.frames)
+    except FrameError as exc:
+        return (f"{name!r} was measured in {item.frame_id!r} and that frame "
+                f"cannot be resolved: {exc.reason}")
+    except LookupError as exc:
+        return f"{name!r}'s frame could not be resolved: {exc}"
+    return f"{name!r} has no usable position"
+
+
+def turn_tol(asked_rad: float) -> float:
+    return max(MIN_TURN_TOL_RAD, TURN_TOL_FRACTION * abs(float(asked_rad)))
 
 
 class ToolAt(Verifier):
@@ -194,6 +240,95 @@ class ToolMoved(Verifier):
                       f"requested displacement", **measured)
 
 
+class ToolFacing(Verifier):
+    """The tool's ORIENTATION reached the one the plan derived.
+
+    ``Approach`` exists to establish a wrist the next verb descends along, and
+    it verified the point alone (R13). An arm at the right place with the
+    pads 90 degrees out has not approached anything.
+    """
+
+    describes = "the hand is oriented the way the approach derived"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str, target,
+                 tol_rad: float = FACING_TOL_RAD):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.target = target
+        self.tol_rad = float(tol_rad)
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        arm = world1.arm(self.side)
+        if arm is None or arm.tool_r is None:
+            return _unknown(f"the {self.side} arm reports no tool orientation, "
+                            f"so the wrist cannot be compared")
+        # A parallel gripper is symmetric under a half turn about its own
+        # approach axis, so the nearer of the two representatives is the
+        # honest comparison.
+        best = min(float(np.linalg.norm(
+            (arm.tool_r.inv() * (self.target * flip)).as_rotvec()))
+            for flip in _JAW_SYMMETRY)
+        measured = {"orientation_error_deg": round(math.degrees(best), 2),
+                    "tolerance_deg": round(math.degrees(self.tol_rad), 2)}
+        if best <= self.tol_rad:
+            return _true(f"the {self.side} wrist is "
+                         f"{math.degrees(best):.1f} deg from the derived "
+                         f"orientation", **measured)
+        return _false(f"the {self.side} wrist is {math.degrees(best):.1f} deg "
+                      f"from the derived orientation", **measured)
+
+
+class ToolTurned(Verifier):
+    """The tool ROTATED by a commanded angle about a stated axis.
+
+    ``Nudge`` snapped a yaw, planned it, and then returned a translation-only
+    verdict: ``Nudge(side="left", dyaw=0.2).verifier(w)(w)`` was TRUE — "the
+    left hand moved 0 mm as asked" (R13). A rotation nobody measures is a
+    rotation nobody performed, as far as the record goes.
+    """
+
+    describes = "the hand turned by what was asked"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str,
+                 dyaw_rad: float, axis=None, tol_rad: Optional[float] = None):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.dyaw_rad = float(dyaw_rad)
+        self.axis = None if axis is None else np.asarray(axis, dtype=float)
+        self.tol_rad = turn_tol(dyaw_rad) if tol_rad is None else float(tol_rad)
+        arm = world0.arm(side)
+        self.before = None if arm is None else arm.tool_r
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        arm = world1.arm(self.side)
+        if arm is None or arm.tool_r is None or self.before is None:
+            return _unknown(f"the {self.side} arm reports no tool orientation "
+                            f"in both observations, so the turn cannot be "
+                            f"measured")
+        delta = (self.before.inv() * arm.tool_r).as_rotvec()
+        axis = (self.before.as_matrix()[:, 2] if self.axis is None
+                else self.axis)
+        # the component ABOUT THE APPROACH AXIS, expressed in the pre-action
+        # tool frame — which is the axis the nudge was defined around
+        local = self.before.inv().apply(np.asarray(axis, dtype=float))
+        local = local / max(float(np.linalg.norm(local)), 1e-12)
+        turned = float(np.dot(delta, local))
+        err = abs(turned - self.dyaw_rad)
+        measured = {"turned_deg": round(math.degrees(turned), 2),
+                    "asked_deg": round(math.degrees(self.dyaw_rad), 2),
+                    "off_axis_deg": round(math.degrees(float(np.linalg.norm(
+                        delta - local * turned))), 2),
+                    "tolerance_deg": round(math.degrees(self.tol_rad), 2)}
+        if err <= self.tol_rad:
+            return _true(f"the {self.side} hand turned "
+                         f"{math.degrees(turned):+.1f} deg about its approach "
+                         f"axis as asked", **measured)
+        return _false(f"the {self.side} hand turned "
+                      f"{math.degrees(turned):+.1f} deg of the "
+                      f"{math.degrees(self.dyaw_rad):+.1f} deg asked",
+                      **measured)
+
+
 class Holding(Verifier):
     """Something is held, and it is the OBJECT — three measurements, not a flag.
 
@@ -224,21 +359,48 @@ class Holding(Verifier):
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
                  obj: Optional[ObjectView] = None,
-                 tol_m: float = GRIP_WIDTH_TOL_M):
+                 tol_m: float = GRIP_WIDTH_TOL_M, *, jaw_axis=None):
         super().__init__(primitive, world0)
         self.side = side
         self.obj = obj
         self.tol_m = float(tol_m)
+        #: the base-frame jaw axis the grasp was planned with. The width the
+        #: pads must span is the object's extent ALONG THIS, not its smallest
+        #: side (R9).
+        self.jaw_axis = None if jaw_axis is None else np.asarray(
+            jaw_axis, dtype=float).reshape(3)
+
+    def _width(self, world1: WorldView) -> Optional[float]:
+        if self.obj is None:
+            return None
+        if self.jaw_axis is None:
+            return float(self.obj.min_horizontal_extent())
+        for world in (world1, self.world0):
+            item = world.find(self.obj.name) or self.obj
+            try:
+                return float(item.extent_along(self.jaw_axis, world.frames))
+            except LookupError:
+                continue
+        return None
 
     def measure(self, world1: WorldView) -> VerdictReport:
         gripper = world1.gripper(self.side)
         if gripper is None:
             return _unknown(f"no gripper report for the {self.side} hand")
+        name = None if self.obj is None else self.obj.name
         measured = {"holding": bool(gripper.holding),
                     "closedness": round(float(gripper.closedness), 3),
-                    "jaw_stalled": gripper.jaw_stalled}
+                    "jaw_stalled": gripper.jaw_stalled,
+                    "held_object": gripper.held_object,
+                    "named_object": name}
         if gripper.jaw_gap_m is not None:
             measured["jaw_gap_m"] = round(float(gripper.jaw_gap_m), 4)
+        # (0) CONTRADICTORY IDENTITY beats everything. A hand that says it is
+        # holding something else is not holding this.
+        if (name is not None and gripper.held_object
+                and gripper.held_object != name):
+            return _false(f"the {self.side} gripper reports holding "
+                          f"{gripper.held_object!r}, not {name!r}", **measured)
         # (1) the stroke stopped on something, rather than running to target
         if gripper.jaw_stalled is False:
             return _false(f"the {self.side} jaws never stopped short of the "
@@ -247,8 +409,8 @@ class Holding(Verifier):
         # (3) a gap the named object could make.  Checked BEFORE the producer's
         # verdict so "it closed on itself" is reported as itself rather than as
         # a bare `nothing held`.
-        if self.obj is not None and gripper.jaw_gap_m is not None:
-            width = self.obj.min_horizontal_extent()
+        width = self._width(world1)
+        if width is not None and gripper.jaw_gap_m is not None:
             low, high = grip_width_window(width, self.tol_m)
             measured["width_window_m"] = [round(low, 4), round(high, 4)]
             measured["object_width_m"] = round(float(width), 4)
@@ -256,13 +418,13 @@ class Holding(Verifier):
                 return _false(
                     f"the {self.side} gripper stalled at "
                     f"{gripper.jaw_gap_m * 1000:.1f} mm, inside "
-                    f"{self.obj.name}'s {width * 1000:.1f} mm — it closed on "
+                    f"{name}'s {width * 1000:.1f} mm — it closed on "
                     f"itself, not on the object", **measured)
             if gripper.jaw_gap_m > high:
                 return _false(
                     f"the {self.side} gripper stopped at "
                     f"{gripper.jaw_gap_m * 1000:.1f} mm, wider than "
-                    f"{self.obj.name}'s {width * 1000:.1f} mm — the jaws never "
+                    f"{name}'s {width * 1000:.1f} mm — the jaws never "
                     f"reached it", **measured)
         # (2) the half only the producer can see: a body between the pad faces
         if not gripper.holding:
@@ -270,7 +432,38 @@ class Holding(Verifier):
                           f"pads", **measured)
         gap = ("" if gripper.jaw_gap_m is None
                else f" at a {gripper.jaw_gap_m * 1000:.1f} mm gap")
-        return _true(f"the {self.side} gripper is holding{gap}", **measured)
+        if name is None:
+            return _true(f"the {self.side} gripper is holding{gap}", **measured)
+        # (4) ASSOCIATION. "Something is gripped" is not "the named block is
+        # gripped", and a torque stall cannot tell them apart. Either the
+        # producer names what it holds, or the named object is measured at the
+        # pads; with neither, this is UNKNOWN (R11).
+        if gripper.held_object == name:
+            measured["association"] = "producer"
+            return _true(f"the {self.side} gripper is holding {name!r}{gap}",
+                         **measured)
+        at = _object_p(world1, name)
+        tool = _tool_point(world1, self.side)
+        if at is None or tool is None:
+            measured["association"] = None
+            return _unknown(
+                f"the {self.side} jaws stalled on something{gap}, but nothing "
+                f"in this observation ties it to {name!r}: the gripper does "
+                f"not report a held object and "
+                f"{'the arm reports no tool point' if tool is None else _why_missing(world1, name)}. "
+                f"Publish GripperView(held_object=...) or keep observing the "
+                f"object to turn this into a verdict", **measured)
+        distance = float(np.linalg.norm(np.asarray(at) - tool))
+        measured["object_to_tool_m"] = round(distance, 4)
+        if distance > ASSOCIATION_TOL_M:
+            return _false(
+                f"the {self.side} jaws stalled on something, but {name!r} is "
+                f"measured {distance * 1000:.0f} mm from the tool point — "
+                f"whatever is between the pads, it is not that", **measured)
+        measured["association"] = "measured_position"
+        return _true(f"the {self.side} gripper is holding {name!r}{gap}, and "
+                     f"{name!r} is measured {distance * 1000:.0f} mm from the "
+                     f"tool point", **measured)
 
 
 class NotHolding(Verifier):
@@ -319,16 +512,27 @@ class ObjectRose(Verifier):
     def measure(self, world1: WorldView) -> VerdictReport:
         now = _object_p(world1, self.name)
         if now is None or self.z0 is None:
-            return _unknown(f"{self.name} is not in the later observation, so "
-                            f"its height cannot be compared")
+            return _unknown(f"a rise cannot be compared: "
+                            f"{_why_missing(world1, self.name)}")
         rise = float(now[2] - self.z0[2])
         need = self.height_m * MOVED_FRACTION
         gripper = world1.gripper(self.side)
         measured = {"rise_m": round(rise, 4), "asked_m": round(self.height_m, 4),
                     "holding": None if gripper is None else bool(gripper.holding)}
-        if gripper is not None and not gripper.holding:
+        if gripper is None:
+            # "Still held" is half the predicate, so a missing gripper report
+            # is missing EVIDENCE, not a pass (R12). The old code skipped the
+            # clause and could return TRUE with ``grippers={}``.
+            return _unknown(f"{self.name} rose {rise * 1000:.0f} mm, but the "
+                            f"{self.side} gripper reports nothing, so whether "
+                            f"it is still held cannot be measured", **measured)
+        if not gripper.holding:
             return _false(f"{self.name} rose {rise * 1000:.0f} mm but the "
                           f"{self.side} gripper is no longer holding it", **measured)
+        if gripper.held_object and gripper.held_object != self.name:
+            return _false(f"the {self.side} gripper is holding "
+                          f"{gripper.held_object!r}, not {self.name!r}",
+                          **measured)
         if rise < need:
             return _false(f"{self.name} rose {rise * 1000:.0f} mm of the "
                           f"{self.height_m * 1000:.0f} mm asked", **measured)
@@ -357,15 +561,26 @@ class ObjectOver(Verifier):
     def measure(self, world1: WorldView) -> VerdictReport:
         here = _object_p(world1, self.name)
         there = _object_p(world1, self.destination)
-        if here is None or there is None:
-            return _unknown(f"{self.name} or {self.destination} is not in the "
-                            f"later observation")
+        if here is None:
+            return _unknown(_why_missing(world1, self.name))
+        if there is None:
+            return _unknown(_why_missing(world1, self.destination))
         gap = float(np.linalg.norm(here[:2] - there[:2]))
         gripper = world1.gripper(self.side)
         measured = {"horizontal_gap_m": round(gap, 4),
-                    "holding": None if gripper is None else bool(gripper.holding)}
-        if gripper is not None and not gripper.holding:
+                    "holding": None if gripper is None else bool(gripper.holding),
+                    "held_object": None if gripper is None else gripper.held_object}
+        if gripper is None:
+            return _unknown(f"{self.name} is {gap * 1000:.0f} mm from over "
+                            f"{self.destination}, but the {self.side} gripper "
+                            f"reports nothing, so whether it is still held "
+                            f"cannot be measured", **measured)
+        if not gripper.holding:
             return _false(f"the {self.side} gripper dropped {self.name} on the way",
+                          **measured)
+        if gripper.held_object and gripper.held_object != self.name:
+            return _false(f"the {self.side} gripper is holding "
+                          f"{gripper.held_object!r}, not {self.name!r}",
                           **measured)
         if gap <= self.tol_m:
             return _true(f"{self.name} is {gap * 1000:.0f} mm from over "
@@ -374,14 +589,74 @@ class ObjectOver(Verifier):
                       f"{self.destination}", **measured)
 
 
+class ObjectClears(Verifier):
+    """The object's UNDERSIDE is above a destination's rim / top face.
+
+    The other half of a carry. Horizontal position alone passed an object
+    dangling below the rim of the bin it was over (R12), which is the state
+    just before it catches on the way across.
+    """
+
+    describes = "the object is clear of the destination's rim"
+
+    def __init__(self, primitive: str, world0: WorldView, name: str,
+                 destination: str, margin_m: float = 0.0):
+        super().__init__(primitive, world0)
+        self.name = name
+        self.destination = destination
+        self.margin_m = float(margin_m)
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        obj = world1.find(self.name)
+        target = world1.find(self.destination)
+        if obj is None:
+            return _unknown(_why_missing(world1, self.name))
+        if target is None:
+            return _unknown(_why_missing(world1, self.destination))
+        try:
+            under = obj.bottom_z(world1.frames)
+            if isinstance(target, ContainerView):
+                top = target.rim_z(world1.frames)
+                what = "rim"
+            elif isinstance(target, SurfaceView):
+                top = target.top_z(world1.frames)
+                what = "top"
+            else:
+                top = target.top_face_z(world1.frames)
+                what = "top"
+        except LookupError as exc:
+            return _unknown(f"the clearance cannot be resolved: {exc}")
+        gap = under - top
+        measured = {"underside_z_m": round(under, 4),
+                    f"{what}_z_m": round(top, 4),
+                    "clearance_m": round(gap, 4)}
+        if gap >= self.margin_m:
+            return _true(f"{self.name}'s underside is {gap * 1000:.0f} mm above "
+                         f"{self.destination}'s {what}", **measured)
+        return _false(f"{self.name}'s underside is {-gap * 1000:.0f} mm BELOW "
+                      f"{self.destination}'s {what}", **measured)
+
+
 class ObjectIn(Verifier):
     """The object ended up inside a container, or on a surface, and was let go.
 
-    Both halves are required. An object still in the jaws above the box is not
-    placed, and a released object beside the box is not placed either.
+    Every clause is measured and every missing clause is UNKNOWN:
+
+    1. the object's own EXTENT is inside the interior (or its footprint is on
+       the surface) — not its centre, which passed a bar twice the bin's width;
+    2. it is SUPPORTED — its underside on the container floor or the surface
+       top, within :data:`RESTING_TOL_M`. This is what this robot can measure
+       of "at rest": nothing publishes a velocity, so a falling object passing
+       through the interior is excluded by where its underside is rather than
+       by watching it stop. The limitation is named in the verdict;
+    3. the gripper LET GO, and is not holding something else instead.
+
+    A gripper that reports nothing makes the whole thing UNKNOWN. It used to
+    be read as "released" (R12).
     """
 
-    describes = "the object is in/on the destination and no longer held"
+    describes = ("the object's extent is in/on the destination, supported, and "
+                 "no longer held")
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
                  name: str, destination: str, pad_m: float = 0.01):
@@ -394,33 +669,64 @@ class ObjectIn(Verifier):
     def measure(self, world1: WorldView) -> VerdictReport:
         obj = world1.find(self.name)
         target = world1.find(self.destination)
-        if obj is None or target is None:
-            return _unknown(f"{self.name} or {self.destination} is not in the "
-                            f"later observation")
+        if obj is None:
+            return _unknown(_why_missing(world1, self.name))
+        if target is None:
+            return _unknown(_why_missing(world1, self.destination))
         try:
             p = obj.pose_in_base(world1.frames)[0]
-        except LookupError as exc:
-            return _unknown(f"{self.name}'s frame could not be resolved: {exc}")
+            # BOTH frames, inside the same guard. The destination's own frame
+            # failure used to escape from ``contains``/``supports`` as an
+            # exception, outside the catch that covered the object (R12).
+            target.pose_in_base(world1.frames)
+        except LookupError:
+            return _unknown(f"{_why_missing(world1, self.name)}; "
+                            f"{_why_missing(world1, self.destination)}")
         gripper = world1.gripper(self.side)
         measured = {"p": [round(float(v), 4) for v in p],
-                    "holding": None if gripper is None else bool(gripper.holding)}
-        if isinstance(target, ContainerView):
-            inside = target.contains(p, world1.frames, pad_m=self.pad_m)
-            where = f"inside {self.destination}"
-        elif isinstance(target, SurfaceView):
-            inside = target.supports(p, world1.frames, pad_m=self.pad_m)
-            where = f"on {self.destination}"
-        else:
-            return _unknown(f"{self.destination} is a plain object, not a "
-                            f"container or a surface — 'placed in' has no "
-                            f"measurable meaning for it")
+                    "holding": None if gripper is None else bool(gripper.holding),
+                    "held_object": None if gripper is None else gripper.held_object}
+        try:
+            if isinstance(target, ContainerView):
+                inside = target.contains_object(obj, world1.frames,
+                                                pad_m=self.pad_m)
+                floor = target.floor_z(world1.frames)
+                where = f"inside {self.destination}"
+            elif isinstance(target, SurfaceView):
+                inside = target.over(p, world1.frames, pad_m=self.pad_m)
+                floor = target.top_z(world1.frames)
+                where = f"on {self.destination}"
+            else:
+                return _unknown(f"{self.destination} is a plain object, not a "
+                                f"container or a surface — 'placed in' has no "
+                                f"measurable meaning for it")
+            under = obj.bottom_z(world1.frames)
+        except LookupError as exc:
+            return _unknown(f"the placement cannot be resolved: {exc}")
+        rest = under - floor
         measured["inside"] = bool(inside)
+        measured["underside_above_floor_m"] = round(rest, 4)
         if not inside:
-            return _false(f"{self.name} is not {where}", **measured)
-        if gripper is not None and gripper.holding:
+            return _false(f"{self.name} — all of it, not just its centre — is "
+                          f"not {where}", **measured)
+        if gripper is None:
+            return _unknown(f"{self.name} is {where}, but the {self.side} "
+                            f"gripper reports nothing, so whether it was "
+                            f"released cannot be measured", **measured)
+        if gripper.holding and (not gripper.held_object
+                                or gripper.held_object == self.name):
             return _false(f"{self.name} is {where} but the {self.side} gripper "
                           f"is still holding it", **measured)
-        return _true(f"{self.name} is {where}", **measured)
+        if abs(rest) > RESTING_TOL_M + self.pad_m:
+            return _false(
+                f"{self.name} is {where} and released, but its underside is "
+                f"{rest * 1000:+.0f} mm from the floor it should be standing "
+                f"on — it is in the air or through the bottom, not set down",
+                **measured)
+        return _true(f"{self.name} is {where}, released, and standing on its "
+                     f"floor ({rest * 1000:+.0f} mm). Note: nothing on this "
+                     f"robot publishes a velocity, so 'supported' is what is "
+                     f"measured here, not 'has come to rest'", **measured)
 
 
 class JointsAt(Verifier):

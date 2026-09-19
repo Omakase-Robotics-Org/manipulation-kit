@@ -91,7 +91,10 @@ def test_a_tool_frame_nudge_moves_along_the_hands_own_axes(d1_arm, observe):
 def test_an_unknown_frame_name_is_refused_rather_than_guessed(d1_arm, observe):
     world = observe(d1_arm)
     verb = Nudge(side="left", dz=0.030, frame="world")
-    assert any(u.code == "bad_frame" for u in verb.preconditions(world))
+    # ONE argument vocabulary now owns this: a value outside a published
+    # domain is ``bad_argument`` whichever argument it was (R14).
+    unmet = verb.preconditions(world)
+    assert any(u.code == "bad_argument" and "frame" in u.detail for u in unmet)
 
 
 # --------------------------------------------------------------------------- #

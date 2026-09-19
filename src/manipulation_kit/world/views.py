@@ -30,21 +30,71 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from .frames import BASE, FrameGraph
+from .frames import BASE, FrameError, FrameGraph
 
 _SIDES = ("left", "right")
 
 
 def _vec3(value, what: str) -> np.ndarray:
-    array = np.asarray(value, dtype=float).reshape(3)
+    """A frozen 3-vector. The array is COPIED and made read-only.
+
+    ``np.asarray`` alone hands back the caller's own buffer, so a producer
+    that reuses one scratch array mutates every observation it ever emitted —
+    including the ``before`` world a verifier is holding. A world is a value;
+    this is what makes that true rather than merely documented.
+    """
+    array = np.array(value, dtype=float).reshape(3)
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{what} must be three finite numbers, got {value!r}")
+    array.setflags(write=False)
     return array
+
+
+def _extent_along(axis, size, rot: R) -> float:
+    """The object's full extent along a unit ``axis``, in the BASE frame.
+
+    ``sum(|axis . body_axis_i| * size_i)`` — the support width of the oriented
+    box along that direction. It reduces to ``size_i`` for an axis-aligned box
+    and it is the only reading that survives a yaw or a tilt.
+
+    This replaces the old ``min(size)``, which was called conservative and was
+    not: a 100x80x40 mm box passed a 51.96 mm jaw check on its 40 mm extent
+    while its derived top-down grasp presented the 80 mm one (R9).
+    """
+    axis = np.asarray(axis, dtype=float).reshape(3)
+    norm = float(np.linalg.norm(axis))
+    if norm < 1e-12:
+        raise ValueError("extent_along needs a non-degenerate axis")
+    axis = axis / norm
+    columns = rot.as_matrix()
+    return float(sum(abs(float(np.dot(axis, columns[:, i]))) * float(size[i])
+                     for i in range(3)))
+
+
+def _tilt_rad(rot: R) -> float:
+    """How far this pose is from having ONE body axis straight up.
+
+    Zero for any yaw about z (a turned block is not a tilted one); the angle
+    to the nearest upright otherwise. The primitives refuse above
+    :data:`UPRIGHT_TOL_RAD` rather than computing a support height that
+    assumes a level box.
+    """
+    columns = rot.as_matrix()
+    best = max(abs(float(columns[2, i])) for i in range(3))
+    return float(math.acos(max(0.0, min(1.0, best))))
+
+
+#: How far from upright a box may sit and still be planned against. Above it
+#: the vertical extent, the support height and the jaw geometry all become
+#: statements about a shape this v1 does not model, and the honest answer is a
+#: refusal rather than a number (R9).
+UPRIGHT_TOL_RAD = math.radians(10.0)
 
 
 def _rot(value, what: str) -> R:
@@ -150,16 +200,53 @@ class ObjectView:
         return self._horizontal_axes(frames)[0][1]
 
     def min_horizontal_extent(self) -> float:
-        """Smallest of the three measured extents — what the jaws must span.
+        """Smallest of the three measured extents.
 
-        Deliberately the smallest of ALL THREE rather than of the two
-        horizontal ones: a parallel gripper approaching from any direction in
-        the kit's approach set closes across one of them, and the conservative
-        reading of "does this fit" is the one that does not depend on which.
+        NOT a jaw-fit test — :meth:`extent_along` is. It is kept for the one
+        thing it is honestly good for: a lower bound used in a message. A
+        100x80x40 mm box has a 40 mm minimum and presents 80 mm to a top-down
+        grasp, so "does this fit" has to name the axis (R9).
         """
         return float(np.min(self.size))
 
+    def extent_along(self, axis, frames: FrameGraph) -> float:
+        """The object's extent along a base-frame ``axis``, RESOLVED.
+
+        This is the number every clearance question actually wants: the jaw
+        gap needs the extent along the jaw axis, a support needs it along the
+        surface normal, a container needs it along its own three axes.
+        """
+        _p, r = self.pose_in_base(frames)
+        return _extent_along(axis, self.size, r)
+
+    def vertical_extent(self, frames: FrameGraph) -> float:
+        """How tall this object stands in the base frame, orientation included."""
+        return self.extent_along((0.0, 0.0, 1.0), frames)
+
+    def tilt_rad(self, frames: FrameGraph) -> float:
+        """Angle from upright, base frame. Yaw is not tilt."""
+        return _tilt_rad(self.pose_in_base(frames)[1])
+
+    def upright(self, frames: FrameGraph, *, tol_rad: float = UPRIGHT_TOL_RAD
+                ) -> bool:
+        return self.tilt_rad(frames) <= float(tol_rad)
+
+    def bottom_z(self, frames: FrameGraph) -> float:
+        """World z of the object's underside, from the RESOLVED pose."""
+        p, r = self.pose_in_base(frames)
+        return float(p[2]) - _extent_along((0.0, 0.0, 1.0), self.size, r) / 2.0
+
+    def top_face_z(self, frames: FrameGraph) -> float:
+        p, r = self.pose_in_base(frames)
+        return float(p[2]) + _extent_along((0.0, 0.0, 1.0), self.size, r) / 2.0
+
+    def vertical_extent_local(self) -> float:
+        """The object-LOCAL z extent — the fallback when no frame resolves."""
+        return float(self.size[2])
+
     def height(self) -> float:
+        """The object-LOCAL z extent. Prefer :meth:`vertical_extent`, which is
+        the same number for an upright box and the right one for any other."""
         return float(self.size[2])
 
     def to_json(self) -> Dict[str, Any]:
@@ -174,11 +261,33 @@ class ObjectView:
             out["colour"] = self.colour
         return out
 
-    def to_text(self) -> str:
+    def to_text(self, frames: Optional[FrameGraph] = None) -> str:
+        """One line, in BASE coordinates, with where the number came from.
+
+        The old line printed the object's own frame-local position and
+        labelled the whole world with base axes, so a model could not compare
+        two objects measured in different frames and had no way to know
+        (R: "World text reports positions in each object's local frame but
+        omits the transforms"). Names are quoted: an object name is DATA, and
+        a scene that contains "ignore your instructions" must read as a
+        string.
+        """
         colour = f" {self.colour}" if self.colour else ""
+        where, note = self.p, ""
+        if frames is not None:
+            try:
+                where = self.pose_in_base(frames)[0]
+                note = ("" if self.frame_id == BASE
+                        else f" (measured in {self.frame_id!r})")
+            except FrameError as exc:
+                return (f"{self.name!r}{colour}: position UNAVAILABLE — "
+                        f"{exc.reason} on {self.frame_id!r}; nothing measured "
+                        f"in it can be acted on")
+        else:
+            note = f" in {self.frame_id}"
         yaw = math.degrees(self.r.as_euler("xyz")[2])
-        return (f"{self.name}{colour}: at ({self.p[0]:.3f}, {self.p[1]:.3f}, "
-                f"{self.p[2]:.3f}) in {self.frame_id}, "
+        return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "
+                f"{where[1]:.3f}, {where[2]:.3f}) m base{note}, "
                 f"{self.size[0] * 1000:.0f}x{self.size[1] * 1000:.0f}x"
                 f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg")
 
@@ -198,22 +307,43 @@ class ContainerView(ObjectView):
     interior: Optional[np.ndarray] = None
     #: height of the rim above the container's centre [m]; ``None`` = size/2
     rim_height_m: Optional[float] = None
+    #: was ``interior`` MEASURED, or is it the 90% estimate? A placement that
+    #: needs the walls to be where they are said to be must not run on a
+    #: guess, so the flag travels with the number and
+    #: :class:`~manipulation_kit.primitives.Place` refuses a tight fit against
+    #: an estimate rather than silently trusting it.
+    interior_measured: bool = True
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        interior = (self.size * 0.9 if self.interior is None
+        estimated = self.interior is None
+        interior = (np.asarray(self.size, dtype=float) * 0.9 if estimated
                     else _vec3(self.interior, f"{self.name}.interior"))
         if np.any(interior <= 0.0) or np.any(interior > self.size + 1e-9):
             raise ValueError(f"{self.name}.interior must be positive and no "
                              f"larger than size")
+        interior = np.array(interior, dtype=float)
+        interior.setflags(write=False)
         object.__setattr__(self, "interior", interior)
+        if estimated:
+            object.__setattr__(self, "interior_measured", False)
 
     def rim_z(self, frames: FrameGraph) -> float:
-        """World z of the rim — where a carried object must clear."""
-        p, _ = self.pose_in_base(frames)
-        lift = (float(self.size[2]) / 2.0 if self.rim_height_m is None
-                else float(self.rim_height_m))
+        """World z of the rim — where a carried object must clear.
+
+        From the RESOLVED pose: a container measured in a table frame that
+        sits 30 mm up has its rim 30 mm higher, and reading ``self.p`` here is
+        the same frame mistake as R1 one class along.
+        """
+        p, r = self.pose_in_base(frames)
+        lift = (_extent_along((0.0, 0.0, 1.0), self.size, r) / 2.0
+                if self.rim_height_m is None else float(self.rim_height_m))
         return float(p[2]) + lift
+
+    def floor_z(self, frames: FrameGraph) -> float:
+        """World z of the inner floor a placed object comes to rest on."""
+        p, r = self.pose_in_base(frames)
+        return float(p[2]) - _extent_along((0.0, 0.0, 1.0), self.interior, r) / 2.0
 
     def contains(self, point, frames: FrameGraph, *, pad_m: float = 0.0) -> bool:
         """Is ``point`` (base frame) inside the interior AABB, in the container's axes?"""
@@ -222,15 +352,50 @@ class ContainerView(ObjectView):
         half = np.asarray(self.interior, dtype=float) / 2.0 + float(pad_m)
         return bool(np.all(np.abs(local) <= half))
 
+    def contains_object(self, obj: "ObjectView", frames: FrameGraph, *,
+                        pad_m: float = 0.0) -> bool:
+        """Is the whole of ``obj`` — its extent, not its centre — inside?
+
+        A 120 mm bar whose centre sits over a 100 mm bin is not in the bin.
+        The centre test passed it (R12); this one measures the object's own
+        support width along each of the container's axes.
+        """
+        p, r = self.pose_in_base(frames)
+        op, orot = obj.pose_in_base(frames)
+        local = r.inv().apply(np.asarray(op, dtype=float).reshape(3) - p)
+        half = np.asarray(self.interior, dtype=float) / 2.0 + float(pad_m)
+        columns = r.as_matrix()
+        for i in range(3):
+            reach = _extent_along(columns[:, i], obj.size, orot) / 2.0
+            if abs(float(local[i])) + reach > float(half[i]):
+                return False
+        return True
+
+    def fits_inside(self, obj: "ObjectView", frames: FrameGraph, *,
+                    pad_m: float = 0.0) -> bool:
+        """Could ``obj`` fit at all, wherever it were put? Horizontal only."""
+        _p, r = self.pose_in_base(frames)
+        _op, orot = obj.pose_in_base(frames)
+        columns = r.as_matrix()
+        for i in (0, 1):
+            if (_extent_along(columns[:, i], obj.size, orot)
+                    > float(self.interior[i]) + 2 * float(pad_m)):
+                return False
+        return True
+
     def to_json(self) -> Dict[str, Any]:
         out = super().to_json()
         out["interior"] = _round(self.interior)
+        out["interior_measured"] = bool(self.interior_measured)
+        if self.rim_height_m is not None:
+            out["rim_height_m"] = round(float(self.rim_height_m), 4)
         return out
 
-    def to_text(self) -> str:
-        return (super().to_text() + f", interior "
+    def to_text(self, frames: Optional[FrameGraph] = None) -> str:
+        how = "measured" if self.interior_measured else "ESTIMATED at 90% of size"
+        return (super().to_text(frames) + f", interior "
                 f"{self.interior[0] * 1000:.0f}x{self.interior[1] * 1000:.0f}"
-                f"x{self.interior[2] * 1000:.0f}mm")
+                f"x{self.interior[2] * 1000:.0f}mm ({how})")
 
 
 @dataclass(frozen=True)
@@ -240,16 +405,66 @@ class SurfaceView(ObjectView):
     kind: str = "surface"
 
     def top_z(self, frames: FrameGraph) -> float:
-        p, _ = self.pose_in_base(frames)
-        return float(p[2]) + float(self.size[2]) / 2.0
+        """World z of the top face, from the RESOLVED pose (R1/R9)."""
+        p, r = self.pose_in_base(frames)
+        return float(p[2]) + _extent_along((0.0, 0.0, 1.0), self.size, r) / 2.0
+
+    def normal(self, frames: FrameGraph) -> np.ndarray:
+        """The surface's own up axis in the base frame."""
+        _p, r = self.pose_in_base(frames)
+        columns = r.as_matrix()
+        i = int(np.argmax([abs(float(columns[2, k])) for k in range(3)]))
+        axis = np.array(columns[:, i], dtype=float)
+        return axis if float(axis[2]) >= 0.0 else -axis
+
+    def level(self, frames: FrameGraph, *, tol_rad: float = UPRIGHT_TOL_RAD
+              ) -> bool:
+        return _tilt_rad(self.pose_in_base(frames)[1]) <= float(tol_rad)
+
+    def over(self, point, frames: FrameGraph, *, pad_m: float = 0.0) -> bool:
+        """Is ``point`` inside the footprint, ignoring height?"""
+        p, r = self.pose_in_base(frames)
+        local = r.inv().apply(np.asarray(point, dtype=float).reshape(3) - p)
+        half = np.asarray(self.size, dtype=float) / 2.0 + float(pad_m)
+        return bool(abs(local[0]) <= half[0] + float(pad_m)
+                    and abs(local[1]) <= half[1] + float(pad_m))
 
     def supports(self, point, frames: FrameGraph, *, pad_m: float = 0.0) -> bool:
-        """Is ``point`` over this surface's footprint and within 30 mm of its top?"""
+        """Is ``point`` over the footprint and within 30 mm of the top face?
+
+        Takes a POINT, so a caller that hands it an object CENTRE is asking
+        whether the centre floats near the top — which failed a correctly
+        placed 80 mm box (R12). :meth:`supports_object` is the one that knows
+        about undersides.
+        """
         p, r = self.pose_in_base(frames)
         local = r.inv().apply(np.asarray(point, dtype=float).reshape(3) - p)
         half = np.asarray(self.size, dtype=float) / 2.0 + float(pad_m)
         return bool(abs(local[0]) <= half[0] and abs(local[1]) <= half[1]
                     and -0.005 <= local[2] - half[2] <= 0.030 + float(pad_m))
+
+    def supports_object(self, obj: "ObjectView", frames: FrameGraph, *,
+                        pad_m: float = 0.0, tol_m: float = 0.005) -> bool:
+        """Is ``obj`` standing ON this surface — its UNDERSIDE on the top face?
+
+        Measured along the surface's own normal, and the footprint test uses
+        the object's own extent rather than its centre, so an 80 mm box whose
+        centre is 40 mm up still passes and a box hanging half off the edge
+        does not.
+        """
+        op, orot = obj.pose_in_base(frames)
+        p, r = self.pose_in_base(frames)
+        axis = self.normal(frames)
+        reach = _extent_along(axis, obj.size, orot) / 2.0
+        top = float(np.dot(axis, np.asarray(p, dtype=float))) + \
+            _extent_along(axis, self.size, r) / 2.0
+        under = float(np.dot(axis, np.asarray(op, dtype=float))) - reach
+        if not (-float(tol_m) - float(pad_m) <= under - top
+                <= float(tol_m) + float(pad_m)):
+            return False
+        local = r.inv().apply(np.asarray(op, dtype=float).reshape(3) - p)
+        half = np.asarray(self.size, dtype=float) / 2.0 + float(pad_m)
+        return bool(abs(local[0]) <= half[0] and abs(local[1]) <= half[1])
 
 
 @dataclass(frozen=True)
@@ -282,13 +497,28 @@ class ArmView:
         }
         if self.tool_p is not None:
             out["tool_p"] = _round(self.tool_p)
+        if self.tool_r is not None:
+            out["tool_quat_xyzw"] = _round(self.tool_r.as_quat(), 4)
         return out
+
+    def approach_axis(self):
+        """The tool's own +z in the base frame — the direction it closes along.
+
+        ``None`` when the producer reports no orientation, which is the case a
+        ``Nudge`` in the TOOL frame cannot be verified in (R13).
+        """
+        return None if self.tool_r is None else self.tool_r.as_matrix()[:, 2]
 
     def to_text(self) -> str:
         where = ("" if self.tool_p is None else
                  f" tool at ({self.tool_p[0]:.3f}, {self.tool_p[1]:.3f}, "
                  f"{self.tool_p[2]:.3f})")
-        return f"{self.side} arm: mode {self.mode}{where}"
+        axis = ""
+        if self.tool_r is not None:
+            z = self.tool_r.as_matrix()[:, 2]
+            axis = (f", closing along ({z[0]:+.2f}, {z[1]:+.2f}, {z[2]:+.2f}) "
+                    f"in base axes")
+        return f"{self.side} arm: mode {self.mode}{where}{axis}"
 
 
 @dataclass(frozen=True)
@@ -373,6 +603,12 @@ class WorldView:
     arms: Mapping[str, ArmView] = field(default_factory=dict)
     grippers: Mapping[str, GripperView] = field(default_factory=dict)
     stamp: float = 0.0
+    #: The producer's own observation counter. Two worlds with the same
+    #: revision are the same look at the world; a plan is BOUND to the
+    #: revision it was checked against and an executor refuses to run it
+    #: against a different one (R8). Producers that do not count simply leave
+    #: it at 0 and the binding falls back to the stamp and the frame set.
+    revision: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "objects", tuple(self.objects))
@@ -381,20 +617,38 @@ class WorldView:
         if duplicates:
             raise ValueError(f"two things answer to the same name: {duplicates} "
                              f"— a model naming one of them cannot be obeyed")
-        object.__setattr__(self, "arms", dict(self.arms))
-        object.__setattr__(self, "grippers", dict(self.grippers))
+        # COPIES. A producer that keeps its own dict and mutates it in place
+        # would otherwise be editing every world it has ever emitted,
+        # including the ``before`` a verifier is holding.
+        object.__setattr__(self, "arms", MappingProxyType(dict(self.arms)))
+        object.__setattr__(self, "grippers", MappingProxyType(dict(self.grippers)))
+        if not math.isfinite(float(self.stamp)):
+            raise ValueError("WorldView.stamp must be finite")
 
     @classmethod
     def of(cls, objects: Sequence[ObjectView] = (), *,
            frames: Optional[FrameGraph] = None,
            arms: Sequence[ArmView] = (),
            grippers: Sequence[GripperView] = (),
-           stamp: float = 0.0) -> "WorldView":
+           stamp: float = 0.0, revision: int = 0) -> "WorldView":
         return cls(frames=frames if frames is not None else FrameGraph(now=stamp),
                    objects=tuple(objects),
                    arms={a.side: a for a in arms},
                    grippers={g.side: g for g in grippers},
-                   stamp=stamp)
+                   stamp=stamp, revision=revision)
+
+    # -- identity ---------------------------------------------------------- #
+    def observation_id(self) -> Tuple[Any, ...]:
+        """What makes this observation THIS observation.
+
+        Revision, stamp, the frame set and the object poses. It is what a
+        :class:`~manipulation_kit.primitives.types.PlanBinding` records, so a
+        plan cannot be run against a different look at the world.
+        """
+        return (int(self.revision), round(float(self.stamp), 6),
+                self.frames.revision(),
+                tuple((o.name, round(float(o.stamp), 6),
+                       tuple(round(float(v), 6) for v in o.p)) for o in self.objects))
 
     # -- lookup ------------------------------------------------------------ #
     def find(self, name: str) -> Optional[ObjectView]:
@@ -426,18 +680,35 @@ class WorldView:
         return None
 
     def with_(self, **changes: Any) -> "WorldView":
-        """A copy with fields replaced — how a test writes "and then"."""
+        """A copy with fields replaced — how a test writes "and then".
+
+        A new ``stamp`` with no explicit ``frames`` RE-CLOCKS the graph, so
+        the transforms age with the world instead of staying young forever
+        (the ``with_(stamp=...)`` hole the review found).
+        """
+        stamp = float(changes.get("stamp", self.stamp))
+        if "frames" in changes:
+            frames = changes["frames"]
+        elif stamp != float(self.stamp):
+            frames = self.frames.copy(now=stamp)
+        else:
+            frames = self.frames
+        revision = changes.get("revision", self.revision)
+        if "revision" not in changes and stamp != float(self.stamp):
+            revision = int(self.revision) + 1
         return WorldView(
-            frames=changes.get("frames", self.frames),
+            frames=frames,
             objects=tuple(changes.get("objects", self.objects)),
             arms=changes.get("arms", self.arms),
             grippers=changes.get("grippers", self.grippers),
-            stamp=changes.get("stamp", self.stamp))
+            stamp=stamp, revision=int(revision))
 
     # -- serialisation ----------------------------------------------------- #
     def to_json(self) -> Dict[str, Any]:
         return {
             "stamp": round(float(self.stamp), 3),
+            "revision": int(self.revision),
+            "frames_now": round(float(self.frames.now), 3),
             "frames": {f.frame_id: {"parent": f.parent, "p": _round(f.p),
                                     "quat_xyzw": _round(f.r.as_quat(), 4),
                                     "stamp": round(float(f.stamp), 3),
@@ -456,12 +727,18 @@ class WorldView:
         prompt that grows with the scene is one that silently stops fitting —
         ``tests/world/test_serialisation.py`` pins the budget.
         """
-        lines = ["WORLD (base frame: +x forward, +y robot-left, +z up)"]
+        lines = ["WORLD (base frame: +x forward, +y robot-left, +z up; "
+                 "metres, radians; every position below is a CENTRE)"]
         if self.objects:
             lines.append("things:")
-            lines += [f"  - {o.to_text()}" for o in self.objects]
+            lines += [f"  - {o.to_text(self.frames)}" for o in self.objects]
         else:
             lines.append("things: none detected")
+        holds = [f"{side} hand holds {g.held_object!r}"
+                 for side, g in sorted(self.grippers.items())
+                 if g.holding and g.held_object]
+        if holds:
+            lines.append("held: " + "; ".join(holds))
         for side in _SIDES:
             if side in self.arms:
                 lines.append(f"  - {self.arms[side].to_text()}")

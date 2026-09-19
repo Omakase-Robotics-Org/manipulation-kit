@@ -67,6 +67,16 @@ TIP_BELOW_TOOL_M = PAD_TIP_Z_M - PAD_CENTRE_Z_M
 #: 0.7 s), and the jaws closed beside the block. Ten attempts, ten failures.
 SUPPORT_CLEARANCE_M = 0.003
 
+#: ...and the least the SOLVED descent may actually keep, as opposed to what
+#: the waypoint asked for. The IK converges to about 2 mm and the path window
+#: is 12 mm, so a plan whose ideal grasp point clears by 3 mm can land
+#: anywhere in that band; this is the number the achieved pose is checked
+#: against (``Grasp.plan``). 1 mm rather than 3: at 3 the check would fail on
+#: the solver's own convergence noise — measured, a blocks-eval cube solves
+#: 0.2 mm below its ideal grasp point — and at 0 it would allow the tips into
+#: the surface.
+MIN_ACHIEVED_CLEARANCE_M = 0.001
+
 #: Top-down grasp orientation of the TCP frame, (w, x, y, z), per LOGICAL side.
 #: LEFT: z_tcp -> world -Z (pads down), x_tcp -> world -Y, i.e. the jaw gap
 #: runs along world y and the wrist camera points away from the torso. RIGHT is
@@ -97,6 +107,19 @@ APPROACH_DOC: Dict[str, str] = {
 }
 
 
+def tool_revision() -> str:
+    """A fingerprint of the TOOL GEOMETRY every waypoint is expressed against.
+
+    The tool point is the pad centre and the jaw gap is the driven opening;
+    swap the gripper (or re-measure it) and every waypoint in every plan means
+    a different place. A plan records this and the executor refuses to run one
+    whose tool no longer matches (R8) — cheap, and the only alternative is
+    trusting that nobody changed the hand between planning and moving.
+    """
+    return (f"pad_centre={PAD_CENTRE_Z_M:.4f};pad_tip={PAD_TIP_Z_M:.4f};"
+            f"driven_open={DRIVEN_OPEN_GAP_M:.5f}")
+
+
 def check_approach(approach: str) -> str:
     if approach not in APPROACHES:
         raise ValueError(f"approach must be one of {APPROACHES}, got {approach!r}")
@@ -107,9 +130,34 @@ def direction(approach: str) -> np.ndarray:
     return APPROACH_DIRECTION[check_approach(approach)].copy()
 
 
-def fits_jaws(obj: ObjectView) -> bool:
-    """Can the driven gripper close on this at all, with clearance per side?"""
-    return obj.min_horizontal_extent() <= JAW_OPEN_M - 2 * JAW_CLEARANCE_M
+#: The widest object the driven jaws can take, clearance included.
+GRASPABLE_WIDTH_M = JAW_OPEN_M - 2 * JAW_CLEARANCE_M
+
+
+def jaw_axis(r_tcp: R) -> np.ndarray:
+    """The direction the pads travel along, base frame: the TCP frame's x.
+
+    The jaw GAP is measured along this axis, so it is the axis every fit
+    question has to be asked about — not the object's smallest extent, and
+    not a base axis.
+    """
+    return np.asarray(r_tcp.as_matrix()[:, 0], dtype=float)
+
+
+def grasp_width(obj: ObjectView, frames: FrameGraph, r_tcp: R) -> float:
+    """What the object PRESENTS to these jaws: its extent along the jaw axis.
+
+    ``sum(|jaw . body_axis_i| * size_i)`` over the RESOLVED orientation. A
+    100x80x40 mm box passed the old ``min(size)`` test on its 40 mm extent
+    while the derived top-down grasp closed across 80 mm of it (R9); this is
+    the number that says so.
+    """
+    return obj.extent_along(jaw_axis(r_tcp), frames)
+
+
+def fits_jaws(obj: ObjectView, frames: FrameGraph, r_tcp: R) -> bool:
+    """Can the driven gripper close on this, ALONG THE JAW AXIS it will use?"""
+    return grasp_width(obj, frames, r_tcp) <= GRASPABLE_WIDTH_M
 
 
 def tcp_from_tool(p_tool, r_tcp: R) -> np.ndarray:
@@ -206,46 +254,63 @@ def grasp_orientation(side: str, approach: str, obj: Optional[ObjectView] = None
     return r
 
 
-def lowest_top_down_tool_z(obj: ObjectView) -> float:
+def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph) -> float:
     """The lowest tool-point z a top-down grasp of ``obj`` may command.
 
     A parallel gripper cannot put its finger tips through the table. The
     object's own underside IS the table here — it is standing on it — so the
     constraint needs no surface lookup: tips at ``bottom + SUPPORT_CLEARANCE``,
     tool point ``TIP_BELOW_TOOL_M`` above that.
+
+    RESOLVED, both halves. The underside comes from the base-frame pose and
+    the vertical extent from the base-frame orientation: an object measured in
+    a table frame that sits 30 mm above the base has its underside 30 mm
+    higher, and a yawed box is not taller (R1/R9).
     """
-    bottom = float(np.asarray(obj.p, dtype=float)[2]) - obj.height() / 2.0
-    return bottom + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
+    return obj.bottom_z(frames) + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
 
 
-def grasp_point(obj: ObjectView, approach: str) -> Tuple[np.ndarray, bool]:
+def grasp_point(obj: ObjectView, approach: str, frames: FrameGraph
+                ) -> Tuple[np.ndarray, bool]:
     """Where the TOOL POINT goes to grasp ``obj``, and whether it was raised.
 
-    The object's centre, except for ``top_down``, where the finger tips would
-    otherwise be driven into whatever the object is standing on: there the
-    point is lifted to :func:`lowest_top_down_tool_z`. The pads are 58 mm deep,
-    so a 40 mm cube grasped 12 mm above its centre still has 37 mm of pad
-    against its side — the grasp does not get worse, it gets possible.
+    The object's RESOLVED base-frame centre, except for ``top_down``, where
+    the finger tips would otherwise be driven into whatever the object is
+    standing on: there the point is lifted to :func:`lowest_top_down_tool_z`.
+    The pads are 58 mm deep, so a 40 mm cube grasped 12 mm above its centre
+    still has 37 mm of pad against its side — the grasp does not get worse, it
+    gets possible.
+
+    ``frames`` is not optional: reading ``obj.p`` here produced a base-frame
+    command from a table-frame coordinate — a probe with a 0.30/0.20 m table
+    offset asked the IK for (0.08, 0.05, 0.057) for an object at
+    (0.38, 0.25, 0.05) (R1).
     """
-    p = np.asarray(obj.p, dtype=float).reshape(3).copy()
+    p = np.asarray(obj.pose_in_base(frames)[0], dtype=float).reshape(3).copy()
     if check_approach(approach) != TOP_DOWN:
         return p, False
-    floor = lowest_top_down_tool_z(obj)
+    floor = lowest_top_down_tool_z(obj, frames)
     if floor <= p[2]:
         return p, False
     p[2] = floor
     return p, True
 
 
-def grasps_above_its_top(obj: ObjectView) -> bool:
+def achieved_clearance(obj: ObjectView, frames: FrameGraph, p_tool) -> float:
+    """How far the pad TIPS end up above what ``obj`` stands on, for a solved
+    top-down tool point. Negative means the fingers are in the surface."""
+    tips = float(np.asarray(p_tool, dtype=float)[2]) - TIP_BELOW_TOOL_M
+    return tips - obj.bottom_z(frames)
+
+
+def grasps_above_its_top(obj: ObjectView, frames: FrameGraph) -> bool:
     """Is this object too FLAT for the fingers to reach beside it at all?
 
     When the lowest legal tool point is above the object's top face, the pads
     would close over thin air with the tips still on the table. A refusal is
     the honest answer; a grasp that cannot touch the object is not.
     """
-    top = float(np.asarray(obj.p, dtype=float)[2]) + obj.height() / 2.0
-    return lowest_top_down_tool_z(obj) > top
+    return lowest_top_down_tool_z(obj, frames) > obj.top_face_z(frames)
 
 
 def standoff_pose(grasp_p, approach: str, standoff_m: float) -> np.ndarray:

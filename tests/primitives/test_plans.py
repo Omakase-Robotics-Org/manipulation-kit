@@ -270,11 +270,12 @@ def test_an_object_tall_enough_is_grasped_at_its_centre_as_before(d1_arm, observ
     the table moves."""
     from manipulation_kit.primitives import approach as ap
 
-    from manipulation_kit.world import ObjectView
+    from manipulation_kit.world import FrameGraph, ObjectView
 
+    frames = FrameGraph()
     tall = ObjectView("tall_block", p=(0.38, 0.25, 0.12), size=(0.05, 0.04, 0.16))
-    assert not ap.grasp_point(tall, "top_down")[1]
-    assert np.allclose(ap.grasp_point(tall, "top_down")[0], tall.p)
+    assert not ap.grasp_point(tall, "top_down", frames)[1]
+    assert np.allclose(ap.grasp_point(tall, "top_down", frames)[0], tall.p)
 
 
 def test_a_flat_object_is_refused_rather_than_grasped_over(d1_arm, observe):
@@ -297,10 +298,11 @@ def test_a_horizontal_approach_still_aims_at_the_object_centre(d1_arm, observe):
     descent drives into."""
     from manipulation_kit.primitives import approach as ap
 
-    from manipulation_kit.world import ObjectView
+    from manipulation_kit.world import FrameGraph, ObjectView
 
+    frames = FrameGraph()
     low = ObjectView("low_block", p=(0.38, 0.25, 0.02), size=(0.05, 0.04, 0.04))
     for name in ("front", "side_left", "side_right"):
-        point, raised = ap.grasp_point(low, name)
+        point, raised = ap.grasp_point(low, name, frames)
         assert not raised and np.allclose(point, low.p)
-    assert ap.grasp_point(low, "top_down")[1]
+    assert ap.grasp_point(low, "top_down", frames)[1]

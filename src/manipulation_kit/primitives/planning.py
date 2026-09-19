@@ -33,8 +33,8 @@ from ..arms import safety
 from ..arms.ik import clamp_joint_step
 from ..world import ArmView, WorldView
 from . import approach as ap
-from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanError,
-                    UNREACHABLE_OBJECT, Waypoint)
+from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanBinding,
+                    PlanError, UNREACHABLE_OBJECT, Waypoint)
 
 #: How many clamped ``solve_ee`` calls ONE INTERPOLATION KNOT may take before
 #: the path is declared not to be converging. A knot is at most one
@@ -83,30 +83,95 @@ ARRIVE_TOL_M = 0.003
 #: and the orientation half, a touch above the solver's 5e-2 rad
 ARRIVE_TOL_RAD = 0.06
 
+#: How far a knot may be MISSED and the path still be walked on. The solver
+#: converges to :data:`ARRIVE_TOL_M` over most of the workspace and plateaus
+#: near the reach limit — measured on the bundled URDF, the last four knots of
+#: a HOME -> standoff travel at (0.38, 0.25) sit at 4.7-9.1 mm however many
+#: solves they are given. Walking on from those is right; walking on from a
+#: knot the solver is 50 mm from is not, and the old code could not tell the
+#: two apart because it checked NOTHING at a knot and then judged the final
+#: waypoint against this same window (R: "Exhausting eight solves does not
+#: refuse an intermediate knot").
+#:
+#: So: exhaustion inside this window walks on and the residual travels with
+#: the plan; exhaustion outside it is a refusal naming the knot. The window is
+#: WIDER than the 3 mm support margin, which is why a grasp additionally
+#: validates its ACHIEVED descent rather than its ideal waypoint — see
+#: ``Grasp.plan``.
+PATH_TOL_M = 0.012
+PATH_TOL_RAD = 0.12
+
+
+class IncompleteObservation(LookupError):
+    """The world does not describe an arm the guard has to reason about."""
+
+
+def missing_arms(kin, world: WorldView) -> Tuple[str, ...]:
+    """Sides the model has and the observation does not.
+
+    The collision guard is DUAL-ARM: it decides whether a posture is safe by
+    looking at both arms at once. An observation with one arm in it leaves the
+    other at whatever the shared model happened to be left at, so the same
+    plan is safe or unsafe depending on the previous caller — which is exactly
+    the hidden-state dependence R8 names.
+    """
+    return tuple(side for side in kin.sides if world.arm(side) is None)
+
 
 class Kin:
     """A borrowed :class:`~manipulation_kit.arms.kinematics.ArmKinematics`, restored on exit.
 
     Planning is pure from the caller's point of view; internally the solver
-    needs a posable model. This context manager is how both stay true.
+    needs a posable model. This context manager is how both stay true — and
+    it now holds the model's own lock for the whole transaction, because two
+    interleaved plans posing the same mirror contaminate each other and
+    "restored afterwards" does not help when the other plan reads in between.
+
+    It also REFUSES an observation that does not carry every arm the model
+    has. Silently keeping the model's own joints for a missing arm made the
+    plan depend on whoever posed the mirror last.
     """
 
-    def __init__(self, kin, world: WorldView):
+    def __init__(self, kin, world: WorldView, *, require_all_arms: bool = True):
         self.kin = kin
         self.world = world
+        self.require_all_arms = bool(require_all_arms)
         self._saved = {}
+        self._lock = getattr(kin, "lock", None)
+        self._held = False
 
     def __enter__(self) -> "Kin":
-        for side in self.kin.sides:
-            self._saved[side] = np.array(self.kin.joints(side), dtype=float)
-            arm: Optional[ArmView] = self.world.arm(side)
-            if arm is not None:
-                self.kin.set_joints(side, arm.joints)
+        missing = missing_arms(self.kin, self.world)
+        if self.require_all_arms and missing:
+            raise IncompleteObservation(
+                f"the observation reports no joints for: {', '.join(missing)}. "
+                f"The collision guard checks BOTH arms at once, so a plan made "
+                f"without one is a statement about a posture nobody measured.")
+        if self._lock is not None:
+            self._lock.acquire()
+            self._held = True
+        try:
+            for side in self.kin.sides:
+                self._saved[side] = np.array(self.kin.joints(side), dtype=float)
+                arm: Optional[ArmView] = self.world.arm(side)
+                if arm is not None:
+                    self.kin.set_joints(side, arm.joints)
+        except BaseException:
+            # Half-posed is worse than not posed: put back whatever was read
+            # before re-raising, then drop the lock.
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def __exit__(self, *_exc) -> None:
-        for side, q in self._saved.items():
-            self.kin.set_joints(side, q)
+        try:
+            for side, q in self._saved.items():
+                self.kin.set_joints(side, q)
+        finally:
+            self._saved = {}
+            if self._held and self._lock is not None:
+                self._held = False
+                self._lock.release()
 
     # -- reads, in the plan's own units ------------------------------------ #
     def tool_pose(self, side: str) -> Tuple[np.ndarray, R]:
@@ -146,7 +211,15 @@ def knots(p0, r0: R, p1, r1: R,
     rotvec = (r0.inv() * r1).as_rotvec()
     steps = max(int(np.ceil(np.linalg.norm(p1 - p0) / max_step_m)),
                 int(np.ceil(np.linalg.norm(rotvec) / max_step_rad)), 1)
-    steps = min(steps, MAX_KNOTS_PER_WAYPOINT)
+    if steps > MAX_KNOTS_PER_WAYPOINT:
+        # NOT clamped. Clamping kept the count and widened the spacing, which
+        # is the one thing the spacing exists to bound. ``_straight`` refuses
+        # such a leg before it gets here; this is the belt to that's braces.
+        raise ValueError(
+            f"a {float(np.linalg.norm(p1 - p0)) * 1000:.0f} mm / "
+            f"{float(np.degrees(np.linalg.norm(rotvec))):.0f} deg leg needs "
+            f"{steps} knots at the planner's spacing, over the "
+            f"{MAX_KNOTS_PER_WAYPOINT} budget")
     for k in range(1, steps + 1):
         f = k / steps
         yield p0 + (p1 - p0) * f, r0 * R.from_rotvec(rotvec * f)
@@ -162,37 +235,91 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
     different from "the straight line worked".
     """
     steps: List[JointStep] = []
+    worst_m = worst_rad = 0.0
     pos_err, rot_err = _pose_error(kin, side, wp.p, wp.r)
     if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
         return steps, None
     p0, r0 = kin.tool_pose(side)
-    for p_knot, r_knot in knots(p0, r0, wp.p, wp.r):
+    plan_knots = list(knots(p0, r0, wp.p, wp.r))
+    if _too_far(p0, r0, wp.p, wp.r):
+        residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
+        return steps, PlanError(
+            INFEASIBLE,
+            f"the leg to {wp.label!r} is {residual * 1000:.0f} mm and "
+            f"{np.degrees(rot_residual):.0f} deg long, which needs more than "
+            f"the {MAX_KNOTS_PER_WAYPOINT} interpolation knots this planner "
+            f"will spend at its {safety.MAX_STEP_M * 1000:.0f} mm / "
+            f"{np.degrees(safety.MAX_STEP_RAD):.0f} deg spacing. Split it "
+            f"into shorter waypoints rather than widening the spacing",
+            waypoint_index=index, waypoint_label=wp.label,
+            residual_m=residual, residual_rad=rot_residual, stage="knots",
+            primitive=primitive, side=side)
+    for knot_index, (p_knot, r_knot) in enumerate(plan_knots):
+        converged = False
         for _ in range(MAX_SOLVES_PER_KNOT):
             pos_err, rot_err = _pose_error(kin, side, p_knot, r_knot)
             if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
+                converged = True
                 break
             p7, r7 = ap.link7_from_tool(p_knot, r_knot)
             result = kin.kin.solve_ee(side, p7, r7)
             if not result.ok:
-                residual, _ = _pose_error(kin, side, wp.p, wp.r)
+                residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
                 return steps, PlanError(
                     _plan_reason(result.reason),
                     _explain(result.reason, side, wp),
                     waypoint_index=index,
                     waypoint_label=wp.label, residual_m=residual,
+                    residual_rad=rot_residual, stage="straight",
                     primitive=primitive, side=side)
             steps.append(JointStep(side, kin.joints(side), index))
+        if not converged:
+            # EXHAUSTION IS CHECKED, not shrugged off. Every knot now gets a
+            # verdict of its own: inside PATH_TOL the path walks on and the
+            # miss is recorded, outside it the leg is refused AT THAT KNOT
+            # rather than 13 knots later against a window four times the
+            # tolerance.
+            pos_err, rot_err = _pose_error(kin, side, p_knot, r_knot)
+            worst_m, worst_rad = max(worst_m, pos_err), max(worst_rad, rot_err)
+            if pos_err > PATH_TOL_M or rot_err > PATH_TOL_RAD:
+                residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
+                return steps, PlanError(
+                    IK_FAIL,
+                    f"the {side} arm did not converge on knot {knot_index} of "
+                    f"{len(plan_knots)} on the way to {wp.label!r}: "
+                    f"{pos_err * 1000:.1f} mm and {np.degrees(rot_err):.1f} "
+                    f"deg short after {MAX_SOLVES_PER_KNOT} solves, outside "
+                    f"the {PATH_TOL_M * 1000:.0f} mm / "
+                    f"{np.degrees(PATH_TOL_RAD):.0f} deg path window",
+                    waypoint_index=index, waypoint_label=wp.label,
+                    residual_m=residual, residual_rad=rot_residual,
+                    stage="knot_exhausted", primitive=primitive, side=side)
     residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
-    if residual > ARRIVE_TOL_M * 4 or rot_residual > ARRIVE_TOL_RAD * 2:
+    if residual > PATH_TOL_M or rot_residual > PATH_TOL_RAD:
         return steps, PlanError(
             UNREACHABLE_OBJECT,
             f"the {side} tool point stopped converging on {wp.label!r}: "
-            f"{residual * 1000:.0f} mm and "
-            f"{np.degrees(rot_residual):.0f} deg short after the whole "
+            f"{residual * 1000:.1f} mm and "
+            f"{np.degrees(rot_residual):.1f} deg short after the whole "
             f"interpolated path",
             waypoint_index=index, waypoint_label=wp.label,
-            residual_m=residual, primitive=primitive, side=side)
+            residual_m=residual, residual_rad=rot_residual, stage="arrival",
+            primitive=primitive, side=side)
     return steps, None
+
+
+def _too_far(p0, r0, p1, r1: R) -> bool:
+    """Is this leg longer than the knot budget can cover at its own spacing?
+
+    ``knots`` used to CAP the count at 200 by widening the spacing, which
+    silently broke the per-tick bound the spacing exists to enforce. A leg
+    that long is a caller asking for the wrong thing, so it is refused.
+    """
+    span_m = float(np.linalg.norm(np.asarray(p1, dtype=float)
+                                  - np.asarray(p0, dtype=float)))
+    span_rad = float(np.linalg.norm((r0.inv() * r1).as_rotvec()))
+    return (span_m > MAX_KNOTS_PER_WAYPOINT * safety.MAX_STEP_M
+            or span_rad > MAX_KNOTS_PER_WAYPOINT * safety.MAX_STEP_RAD)
 
 
 def _outward(side: str) -> float:
@@ -270,6 +397,13 @@ def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
     is still the STRAIGHT line's: same reason, same knot index, same residual,
     so nothing about the detour changes what a dead end looks like.
 
+    A DETOUR IS PER LEG. ``allow_via`` here is the caller's global switch and
+    ``Waypoint.allow_via`` is the leg's own: a detour is only ever taken when
+    BOTH say yes. Free-space transit says yes; a grasp descent, a lift, a
+    nudge and a retreat say no, because for those the shape of the path is the
+    promise and a 25 cm clearance hop that lands on the endpoint has not kept
+    it (R10).
+
     Returns ``(steps, error, notes)``; ``notes`` names any detour taken, so a
     plan that went around something says so in its own record.
     """
@@ -282,7 +416,7 @@ def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
         if error is None:
             steps += leg
             continue
-        if not allow_via or error.reason not in VIA_REASONS:
+        if not (allow_via and wp.allow_via) or error.reason not in VIA_REASONS:
             return steps + leg, error, notes
         detour, note = _detour(kin, side, wp, primitive=primitive, index=at,
                                q_start=q_start)
@@ -335,12 +469,18 @@ def joint_ramp(kin: Kin, side: str, q_goal, *, primitive: str,
         if kin.kin.gate.installed and not kin.kin.guard_ok(side, q_next):
             return steps, PlanError(
                 GUARD_REJECT,
-                f"the motion guard refused the {side} arm on the way to {label}",
+                f"the motion guard refused the {side} arm on the way to "
+                f"{label}, {np.degrees(np.max(np.abs(q_goal - q_now))):.1f} "
+                f"deg from it",
                 waypoint_label=label, primitive=primitive, side=side,
-                residual_m=float(np.max(np.abs(q_goal - q_now))))
+                stage="joint_ramp",
+                # RADIANS go in residual_rad. They used to go in residual_m
+                # and be printed as millimetres.
+                residual_rad=float(np.max(np.abs(q_goal - q_now))))
         kin.kin.set_joints(side, q_next)
         steps.append(JointStep(side, q_next, 0))
     return steps, PlanError(
         UNREACHABLE_OBJECT,
         f"the {side} arm did not converge on {label} within the step budget",
-        waypoint_label=label, primitive=primitive, side=side)
+        waypoint_label=label, primitive=primitive, side=side,
+        stage="joint_ramp")

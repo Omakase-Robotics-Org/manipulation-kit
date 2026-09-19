@@ -20,16 +20,22 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..world import ContainerView, FrameError, ObjectView, SurfaceView, WorldView
+from ..world import (UPRIGHT_TOL_RAD as _UPRIGHT_TOL_RAD, ContainerView,
+                     FrameError, ObjectView, SurfaceView, WorldView)
 from . import approach as ap
 from . import verifiers as V
-from .planning import Kin, joint_ramp, solve_path
-from .types import (AUTO, BOTH, FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPS,
-                    LearnedPrimitive,
-                    LEARNED_POLICY_REQUIRED, NO_SUCH_OBJECT, NUDGE_FRAMES,
-                    NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, PlanError, Plan, Primitive,
-                    SIDE_CHOICES, SIDES, TOP_DOWN,
-                    UNREACHABLE_DESTINATION, UNKNOWN_FRAME, Unmet,
+from .arguments import check_arguments
+from .planning import IncompleteObservation, Kin, joint_ramp, solve_path
+from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
+                    FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, GRIPS,
+                    INCOMPLETE_OBSERVATION, LearnedPrimitive,
+                    LEARNED_POLICY_REQUIRED, NO_FIT, NO_MOTION, NO_SUCH_OBJECT,
+                    NOT_HOLDING, NUDGE_FRAMES,
+                    NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, OBJECT_TILTED,
+                    OBJECT_TOO_FLAT, OBJECT_TOO_WIDE, PlanBinding, PlanError,
+                    Plan, Primitive, SIDE_CHOICES, SIDES, TOP_DOWN,
+                    UNREACHABLE_DESTINATION, UNKNOWN_FRAME,
+                    UNSUPPORTED_GEOMETRY, Unmet,
                     Verifier, GripStep, SettleStep, Waypoint)
 
 #: default standoff along the approach axis [m] — far enough that the descent
@@ -59,16 +65,16 @@ RIM_MARGIN_M = 0.010
 PLACE_RELEASE_MARGIN_M = 0.010
 #: default lift [m]
 DEFAULT_LIFT_M = 0.10
+#: how close under a held object something has to be to catch it on release [m]
+RELEASE_SUPPORT_M = 0.030
 
 
 # --------------------------------------------------------------------------- #
 # shared precondition helpers
 # --------------------------------------------------------------------------- #
 
-def _check_side(side: str) -> List[Unmet]:
-    if side not in SIDE_CHOICES:
-        return [Unmet("bad_side", f"{side!r} is not one of {SIDE_CHOICES}")]
-    return []
+#: How long a settle may take before the executor gives up on it [s].
+SETTLE_S = 1.5
 
 
 def _locate(world: WorldView, name: str, what: str = "object"
@@ -94,7 +100,32 @@ def _locate(world: WorldView, name: str, what: str = "object"
 
 
 def _resolved_side(want: str, world: WorldView, p_base) -> str:
-    return ap.choose_side(p_base) if want == AUTO else want
+    """The hand this verb will actually use — resolved ONCE, before checking.
+
+    ``side="auto"`` used to stay unresolved through ``preconditions``, so the
+    occupancy check was skipped for exactly the calls that most needed it:
+    ``Grasp(object=...)`` with no side could pick a hand already holding
+    something, and its first step opened that hand (R2). Everything
+    downstream — the plan, the notes, the verifier — takes the value this
+    returns.
+    """
+    if want != AUTO:
+        return want
+    free = [s for s in SIDES if _occupancy(world, s) == "free"]
+    return ap.choose_side(p_base, available=tuple(free) if free else SIDES)
+
+
+def _occupancy(world: WorldView, side: str) -> str:
+    """``"free"`` / ``"holding"`` / ``"unknown"`` — three states, not two.
+
+    ``_holding`` used to map "no gripper report" onto "not holding", so an
+    absent gripper read as an empty hand and passed a free-hand check. A hand
+    nobody can see is not an empty hand.
+    """
+    gripper = world.gripper(side)
+    if gripper is None:
+        return "unknown"
+    return "holding" if gripper.holding else "free"
 
 
 def _holding(world: WorldView, side: str) -> Optional[str]:
@@ -107,38 +138,199 @@ def _holding(world: WorldView, side: str) -> Optional[str]:
 def _must_hold(world: WorldView, side: str, name: str) -> List[Unmet]:
     gripper = world.gripper(side)
     if gripper is None:
-        return [Unmet("gripper_unknown",
+        return [Unmet(GRIPPER_UNKNOWN,
                       f"the {side} gripper reports nothing, so whether it holds "
-                      f"{name} is unknown", "read the gripper state first")]
+                      f"{name!r} is unknown", "read the gripper state first")]
     if not gripper.holding:
-        return [Unmet("not_holding", f"the {side} gripper is not holding anything",
+        return [Unmet(NOT_HOLDING,
+                      f"the {side} gripper is not holding anything",
                       f"grasp {name} first")]
     if gripper.held_object and gripper.held_object != name:
-        return [Unmet("not_holding",
-                      f"the {side} gripper is holding {gripper.held_object}, "
-                      f"not {name}")]
+        return [Unmet(NOT_HOLDING,
+                      f"the {side} gripper is holding {gripper.held_object!r}, "
+                      f"not {name!r}")]
+    if not gripper.held_object:
+        # An unidentified hold is NOT a hold of an arbitrary named object.
+        return [Unmet(GRIPPER_UNKNOWN,
+                      f"the {side} gripper reports a hold but not WHAT it is "
+                      f"holding, so this cannot be shown to be {name!r}",
+                      "publish GripperView(held_object=...) from the producer")]
     return []
 
 
 def _must_be_free(world: WorldView, side: str) -> List[Unmet]:
-    held = _holding(world, side)
-    if held:
-        return [Unmet("already_holding",
-                      f"the {side} gripper is already holding {held}",
-                      "place or release it first")]
+    """This hand is MEASURED empty. Unknown is a refusal, not a default."""
+    state = _occupancy(world, side)
+    if state == "holding":
+        return [Unmet(ALREADY_HOLDING,
+                      f"the {side} gripper is already holding "
+                      f"{_holding(world, side)}",
+                      "place or release it first, or use the other hand")]
+    if state == "unknown":
+        return [Unmet(GRIPPER_UNKNOWN,
+                      f"the {side} gripper reports nothing, so whether it is "
+                      f"free is unknown — and the first thing this verb does "
+                      f"is open it",
+                      "read the gripper state into the world first")]
     return []
 
 
+def _holder_of(world: WorldView, name: str, want: str) -> Tuple[Optional[str],
+                                                                List[Unmet]]:
+    """Which hand holds ``name`` — or the typed reason no hand does.
+
+    ``Lift``/``Carry``/``Place``/``Pour`` with the default ``side="auto"`` used
+    to skip their hold check when no holder could be found and then ask the
+    kinematics for ``tool_pose(None)``, which raises ``ValueError`` out of
+    ``plan()`` — an exception for what is an ordinary model mistake (R3).
+    """
+    if want in SIDES:
+        return want, _must_hold(world, want, name)
+    holder = world.holder_of(name)
+    if holder:
+        return holder, []
+    occupied = [s for s in SIDES if _occupancy(world, s) == "holding"]
+    unknown = [s for s in SIDES if _occupancy(world, s) == "unknown"]
+    if len(occupied) == 1:
+        side = occupied[0]
+        return side, _must_hold(world, side, name)
+    if len(occupied) > 1:
+        return None, [Unmet(
+            NOT_HOLDING,
+            f"both hands are holding something and neither reports {name!r}",
+            f"name the side explicitly, or re-observe the held object")]
+    if unknown:
+        return None, [Unmet(
+            GRIPPER_UNKNOWN,
+            f"the {', '.join(unknown)} gripper reports nothing, so whether "
+            f"{name!r} is held cannot be established",
+            "read the gripper state into the world, or name the side")]
+    return None, [Unmet(
+        NOT_HOLDING, f"neither hand is holding {name!r}",
+        f"grasp {name} first")]
+
+
+def _incomplete(primitive: Primitive, side: str, exc) -> PlanError:
+    return PlanError(INCOMPLETE_OBSERVATION, str(exc),
+                     primitive=primitive.name(), side=side,
+                     unmet=(Unmet(ARM_UNKNOWN, str(exc),
+                                  "publish both arms in the observation"),))
+
+
+def _solve(primitive: Primitive, world: WorldView, kin, side: str, waypoints):
+    """``(steps, error, notes)`` with the model restored and the lock held."""
+    try:
+        with Kin(kin, world) as borrowed:
+            return solve_path(borrowed, side, waypoints,
+                              primitive=primitive.name())
+    except IncompleteObservation as exc:
+        return [], _incomplete(primitive, side, exc), []
+
+
+def _plan(primitive: Primitive, world: WorldView, kin, side: str, waypoints,
+          steps, notes) -> Plan:
+    """A checked plan, BOUND to the posture and observation it was checked in."""
+    return Plan(primitive.name(), side, tuple(waypoints), tuple(steps),
+                tuple(notes), binding=PlanBinding.of(world, kin))
+
+
 def _plan_for(primitive: Primitive, world: WorldView, kin, side: str,
-              waypoints, *, notes=()):
+              waypoints, *, notes=(), extra_steps=()):
     """Solve a tool path and wrap the result, with the model always restored."""
-    with Kin(kin, world) as borrowed:
-        steps, error, detours = solve_path(borrowed, side, waypoints,
-                                           primitive=primitive.name())
+    steps, error, detours = _solve(primitive, world, kin, side, waypoints)
     if error is not None:
         return error
-    return Plan(primitive.name(), side, tuple(waypoints), tuple(steps),
-                tuple(notes) + tuple(detours))
+    return _plan(primitive, world, kin, side, waypoints,
+                 tuple(steps) + tuple(extra_steps),
+                 tuple(notes) + tuple(detours))
+
+
+def _upright_geometry(world: WorldView, name: str, what: str = "object"
+                      ) -> List[Unmet]:
+    """Refuse a tilted box rather than computing a height that assumes it is not.
+
+    Every support number in this package — the descent floor, the rim
+    clearance, the hang below the tool — reads the vertical extent off the
+    resolved pose. That reading is exact for a yawed box and wrong for a
+    tilted one, and "wrong by an unstated amount" is not a safety property
+    (R9). A deliberately limited v1 says so.
+    """
+    item = world.find(name)
+    if item is None:
+        return []
+    try:
+        tilt = item.tilt_rad(world.frames)
+    except FrameError:
+        return []
+    if tilt > _UPRIGHT_TOL_RAD:
+        return [Unmet(
+            OBJECT_TILTED,
+            f"{name} is tilted {math.degrees(tilt):.0f} deg off upright and "
+            f"this version plans support geometry for upright boxes and level "
+            f"surfaces only",
+            "level it, or drive the arm directly",
+            {"tilt_deg": round(math.degrees(tilt), 1)})]
+    if isinstance(item, SurfaceView) and not item.level(world.frames):
+        return [Unmet(UNSUPPORTED_GEOMETRY,
+                      f"{name} is not level and this version places onto level "
+                      f"surfaces only")]
+    return []
+
+
+def _supported_by(world: WorldView, name: str) -> Optional[str]:
+    """What is under ``name`` right now, close enough to catch it.
+
+    A surface whose top is within :data:`RELEASE_SUPPORT_M` of the object's
+    underside, or a container whose interior already contains it. Anything
+    else — including "nothing is published" — is no support, and the honest
+    answer for a Release is a refusal rather than a drop.
+    """
+    obj = world.find(name)
+    if obj is None:
+        return None
+    try:
+        under = obj.bottom_z(world.frames)
+    except FrameError:
+        return None
+    for item in world.objects:
+        try:
+            if isinstance(item, SurfaceView):
+                if (item.over(obj.pose_in_base(world.frames)[0], world.frames)
+                        and -RELEASE_SUPPORT_M <= under - item.top_z(world.frames)
+                        <= RELEASE_SUPPORT_M):
+                    return item.name
+            elif isinstance(item, ContainerView):
+                if (item.contains_object(obj, world.frames, pad_m=0.01)
+                        and under - item.floor_z(world.frames)
+                        <= RELEASE_SUPPORT_M):
+                    return item.name
+        except FrameError:
+            continue
+    return None
+
+
+def _achieved_tool(kin, world: WorldView, side: str, q):
+    """Where the tool point ACTUALLY ends up for a solved joint vector.
+
+    Forward kinematics on the plan's own last step, with the mirror put back.
+    An ideal waypoint is what was asked for; this is what was solved.
+    """
+    try:
+        with Kin(kin, world) as borrowed:
+            borrowed.kin.set_joints(side, np.asarray(q, dtype=float))
+            return borrowed.tool_pose(side)[0]
+    except IncompleteObservation:
+        return None
+
+
+def _with_settle(plan: Plan, timeout_s: float = SETTLE_S) -> Plan:
+    """Append a settle to a plan that moves. A verifier run on a moving robot
+    measures the middle of the motion, which is not a verdict."""
+    import dataclasses  # noqa: PLC0415
+    if plan.steps and isinstance(plan.steps[-1], SettleStep):
+        return plan
+    return dataclasses.replace(plan, steps=tuple(plan.steps)
+                               + (SettleStep(timeout_s),))
 
 
 def _hang_below_tool(world: WorldView, name: str, p_tool) -> float:
@@ -159,10 +351,9 @@ def _hang_below_tool(world: WorldView, name: str, p_tool) -> float:
     if item is None:
         return 0.0
     try:
-        p_obj, _ = item.pose_in_base(world.frames)
+        return float(p_tool[2]) - item.bottom_z(world.frames)
     except FrameError:
-        return item.height() / 2.0
-    return float(p_tool[2]) - (float(p_obj[2]) - item.height() / 2.0)
+        return item.vertical_extent_local() / 2.0
 
 
 def _clearance_ladder(asked_m: float, floor_m: float) -> Tuple[float, ...]:
@@ -263,19 +454,23 @@ class Approach(Primitive):
     standoff_m: float = DEFAULT_STANDOFF_M
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
         item, p, _r, found = _locate(world, self.object)
         unmet += found
-        if self.approach not in ap.APPROACHES:
-            unmet.append(Unmet("bad_approach",
-                               f"{self.approach!r} is not one of {ap.APPROACHES}"))
-        if not 0.02 <= self.standoff_m <= 0.30:
-            unmet.append(Unmet("bad_standoff",
-                               f"standoff_m must be 0.02-0.30 m, got "
-                               f"{self.standoff_m}"))
-        if p is not None and self.side != AUTO:
-            unmet += _must_be_free(world, self.side)
+        unmet += _upright_geometry(world, self.object)
+        if p is not None and not unmet:
+            # RESOLVE FIRST, then check the hand this verb will actually use.
+            unmet += _must_be_free(world, self.resolve_side(world))
         return unmet
+
+    def resolve_side(self, world: WorldView) -> Optional[str]:
+        """The hand this verb binds to, or ``None`` when the object is lost."""
+        _item, p, _r, unmet = _locate(world, self.object)
+        if unmet or p is None:
+            return None if self.side == AUTO else self.side
+        return _resolved_side(self.side, world, p)
 
     def _geometry(self, world: WorldView):
         item, p, _r, unmet = _locate(world, self.object)
@@ -288,18 +483,37 @@ class Approach(Primitive):
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
-            return self._unmet_error(unmet, "" if self.side == AUTO else self.side)
+            return self._unmet_error(unmet, self.resolve_side(world) or "")
         side, p_stand, r_tcp, _ = self._geometry(world)
         notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
-        return _plan_for(self, world, kin, side,
-                         [Waypoint("standoff", p_stand, r_tcp)], notes=notes)
+        waypoints = [Waypoint("standoff", p_stand, r_tcp, allow_via=True)]
+        steps, error, detours = _solve(self, world, kin, side, waypoints)
+        if error is not None:
+            return error
+        # The OPEN STROKE IS IN THE PLAN. The docstring promised an open hand
+        # and the plan emitted joints only, so "approach" left the jaws
+        # wherever the last verb put them and the next Grasp descended with a
+        # closed hand (R2). The stroke goes first, before the arm moves, and
+        # the executor waits for it to finish.
+        all_steps = ((GripStep(side, 0.0, "soft", 0),) + tuple(steps)
+                     + (SettleStep(SETTLE_S),))
+        return _plan(self, world, kin, side, waypoints, all_steps,
+                     notes + tuple(detours)
+                     + ("the jaws are opened before the arm moves, and the "
+                        "stroke is waited for",))
 
     def verifier(self, world0: WorldView) -> Verifier:
-        side, p_stand, _r, unmet = self._geometry(world0)
+        side, p_stand, r_tcp, unmet = self._geometry(world0)
         if unmet:
             return V.Never(self.name(), world0,
                            f"approach cannot be verified: {unmet[0]}")
-        return V.ToolAt(self.name(), world0, side, p_stand)
+        # Position AND orientation: the next verb descends along the wrist
+        # this one was supposed to establish, so verifying the point alone
+        # certifies half of what the step is for (R13).
+        return V.All(self.name(), world0, [
+            V.ToolAt(self.name(), world0, side, p_stand),
+            V.ToolFacing(self.name(), world0, side, r_tcp),
+            V.NotHolding(self.name(), world0, side)])
 
 
 # --------------------------------------------------------------------------- #
@@ -325,29 +539,50 @@ class Grasp(Primitive):
     grip: str = "soft"
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = Approach(object=self.object, side=self.side,
-                         approach=self.approach,
-                         standoff_m=self.standoff_m).preconditions(world)
-        if self.grip not in GRIPS:
-            unmet.append(Unmet("bad_grip", f"grip must be one of {GRIPS}, "
-                                           f"got {self.grip!r}"))
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
+        unmet += Approach(object=self.object, side=self.side,
+                          approach=self.approach,
+                          standoff_m=self.standoff_m).preconditions(world)
         item = world.find(self.object)
-        if (item is not None and self.approach == TOP_DOWN
-                and ap.grasps_above_its_top(item)):
+        if item is None or any(u.code in (FRAME_STALE, UNKNOWN_FRAME)
+                               for u in unmet):
+            return unmet
+        side = self.resolve_side(world)
+        if side is None:
+            return unmet
+        try:
+            r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames)
+            width = ap.grasp_width(item, world.frames, r_tcp)
+            flat = (self.approach == TOP_DOWN
+                    and ap.grasps_above_its_top(item, world.frames))
+            tall = item.vertical_extent(world.frames)
+        except FrameError:
+            return unmet
+        if flat:
             unmet.append(Unmet(
-                "object_too_flat",
-                f"{self.object} is {item.height() * 1000:.0f} mm tall and the "
-                f"pads reach {ap.TIP_BELOW_TOOL_M * 1000:.0f} mm past the tool "
+                OBJECT_TOO_FLAT,
+                f"{self.object} stands {tall * 1000:.0f} mm tall and the pads "
+                f"reach {ap.TIP_BELOW_TOOL_M * 1000:.0f} mm past the tool "
                 f"point, so a top-down grasp would close above it with the "
                 f"tips still on the surface",
-                "come in from the side, or use a different tool"))
-        if item is not None and not ap.fits_jaws(item):
+                "come in from the side, or use a different tool",
+                {"height_m": round(tall, 4)}))
+        if width > ap.GRASPABLE_WIDTH_M:
+            # ALONG THE JAW AXIS, not the object's smallest side. A
+            # 100x80x40 mm box passed the old min-extent test on its 40 mm
+            # edge while this grasp closes across 80 mm of it (R9).
             unmet.append(Unmet(
-                "object_too_wide",
-                f"{self.object}'s narrowest side is "
-                f"{item.min_horizontal_extent() * 1000:.0f} mm and the driven "
-                f"jaws open {ap.JAW_OPEN_M * 1000:.0f} mm",
-                "use a different tool, or a different object"))
+                OBJECT_TOO_WIDE,
+                f"{self.object} presents {width * 1000:.0f} mm across the jaw "
+                f"axis of this {self.approach} grasp, and the driven jaws take "
+                f"{ap.GRASPABLE_WIDTH_M * 1000:.0f} mm "
+                f"(opening {ap.JAW_OPEN_M * 1000:.0f} mm, "
+                f"{ap.JAW_CLEARANCE_M * 1000:.0f} mm clearance per side)",
+                "approach it across a narrower face, or use a different tool",
+                {"presented_width_m": round(width, 4),
+                 "graspable_width_m": round(ap.GRASPABLE_WIDTH_M, 4)}))
         return unmet
 
     def _geometry(self, world: WorldView):
@@ -358,44 +593,88 @@ class Grasp(Primitive):
         r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames)
         # The tool point is the pad CENTRE and the pads reach 29 mm past it,
         # so a top-down grasp on the object's centre asks for the finger tips
-        # under the table. ``grasp_point`` lifts it just clear.
-        p_grasp, _raised = ap.grasp_point(item, self.approach)
+        # under the table. ``grasp_point`` lifts it just clear — from the
+        # RESOLVED pose, which is the whole of R1: it used to read ``item.p``
+        # and hand a table-frame coordinate to an IK that reads base frame.
+        p_grasp, _raised = ap.grasp_point(item, self.approach, world.frames)
         return (side, ap.standoff_pose(p_grasp, self.approach, self.standoff_m),
                 p_grasp, r_tcp, [])
+
+    def resolve_side(self, world: WorldView) -> Optional[str]:
+        return Approach(object=self.object, side=self.side,
+                        approach=self.approach).resolve_side(world)
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
-            return self._unmet_error(unmet, "" if self.side == AUTO else self.side)
+            return self._unmet_error(unmet, self.resolve_side(world) or "")
         side, p_stand, p_grasp, r_tcp, _ = self._geometry(world)
-        waypoints = [Waypoint("standoff", p_stand, r_tcp),
-                     Waypoint("grasp", p_grasp, r_tcp)]
+        waypoints = [
+            # getting to the standoff is free-space transit: a detour is a
+            # better answer than a refusal.
+            Waypoint("standoff", p_stand, r_tcp, allow_via=True),
+            # the descent is NOT. Its straightness along the approach axis is
+            # the whole promise of the verb, and a 25 cm clearance hop that
+            # ends on the grasp point has left the corridor (R10).
+            Waypoint("grasp", p_grasp, r_tcp, allow_via=False)]
         item = world.find(self.object)
-        raised = ap.grasp_point(item, self.approach)[1] if item else False
+        raised = ap.grasp_point(item, self.approach, world.frames)[1]
+        p_obj = item.pose_in_base(world.frames)[0]
         # The jaws open BEFORE the arm moves and close only once the tool is on
         # the object: an open-on-arrival stroke sweeps the pads through whatever
         # is beside it.
-        with Kin(kin, world) as borrowed:
-            steps, error, detours = solve_path(borrowed, side, waypoints,
-                                               primitive=self.name())
+        steps, error, detours = _solve(self, world, kin, side, waypoints)
         if error is not None:
             return error
+        # VALIDATE THE ACHIEVED DESCENT, not the ideal waypoint. The path
+        # window is 12 mm and the support margin is 3 mm, so a solver that
+        # plateaus low lands the pad tips in the table while every waypoint
+        # coordinate still reads correct (R: "validate achieved clearance,
+        # not only ideal waypoint coordinates"; F5's ten failures in ten).
+        if self.approach == TOP_DOWN and steps:
+            achieved = _achieved_tool(kin, world, side, steps[-1].q)
+            if achieved is not None:
+                clearance = ap.achieved_clearance(item, world.frames, achieved)
+                if clearance < ap.MIN_ACHIEVED_CLEARANCE_M:
+                    return PlanError(
+                        UNSUPPORTED_GEOMETRY,
+                        f"the {side} arm's SOLVED descent leaves the pad tips "
+                        f"{clearance * 1000:+.1f} mm above what {self.object} "
+                        f"stands on, under the "
+                        f"{ap.MIN_ACHIEVED_CLEARANCE_M * 1000:.0f} mm this "
+                        f"plan has to keep. The waypoint asked for "
+                        f"{ap.SUPPORT_CLEARANCE_M * 1000:.0f} mm; the IK did "
+                        f"not get there, and the fingers would jam on the "
+                        f"surface before the jaws close",
+                        waypoint_index=1, waypoint_label="grasp",
+                        residual_m=float(ap.MIN_ACHIEVED_CLEARANCE_M - clearance),
+                        stage="achieved_clearance",
+                        primitive=self.name(), side=side)
+                notes_clearance = (f"the solved descent keeps the pad tips "
+                                   f"{clearance * 1000:.1f} mm off the surface",)
+            else:
+                notes_clearance = ()
+        else:
+            notes_clearance = ()
         all_steps = ((GripStep(side, 0.0, self.grip, 0),) + tuple(steps)
-                     + (GripStep(side, 1.0, self.grip, 1), SettleStep(1.0)))
+                     + (GripStep(side, 1.0, self.grip, 1),
+                        SettleStep(SETTLE_S)))
         notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
         if raised:
-            notes += (f"grasping {(p_grasp[2] - float(item.p[2])) * 1000:.0f} mm "
+            notes += (f"grasping {(p_grasp[2] - float(p_obj[2])) * 1000:.0f} mm "
                       f"above the object's centre so the pad tips clear what "
                       f"it is standing on",)
-        return Plan(self.name(), side, tuple(waypoints), all_steps,
-                    notes + tuple(detours))
+        return _plan(self, world, kin, side, waypoints, all_steps,
+                     notes + tuple(detours) + notes_clearance)
 
     def verifier(self, world0: WorldView) -> Verifier:
-        side, _stand, _p, _r, unmet = self._geometry(world0)
+        side, _stand, _p, r_tcp, unmet = self._geometry(world0)
         if unmet:
             return V.Never(self.name(), world0,
                            f"grasp cannot be verified: {unmet[0]}")
-        return V.Holding(self.name(), world0, side, world0.find(self.object))
+        item = world0.find(self.object)
+        return V.Holding(self.name(), world0, side, item,
+                         jaw_axis=ap.jaw_axis(r_tcp))
 
 
 # --------------------------------------------------------------------------- #
@@ -412,38 +691,39 @@ class Lift(Primitive):
     height_m: float = DEFAULT_LIFT_M
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
         _item, _p, _r, found = _locate(world, self.object)
         unmet += found
-        if not 0.01 <= self.height_m <= 0.40:
-            unmet.append(Unmet("bad_height",
-                               f"height_m must be 0.01-0.40 m, got {self.height_m}"))
-        side = self._side(world)
-        if side is not None:
-            unmet += _must_hold(world, side, self.object)
-        return unmet
+        if unmet:
+            return unmet
+        # THE HOLD CHECK RUNS EVEN WHEN NO HAND HOLDS ANYTHING. It used to be
+        # skipped exactly then, and planning went on to ask the kinematics for
+        # ``tool_pose(None)`` (R3).
+        _side, held = _holder_of(world, self.object, self.side)
+        return unmet + held
 
     def _side(self, world: WorldView) -> Optional[str]:
-        if self.side != AUTO:
-            return self.side if self.side in SIDES else None
-        holder = world.holder_of(self.object)
-        if holder:
-            return holder
-        for side in SIDES:
-            if _holding(world, side):
-                return side
-        return None
+        return _holder_of(world, self.object, self.side)[0]
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self._side(world) or "")
         side = self._side(world)
-        with Kin(kin, world) as borrowed:
-            p_tool, r_tool = borrowed.tool_pose(side)
+        try:
+            with Kin(kin, world) as borrowed:
+                p_tool, r_tool = borrowed.tool_pose(side)
+        except IncompleteObservation as exc:
+            return _incomplete(self, side, exc)
         goal = p_tool + np.array([0.0, 0.0, float(self.height_m)])
+        # STRAIGHT UP. A lift that routes through a 25 cm clearance point, or
+        # through READY, is not a lift of a held object — it is a swing with
+        # something in the hand, and the orientation promise goes with it.
         return _plan_for(self, world, kin, side,
-                         [Waypoint("lifted", goal, r_tool)])
+                         [Waypoint("lifted", goal, r_tool, allow_via=False)],
+                         extra_steps=(SettleStep(SETTLE_S),))
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
@@ -473,21 +753,22 @@ class Carry(Primitive):
     clearance_m: float = DEFAULT_CLEARANCE_M
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
         _item, _p, _r, found = _locate(world, self.object)
         unmet += found
-        _dest, dest_p, _dr, dfound = _locate(world, self.to, "destination")
+        _dest, _dest_p, _dr, dfound = _locate(world, self.to, "destination")
         unmet += dfound
-        if not 0.0 <= self.clearance_m <= 0.40:
-            unmet.append(Unmet("bad_clearance",
-                               f"clearance_m must be 0-0.40 m, got {self.clearance_m}"))
-        side = self._side(world)
-        if side is not None:
-            unmet += _must_hold(world, side, self.object)
-        return unmet
+        unmet += _upright_geometry(world, self.object)
+        unmet += _upright_geometry(world, self.to, "destination")
+        if unmet:
+            return unmet
+        _side, held = _holder_of(world, self.object, self.side)
+        return unmet + held
 
     def _side(self, world: WorldView) -> Optional[str]:
-        return Lift(object=self.object, side=self.side)._side(world)
+        return _holder_of(world, self.object, self.side)[0]
 
     def _destination_top(self, world: WorldView) -> Tuple[np.ndarray, float]:
         """``(destination centre in base, the z a carried object must clear)``."""
@@ -498,14 +779,8 @@ class Carry(Primitive):
         elif isinstance(dest, SurfaceView):
             top = dest.top_z(world.frames)
         else:
-            top = float(dest_p[2]) + float(dest.size[2]) / 2.0
+            top = dest.top_face_z(world.frames)
         return np.asarray(dest_p, dtype=float), float(top)
-
-    def _goal(self, world: WorldView, clearance_m: Optional[float] = None):
-        dest_p, top = self._destination_top(world)
-        clearance = (float(self.clearance_m) if clearance_m is None
-                     else float(clearance_m))
-        return np.array([float(dest_p[0]), float(dest_p[1]), top + clearance])
 
     def ladder(self, world: WorldView, p_tool) -> Tuple[float, ...]:
         """The transit clearances this carry may use, largest first.
@@ -522,8 +797,11 @@ class Carry(Primitive):
         if unmet:
             return self._unmet_error(unmet, self._side(world) or "")
         side = self._side(world)
-        with Kin(kin, world) as borrowed:
-            p_tool, r_tool = borrowed.tool_pose(side)
+        try:
+            with Kin(kin, world) as borrowed:
+                p_tool, r_tool = borrowed.tool_pose(side)
+        except IncompleteObservation as exc:
+            return _incomplete(self, side, exc)
         dest_p, top = self._destination_top(world)
         ladder = self.ladder(world, p_tool)
         attempts = []
@@ -543,11 +821,11 @@ class Carry(Primitive):
                 (f"transit {clearance * 1000:.0f} mm above {self.to}'s rim"
                  + ("" if clearance >= ladder[0] - 1e-9 else
                     f" (the {ladder[0] * 1000:.0f} mm rung is out of reach)"),),
-                [Waypoint("clearance", rise, r_tool),
-                 Waypoint("over_destination", goal, r_tool)]))
+                [Waypoint("clearance", rise, r_tool, allow_via=False),
+                 Waypoint("over_destination", goal, r_tool, allow_via=False)]))
         plan, best, error = _first_reachable(self, world, kin, side, attempts)
         if plan is not None:
-            return plan
+            return _with_settle(plan)
         return _unreachable_destination(self, side, ladder, best, error)
 
     def verifier(self, world0: WorldView) -> Verifier:
@@ -555,7 +833,13 @@ class Carry(Primitive):
         if side is None:
             return V.Never(self.name(), world0,
                            "no hand is holding anything, so no carry can be measured")
-        return V.ObjectOver(self.name(), world0, side, self.object, self.to)
+        # Horizontal position was the WHOLE of the old verdict, so an object
+        # dangling below the rim counted as carried over the bin (R12). The
+        # clearance half is measured against the same rim the plan used.
+        return V.All(self.name(), world0, [
+            V.ObjectOver(self.name(), world0, side, self.object, self.to),
+            V.ObjectClears(self.name(), world0, self.object, self.to),
+            V.Holding(self.name(), world0, side, world0.find(self.object))])
 
 
 # --------------------------------------------------------------------------- #
@@ -577,20 +861,59 @@ class Place(Primitive):
     to: str = ""
     side: str = AUTO
     clearance_m: float = 0.01
+    #: May the object be LET GO above the destination when the arm cannot
+    #: reach down to set it down? It used to happen silently — a Place that
+    #: could not reach the floor released one centimetre over the rim and
+    #: called itself a place (R, section 3: "Place silently falls back to rim
+    #: release"). Dropping a thing is an application decision with a height
+    #: and a suitability attached, so it is a field, and the plan says which
+    #: rung it took.
+    allow_drop: bool = False
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = Carry(object=self.object, to=self.to, side=self.side,
-                      clearance_m=0.0).preconditions(world)
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
+        # Its OWN clearance, not a freshly built Carry's zero. The old code
+        # validated ``Carry(clearance_m=0.0)`` and never looked at
+        # ``self.clearance_m``, so a negative or nonfinite one reached
+        # ``_drop_pose`` (R14). ``check_arguments`` above is what now does it.
+        unmet += Carry(object=self.object, to=self.to, side=self.side,
+                       clearance_m=0.0).preconditions(world)
         dest = world.find(self.to)
         if dest is not None and not isinstance(dest, (ContainerView, SurfaceView)):
             unmet.append(Unmet(
                 "no_such_target",
                 f"{self.to} is a plain object, not a container or a surface",
                 "name a container or a surface"))
+        obj = world.find(self.object)
+        if (obj is not None and isinstance(dest, ContainerView)
+                and not any(u.code in (FRAME_STALE, UNKNOWN_FRAME) for u in unmet)):
+            try:
+                fits = dest.fits_inside(obj, world.frames)
+                measured = dest.interior_measured
+            except FrameError:
+                fits, measured = True, True
+            if not fits:
+                # THE OBJECT HAS TO FIT. Nothing checked this: a bar wider
+                # than the bin planned a descent into it and the verifier
+                # then asked only whether its CENTRE was inside (R9/R12).
+                unmet.append(Unmet(
+                    NO_FIT,
+                    f"{self.object} is wider than {self.to}'s interior "
+                    f"({[round(float(v) * 1000) for v in dest.interior]} mm)",
+                    "place it on a surface, or name a larger container"))
+            elif not measured:
+                unmet.append(Unmet(
+                    NO_FIT,
+                    f"{self.to}'s interior is ESTIMATED at 90% of its outside "
+                    f"size, not measured, and this placement needs the walls "
+                    f"to be where they are said to be",
+                    "publish ContainerView(interior=...) from a measurement"))
         return unmet
 
     def _side(self, world: WorldView) -> Optional[str]:
-        return Lift(object=self.object, side=self.side)._side(world)
+        return _holder_of(world, self.object, self.side)[0]
 
     def _drop_pose(self, world: WorldView, *, from_rim: bool = False):
         """Where the object's CENTRE ends up when it is let go.
@@ -607,13 +930,15 @@ class Place(Primitive):
         dest = world.find(self.to)
         dest_p, _ = dest.pose_in_base(world.frames)
         if isinstance(dest, ContainerView):
-            floor = float(dest_p[2]) - float(dest.interior[2]) / 2.0
+            floor = dest.floor_z(world.frames)
             rim = dest.rim_z(world.frames)
         else:
             floor = rim = dest.top_z(world.frames)
         base = rim if from_rim else floor
         margin = (PLACE_RELEASE_MARGIN_M if from_rim else float(self.clearance_m))
-        z = base + obj.height() / 2.0 + margin
+        # The RESOLVED vertical extent: a yawed box is not taller, and a box
+        # measured in a table frame is not at the height its local z says.
+        z = base + obj.vertical_extent(world.frames) / 2.0 + margin
         return np.array([float(dest_p[0]), float(dest_p[1]), z])
 
     def plan(self, world: WorldView, kin) -> Any:
@@ -621,8 +946,11 @@ class Place(Primitive):
         if unmet:
             return self._unmet_error(unmet, self._side(world) or "")
         side = self._side(world)
-        with Kin(kin, world) as borrowed:
-            p_tool, r_tool = borrowed.tool_pose(side)
+        try:
+            with Kin(kin, world) as borrowed:
+                p_tool, r_tool = borrowed.tool_pose(side)
+        except IncompleteObservation as exc:
+            return _incomplete(self, side, exc)
         # The tool point is at the object's grasp point, so the tool descends
         # to the object's resting centre — not to the container floor.
         offset = np.asarray(p_tool) - world.find(self.object).pose_in_base(
@@ -632,7 +960,7 @@ class Place(Primitive):
         ladder = carry.ladder(world, p_tool)
         releases = [("set_down", self._drop_pose(world) + offset)]
         rim_release = self._drop_pose(world, from_rim=True) + offset
-        if rim_release[2] > releases[0][1][2] + 1e-6:
+        if self.allow_drop and rim_release[2] > releases[0][1][2] + 1e-6:
             releases.append(("rim_release", rim_release))
         attempts = []
         for label, release in releases:
@@ -643,21 +971,47 @@ class Place(Primitive):
                     continue
                 how = ("setting it down on the floor of " + self.to
                        if label == "set_down" else
-                       f"letting go {PLACE_RELEASE_MARGIN_M * 1000:.0f} mm "
-                       f"above {self.to}'s rim, which the arm can reach and "
-                       f"the floor of it is not")
+                       f"DROPPING it {PLACE_RELEASE_MARGIN_M * 1000:.0f} mm "
+                       f"above {self.to}'s rim (allow_drop=True), which the "
+                       f"arm can reach and the floor of it is not")
                 attempts.append((
                     clearance,
                     (f"transit {clearance * 1000:.0f} mm above {self.to}'s "
                      f"rim, {how}",),
-                    [Waypoint("over_destination", above, r_tool),
-                     Waypoint(label, release, r_tool)]))
+                    # RISE BEFORE TRAVEL, then descend. Called directly on an
+                    # object still below the rim, the old first waypoint was a
+                    # diagonal to a point over the destination, which clips
+                    # the rim on the way (R10). The rise leg is a no-op when
+                    # the tool is already above the transit height.
+                    [Waypoint("clearance",
+                              np.array([float(p_tool[0]), float(p_tool[1]),
+                                        max(float(p_tool[2]), float(above[2]))]),
+                              r_tool, allow_via=False),
+                     Waypoint("over_destination", above, r_tool,
+                              allow_via=False),
+                     # the set-down is a constrained descent, like a grasp's
+                     Waypoint(label, release, r_tool, allow_via=False)]))
         plan, best, error = _first_reachable(self, world, kin, side, attempts)
         if plan is None:
+            if not self.allow_drop and rim_release[2] > releases[0][1][2] + 1e-6:
+                error = PlanError(
+                    UNREACHABLE_DESTINATION,
+                    f"the {side} arm cannot reach down to set {self.object} on "
+                    f"the floor of {self.to}. Letting go above the rim would "
+                    f"drop it {(rim_release[2] - releases[0][1][2]) * 1000:.0f} "
+                    f"mm; pass allow_drop=True if that is acceptable for this "
+                    f"object",
+                    waypoint_label="set_down", stage="clearance_ladder",
+                    residual_m=(float(error.residual_m) if error is not None
+                                else float("nan")),
+                    attempted=tuple(f"{c * 1000:.0f} mm" for c in ladder),
+                    primitive=self.name(), side=side)
+                return error
             return _unreachable_destination(self, side, ladder, best, error)
         all_steps = (tuple(plan.steps)
-                     + (GripStep(side, 0.0, "soft", 1), SettleStep(1.0)))
-        return Plan(self.name(), side, plan.waypoints, all_steps, plan.notes)
+                     + (GripStep(side, 0.0, "soft", 1), SettleStep(SETTLE_S)))
+        import dataclasses  # noqa: PLC0415
+        return dataclasses.replace(plan, steps=all_steps)
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
@@ -673,16 +1027,43 @@ class Place(Primitive):
 
 @dataclass(frozen=True)
 class Release(Primitive):
-    """Open the jaws. No arm motion — that is what makes it safe to offer alone."""
+    """Open the jaws. No arm motion — which is NOT the same as safe.
+
+    "No arm motion makes it safe to offer alone" ignored gravity: opening the
+    hand 30 cm over a table drops whatever is in it (R, section 3). So a
+    release over nothing is refused unless the caller says it means to drop,
+    and the check is measured — the held object's underside against a surface
+    or a container floor it is already resting in / just above.
+    """
 
     VERB = "release"
     side: str = AUTO
+    #: open the hand even when nothing measurably supports what it holds
+    allow_drop: bool = False
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
-        if self._side(world) is None:
-            unmet.append(Unmet("bad_side", "no side given and neither hand is "
-                                           "holding anything"))
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
+        side = self._side(world)
+        if side is None:
+            unmet.append(Unmet(BAD_SIDE, "no side given and neither hand is "
+                                         "measurably holding anything",
+                               "name a side"))
+            return unmet
+        if self.allow_drop:
+            return unmet
+        held = _holding(world, side)
+        if held is None:
+            return unmet
+        support = _supported_by(world, held)
+        if support is None:
+            unmet.append(Unmet(
+                "unsupported_release",
+                f"nothing in this observation supports {held!r}: opening the "
+                f"{side} hand now drops it",
+                "place it first, or pass allow_drop=True to drop it "
+                "deliberately"))
         return unmet
 
     def _side(self, world: WorldView) -> Optional[str]:
@@ -696,10 +1077,11 @@ class Release(Primitive):
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
-            return self._unmet_error(unmet)
+            return self._unmet_error(unmet, self._side(world) or "")
         side = self._side(world)
         return Plan(self.name(), side, (),
-                    (GripStep(side, 0.0, "soft", -1), SettleStep(1.0)))
+                    (GripStep(side, 0.0, "soft", -1), SettleStep(SETTLE_S)),
+                    binding=PlanBinding.of(world, kin))
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
@@ -720,6 +1102,10 @@ def snap(value_m: float) -> float:
     a menu of only 10 mm steps pays three turns for every real move.
     """
     value = float(value_m)
+    if not math.isfinite(value):
+        # min()/copysign() are perfectly happy with a NaN and hand back a
+        # plausible +10 mm. ``Nudge(dx=NaN)`` did exactly that (R14).
+        raise ValueError(f"a nudge component must be finite, got {value_m!r}")
     if abs(value) < NUDGE_GRID_M[0] / 2.0:
         return 0.0
     nearest = min(NUDGE_GRID_M, key=lambda g: abs(abs(value) - g))
@@ -755,23 +1141,35 @@ class Nudge(Primitive):
         return delta, dyaw
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
-        if self.frame not in NUDGE_FRAMES:
-            unmet.append(Unmet("bad_frame",
-                               f"frame must be one of {NUDGE_FRAMES}, "
-                               f"got {self.frame!r}"))
+        # Arguments FIRST and nothing after them on failure: ``snapped`` must
+        # never see a nonfinite number.
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
         side = self._side(world)
         if side is None:
-            unmet.append(Unmet("bad_side", "name which hand to nudge"))
-        elif world.arm(side) is None:
-            unmet.append(Unmet("arm_unknown",
+            unmet.append(Unmet(BAD_SIDE, "name which hand to nudge"))
+            return unmet
+        arm = world.arm(side)
+        if arm is None:
+            unmet.append(Unmet(ARM_UNKNOWN,
                                f"the {side} arm is not in this observation"))
+        elif self.frame == "tool" and arm.tool_r is None:
+            # A tool-frame correction needs the tool's orientation. Without
+            # it the old verifier silently graded the delta as if it were
+            # base-frame (R13); refusing to PLAN it is the better half.
+            unmet.append(Unmet(
+                ARM_UNKNOWN,
+                f"the {side} arm reports no tool orientation, so a correction "
+                f"in its own frame cannot be expressed",
+                "use frame='base', or publish ArmView.tool_r"))
         delta, dyaw = self.snapped()
         if not np.any(delta) and dyaw == 0.0:
             unmet.append(Unmet(
-                "no_motion",
+                NO_MOTION,
                 f"every component snaps to zero (the grid is "
-                f"{[int(g * 1000) for g in NUDGE_GRID_M]} mm)",
+                f"{[int(g * 1000) for g in NUDGE_GRID_M]} mm) and no yaw was "
+                f"asked for",
                 "ask for at least 10 mm, or a yaw"))
         return unmet
 
@@ -789,8 +1187,11 @@ class Nudge(Primitive):
             return self._unmet_error(unmet, self._side(world) or "")
         side = self._side(world)
         delta, dyaw = self.snapped()
-        with Kin(kin, world) as borrowed:
-            p_tool, r_tool = borrowed.tool_pose(side)
+        try:
+            with Kin(kin, world) as borrowed:
+                p_tool, r_tool = borrowed.tool_pose(side)
+        except IncompleteObservation as exc:
+            return _incomplete(self, side, exc)
         world_delta = r_tool.apply(delta) if self.frame == "tool" else delta
         r_goal = (R.from_rotvec(r_tool.as_matrix()[:, 2] * dyaw) * r_tool
                   if dyaw else r_tool)
@@ -803,29 +1204,50 @@ class Nudge(Primitive):
         if abs(float(self.dyaw)) > NUDGE_MAX_YAW_RAD:
             notes.append(f"yaw clamped to {math.degrees(dyaw):+.0f} deg "
                          f"(asked {math.degrees(self.dyaw):+.0f})")
-        plan = _plan_for(self, world, kin, side,
-                         [Waypoint("nudged", p_tool + world_delta, r_goal)],
-                         notes=notes)
-        return plan
+        # A BOUNDED CORRECTION STAYS BOUNDED. The default detour search
+        # could answer a 10 mm nudge with a 25 cm clearance hop that lands on
+        # the same endpoint, which is not the move that was asked for (R10).
+        return _plan_for(self, world, kin, side,
+                         [Waypoint("nudged", p_tool + world_delta, r_goal,
+                                   allow_via=False)],
+                         notes=notes, extra_steps=(SettleStep(SETTLE_S),))
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
         if side is None:
             return V.Never(self.name(), world0, "no side to verify")
-        delta, _ = self.snapped()
+        try:
+            delta, dyaw = self.snapped()
+        except ValueError as exc:
+            return V.Never(self.name(), world0, str(exc))
         arm = world0.arm(side)
         if arm is None or arm.tool_p is None:
             return V.Never(self.name(), world0,
                            f"the {side} arm reports no tool point")
         # the verifier measures the BASE-frame displacement, whichever frame
         # the model expressed it in
-        if self.frame == "tool" and arm.tool_r is not None:
+        if self.frame == "tool":
+            if arm.tool_r is None:
+                return V.Never(
+                    self.name(), world0,
+                    f"the {side} arm reports no tool orientation, so a "
+                    f"tool-frame displacement cannot be resolved into the "
+                    f"base frame — treating it as base-frame would grade the "
+                    f"wrong motion")
             delta = arm.tool_r.apply(delta)
         # Tolerance scales with what was asked (V.moved_tol): a fixed 15 or
         # 20 mm window is wider than the 10 mm bottom of NUDGE_GRID_M, so the
         # finest correction on the menu could not fail. It scored a hand that
         # moved 0 mm as TRUE on the 2026-09-19 agent-eval run.
-        return V.ToolMoved(self.name(), world0, side, delta)
+        parts = [V.ToolMoved(self.name(), world0, side, delta)]
+        if dyaw:
+            # AND THE TURN. ``Nudge(dyaw=0.2).verifier(w)(w)`` returned TRUE
+            # — "the left hand moved 0 mm as asked" — because the rotation
+            # was dropped from the verdict entirely (R13).
+            axis = None if arm.tool_r is None else arm.tool_r.as_matrix()[:, 2]
+            parts.append(V.ToolTurned(self.name(), world0, side, dyaw,
+                                      axis=axis))
+        return parts[0] if len(parts) == 1 else V.All(self.name(), world0, parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -845,14 +1267,12 @@ class Retreat(Primitive):
     distance_m: float = 0.10
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
         side = self._side(world)
         if side is None or world.arm(side) is None:
-            unmet.append(Unmet("arm_unknown", "name which hand to retreat"))
-        if not 0.01 <= self.distance_m <= 0.40:
-            unmet.append(Unmet("bad_distance",
-                               f"distance_m must be 0.01-0.40 m, got "
-                               f"{self.distance_m}"))
+            unmet.append(Unmet(ARM_UNKNOWN, "name which hand to retreat"))
         return unmet
 
     def _side(self, world: WorldView) -> Optional[str]:
@@ -865,11 +1285,18 @@ class Retreat(Primitive):
         if unmet:
             return self._unmet_error(unmet, self._side(world) or "")
         side = self._side(world)
-        with Kin(kin, world) as borrowed:
-            p_tool, r_tool = borrowed.tool_pose(side)
+        try:
+            with Kin(kin, world) as borrowed:
+                p_tool, r_tool = borrowed.tool_pose(side)
+        except IncompleteObservation as exc:
+            return _incomplete(self, side, exc)
         back = -r_tool.as_matrix()[:, 2] * float(self.distance_m)
+        # STRAIGHT BACK. A hand inside a container that is allowed to detour
+        # up and out lifts the container with it (R10).
         return _plan_for(self, world, kin, side,
-                         [Waypoint("retreated", p_tool + back, r_tool)])
+                         [Waypoint("retreated", p_tool + back, r_tool,
+                                   allow_via=False)],
+                         extra_steps=(SettleStep(SETTLE_S),))
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
@@ -909,13 +1336,18 @@ class GoHome(Primitive):
         return SIDES if self.side in (BOTH, AUTO) else (self.side,)
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        if self.side not in GOHOME_SIDE_CHOICES:
-            return [Unmet("bad_side", f"side must be one of "
-                                      f"{GOHOME_SIDE_CHOICES}, got {self.side!r}")]
-        missing = [s for s in self._sides() if world.arm(s) is None]
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
+        missing = [s for s in SIDES if world.arm(s) is None]
         if missing:
-            return [Unmet("arm_unknown",
-                          f"no joints reported for: {', '.join(missing)}")]
+            # BOTH arms, even for a one-sided GoHome: the guard checks the
+            # pair, so a ramp planned without the other arm is checked against
+            # whatever the shared model was left at (R8).
+            return [Unmet(ARM_UNKNOWN,
+                          f"no joints reported for: {', '.join(missing)}; the "
+                          f"collision guard checks both arms at once",
+                          "publish both arms in the observation")]
         return []
 
     def plan(self, world: WorldView, kin) -> Any:
@@ -923,14 +1355,19 @@ class GoHome(Primitive):
         if unmet:
             return self._unmet_error(unmet, self.side)
         steps = []
-        with Kin(kin, world) as borrowed:
-            for side in self._sides():
-                part, error = joint_ramp(borrowed, side, kin.home(side),
-                                         primitive=self.name(), label="HOME")
-                steps += part
-                if error is not None:
-                    return error
-        return Plan(self.name(), self.side, (), tuple(steps) + (SettleStep(2.0),))
+        try:
+            with Kin(kin, world) as borrowed:
+                for side in self._sides():
+                    part, error = joint_ramp(borrowed, side, kin.home(side),
+                                             primitive=self.name(), label="HOME")
+                    steps += part
+                    if error is not None:
+                        return error
+        except IncompleteObservation as exc:
+            return _incomplete(self, self.side, exc)
+        return Plan(self.name(), self.side, (),
+                    tuple(steps) + (SettleStep(2.0),),
+                    binding=PlanBinding.of(world, kin))
 
     def verifier(self, world0: WorldView) -> Verifier:
         from ..arms.d1.arm.kinematics import load_home
@@ -968,25 +1405,27 @@ class Pour(LearnedPrimitive):
     policy: str = "act:pourwithsmallpotjp"
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
-        unmet = _check_side(self.side)
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
         _src, _p, _r, found = _locate(world, self.source, "source")
         unmet += found
         _dst, _dp, _dr, dfound = _locate(world, self.target, "target")
         unmet += dfound
-        if not 15.0 <= self.tilt_deg <= 120.0:
-            unmet.append(Unmet("bad_tilt",
-                               f"tilt_deg must be 15-120, got {self.tilt_deg}"))
         if not self.policy:
             unmet.append(Unmet("no_policy",
                                "pour is a learned verb and names no policy",
                                "pass policy='act:<checkpoint>'"))
-        side = self._side(world)
-        if side is not None:
-            unmet += _must_hold(world, side, self.source)
-        return unmet
+        if unmet:
+            return unmet
+        # The hold check runs unconditionally here too: an empty hand used to
+        # skip it and be reported as ``learned_policy_required``, which reads
+        # as "ask the policy executor" rather than "nothing is held" (R3).
+        _side, held = _holder_of(world, self.source, self.side)
+        return unmet + held
 
     def _side(self, world: WorldView) -> Optional[str]:
-        return Lift(object=self.source, side=self.side)._side(world)
+        return _holder_of(world, self.source, self.side)[0]
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)

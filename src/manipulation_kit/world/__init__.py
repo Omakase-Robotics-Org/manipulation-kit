@@ -15,12 +15,13 @@ See :mod:`.frames` for why a pose carries its frame and what happens when that
 frame is stale, and :mod:`.views` for why ``size`` has no default.
 """
 
-from .frames import BASE, FRAME_STALE, UNKNOWN_FRAME, Frame, FrameError, FrameGraph
-from .views import (ArmView, ContainerView, GripperView, ObjectView, SurfaceView,
-                    WorldView)
+from .frames import (BASE, FRAME_STALE, FUTURE_TOL_S, UNKNOWN_FRAME, Frame,
+                     FrameError, FrameGraph)
+from .views import (UPRIGHT_TOL_RAD, ArmView, ContainerView, GripperView,
+                    ObjectView, SurfaceView, WorldView)
 
 __all__ = [
-    "BASE", "FRAME_STALE", "UNKNOWN_FRAME",
+    "BASE", "FRAME_STALE", "FUTURE_TOL_S", "UNKNOWN_FRAME", "UPRIGHT_TOL_RAD",
     "Frame", "FrameError", "FrameGraph",
     "ObjectView", "ContainerView", "SurfaceView",
     "ArmView", "GripperView", "WorldView",

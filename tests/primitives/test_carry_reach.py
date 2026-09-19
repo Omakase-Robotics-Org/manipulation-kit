@@ -247,7 +247,10 @@ def test_place_descends_to_the_set_down_and_still_ends_by_letting_go(d1_arm):
     world = after_a_real_grasp_and_lift(d1_arm, shelf_bin())
     plan = Place(object="cube", to="bin_on_shelf", side="right").plan(world, d1_arm)
     assert plan.ok, str(plan)
-    assert plan.waypoints[0].label == "over_destination"
+    # RISE, travel, descend: the first leg exists so an object below the rim
+    # does not take a diagonal into it (R10).
+    assert [w.label for w in plan.waypoints][:2] == ["clearance",
+                                                     "over_destination"]
     assert plan.waypoints[-1].label in ("set_down", "rim_release")
     assert any("transit" in note for note in plan.notes), plan.notes
     grips = [s for s in plan.steps if getattr(s, "closedness", None) == 0.0]

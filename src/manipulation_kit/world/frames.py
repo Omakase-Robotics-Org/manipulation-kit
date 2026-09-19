@@ -26,6 +26,7 @@ graph; the kit reads it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Optional, Tuple
 
@@ -41,6 +42,11 @@ BASE = "base"
 #: typed refusal reasons this module can produce
 UNKNOWN_FRAME = "unknown_frame"
 FRAME_STALE = "frame_stale"
+
+#: How far ahead of ``now`` a frame stamp may sit before it is treated as
+#: stale rather than as fresh. Small, because the only legitimate cause is
+#: clock granularity between the producer and the observation stamp.
+FUTURE_TOL_S = 0.050
 
 
 class FrameError(LookupError):
@@ -79,19 +85,36 @@ class Frame:
     valid: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "p", np.asarray(self.p, dtype=float).reshape(3))
+        p = np.array(self.p, dtype=float).reshape(3)
+        p.setflags(write=False)
+        object.__setattr__(self, "p", p)
         if not isinstance(self.r, R):
             raise TypeError(f"frame {self.frame_id!r}: r must be a scipy Rotation")
         if self.frame_id == BASE:
             raise ValueError(f"{BASE!r} is the graph root and is never registered")
         if self.max_age_s is not None and self.max_age_s <= 0:
             raise ValueError(f"frame {self.frame_id!r}: max_age_s must be positive")
+        if not math.isfinite(float(self.stamp)):
+            raise ValueError(f"frame {self.frame_id!r}: stamp must be finite — "
+                             f"a NaN stamp is never older than any limit and "
+                             f"would read as fresh forever")
 
     def age_s(self, now: float) -> float:
         return float(now) - float(self.stamp)
 
-    def fresh(self, now: float) -> bool:
+    def fresh(self, now: float, *, future_tol_s: float = FUTURE_TOL_S) -> bool:
+        """Is this frame usable at ``now``?
+
+        Three ways to fail, and the third one is new: a frame stamped in the
+        FUTURE has a negative age, which passes every ``age <= max_age`` test
+        there is and would stay "fresh" indefinitely. A clock that disagrees
+        with the producer's is a measurement problem, not a licence to act.
+        """
         if not self.valid:
+            return False
+        if not math.isfinite(float(now)):
+            return False
+        if self.age_s(now) < -float(future_tol_s):
             return False
         return self.max_age_s is None or self.age_s(now) <= self.max_age_s
 
@@ -122,6 +145,28 @@ class FrameGraph:
     def add(self, frame: Frame) -> "FrameGraph":
         self.frames[frame.frame_id] = frame
         return self
+
+    def copy(self, *, now: Optional[float] = None) -> "FrameGraph":
+        """A detached copy, optionally re-clocked.
+
+        ``WorldView.with_(stamp=...)`` used to keep the OLD graph and its old
+        ``now``, so a later world stamp did not age a single transform and a
+        30-second-old table frame stayed "fresh" for as long as the test kept
+        stamping worlds. Re-clocking is what makes a newer observation
+        actually ask the freshness question again.
+        """
+        return FrameGraph(frames=dict(self.frames),
+                          now=self.now if now is None else float(now))
+
+    def revision(self) -> Tuple[Tuple[str, float, bool], ...]:
+        """A hashable fingerprint of every registered transform's identity.
+
+        A plan is checked against the transforms that were in force when it
+        was built; this is the thing an executor compares before it moves
+        (see ``manipulation_kit.primitives.types.PlanBinding``).
+        """
+        return tuple(sorted((f.frame_id, float(f.stamp), bool(f.valid))
+                            for f in self.frames.values()))
 
     def known(self, frame_id: str) -> bool:
         return frame_id == BASE or frame_id in self.frames
