@@ -15,6 +15,7 @@ what makes them worth keeping.
 | [`guard-README.md`](guard-README.md) | The motion guard's model, frames and configuration knobs. From d1-sdk `pyguard/README.md`. | changing a margin, or debugging a rejection |
 | [`GESTURES.md`](GESTURES.md) | The gesture CSV format and the record → preview → play workflow the scripts in [`../examples/`](../examples) produce for. From d1-sdk `devices/omakase_arm/GESTURES.md`. | generating or playing a gesture |
 | [`hardware-notes-pyarmstate.md`](hardware-notes-pyarmstate.md) | Arm modes, faults and recovery, as documented while it lived in d1-sdk. Kept as PROSE only — the code is `d1-firmwared`'s. | asking the daemon for a mode change and wondering what it means |
+| [`PRIMITIVE_CONTRACT.md`](PRIMITIVE_CONTRACT.md) | The three-part contract every verb in `manipulation_kit.primitives` keeps: cheap preconditions, a pure pre-checked `plan()`, a measured `verifier()`. Also why orientation is derived rather than emitted, and how a learned verb (`Pour`) fits the same contract. | adding a verb, or consuming one |
 | [`HISTORY.md`](HISTORY.md) | The migration log: what this repository was assembled out of, the incidents that produced its rules, what deliberately did not come, and which consumers still import the old modules. Moved out of the root README so that README can address someone who just wants to use the kit. | wondering *why*, or finishing the migration |
 | [`reference/`](reference/) | Frozen copies of retired sources that live tests still pin against. Not part of the kit. | see its own README |
 
