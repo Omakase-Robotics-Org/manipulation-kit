@@ -20,12 +20,15 @@ one transport that has a wire.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
 
 import numpy as np
 
-from .primitives.types import GripStep, JointStep, Plan, SettleStep
+from .primitives.approach import tool_revision
+from .primitives.types import (GripStep, JointStep, Plan, PlanError, SettleStep,
+                               STALE_PLAN)
 
 #: wire layout — see the module docstring
 ARM_DOF = 7
@@ -84,9 +87,80 @@ class SettleReport:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class ArrivalReport:
+    """Did the arm MEASURABLY get to the posture it was commanded to?
+
+    "The transport says completed" and "the arm is there" are different
+    claims. A trajectory job reports ``completed`` when it has played its last
+    waypoint; a stopped arm can be short of the target and a stationary arm
+    can still have moving jaws (R7). Everything that must not happen until the
+    arm is really there — a close, a release, a verdict — waits on this.
+    """
+
+    arrived: bool
+    worst_error_rad: float = float("nan")
+    waited_s: float = 0.0
+    detail: str = ""
+
+    def to_json(self) -> Dict[str, Any]:
+        return {"arrived": bool(self.arrived),
+                "worst_error_deg": (None if not np.isfinite(self.worst_error_rad)
+                                    else round(float(np.degrees(
+                                        self.worst_error_rad)), 3)),
+                "waited_s": round(float(self.waited_s), 3),
+                "detail": self.detail}
+
+
+@dataclass(frozen=True)
+class StrokeReport:
+    """Did a gripper stroke reach a TERMINAL state before the next step?
+
+    :class:`~manipulation_kit.primitives.types.GripStep` promises "run to
+    completion before the next joint step". Firmware's ``set_gripper`` posted
+    the command and discarded the reply, so the promise was the docstring's
+    and nobody else's — and F13 is what that costs: the evidence was read
+    while the jaws were still closing.
+    """
+
+    settled: bool
+    closedness: float = float("nan")
+    holding: Optional[bool] = None
+    stalled: Optional[bool] = None
+    waited_s: float = 0.0
+    detail: str = ""
+
+    def to_json(self) -> Dict[str, Any]:
+        return {"settled": bool(self.settled),
+                "closedness": (None if not np.isfinite(self.closedness)
+                               else round(float(self.closedness), 3)),
+                "holding": self.holding, "stalled": self.stalled,
+                "waited_s": round(float(self.waited_s), 3),
+                "detail": self.detail}
+
+
+#: Default barriers. Both are generous — they are deadlines, not budgets.
+ARRIVE_TOL_RAD = math.radians(3.0)
+ARRIVE_TIMEOUT_S = 3.0
+STROKE_TIMEOUT_S = 3.0
+
+
 @runtime_checkable
 class Executor(Protocol):
-    """Four verbs. Anything that can do these can run any :class:`Plan`."""
+    """What it takes to run a :class:`Plan`, stated once.
+
+    Four verbs move the robot and two more say when it has ARRIVED. The
+    barriers are part of the protocol rather than each consumer's private
+    business because the lesson that produced them (F5 and F13, fixed in the
+    Isaac executor and nowhere else) is about the SEAM: a plan's steps are
+    ordered, and an executor that returns from a step before the robot has
+    done it has broken the order for everyone downstream.
+
+    A transport that genuinely blocks can implement the two barriers as
+    ``return ArrivalReport(True, ...)`` — but it has to SAY so, because
+    ``manipulation_kit.executor.run`` refuses to close jaws on a claim nobody
+    made.
+    """
 
     def state(self) -> RawState:
         """The MEASURED robot state. Not the last command echoed back."""
@@ -104,19 +178,46 @@ class Executor(Protocol):
         """Block until the arms are stationary, or the timeout expires."""
         ...
 
+    # -- barriers: measured arrival, not transport completion --------------- #
+    def wait_arrived(self, q16, *, tol_rad: float = ARRIVE_TOL_RAD,
+                     timeout_s: float = ARRIVE_TIMEOUT_S) -> ArrivalReport:
+        """Block until the MEASURED joints are within ``tol_rad`` of ``q16``."""
+        ...
+
+    def wait_gripper_settled(self, side: str, *,
+                             timeout_s: float = STROKE_TIMEOUT_S
+                             ) -> StrokeReport:
+        """Block until the jaws reach a terminal state (target, or stalled)."""
+        ...
+
 
 # --------------------------------------------------------------------------- #
 # running a plan
 # --------------------------------------------------------------------------- #
+
+#: Why a run stopped, when it was not "every step was sent".
+NOT_BOUND = "not_bound"
+STALE_BINDING = "stale_binding"
+REFUSED_PLAN = "refused_plan"
+BARRIER_FAILED = "barrier_failed"
+TRANSPORT_ERROR = "transport_error"
+STOP_REASONS: Tuple[str, ...] = (NOT_BOUND, STALE_BINDING, REFUSED_PLAN,
+                                 BARRIER_FAILED, TRANSPORT_ERROR)
+
 
 @dataclass(frozen=True)
 class RunReport:
     """What happened, step by step, so a refusal is never silent.
 
     ``completed`` is about the EXECUTOR, not about the task: it says every step
-    was sent. Whether the task worked is the verifier's answer, and the two are
-    reported separately on purpose — the whole design exists because "the
-    command was sent" was being read as "the thing happened".
+    was sent AND every barrier in the plan was met. Whether the task worked is
+    the verifier's answer, and the two are reported separately on purpose —
+    the whole design exists because "the command was sent" was being read as
+    "the thing happened".
+
+    ``stop_reason`` is a code from :data:`STOP_REASONS`, so an execution
+    failure has the same kind of stable vocabulary a plan refusal has. It used
+    to be prose in ``error``, or an exception with no vocabulary at all.
     """
 
     plan_primitive: str
@@ -125,54 +226,154 @@ class RunReport:
     steps_sent: int
     settle: Optional[SettleReport] = None
     error: str = ""
+    stop_reason: str = ""
+    stopped_at: int = -1
+    arrivals: Tuple[ArrivalReport, ...] = ()
+    strokes: Tuple[StrokeReport, ...] = ()
 
     def to_json(self) -> Dict[str, Any]:
         return {"primitive": self.plan_primitive, "side": self.side,
                 "completed": self.completed, "steps_sent": self.steps_sent,
                 "settled": None if self.settle is None else self.settle.settled,
+                "stop_reason": self.stop_reason,
+                "stopped_at": self.stopped_at,
+                "arrivals": [a.to_json() for a in self.arrivals],
+                "strokes": [s.to_json() for s in self.strokes],
                 "error": self.error}
 
 
-def run(plan: Plan, executor: Executor, *, hz: float = 50.0) -> RunReport:
+def check_binding(plan: Plan, executor: "Executor", *,
+                  allow_unbound: bool = False, now: float = float("nan")
+                  ) -> Optional[str]:
+    """Is this plan still a statement about the robot in front of us?
+
+    Called before the FIRST byte of every run. The plan carries the posture,
+    the observation and the tool it was checked against
+    (:class:`~manipulation_kit.primitives.types.PlanBinding`); this compares
+    them with what the executor measures right now. Drift is a refusal, not a
+    clamp: the answer to "the arm moved since you planned" is to replan.
+
+    Returns the reason to refuse, or ``None``.
+    """
+    binding = getattr(plan, "binding", None)
+    if binding is None:
+        if allow_unbound:
+            return None
+        return ("this plan carries no binding, so there is nothing to check it "
+                "against. Build it with a primitive's plan(), or pass "
+                "allow_unbound=True and own the consequence")
+    state = executor.state()
+    stamp = state.stamp if math.isfinite(state.stamp) else now
+    return binding.drift(joints=state.joints, now=stamp,
+                         tool_revision=tool_revision())
+
+
+def _arrival_of(executor: "Executor", q16, *, tol_rad: float,
+                timeout_s: float) -> ArrivalReport:
+    """The arrival barrier, or a stated absence of one.
+
+    An executor that does not implement ``wait_arrived`` gets an UNKNOWN
+    arrival rather than an assumed one — and ``run`` treats that as a failed
+    barrier before a stroke, because closing the jaws on an unverified
+    posture is the thing the barrier exists to stop.
+    """
+    wait = getattr(executor, "wait_arrived", None)
+    if wait is None:
+        return ArrivalReport(False, detail=(
+            f"{type(executor).__name__} implements no wait_arrived, so the "
+            f"arm's arrival cannot be measured"))
+    return wait(q16, tol_rad=tol_rad, timeout_s=timeout_s)
+
+
+def _stroke_of(executor: "Executor", side: str, *, timeout_s: float
+               ) -> StrokeReport:
+    wait = getattr(executor, "wait_gripper_settled", None)
+    if wait is None:
+        return StrokeReport(False, detail=(
+            f"{type(executor).__name__} implements no wait_gripper_settled, "
+            f"so the stroke's completion cannot be measured"))
+    return wait(side, timeout_s=timeout_s)
+
+
+def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
+        allow_unbound: bool = False,
+        arrive_tol_rad: float = ARRIVE_TOL_RAD,
+        arrive_timeout_s: float = ARRIVE_TIMEOUT_S,
+        stroke_timeout_s: float = STROKE_TIMEOUT_S) -> RunReport:
     """Walk a plan's steps through an executor, in order, at ``hz``.
 
     Joint steps are batched into one 16-vector per step so both arms move
     together — a dual-arm robot commanded one arm at a time is two robots
     disagreeing about the posture the guard just approved.
+
+    Nothing is sent until :func:`check_binding` passes.
     """
     if not getattr(plan, "ok", False):
-        return RunReport(getattr(plan, "primitive", "?"), getattr(plan, "side", ""),
-                         False, 0, error=str(plan))
+        return RunReport(getattr(plan, "primitive", "?"),
+                         getattr(plan, "side", ""), False, 0,
+                         error=str(plan), stop_reason=REFUSED_PLAN)
+    drift = check_binding(plan, executor, allow_unbound=allow_unbound)
+    if drift is not None:
+        return RunReport(
+            plan.primitive, plan.side, False, 0, error=drift,
+            stop_reason=(NOT_BOUND if getattr(plan, "binding", None) is None
+                         else STALE_BINDING))
     # An executor that can take a whole plan at once is asked to: the firmware
     # one uploads it as a daemon-played trajectory, which is strictly better
     # than this loop re-timing it over a socket. See
-    # manipulation_kit.executors.firmware for the argument.
+    # manipulation_kit.executors.firmware for the argument. It gets the SAME
+    # barrier settings; ``hz`` used to be silently dropped on this path.
     own = getattr(executor, "run_plan", None)
     if own is not None:
-        return own(plan)
-    return run_steps(plan, executor, hz=hz)
+        return own(plan, arrive_tol_rad=arrive_tol_rad,
+                   arrive_timeout_s=arrive_timeout_s,
+                   stroke_timeout_s=stroke_timeout_s)
+    return run_steps(plan, executor, hz=hz, arrive_tol_rad=arrive_tol_rad,
+                     arrive_timeout_s=arrive_timeout_s,
+                     stroke_timeout_s=stroke_timeout_s)
 
 
-def run_steps(plan: Plan, executor: Executor, *, hz: float = 50.0) -> RunReport:
+def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
+              schedule: Optional[Sequence[float]] = None,
+              arrive_tol_rad: float = ARRIVE_TOL_RAD,
+              arrive_timeout_s: float = ARRIVE_TIMEOUT_S,
+              stroke_timeout_s: float = STROKE_TIMEOUT_S) -> RunReport:
     """The step-by-step walk itself, with no delegation.
 
     Separate from :func:`run` so an executor that OVERRIDES ``run_plan`` can
     still reach the generic loop for its fallback transport without calling
     itself. (It did, once, and the stack trace said so.)
+
+    ``schedule`` is the plan time for each JOINT step, in order. A transport
+    that has a rate ceiling computes one (``FirmwareExecutor.stream_schedule``)
+    so that honouring the ceiling stretches TIME rather than shrinking the
+    motion; with no schedule the steps go out at a flat ``hz``.
+
+    THE BARRIERS ARE HERE, not in each transport. Before a gripper stroke the
+    arm must be measurably AT the posture the last joint step commanded;
+    after one, the stroke must have reached a terminal state; a settle that
+    fails ends the run. Every one of those used to be a step that returned
+    immediately and a report that said ``completed``.
     """
     period = 1.0 / float(hz)
     sent = 0
     settle: Optional[SettleReport] = None
+    arrivals: List[ArrivalReport] = []
+    strokes: List[StrokeReport] = []
+    begin = getattr(executor, "begin_run", None)
+    if begin is not None:
+        begin(plan)
     state = executor.state()
     missing = [s for s in SIDES if s not in state.joints]
     if missing:
         # The arm nobody is moving is still COMMANDED, every tick, at whatever
         # this dict says. Defaulting it to zero would command a T-pose through
         # the torso; refusing is the only safe answer.
-        raise ValueError(
-            f"the executor reports no joints for {missing} — the untouched arm "
-            f"is commanded at its measured pose in every dual-arm vector, and "
-            f"there is nothing to command it at")
+        return RunReport(
+            plan.primitive, plan.side, False, 0, stop_reason=TRANSPORT_ERROR,
+            error=(f"the executor reports no joints for {missing} — the "
+                   f"untouched arm is commanded at its measured pose in every "
+                   f"dual-arm vector, and there is nothing to command it at"))
     joints = {side: np.array(q, dtype=float) for side, q in state.joints.items()}
     # A plan that does not touch the jaws still has to put a number in every
     # 16-vector it sends, and that number is the COMMAND the hand is already
@@ -186,21 +387,63 @@ def run_steps(plan: Plan, executor: Executor, *, hz: float = 50.0) -> RunReport:
     # rule as F5 one level out: a measurement is not a command.
     grippers = {side: float(state.commanded_grippers.get(side, value))
                 for side, value in state.grippers.items()}
-    for step in plan.steps:
+    last_vector: Optional[np.ndarray] = None
+
+    def stop(index: int, reason: str, detail: str) -> RunReport:
+        end = getattr(executor, "end_run", None)
+        if end is not None:
+            end(plan)
+        return RunReport(plan.primitive, plan.side, False, sent, settle,
+                         error=detail, stop_reason=reason, stopped_at=index,
+                         arrivals=tuple(arrivals), strokes=tuple(strokes))
+
+    times = None if schedule is None else list(schedule)
+    joint_index = 0
+    for index, step in enumerate(plan.steps):
         if isinstance(step, JointStep):
             joints[step.side] = np.asarray(step.q, dtype=float)
-            executor.send_joints(wire(joints, grippers), t=sent * period)
+            last_vector = wire(joints, grippers)
+            at = (joint_index * period if times is None
+                  else float(times[joint_index]))
+            executor.send_joints(last_vector, t=at)
+            joint_index += 1
             sent += 1
         elif isinstance(step, GripStep):
+            # ARRIVE BEFORE YOU CLOSE. A stroke run while the arm is still
+            # travelling closes the jaws somewhere along the path.
+            if last_vector is not None:
+                arrival = _arrival_of(executor, last_vector,
+                                      tol_rad=arrive_tol_rad,
+                                      timeout_s=arrive_timeout_s)
+                arrivals.append(arrival)
+                if not arrival.arrived:
+                    return stop(index, BARRIER_FAILED,
+                                f"the {plan.side} arm had not arrived at the "
+                                f"posture before the gripper stroke: "
+                                f"{arrival.detail}")
             executor.set_gripper(step.side, step.closedness, grip=step.grip)
             grippers[step.side] = float(step.closedness)
+            stroke = _stroke_of(executor, step.side, timeout_s=stroke_timeout_s)
+            strokes.append(stroke)
+            if not stroke.settled:
+                return stop(index, BARRIER_FAILED,
+                            f"the {step.side} gripper stroke did not reach a "
+                            f"terminal state: {stroke.detail}")
             sent += 1
         elif isinstance(step, SettleStep):
             settle = executor.settle(step.timeout_s)
             sent += 1
-        else:  # pragma: no cover - the Step union is closed
-            raise TypeError(f"not a plan step: {step!r}")
-    return RunReport(plan.primitive, plan.side, True, sent, settle)
+            if not settle.settled:
+                # BOTH runners used to carry on here and report completion.
+                return stop(index, BARRIER_FAILED,
+                            f"the arms did not settle: {settle.detail}")
+        else:
+            return stop(index, TRANSPORT_ERROR, f"not a plan step: {step!r}")
+    end = getattr(executor, "end_run", None)
+    if end is not None:
+        end(plan)
+    return RunReport(plan.primitive, plan.side, True, sent, settle,
+                     arrivals=tuple(arrivals), strokes=tuple(strokes))
 
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +465,10 @@ class RecordingExecutor:
         self.sent: List[Tuple[float, np.ndarray]] = []
         self.grips: List[Tuple[str, float, str]] = []
         self.settles: List[float] = []
+        self.arrival_waits: List[float] = []
+        self.stroke_waits: List[Tuple[str, float]] = []
+        #: a test that wants to exercise the steps AFTER a barrier sets this
+        self.pretend_arrived = False
 
     def state(self) -> RawState:
         return self._state
@@ -236,6 +483,29 @@ class RecordingExecutor:
     def settle(self, timeout_s: float) -> SettleReport:
         self.settles.append(float(timeout_s))
         return SettleReport(True, 0.0, 0.0, "nothing was moving; nothing was sent")
+
+    # -- barriers ---------------------------------------------------------- #
+    # A recorder moves nothing, so nothing arrives. It SAYS so rather than
+    # claiming an arrival it cannot have had: this class exists to be the
+    # executor a verifier must fail against, and a fake barrier would make it
+    # the executor a RUNNER passes against instead.
+    def wait_arrived(self, q16, *, tol_rad: float = ARRIVE_TOL_RAD,
+                     timeout_s: float = ARRIVE_TIMEOUT_S) -> ArrivalReport:
+        self.arrival_waits.append(float(timeout_s))
+        if not self.pretend_arrived:
+            return ArrivalReport(False, detail=(
+                "a RecordingExecutor moves nothing, so the arm never arrives"))
+        return ArrivalReport(True, 0.0, 0.0, "pretended, by the test's request")
+
+    def wait_gripper_settled(self, side: str, *,
+                             timeout_s: float = STROKE_TIMEOUT_S
+                             ) -> StrokeReport:
+        self.stroke_waits.append((side, float(timeout_s)))
+        if not self.pretend_arrived:
+            return StrokeReport(False, detail=(
+                "a RecordingExecutor moves nothing, so no stroke completes"))
+        return StrokeReport(True, self._state.grippers.get(side, float("nan")),
+                            detail="pretended, by the test's request")
 
     # -- inspection -------------------------------------------------------- #
     def cadence(self) -> np.ndarray:
@@ -294,6 +564,34 @@ class KinematicExecutor:
     def settle(self, timeout_s: float) -> SettleReport:
         self.settles.append(float(timeout_s))
         return SettleReport(True, 0.0, 0.0, "a kinematic mirror is always settled")
+
+    # -- barriers ---------------------------------------------------------- #
+    # A mirror reaches a commanded posture exactly and instantaneously, so
+    # these are honest ``True``s rather than pretended ones — and they are
+    # still MEASURED against the model rather than assumed, so a test that
+    # poses the model elsewhere makes them fail.
+    def wait_arrived(self, q16, *, tol_rad: float = ARRIVE_TOL_RAD,
+                     timeout_s: float = ARRIVE_TIMEOUT_S) -> ArrivalReport:
+        want = np.asarray(q16, dtype=float).reshape(WIRE_DIM)
+        worst = 0.0
+        for side in SIDES:
+            worst = max(worst, float(np.max(np.abs(
+                np.asarray(self.kin.joints(side), dtype=float)
+                - want[JOINT_SLICE[side]]))))
+        if worst <= tol_rad:
+            return ArrivalReport(True, worst, 0.0,
+                                 "the mirror is at the commanded posture")
+        return ArrivalReport(False, worst, float(timeout_s),
+                             f"the mirror is {np.degrees(worst):.1f} deg from "
+                             f"the commanded posture")
+
+    def wait_gripper_settled(self, side: str, *,
+                             timeout_s: float = STROKE_TIMEOUT_S
+                             ) -> StrokeReport:
+        return StrokeReport(True, self.grippers.get(side, 0.0),
+                            holding=self.held.get(side) is not None,
+                            stalled=self.held.get(side) is not None,
+                            detail="a kinematic stroke completes at once")
 
     def tool_pose(self, side: str):
         from .primitives.approach import tool_from_link7

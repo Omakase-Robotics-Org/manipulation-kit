@@ -10,6 +10,7 @@ not pretend otherwise.
 
 from __future__ import annotations
 
+from manipulation_kit.primitives import verbs
 import numpy as np
 
 from manipulation_kit.executor import (GRIPPER_INDEX, JOINT_SLICE,
@@ -96,12 +97,20 @@ def test_the_task_verifier_is_false_until_the_place_actually_happens(d1_arm, obs
     assert goal.verifier(start)(mirror.world()).verdict == Verdict.TRUE
 
 
-def _recorder(world):
-    """A RecordingExecutor whose reported state is the world's measured one."""
+def _recorder(world, *, arrives: bool = True):
+    """A RecordingExecutor whose reported state is the world's measured one.
+
+    ``arrives`` is the barrier switch. A recorder moves nothing, so by default
+    it cannot claim an arrival and ``run`` stops at the first stroke — which
+    is the behaviour ``test_a_recorder_cannot_close_the_jaws...`` pins. The
+    tests that are about step ROUTING rather than about the barrier say so.
+    """
     from manipulation_kit.executor import RawState
-    return RecordingExecutor(RawState(
+    executor = RecordingExecutor(RawState(
         joints={s: world.arm(s).joints for s in ("left", "right")},
         grippers={s: world.gripper(s).closedness for s in ("left", "right")}))
+    executor.pretend_arrived = arrives
+    return executor
 
 
 def test_run_refuses_when_the_executor_cannot_say_where_an_arm_is(d1_arm, observe):
@@ -112,8 +121,22 @@ def test_run_refuses_when_the_executor_cannot_say_where_an_arm_is(d1_arm, observ
     world = observe(d1_arm, block_p=REACHABLE)
     plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
     blind = RecordingExecutor(RawState(joints={"left": world.arm("left").joints}))
-    with pytest.raises(ValueError, match="no joints for"):
-        run(plan, blind)
+    blind.pretend_arrived = True
+    report = run(plan, blind)
+    assert not report.completed
+    # The BINDING catches it first now, and says the better thing: the posture
+    # this plan was checked against cannot be confirmed. The runner's own
+    # "nothing to command the untouched arm at" is the belt to that's braces
+    # and still fires for an unbound plan.
+    assert report.stop_reason == "stale_binding"
+    assert "no joints for the right arm" in report.error
+    assert not blind.sent, "nothing may be commanded on a half-known robot"
+
+    from manipulation_kit.executor import run_steps
+    unbound = run_steps(plan, blind)
+    assert unbound.stop_reason == "transport_error"
+    assert "no joints for" in unbound.error
+    assert pytest
 
 
 def test_run_sends_one_dual_arm_vector_per_joint_step(d1_arm, observe):
@@ -177,6 +200,7 @@ def test_a_plan_that_never_mentions_the_jaws_carries_the_COMMAND_not_the_measure
     stalled = RecordingExecutor(RawState(
         joints=measured, grippers={"left": 0.41, "right": 0.0},
         commanded_grippers={"left": 1.0, "right": 0.0}))
+    stalled.pretend_arrived = True
     run_steps(plan, stalled)
     assert stalled.sent
     assert all(v[GRIPPER_INDEX["left"]] == 1.0 for _t, v in stalled.sent)
@@ -185,6 +209,7 @@ def test_a_plan_that_never_mentions_the_jaws_carries_the_COMMAND_not_the_measure
     # the measurement, which is the honest fallback and is documented as one
     blind = RecordingExecutor(RawState(
         joints=measured, grippers={"left": 0.41, "right": 0.0}))
+    blind.pretend_arrived = True
     run_steps(plan, blind)
     assert all(v[GRIPPER_INDEX["left"]] == 0.41 for _t, v in blind.sent)
 
@@ -195,6 +220,59 @@ def test_the_gripper_closedness_travels_in_the_wire_vector(d1_arm, observe):
     executor = _recorder(world)
     run(plan, executor)
     assert [(s, c) for s, c, _g in executor.grips] == [("left", 0.0), ("left", 1.0)]
-    assert executor.settles == [1.0]
+    assert executor.settles == [verbs.SETTLE_S]
     # after the opening stroke every commanded vector carries the open jaws
     assert all(v[GRIPPER_INDEX["left"]] == 0.0 for _t, v in executor.sent)
+
+
+def test_a_recorder_cannot_close_the_jaws_because_it_never_arrives(
+        d1_arm, observe):
+    """R7, as a runner-level rule. An executor that cannot MEASURE an arrival
+    does not get to run a gripper stroke: the stroke's whole meaning is "the
+    tool is on the object now". Before this, ``set_gripper`` was called the
+    instant the previous joint step returned, whatever the arm was doing."""
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    executor = _recorder(world, arrives=False)
+    report = run(plan, executor)
+    assert not report.completed
+    assert report.stop_reason == "barrier_failed"
+    # the OPENING stroke is the first step and has no preceding joint step, so
+    # what stops the run is its completion, not an arrival
+    assert report.strokes and not report.strokes[0].settled
+    assert len(executor.grips) == 1, "no second stroke after a failed barrier"
+
+
+def test_a_plan_is_refused_against_a_posture_it_was_not_checked_in(
+        d1_arm, observe):
+    """R8. Between planning and running there is a model turn; the arm can
+    move. The plan carries the posture it was checked in and the runner
+    compares it with what the executor measures."""
+    import numpy as np
+    from manipulation_kit.executor import RawState
+
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    assert plan.ok and plan.binding is not None
+
+    drifted = dict({s: np.array(world.arm(s).joints, dtype=float)
+                    for s in ("left", "right")})
+    drifted["right"] = drifted["right"] + np.radians(12.0)
+    executor = RecordingExecutor(RawState(
+        joints=drifted, grippers={"left": 0.0, "right": 0.0}))
+    executor.pretend_arrived = True
+    report = run(plan, executor)
+    assert not report.completed
+    assert report.stop_reason == "stale_binding"
+    assert "right arm has moved" in report.error
+    assert not executor.sent, "nothing may be sent against a stale plan"
+
+
+def test_an_unbound_plan_is_refused_unless_the_caller_owns_it(d1_arm, observe):
+    from manipulation_kit.primitives.types import Plan
+
+    world = observe(d1_arm, block_p=REACHABLE)
+    hand_made = Plan("hand_made", "left", (), ())
+    executor = _recorder(world)
+    assert run(hand_made, executor).stop_reason == "not_bound"
+    assert run(hand_made, executor, allow_unbound=True).completed

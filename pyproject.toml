@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.10.0"
+version = "0.11.0"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]

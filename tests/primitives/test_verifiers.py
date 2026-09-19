@@ -64,13 +64,19 @@ def test_nothing_happened_is_never_true(d1_arm, observe, verb):
 def test_a_recording_executor_that_sent_the_plan_still_fails(d1_arm, observe, verb):
     """The same claim, made through the machinery instead of by hand: the
     RecordingExecutor accepts every step and moves nothing."""
-    from manipulation_kit.executor import RecordingExecutor, run
+    from manipulation_kit.executor import RawState, RecordingExecutor, run
     world = _before(verb, d1_arm, observe)
     plan = verb.plan(world, d1_arm)
-    executor = RecordingExecutor()
+    # Seeded from the world the plan was CHECKED in, and told to pretend the
+    # barriers passed: this test is about the VERDICT, not about the binding
+    # or the barriers, which have their own tests in tests/executors/.
+    executor = RecordingExecutor(RawState(
+        joints={s: world.arm(s).joints for s in ("left", "right")},
+        grippers={s: world.gripper(s).closedness for s in ("left", "right")}))
+    executor.pretend_arrived = True
     if getattr(plan, "ok", False):
         report = run(plan, executor)
-        assert report.completed
+        assert report.completed, report.error
         assert executor.sent or executor.grips, (
             f"{verb.name()} produced a plan that sent nothing at all")
     verdict = verb.verifier(world)(world).verdict
