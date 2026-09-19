@@ -67,6 +67,15 @@ there is one, the widest where the footprint is square. A square prism has no
 47.3 mm across base-aligned jaws, past the 43.96 mm the driven gripper can
 take, so the pads meet two corners and stall holding nothing.
 
+**The tool point is the pad CENTRE, and the pads reach 29 mm past it.** A
+top-down `Grasp` is therefore raised to keep the finger tips clear of whatever
+the object is standing on (`approach.grasp_point`, `SUPPORT_CLEARANCE_M` 3 mm)
+— descending to a 40 mm cube's centre asks for the tips 9 mm *under the
+table*, which jams the fingers and stops the arm 17 mm high and 19 mm to the
+side. The pads are 58 mm deep, so the raised grasp still has 37 mm of pad
+against the cube. An object too flat for the tips to reach beside is refused
+(`object_too_flat`) rather than grasped over.
+
 **A refusal is a typed value, never a silent no-op.** `PlanError` carries the
 reason, the waypoint index and label, and the residual:
 

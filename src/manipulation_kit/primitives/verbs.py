@@ -209,6 +209,15 @@ class Grasp(Primitive):
             unmet.append(Unmet("bad_grip", f"grip must be one of {GRIPS}, "
                                            f"got {self.grip!r}"))
         item = world.find(self.object)
+        if (item is not None and self.approach == TOP_DOWN
+                and ap.grasps_above_its_top(item)):
+            unmet.append(Unmet(
+                "object_too_flat",
+                f"{self.object} is {item.height() * 1000:.0f} mm tall and the "
+                f"pads reach {ap.TIP_BELOW_TOOL_M * 1000:.0f} mm past the tool "
+                f"point, so a top-down grasp would close above it with the "
+                f"tips still on the surface",
+                "come in from the side, or use a different tool"))
         if item is not None and not ap.fits_jaws(item):
             unmet.append(Unmet(
                 "object_too_wide",
@@ -224,7 +233,12 @@ class Grasp(Primitive):
             return None, None, None, None, unmet
         side = _resolved_side(self.side, world, p)
         r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames)
-        return side, ap.standoff_pose(p, self.approach, self.standoff_m), p, r_tcp, []
+        # The tool point is the pad CENTRE and the pads reach 29 mm past it,
+        # so a top-down grasp on the object's centre asks for the finger tips
+        # under the table. ``grasp_point`` lifts it just clear.
+        p_grasp, _raised = ap.grasp_point(item, self.approach)
+        return (side, ap.standoff_pose(p_grasp, self.approach, self.standoff_m),
+                p_grasp, r_tcp, [])
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
@@ -233,6 +247,8 @@ class Grasp(Primitive):
         side, p_stand, p_grasp, r_tcp, _ = self._geometry(world)
         waypoints = [Waypoint("standoff", p_stand, r_tcp),
                      Waypoint("grasp", p_grasp, r_tcp)]
+        item = world.find(self.object)
+        raised = ap.grasp_point(item, self.approach)[1] if item else False
         # The jaws open BEFORE the arm moves and close only once the tool is on
         # the object: an open-on-arrival stroke sweeps the pads through whatever
         # is beside it.
@@ -244,6 +260,10 @@ class Grasp(Primitive):
         all_steps = ((GripStep(side, 0.0, self.grip, 0),) + tuple(steps)
                      + (GripStep(side, 1.0, self.grip, 1), SettleStep(1.0)))
         notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
+        if raised:
+            notes += (f"grasping {(p_grasp[2] - float(item.p[2])) * 1000:.0f} mm "
+                      f"above the object's centre so the pad tips clear what "
+                      f"it is standing on",)
         return Plan(self.name(), side, tuple(waypoints), all_steps,
                     notes + tuple(detours))
 

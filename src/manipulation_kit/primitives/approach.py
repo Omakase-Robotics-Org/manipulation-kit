@@ -32,7 +32,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from ..hands.d1.parallel_gripper.description import (DRIVEN_OPEN_GAP_M,
-                                                     PAD_CENTRE_Z_M)
+                                                     PAD_CENTRE_Z_M,
+                                                     PAD_TIP_Z_M)
 from ..world import FrameGraph, ObjectView
 from .types import APPROACHES, FRONT, SIDE_LEFT, SIDE_RIGHT, TOP_DOWN
 
@@ -53,6 +54,18 @@ TOOL_Z_M = PAD_CENTRE_Z_M
 JAW_OPEN_M = DRIVEN_OPEN_GAP_M
 #: clearance per side that a graspable object must leave inside that opening
 JAW_CLEARANCE_M = 0.004
+
+#: How far the pad TIP reaches past the tool point, 29 mm. The tool point is
+#: the pad CENTRE; the fingers keep going.
+TIP_BELOW_TOOL_M = PAD_TIP_Z_M - PAD_CENTRE_Z_M
+#: ...and how much daylight the tips must keep over whatever the object is
+#: standing on. MEASURED, 2026-09-19: a top-down grasp that put the tool point
+#: on a 40 mm cube's CENTRE asked for the pad tips 9 mm BELOW the wagon top.
+#: The fingers jammed on the table, the arm stopped 17 mm high and 19 mm off
+#: to the side (still 2.5 deg from the commanded posture after two seconds of
+#: holding it, while the same arm tracks a free-air posture to 0.00 deg in
+#: 0.7 s), and the jaws closed beside the block. Ten attempts, ten failures.
+SUPPORT_CLEARANCE_M = 0.003
 
 #: Top-down grasp orientation of the TCP frame, (w, x, y, z), per LOGICAL side.
 #: LEFT: z_tcp -> world -Z (pads down), x_tcp -> world -Y, i.e. the jaw gap
@@ -191,6 +204,48 @@ def grasp_orientation(side: str, approach: str, obj: Optional[ObjectView] = None
     if dyaw_rad:
         r = R.from_rotvec(d * float(dyaw_rad)) * r
     return r
+
+
+def lowest_top_down_tool_z(obj: ObjectView) -> float:
+    """The lowest tool-point z a top-down grasp of ``obj`` may command.
+
+    A parallel gripper cannot put its finger tips through the table. The
+    object's own underside IS the table here — it is standing on it — so the
+    constraint needs no surface lookup: tips at ``bottom + SUPPORT_CLEARANCE``,
+    tool point ``TIP_BELOW_TOOL_M`` above that.
+    """
+    bottom = float(np.asarray(obj.p, dtype=float)[2]) - obj.height() / 2.0
+    return bottom + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
+
+
+def grasp_point(obj: ObjectView, approach: str) -> Tuple[np.ndarray, bool]:
+    """Where the TOOL POINT goes to grasp ``obj``, and whether it was raised.
+
+    The object's centre, except for ``top_down``, where the finger tips would
+    otherwise be driven into whatever the object is standing on: there the
+    point is lifted to :func:`lowest_top_down_tool_z`. The pads are 58 mm deep,
+    so a 40 mm cube grasped 12 mm above its centre still has 37 mm of pad
+    against its side — the grasp does not get worse, it gets possible.
+    """
+    p = np.asarray(obj.p, dtype=float).reshape(3).copy()
+    if check_approach(approach) != TOP_DOWN:
+        return p, False
+    floor = lowest_top_down_tool_z(obj)
+    if floor <= p[2]:
+        return p, False
+    p[2] = floor
+    return p, True
+
+
+def grasps_above_its_top(obj: ObjectView) -> bool:
+    """Is this object too FLAT for the fingers to reach beside it at all?
+
+    When the lowest legal tool point is above the object's top face, the pads
+    would close over thin air with the tips still on the table. A refusal is
+    the honest answer; a grasp that cannot touch the object is not.
+    """
+    top = float(np.asarray(obj.p, dtype=float)[2]) + obj.height() / 2.0
+    return lowest_top_down_tool_z(obj) > top
 
 
 def standoff_pose(grasp_p, approach: str, standoff_m: float) -> np.ndarray:

@@ -9,6 +9,7 @@ would accept, and a refusal is the robot's own refusal.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from manipulation_kit.primitives import (Approach, Carry, GoHome, Grasp,
                                          GripStep, Lift, Nudge, Place, Pour,
@@ -228,3 +229,78 @@ def test_every_verb_reports_a_reason_from_the_published_vocabulary(d1_arm, obser
         result = verb.plan(world, d1_arm)
         if not result.ok:
             assert result.reason in PLAN_REASONS, f"{verb.name()}: {result.reason}"
+
+
+# --------------------------------------------------------------------------- #
+# the pads reach 29 mm past the tool point, and the table does not move
+# --------------------------------------------------------------------------- #
+
+def test_a_top_down_grasp_keeps_the_pad_tips_off_the_table(d1_arm, observe):
+    """MEASURED, 2026-09-19 (blocks-eval, ten attempts, ten failures).
+
+    The tool point is the pad CENTRE and the pads reach ``TIP_BELOW_TOOL_M``
+    = 29 mm past it. Descending to a 40 mm cube's CENTRE therefore asked for
+    the finger tips 9 mm BELOW the wagon top. The fingers jammed on the table,
+    the arm stopped 17 mm high and 19 mm to the side — still 2.5 deg from the
+    commanded posture after two seconds of holding it, while the same arm
+    tracks a free-air posture to 0.00 deg in 0.7 s — and the jaws closed
+    beside the block every time.
+    """
+    from manipulation_kit.primitives import approach as ap
+
+    block = (0.38, 0.25, 0.05)                  # 50 x 40 x 50 mm, so it stands
+    world = observe(d1_arm, block_p=block)      # on a surface at z = 0.025
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    assert plan.ok, str(plan)
+    grasp = plan.waypoints[-1]
+    assert grasp.label == "grasp"
+    bottom = block[2] - 0.05 / 2
+    assert grasp.p[2] == pytest.approx(
+        bottom + ap.TIP_BELOW_TOOL_M + ap.SUPPORT_CLEARANCE_M)
+    # over the object, not beside it, and still inside its height
+    assert np.allclose(grasp.p[:2], block[:2])
+    assert grasp.p[2] < block[2] + 0.05 / 2
+    # the standoff is measured from the RAISED point, not the old one
+    assert plan.waypoints[0].p[2] == pytest.approx(grasp.p[2] + 0.08)
+    assert any("above the object's centre" in note for note in plan.notes)
+
+
+def test_an_object_tall_enough_is_grasped_at_its_centre_as_before(d1_arm, observe):
+    """The clearance is a floor, not an offset: nothing that already cleared
+    the table moves."""
+    from manipulation_kit.primitives import approach as ap
+
+    from manipulation_kit.world import ObjectView
+
+    tall = ObjectView("tall_block", p=(0.38, 0.25, 0.12), size=(0.05, 0.04, 0.16))
+    assert not ap.grasp_point(tall, "top_down")[1]
+    assert np.allclose(ap.grasp_point(tall, "top_down")[0], tall.p)
+
+
+def test_a_flat_object_is_refused_rather_than_grasped_over(d1_arm, observe):
+    """When the lowest legal tool point is above the object's top face the
+    pads would close on air with the tips still down. Say so."""
+    world = observe(d1_arm, block_p=(0.38, 0.25, 0.006),
+                    block_size=(0.05, 0.04, 0.012))
+    codes = {u.code for u in Grasp(object="red_block", side="left")
+             .preconditions(world)}
+    assert "object_too_flat" in codes
+    assert not Grasp(object="red_block", side="left").plan(world, d1_arm).ok
+    # ...and coming in from the side is not refused for that reason
+    side_on = {u.code for u in Grasp(object="red_block", side="left",
+                                     approach="front").preconditions(world)}
+    assert "object_too_flat" not in side_on
+
+
+def test_a_horizontal_approach_still_aims_at_the_object_centre(d1_arm, observe):
+    """The clamp is about what the object STANDS on, which only the top-down
+    descent drives into."""
+    from manipulation_kit.primitives import approach as ap
+
+    from manipulation_kit.world import ObjectView
+
+    low = ObjectView("low_block", p=(0.38, 0.25, 0.02), size=(0.05, 0.04, 0.04))
+    for name in ("front", "side_left", "side_right"):
+        point, raised = ap.grasp_point(low, name)
+        assert not raised and np.allclose(point, low.p)
+    assert ap.grasp_point(low, "top_down")[1]

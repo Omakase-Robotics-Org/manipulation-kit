@@ -91,10 +91,18 @@ def test_a_top_down_grasp_over_the_wagon_plans_from_home(d1_arm, name):
     # it went AROUND something, and says so in its own record
     assert any("routed via a clearance point" in note or "READY" in note
                for note in plan.notes), plan.notes
-    # ...and it still ends on the cube: a detour that does not arrive is not
-    # a plan, it is a wander
+    # ...and it still ends where the plan said: a detour that does not arrive
+    # is not a plan, it is a wander
     tool = _tool(d1_arm, plan.side, steps[-1].q)
-    assert np.linalg.norm(tool - np.array(CUBES[name])) < 0.01
+    assert np.linalg.norm(tool - plan.waypoints[-1].p) < 0.01
+    # the grasp point is over the cube, and lifted just clear of the table it
+    # stands on rather than driven through it
+    centre = np.array(CUBES[name])
+    assert np.linalg.norm(tool[:2] - centre[:2]) < 0.01
+    from manipulation_kit.primitives import approach as ap
+    assert tool[2] == pytest.approx(
+        centre[2] - CUBE_SIZE[2] / 2 + ap.TIP_BELOW_TOOL_M
+        + ap.SUPPORT_CLEARANCE_M, abs=0.005)
 
 
 def test_the_same_grasp_is_refused_with_the_detour_switched_off(d1_arm):
@@ -154,7 +162,7 @@ def test_the_ready_reseed_is_the_last_resort_when_no_clearance_point_works(
     assert plan.ok, str(plan)
     assert any("READY" in note for note in plan.notes), plan.notes
     tool = _tool(d1_arm, plan.side, plan.joint_steps()[-1].q)
-    assert np.linalg.norm(tool - np.array(READY_RESCUES)) < 0.01
+    assert np.linalg.norm(tool - plan.waypoints[-1].p) < 0.01
 
 
 def test_a_detour_never_exceeds_the_per_tick_caps(d1_arm):
