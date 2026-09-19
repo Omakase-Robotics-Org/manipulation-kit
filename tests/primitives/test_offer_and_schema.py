@@ -60,13 +60,25 @@ def test_the_export_and_the_kits_own_table_agree_on_every_domain():
 
 
 def test_every_verb_of_the_kit_reaches_the_tool_schemas():
+    from manipulation_kit.primitives.schema import NOT_MODEL_BINDABLE
     tools = {s["name"]: s for s in tool_schemas()}
     assert set(tools) == set(BY_VERB)
     for cls in PRIMITIVES:
         described = set(tools[cls.name()]["parameters"]["properties"])
-        assert described == set(cls.arguments()), (
+        bindable = set(cls.arguments()) - set(NOT_MODEL_BINDABLE)
+        assert described == bindable, (
             f"{cls.name()}: the schema describes {described} and the "
-            f"dataclass takes {set(cls.arguments())}")
+            f"dataclass takes {bindable}")
+
+
+def test_deployment_configuration_is_not_offered_to_a_model():
+    """R, section 3: "Default checkpoint selection is deployment
+    configuration, not a free model string"."""
+    pour = next(s for s in tool_schemas() if s["name"] == "pour")
+    assert "policy" not in pour["parameters"]["properties"]
+    # ...and the limitation reaches capability discovery, not only a docstring
+    assert "UNKNOWN" in pour["description"]
+    assert "learned_policy_required" in pour["description"]
 
 
 def test_the_tool_schemas_are_json():

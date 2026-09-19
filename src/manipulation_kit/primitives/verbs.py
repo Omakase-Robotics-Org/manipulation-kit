@@ -418,18 +418,23 @@ def _unreachable_destination(primitive: Primitive, side: str,
     residual = float(error.residual_m) if error is not None else float("nan")
     gap = (f"{residual * 1000:.0f} mm short" if math.isfinite(residual)
            else "no residual measured")
+    stage = (error.waypoint_label if error is not None else "over_destination")
     return PlanError(
         UNREACHABLE_DESTINATION,
-        f"the {side} arm cannot reach over {to} at any transit height from "
-        f"{ladder[0] * 1000:.0f} down to {ladder[-1] * 1000:.0f} mm above its "
-        f"rim; the closest was {best_clearance * 1000:.0f} mm, {gap} "
-        f"({error.reason if error is not None else 'nothing tried'}). "
-        f"Lowering it further would drive the object into the rim — use the "
-        f"other arm, or bring the destination closer",
+        f"no plan was found for the {side} arm under this search: every "
+        f"transit height from {ladder[0] * 1000:.0f} down to "
+        f"{ladder[-1] * 1000:.0f} mm above {to}'s rim was tried and each was "
+        f"refused at {stage!r}; the closest was "
+        f"{best_clearance * 1000:.0f} mm, {gap} "
+        f"({error.reason if error is not None else 'nothing tried'}). That is "
+        f"a statement about this search, not a proof of impossibility — but "
+        f"lowering the clearance further would drive the object into the rim, "
+        f"so the answers are the other arm or a nearer destination",
         waypoint_index=error.waypoint_index if error is not None else -1,
-        waypoint_label=(error.waypoint_label if error is not None
-                        else "over_destination"),
-        residual_m=residual, primitive=primitive.name(), side=side)
+        waypoint_label=stage,
+        residual_m=residual, primitive=primitive.name(), side=side,
+        stage="clearance_ladder",
+        attempted=tuple(f"{c * 1000:.0f} mm" for c in ladder))
 
 
 # --------------------------------------------------------------------------- #

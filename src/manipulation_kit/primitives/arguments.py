@@ -149,16 +149,20 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
     _number("tilt_deg", 15.0, 120.0, "deg", "how far to tip the source"),
     _number("dx", -max(NUDGE_GRID_M), max(NUDGE_GRID_M), "m",
             f"correction along the frame's x, snapped to "
-            f"{[int(g * 1000) for g in NUDGE_GRID_M]} mm"),
+            f"{[int(g * 1000) for g in NUDGE_GRID_M]} mm. THE BOUND IS PER "
+            f"AXIS: three components at {int(max(NUDGE_GRID_M) * 1000)} mm "
+            f"move the hand {max(NUDGE_GRID_M) * 1000 * 3 ** 0.5:.0f} mm"),
     _number("dy", -max(NUDGE_GRID_M), max(NUDGE_GRID_M), "m",
-            "correction along the frame's y, same grid"),
+            "correction along the frame's y, same grid, same per-axis bound"),
     _number("dz", -max(NUDGE_GRID_M), max(NUDGE_GRID_M), "m",
-            "correction along the frame's z, same grid"),
+            "correction along the frame's z, same grid, same per-axis bound"),
     _number("dyaw", -NUDGE_MAX_YAW_RAD, NUDGE_MAX_YAW_RAD, "rad",
-            "turn about the hand's approach axis, clamped to +-15 degrees"),
+            "turn about the HAND'S OWN approach axis (not base yaw), clamped "
+            "to +-15 degrees. Radians"),
     Argument("policy", "string",
-             "deployment configuration, not a model choice: which learned "
-             "checkpoint runs this verb"),
+             "DEPLOYMENT CONFIGURATION, not a model choice: which learned "
+             "checkpoint runs this verb. Not offered to a model — see "
+             "manipulation_kit.primitives.schema.NOT_MODEL_BINDABLE"),
     Argument("allow_drop", "bool",
              "may the object be RELEASED above its destination when the arm "
              "cannot reach down to set it down?"),

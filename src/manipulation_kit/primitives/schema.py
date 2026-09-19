@@ -34,12 +34,30 @@ from __future__ import annotations
 
 import json
 from dataclasses import fields
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..world import WorldView
 from .arguments import ARGUMENTS, ROLE_ANY, argument, check_arguments, names_for
 from .types import BAD_ARGUMENT, PlanError, Primitive, Unmet
 from .verbs import BY_VERB, PRIMITIVES
+
+
+#: Arguments a MODEL is not offered, because they are deployment
+#: configuration rather than a choice about the task. ``policy`` names a
+#: learned checkpoint: which one is served is a property of the robot in front
+#: of you, and a free string invites a model to invent one (R, section 3).
+#: They keep their defaults and are still bindable from Python.
+NOT_MODEL_BINDABLE: Tuple[str, ...] = ("policy",)
+
+#: What a verb cannot promise, added to its description so the limitation
+#: reaches capability discovery rather than only a docstring.
+CAVEATS: Dict[str, str] = {
+    "pour": ("Runnable ONLY where a learned-policy executor is registered; "
+             "without one it refuses with learned_policy_required. Its "
+             "verifier confirms the TILT and then returns UNKNOWN: nothing on "
+             "this robot weighs the source or reads the target's level, and "
+             "target-relative alignment is not measured."),
+}
 
 
 def verbs() -> List[type]:
@@ -93,6 +111,8 @@ def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
         properties: Dict[str, Any] = {}
         required: List[str] = []
         for field in fields(cls):
+            if field.name in NOT_MODEL_BINDABLE:
+                continue
             spec = argument(field.name, cls.name(), overrides)
             names = (None if world is None or spec.domain()["kind"] != "name"
                      else names_for(world, spec.role))
@@ -101,9 +121,12 @@ def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
                 required.append(field.name)
             elif field.default is not None:
                 properties[field.name]["default"] = field.default
+        description = (cls.__doc__ or "").strip().splitlines()[0]
+        if cls.name() in CAVEATS:
+            description = f"{description} {CAVEATS[cls.name()]}"
         out.append({
             "name": cls.name(),
-            "description": (cls.__doc__ or "").strip().splitlines()[0],
+            "description": description,
             "parameters": {"type": "object", "properties": properties,
                            "required": required, "additionalProperties": False},
         })
@@ -166,7 +189,7 @@ def _role_errors(call: Primitive, world: WorldView) -> List[Unmet]:
     return out
 
 
-def domains() -> Dict[str, Dict[str, Any]]:
+def domains(*, model_bindable_only: bool = True) -> Dict[str, Dict[str, Any]]:
     """verb -> argument -> domain, straight from the kit's own table.
 
     The drift gate compares an EXPORT against this, so a renderer that
@@ -174,7 +197,9 @@ def domains() -> Dict[str, Dict[str, Any]]:
     compared the export with the same function that generated it.
     """
     return {cls.name(): {f.name: argument_domain(f.name, cls.name())
-                         for f in fields(cls)}
+                         for f in fields(cls)
+                         if not (model_bindable_only
+                                 and f.name in NOT_MODEL_BINDABLE)}
             for cls in verbs()}
 
 

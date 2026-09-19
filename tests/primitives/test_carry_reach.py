@@ -217,7 +217,11 @@ def test_a_destination_no_rung_reaches_is_unreachable_destination(d1_arm):
     assert error.reason == UNREACHABLE_DESTINATION
     assert error.primitive == "carry" and error.side == "right"
     assert np.isfinite(error.residual_m) and error.residual_m > 0.05
-    assert "100" in error.detail and "mm above its rim" in error.detail
+    # "unreachable" is a statement about THIS SEARCH, with the rungs it tried
+    assert "no plan was found" in error.detail
+    assert "100" in error.detail and "mm above" in error.detail
+    assert error.stage == "clearance_ladder"
+    assert error.attempted == ("100 mm", "80 mm", "60 mm")
     assert "the closest was" in error.detail
     assert "other arm" in error.detail
 

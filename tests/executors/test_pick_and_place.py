@@ -306,3 +306,43 @@ def test_an_unguarded_plan_is_not_an_executable_plan(d1_arm, observe):
     assert run(unguarded, executor).stop_reason == "unguarded_plan"
     assert not executor.sent
     assert run(unguarded, executor, allow_unguarded=True).completed
+
+
+def test_a_held_hand_with_no_command_history_refuses_rather_than_releasing(
+        d1_arm, observe):
+    """R, section 3: "the fallback still re-commands a measured stalled
+    aperture ... For a transport that uses all 16 entries this remains unsafe
+    when command history is unknown."
+
+    F9 one step further: the documented fallback (send the measurement when
+    nobody retained the command) is only honest for an EMPTY hand. With
+    something held and no retained command, commanding the measured aperture
+    tells a force-limited gripper to stop squeezing, and the carried object is
+    on the table before the arm has moved. There is no safe number, so the
+    answer is to refuse and say which field would fix it."""
+    from manipulation_kit.executor import RawState, run_steps
+
+    world = observe(d1_arm, block_p=REACHABLE, closed={"left": 0.41},
+                    held={"left": "red_block"})
+    plan = Lift(object="red_block", side="left", height_m=0.10).plan(world, d1_arm)
+    assert getattr(plan, "ok", False)
+    measured = {s: np.array(d1_arm.joints(s), dtype=float) for s in ("left", "right")}
+
+    blind = RecordingExecutor(RawState(
+        joints=measured, grippers={"left": 0.41, "right": 0.0},
+        holding={"left": True, "right": False}))
+    blind.pretend_arrived = True
+    report = run_steps(plan, blind)
+    assert not report.completed
+    assert report.stop_reason == "transport_error"
+    assert "commanded_grippers" in report.error
+    assert not blind.sent
+
+    # ...and with the command retained it runs, carrying the COMMAND forward
+    knows = RecordingExecutor(RawState(
+        joints=measured, grippers={"left": 0.41, "right": 0.0},
+        holding={"left": True, "right": False},
+        commanded_grippers={"left": 1.0, "right": 0.0}))
+    knows.pretend_arrived = True
+    assert run_steps(plan, knows).completed
+    assert all(v[GRIPPER_INDEX["left"]] == 1.0 for _t, v in knows.sent)

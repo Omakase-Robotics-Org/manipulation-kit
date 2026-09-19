@@ -393,8 +393,30 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
     # Lift re-commanded 0.41 (where the jaws had stopped), the squeeze went to
     # zero, and the cube stayed on the wagon while the arm went up. The same
     # rule as F5 one level out: a measurement is not a command.
-    grippers = {side: float(state.commanded_grippers.get(side, value))
-                for side, value in state.grippers.items()}
+    grippers: Dict[str, float] = {}
+    for side, value in state.grippers.items():
+        commanded = state.commanded_grippers.get(side)
+        if commanded is not None:
+            grippers[side] = float(commanded)
+            continue
+        if state.holding.get(side):
+            # NO COMMAND HISTORY AND SOMETHING IN THE HAND. Re-commanding the
+            # measured aperture tells a force-limited gripper to stop
+            # squeezing and hold position, which is how a Lift that never
+            # mentions the jaws drops what it is carrying (F9, three trials of
+            # three). The fallback was documented as honest; it is only honest
+            # when the hand is EMPTY. With a hold and no retained command,
+            # refusing is the answer.
+            return RunReport(
+                plan.primitive, plan.side, False, 0,
+                stop_reason=TRANSPORT_ERROR,
+                error=(f"the {side} gripper reports a hold at "
+                       f"{value:.2f} closedness and the executor cannot say "
+                       f"what it is COMMANDED at. Every dual-arm vector has "
+                       f"to carry a number for it, and the measurement is not "
+                       f"that number — re-commanding it releases the squeeze. "
+                       f"Publish RawState.commanded_grippers."))
+        grippers[side] = float(value)
     last_vector: Optional[np.ndarray] = None
 
     def stop(index: int, reason: str, detail: str) -> RunReport:
@@ -548,9 +570,13 @@ class KinematicExecutor:
         self.next_object: Dict[str, Optional[str]] = {s: None for s in SIDES}
 
     def state(self) -> RawState:
+        # A mirror has no contact, so where its jaws are IS what they were
+        # commanded to — and it publishes both, because the runner refuses to
+        # carry a held hand's aperture forward on a measurement alone (F9).
         return RawState(
             joints={s: np.array(self.kin.joints(s), dtype=float) for s in SIDES},
             grippers=dict(self.grippers),
+            commanded_grippers=dict(self.grippers),
             holding={s: self.held.get(s) is not None for s in SIDES},
             stationary=True)
 

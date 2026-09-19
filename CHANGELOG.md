@@ -57,6 +57,17 @@ changes a consumer will notice.
   tilted object is refused with `object_tilted`.
 * **`offer()` no longer takes `cap`.** It plans what it is given and returns
   all of it; capping is a rendering decision and moved to the renderer.
+* **A held hand with no retained gripper command is a refusal.** The
+  documented fallback — send the measurement when nobody retained the command
+  — is honest for an *empty* hand and unsafe for a full one: re-commanding a
+  stalled aperture tells a force-limited gripper to stop squeezing. Publish
+  `RawState.commanded_grippers`.
+* **`pour`'s `policy` is no longer in the tool schema.** Which checkpoint is
+  served is deployment configuration, not a model choice. It is still bindable
+  from Python. `pour`'s schema description now names both its limitations: it
+  needs a registered policy executor, and its verifier returns UNKNOWN after
+  confirming the tilt.
+* **`candidates_for` generates BASE-frame nudges by default** (was `tool`).
 * `Verifier.unchanged()` and `Carry._goal()` are gone (neither was used).
 
 ### New refusal reasons

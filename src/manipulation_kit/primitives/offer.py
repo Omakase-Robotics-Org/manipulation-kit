@@ -158,7 +158,7 @@ def why_nothing(refused: Sequence[Refused], limit: int = 6) -> str:
 
 def candidates_for(world: WorldView, *,
                    approaches: Sequence[str] = ("top_down", "front"),
-                   nudge_frame: str = "tool",
+                   nudge_frame: str = "base",
                    corrections: bool = True) -> List[Primitive]:
     """Everything worth TRYING in this world, before any of it is checked.
 
@@ -171,6 +171,13 @@ def candidates_for(world: WorldView, *,
     A hand whose gripper reports NOTHING gets no candidates at all: the kit
     cannot tell whether it is free, and offering both "grasp" and "release"
     for it would be offering to guess.
+
+    ``nudge_frame`` defaults to ``"base"``. A tool-frame correction is the
+    more useful one once a model has the hand's orientation in front of it,
+    and it is the harder one to get right from a text description — "the
+    hand's own x" means nothing without the axes, which is why they are now in
+    ``WorldView.to_text()``. Base frame is what the first example should show
+    (R, section 3).
     """
     task: List[Primitive] = []
     fine: List[Primitive] = []
