@@ -21,6 +21,7 @@ from typing import Optional, Sequence
 import numpy as np
 
 from ..world import ContainerView, ObjectView, SurfaceView, WorldView
+from .approach import JAW_CLEARANCE_M
 from .types import Verdict, VerdictReport, Verifier
 
 #: how close a measured tool point must be to a commanded ABSOLUTE pose to
@@ -39,6 +40,58 @@ MIN_MOVED_TOL_M = 0.003
 MOVED_FRACTION = 0.7
 #: a gripper at or below this closedness counts as open
 OPEN_CLOSEDNESS = 0.15
+#: How far the MEASURED pad gap may sit either side of the object's own width
+#: and still be that object between the pads. It is the planner's own clearance
+#: (``approach.JAW_CLEARANCE_M``, 4 mm) rather than a second number: the kit
+#: refuses to plan a grasp that does not leave this much per side, so a gap
+#: outside the window is either the jaws closed on something else or on
+#: themselves. MEASURED, 2026-09-19: a 40 mm cube stops the sim's jaws at a
+#: 41.2 mm face gap (1.15 mm of PhysX contact band) while carrying the cube
+#: through 149.8 mm of lift.
+GRIP_WIDTH_TOL_M = JAW_CLEARANCE_M
+#: Base of a lifted object within this of a surface top = still standing on it.
+RESTING_TOL_M = 0.003
+
+
+def grip_width_window(width_m: float, tol_m: float = GRIP_WIDTH_TOL_M):
+    """The pad gaps that are ``width_m`` held, rather than air or the pads.
+
+    Symmetric on purpose: BELOW the window the jaws travelled past the object
+    (they are on themselves, or on something thinner), ABOVE it they never
+    reached it.
+    """
+    width = float(width_m)
+    return max(0.0, width - float(tol_m)), width + float(tol_m)
+
+
+def resting_on(obj: ObjectView, world: WorldView, *,
+               tol_m: float = RESTING_TOL_M) -> Optional[SurfaceView]:
+    """The surface ``obj`` is still standing on, if any.
+
+    A lift that reports a rise while the object's underside is still on the
+    table is measuring the SURFACE moving, or a pose estimate drifting. The
+    test is the object's own base against the surface top, over its footprint —
+    ``SurfaceView.supports`` is about a CENTRE and a 30 mm band, which a 40 mm
+    cube satisfies while held 12 mm in the air.
+    """
+    try:
+        p = obj.pose_in_base(world.frames)[0]
+    except LookupError:
+        return None
+    base_z = float(p[2]) - obj.height() / 2.0
+    for surface in world.surfaces():
+        try:
+            sp, sr = surface.pose_in_base(world.frames)
+        except LookupError:
+            continue
+        top = float(sp[2]) + float(surface.size[2]) / 2.0
+        if abs(base_z - top) > float(tol_m):
+            continue
+        local = sr.inv().apply(np.asarray(p, dtype=float) - sp)
+        half = np.asarray(surface.size, dtype=float) / 2.0
+        if abs(local[0]) <= half[0] and abs(local[1]) <= half[1]:
+            return surface
+    return None
 
 
 def moved_tol(delta, *, fraction: float = MOVED_TOL_FRACTION,
@@ -142,41 +195,82 @@ class ToolMoved(Verifier):
 
 
 class Holding(Verifier):
-    """The gripper's own torque-stop report says something is held.
+    """Something is held, and it is the OBJECT — three measurements, not a flag.
 
-    ``GripperReport.holding`` is the measurement: the closing stroke met an
-    object and stopped squeezing at the preset's stop torque. The jaw gap is
-    checked beside it because a gripper that closed all the way is holding
-    nothing while still reporting a stall against itself.
+    "The jaws are closed" is not a number on a scale, and grading it as one is
+    F8: the Isaac env gated ``held_by`` on a jaw-travel ratio above 0.6, which
+    on 70 mm pads is a 28 mm ceiling, so a 40 mm cube could not be reported held
+    however well it was gripped — and was not, through 149.8 mm of measured
+    lift. What a hold actually is:
+
+    1. **The jaws stopped short of where they were sent** (``jaw_stalled``).
+       Commanded closed, no longer moving, not at the target: for a force- or
+       torque-limited drive that IS the stop, and it is the same signal
+       ``GripperReport.holding`` carries on the robot.
+    2. **A body is between the two pad faces** — which only the producer can
+       see, and which is exactly what ``holding`` means here.
+    3. **The gap is one the named object could make**: within
+       :data:`GRIP_WIDTH_TOL_M` of its own narrowest width. Below the window the
+       jaws went past it (closed on themselves, or on something thinner); above
+       it they never reached it.
+
+    Every part is optional-if-unmeasured and never optional-if-measured: a
+    producer that reports no gap gets (1) and (2) — the documented fallback for
+    an object of unknown size — and a producer that reports nothing at all gets
+    UNKNOWN, never TRUE.
     """
 
-    describes = "the gripper reports holding, at a gap the object could make"
+    describes = "the jaws stalled on the object, at a gap its own width could make"
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
-                 obj: Optional[ObjectView] = None):
+                 obj: Optional[ObjectView] = None,
+                 tol_m: float = GRIP_WIDTH_TOL_M):
         super().__init__(primitive, world0)
         self.side = side
         self.obj = obj
+        self.tol_m = float(tol_m)
 
     def measure(self, world1: WorldView) -> VerdictReport:
         gripper = world1.gripper(self.side)
         if gripper is None:
             return _unknown(f"no gripper report for the {self.side} hand")
         measured = {"holding": bool(gripper.holding),
-                    "closedness": round(float(gripper.closedness), 3)}
+                    "closedness": round(float(gripper.closedness), 3),
+                    "jaw_stalled": gripper.jaw_stalled}
         if gripper.jaw_gap_m is not None:
             measured["jaw_gap_m"] = round(float(gripper.jaw_gap_m), 4)
-        if not gripper.holding:
-            return _false(f"the {self.side} gripper reports nothing held", **measured)
+        # (1) the stroke stopped on something, rather than running to target
+        if gripper.jaw_stalled is False:
+            return _false(f"the {self.side} jaws never stopped short of the "
+                          f"close they were commanded — nothing arrested them",
+                          **measured)
+        # (3) a gap the named object could make.  Checked BEFORE the producer's
+        # verdict so "it closed on itself" is reported as itself rather than as
+        # a bare `nothing held`.
         if self.obj is not None and gripper.jaw_gap_m is not None:
             width = self.obj.min_horizontal_extent()
-            if gripper.jaw_gap_m < width * 0.4:
+            low, high = grip_width_window(width, self.tol_m)
+            measured["width_window_m"] = [round(low, 4), round(high, 4)]
+            measured["object_width_m"] = round(float(width), 4)
+            if gripper.jaw_gap_m < low:
                 return _false(
                     f"the {self.side} gripper stalled at "
-                    f"{gripper.jaw_gap_m * 1000:.0f} mm, far inside "
-                    f"{self.obj.name}'s {width * 1000:.0f} mm — it closed on "
+                    f"{gripper.jaw_gap_m * 1000:.1f} mm, inside "
+                    f"{self.obj.name}'s {width * 1000:.1f} mm — it closed on "
                     f"itself, not on the object", **measured)
-        return _true(f"the {self.side} gripper reports holding", **measured)
+            if gripper.jaw_gap_m > high:
+                return _false(
+                    f"the {self.side} gripper stopped at "
+                    f"{gripper.jaw_gap_m * 1000:.1f} mm, wider than "
+                    f"{self.obj.name}'s {width * 1000:.1f} mm — the jaws never "
+                    f"reached it", **measured)
+        # (2) the half only the producer can see: a body between the pad faces
+        if not gripper.holding:
+            return _false(f"the {self.side} gripper reports nothing between its "
+                          f"pads", **measured)
+        gap = ("" if gripper.jaw_gap_m is None
+               else f" at a {gripper.jaw_gap_m * 1000:.1f} mm gap")
+        return _true(f"the {self.side} gripper is holding{gap}", **measured)
 
 
 class NotHolding(Verifier):
@@ -203,9 +297,16 @@ class NotHolding(Verifier):
 
 
 class ObjectRose(Verifier):
-    """The OBJECT went up — not the hand. Lift is about the thing, not the arm."""
+    """The OBJECT went up — not the hand. Lift is about the thing, not the arm.
 
-    describes = "the object is higher than it was, and still held"
+    And it went up OFF something: an object whose underside is still on the
+    surface it started on has not been lifted, however the hand moved, so a
+    reported rise that leaves it resting is a FALSE rather than a TRUE with a
+    caveat. The check is skipped when the world publishes no surface, which is
+    the honest fallback rather than an assumption about the table.
+    """
+
+    describes = "the object is higher than it was, off its support, and still held"
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
                  name: str, height_m: float):
@@ -228,10 +329,16 @@ class ObjectRose(Verifier):
         if gripper is not None and not gripper.holding:
             return _false(f"{self.name} rose {rise * 1000:.0f} mm but the "
                           f"{self.side} gripper is no longer holding it", **measured)
-        if rise >= need:
-            return _true(f"{self.name} rose {rise * 1000:.0f} mm", **measured)
-        return _false(f"{self.name} rose {rise * 1000:.0f} mm of the "
-                      f"{self.height_m * 1000:.0f} mm asked", **measured)
+        if rise < need:
+            return _false(f"{self.name} rose {rise * 1000:.0f} mm of the "
+                          f"{self.height_m * 1000:.0f} mm asked", **measured)
+        obj = world1.find(self.name)
+        support = None if obj is None else resting_on(obj, world1)
+        measured["resting_on"] = None if support is None else support.name
+        if support is not None:
+            return _false(f"{self.name} reports a {rise * 1000:.0f} mm rise but "
+                          f"its underside is still on {support.name}", **measured)
+        return _true(f"{self.name} rose {rise * 1000:.0f} mm", **measured)
 
 
 class ObjectOver(Verifier):

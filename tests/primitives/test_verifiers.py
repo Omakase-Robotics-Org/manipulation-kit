@@ -102,11 +102,128 @@ def test_a_gripper_stalled_on_itself_is_not_holding_the_object(d1_arm, observe):
     assert "closed on itself" in verifier(after).reason
 
 
+def test_a_stroke_that_never_stalled_is_not_a_grasp(d1_arm, observe):
+    """Nothing arrested the jaws, so nothing is between them — whatever else
+    the producer says. This is (1) of the three, and it is the half that
+    replaces the closure-ratio gate F8 deleted."""
+    world = observe(d1_arm, block_p=REACHABLE)
+    verifier = Grasp(object="red_block", side="left").verifier(world)
+    after = observe(d1_arm, block_p=REACHABLE, closed={"left": 1.0},
+                    held={"left": "red_block"}, stalled={"left": False})
+    report = verifier(after)
+    assert report.verdict == Verdict.FALSE
+    assert "never stopped short" in report.reason
+
+
+def test_a_40mm_cube_is_held_at_a_closedness_the_old_gate_refused(d1_arm, observe):
+    """F8, as a row. The env stopped the jaws at closedness 0.41 on a 40 mm
+    cube and the 0.6 closure gate therefore reported nothing held — while the
+    cube tracked the tool through 149.8 mm of lift. Closedness is not the
+    evidence; the gap, the stall and the body between the pads are."""
+    world = observe(d1_arm, block_p=REACHABLE, block_size=(0.04, 0.04, 0.04))
+    verifier = Grasp(object="red_block", side="left").verifier(world)
+    after = observe(d1_arm, block_p=REACHABLE, block_size=(0.04, 0.04, 0.04),
+                    closed={"left": 0.41}, held={"left": "red_block"},
+                    gap={"left": 0.04122})          # the measured face gap
+    report = verifier(after)
+    assert report.verdict == Verdict.TRUE, report.reason
+    assert report.measured["closedness"] == 0.41
+
+
+def test_the_gap_has_to_be_one_the_object_could_make(d1_arm, observe):
+    """Either side of the window is a different, named failure."""
+    from manipulation_kit.primitives.verifiers import grip_width_window
+
+    size = (0.04, 0.04, 0.04)
+    world = observe(d1_arm, block_p=REACHABLE, block_size=size)
+    verifier = Grasp(object="red_block", side="left").verifier(world)
+    low, high = grip_width_window(0.04)
+    assert (round(low, 4), round(high, 4)) == (0.036, 0.044)
+
+    def after(gap_m):
+        return observe(d1_arm, block_p=REACHABLE, block_size=size,
+                       closed={"left": 0.9}, held={"left": "red_block"},
+                       gap={"left": gap_m})
+
+    assert verifier(after(low + 0.0005)).verdict == Verdict.TRUE
+    assert verifier(after(high - 0.0005)).verdict == Verdict.TRUE
+    closed_through = verifier(after(0.002))
+    assert closed_through.verdict == Verdict.FALSE
+    assert "closed on itself" in closed_through.reason
+    never_reached = verifier(after(0.060))
+    assert never_reached.verdict == Verdict.FALSE
+    assert "never reached it" in never_reached.reason
+
+
+def test_a_10mm_bar_is_held_at_the_gap_a_10mm_bar_makes(d1_arm, observe):
+    """The window is the OBJECT's, not the gripper's: the same 41 mm gap that
+    holds a 40 mm cube is the jaws nowhere near a 10 mm bar."""
+    bar = (0.010, 0.080, 0.010)
+    world = observe(d1_arm, block_p=REACHABLE, block_size=bar)
+    verifier = Grasp(object="red_block", side="left").verifier(world)
+    held = observe(d1_arm, block_p=REACHABLE, block_size=bar, closed={"left": 0.86},
+                   held={"left": "red_block"}, gap={"left": 0.0112})
+    assert verifier(held).verdict == Verdict.TRUE
+    wide = observe(d1_arm, block_p=REACHABLE, block_size=bar, closed={"left": 0.41},
+                   held={"left": "red_block"}, gap={"left": 0.04122})
+    assert verifier(wide).verdict == Verdict.FALSE
+
+
+def test_an_empty_close_is_not_holding_however_hard_it_stalled(d1_arm, observe):
+    """The control the harness ran on the sim: the same jaws close to 1.000 on
+    NOTHING. Stalled, yes — on themselves."""
+    world = observe(d1_arm, block_p=REACHABLE)
+    verifier = Grasp(object="red_block", side="left").verifier(world)
+    empty = observe(d1_arm, block_p=REACHABLE, closed={"left": 1.0},
+                    gap={"left": 0.0}, stalled={"left": True})
+    assert verifier(empty).verdict == Verdict.FALSE
+
+
+def test_holding_falls_back_to_the_stall_when_the_width_is_unmeasurable(d1_arm, observe):
+    """A producer with no pad-gap sensor still gets a verdict — from the stall
+    and the body between the pads — rather than a manufactured gap."""
+    world = observe(d1_arm, block_p=REACHABLE)
+    verifier = Grasp(object="red_block", side="left").verifier(world)
+    blind = observe(d1_arm, block_p=REACHABLE, closed={"left": 0.41},
+                    held={"left": "red_block"}, gap={"left": None})
+    assert verifier(blind).verdict == Verdict.TRUE
+    not_stalled = observe(d1_arm, block_p=REACHABLE, closed={"left": 0.41},
+                          held={"left": "red_block"}, gap={"left": None},
+                          stalled={"left": False})
+    assert verifier(not_stalled).verdict == Verdict.FALSE
+
+
 def test_a_missing_gripper_report_is_unknown_not_false(d1_arm, observe):
     world = observe(d1_arm, block_p=REACHABLE)
     verifier = Grasp(object="red_block", side="left").verifier(world)
     blind = world.with_(grippers={})
     assert verifier(blind).verdict == Verdict.UNKNOWN
+
+
+def test_lift_is_false_while_the_object_is_still_standing_on_something(d1_arm, observe):
+    """A rise is not a lift while the underside is still on a support. The
+    block goes up 100 mm and so does the thing under it — which on a real robot
+    is a drifting pose estimate or a surface that is not where it was measured,
+    and either way is not an object in the air."""
+    from manipulation_kit.world import SurfaceView
+
+    world = observe(d1_arm, block_p=REACHABLE, closed={"left": 1.0},
+                    held={"left": "red_block"})
+    verifier = Lift(object="red_block", side="left", height_m=0.10).verifier(world)
+    high = (REACHABLE[0], REACHABLE[1], REACHABLE[2] + 0.10)
+    risen = observe(d1_arm, block_p=high, closed={"left": 1.0},
+                    held={"left": "red_block"})
+    assert verifier(risen).verdict == Verdict.TRUE
+
+    # the same rise, with the table's top exactly under the block's base
+    base_z = high[2] - 0.05 / 2.0
+    still_standing = risen.with_(objects=[
+        SurfaceView("table", p=(0.40, 0.0, base_z - 0.01), size=(0.9, 0.8, 0.02))
+        if o.name == "table" else o for o in risen.objects])
+    report = verifier(still_standing)
+    assert report.verdict == Verdict.FALSE
+    assert "still on table" in report.reason
+    assert report.measured["resting_on"] == "table"
 
 
 def test_lift_measures_the_object_not_the_hand(d1_arm, observe):

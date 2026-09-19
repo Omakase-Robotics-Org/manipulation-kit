@@ -66,8 +66,16 @@ def observe():
 
 def _observe(kin, *, block_p=(0.38, 0.25, 0.05), box_p=(0.33, 0.34, 0.03),
             closed=None, held=None, block_size=(0.05, 0.04, 0.05), stamp=0.0,
-            frames=None):
-    """A WorldView read off the kinematic mirror — the tests' scene producer."""
+            frames=None, gap=None, stalled=None):
+    """A WorldView read off the kinematic mirror — the tests' scene producer.
+
+    A gripper reporting ``holding`` reports the two measurements that go with
+    it: a pad gap the block's own width could make, and a stalled stroke. The
+    producer in the harness (and the firmware on the robot) publishes all
+    three, so a fixture that published only the flag would be testing a
+    verifier against a world no producer emits. ``gap`` / ``stalled`` override
+    them per side for the tests that are about exactly that.
+    """
     from manipulation_kit.primitives.approach import tool_from_link7
     from manipulation_kit.world import (ArmView, ContainerView, GripperView,
                                         ObjectView, SurfaceView, WorldView)
@@ -78,9 +86,11 @@ def _observe(kin, *, block_p=(0.38, 0.25, 0.05), box_p=(0.33, 0.34, 0.03),
         p, r = tool_from_link7(*kin.ee_pose(side))
         arms.append(ArmView(side, joints=kin.joints(side), tool_p=p, tool_r=r,
                             mode="position"))
-        grippers.append(GripperView(side, closed.get(side, 0.0),
-                                    holding=held.get(side) is not None,
-                                    held_object=held.get(side), jaw_gap_m=0.04))
+        has = held.get(side) is not None
+        grippers.append(GripperView(
+            side, closed.get(side, 0.0), holding=has, held_object=held.get(side),
+            jaw_gap_m=(gap or {}).get(side, 0.04) if gap is not None else 0.04,
+            jaw_stalled=(stalled or {}).get(side, has) if stalled is not None else has))
     return WorldView.of(
         [ObjectView("red_block", p=block_p, size=block_size, colour="red"),
          ContainerView("box", p=box_p, size=(0.16, 0.14, 0.08),

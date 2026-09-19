@@ -293,20 +293,42 @@ class ArmView:
 
 @dataclass(frozen=True)
 class GripperView:
-    """One gripper as MEASURED — the torque-stop verdict, not the command.
+    """One gripper as MEASURED — the physical verdict, not the command.
 
-    ``holding`` is ``GripperReport.holding`` off the wire: the closing stroke
-    met something and stopped squeezing at the preset's torque. It is the only
-    field a :class:`~manipulation_kit.primitives.Grasp` verifier is allowed to
-    believe, and ``held_object`` is the caller's own bookkeeping beside it.
+    ``holding`` is the PRODUCER's measured verdict, and the producer is the only
+    party that can see the half of it the kit cannot: whether a body is actually
+    between the two pad faces. On the robot that is ``GripperReport.holding``
+    (the closing stroke met something and stopped squeezing at the preset's stop
+    torque); in the Isaac harness it is the env's own geometric test. It is
+    never a command echoed back, and never a closedness threshold: an object
+    thicker than the threshold's implied gap can never be reported held by one,
+    which cost the agent-eval harness five trials out of five on 2026-09-19
+    (F8 — a 0.6 closure gate on 70 mm pads is a 28 mm ceiling, and the cube is
+    40 mm).
+
+    Three MEASURED numbers travel beside it so the kit can check the verdict
+    against the object it asked for rather than believing it:
+
+    ``closedness``  0 open .. 1 closed, as the hand reports it.
+    ``jaw_gap_m``   the pad-FACE separation [m] — the gap an object of a known
+                    width has to be able to make. ``None`` when the producer
+                    cannot measure it, and then the width test is skipped
+                    rather than manufactured from the stroke.
+    ``jaw_stalled`` the jaws were commanded to close and have STOPPED, short of
+                    the commanded target — which for a force- or torque-limited
+                    drive IS the stop. ``None`` = not measured.
+
+    ``held_object`` is the caller's own bookkeeping beside all of it.
     """
 
     side: str
     closedness: float                  # 0 open .. 1 closed, measured
     holding: bool = False
-    jaw_gap_m: Optional[float] = None  # measured pad-to-pad gap, when known
+    jaw_gap_m: Optional[float] = None  # measured pad-FACE gap, when known
     held_object: Optional[str] = None
     grip: str = "firm"                 # soft | firm | strong
+    #: commanded closed AND stopped short of the target; None = not measured
+    jaw_stalled: Optional[bool] = None
 
     def __post_init__(self) -> None:
         if self.side not in _SIDES:
@@ -321,6 +343,8 @@ class GripperView:
         }
         if self.jaw_gap_m is not None:
             out["jaw_gap_m"] = round(float(self.jaw_gap_m), 4)
+        if self.jaw_stalled is not None:
+            out["jaw_stalled"] = bool(self.jaw_stalled)
         if self.held_object:
             out["held_object"] = self.held_object
         return out
