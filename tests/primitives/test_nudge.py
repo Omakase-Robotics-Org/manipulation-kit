@@ -92,3 +92,55 @@ def test_an_unknown_frame_name_is_refused_rather_than_guessed(d1_arm, observe):
     world = observe(d1_arm)
     verb = Nudge(side="left", dz=0.030, frame="world")
     assert any(u.code == "bad_frame" for u in verb.preconditions(world))
+
+
+# --------------------------------------------------------------------------- #
+# the verifier's tolerance — measured against what was ASKED for
+# --------------------------------------------------------------------------- #
+
+def test_the_tolerance_scales_with_the_requested_displacement():
+    """``TOOL_TOL_M`` was 20 mm and ``NUDGE_GRID_M`` starts at 10 mm, so the
+    finest correction on the menu could not fail its own verifier."""
+    from manipulation_kit.primitives import verifiers as V
+
+    assert V.moved_tol([0.010, 0.0, 0.0]) == pytest.approx(0.004)
+    assert V.moved_tol([0.030, 0.0, 0.0]) == pytest.approx(0.012)
+    assert V.moved_tol([0.050, 0.0, 0.0]) == pytest.approx(0.020)
+    # the floor: below ~3 mm a FALSE would be measuring the IK, not the robot
+    assert V.moved_tol([0.001, 0.0, 0.0]) == pytest.approx(V.MIN_MOVED_TOL_M)
+    # and it is a magnitude, not a per-axis budget
+    assert V.moved_tol([0.030, 0.040, 0.0]) == pytest.approx(0.020)
+
+
+def test_a_ten_millimetre_nudge_that_moved_nothing_is_false(d1_arm, observe):
+    """The Raptor granularity lesson turned inward: the correction the fine
+    grid exists for is the one the verifier has to be able to fail."""
+    world = observe(d1_arm)
+    verifier = Nudge(side="left", dx=0.010, frame="base").verifier(world)
+    assert verifier.tol_m == pytest.approx(0.004)
+    verdict = verifier(observe(d1_arm, stamp=1.0))      # nothing moved
+    assert str(verdict.verdict) == "false"
+    assert verdict.measured["error_m"] == pytest.approx(0.010, abs=1e-4)
+
+
+def test_a_ten_millimetre_nudge_that_moved_ten_millimetres_is_true(d1_arm, observe):
+    from manipulation_kit.primitives.approach import tool_from_link7
+
+    world = observe(d1_arm)
+    verb = Nudge(side="left", dx=0.010, frame="base")
+    verifier = verb.verifier(world)
+    plan = verb.plan(world, d1_arm)
+    assert plan.ok, str(plan)
+    d1_arm.set_joints("left", plan.joint_steps()[-1].q)
+    after = observe(d1_arm, stamp=1.0)
+    assert bool(verifier(after)), verifier(after).reason
+    moved = tool_from_link7(*d1_arm.ee_pose("left"))[0] - world.arm("left").tool_p
+    assert np.linalg.norm(moved - np.array([0.010, 0.0, 0.0])) <= 0.004
+
+
+def test_a_fifty_millimetre_nudge_keeps_the_old_twenty_millimetre_window(d1_arm, observe):
+    """Scaling is not tightening everywhere: the coarse end of the grid is
+    graded exactly as it was, so nothing that used to pass now fails."""
+    world = observe(d1_arm)
+    assert Nudge(side="left", dz=0.050, frame="base").verifier(world).tol_m == \
+        pytest.approx(0.020)

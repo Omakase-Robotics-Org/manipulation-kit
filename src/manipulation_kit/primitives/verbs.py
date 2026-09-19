@@ -112,12 +112,12 @@ def _plan_for(primitive: Primitive, world: WorldView, kin, side: str,
               waypoints, *, notes=()):
     """Solve a tool path and wrap the result, with the model always restored."""
     with Kin(kin, world) as borrowed:
-        steps, error = solve_path(borrowed, side, waypoints,
-                                  primitive=primitive.name())
+        steps, error, detours = solve_path(borrowed, side, waypoints,
+                                           primitive=primitive.name())
     if error is not None:
         return error
     return Plan(primitive.name(), side, tuple(waypoints), tuple(steps),
-                tuple(notes))
+                tuple(notes) + tuple(detours))
 
 
 # --------------------------------------------------------------------------- #
@@ -237,14 +237,15 @@ class Grasp(Primitive):
         # the object: an open-on-arrival stroke sweeps the pads through whatever
         # is beside it.
         with Kin(kin, world) as borrowed:
-            steps, error = solve_path(borrowed, side, waypoints,
-                                      primitive=self.name())
+            steps, error, detours = solve_path(borrowed, side, waypoints,
+                                               primitive=self.name())
         if error is not None:
             return error
         all_steps = ((GripStep(side, 0.0, self.grip, 0),) + tuple(steps)
                      + (GripStep(side, 1.0, self.grip, 1), SettleStep(1.0)))
         notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
-        return Plan(self.name(), side, tuple(waypoints), all_steps, notes)
+        return Plan(self.name(), side, tuple(waypoints), all_steps,
+                    notes + tuple(detours))
 
     def verifier(self, world0: WorldView) -> Verifier:
         side, _stand, _p, _r, unmet = self._geometry(world0)
@@ -441,12 +442,13 @@ class Place(Primitive):
         waypoints = [Waypoint("over_destination", above, r_tool),
                      Waypoint("set_down", drop + offset, r_tool)]
         with Kin(kin, world) as borrowed:
-            steps, error = solve_path(borrowed, side, waypoints,
-                                      primitive=self.name())
+            steps, error, detours = solve_path(borrowed, side, waypoints,
+                                               primitive=self.name())
         if error is not None:
             return error
         all_steps = tuple(steps) + (GripStep(side, 0.0, "soft", 1), SettleStep(1.0))
-        return Plan(self.name(), side, tuple(waypoints), all_steps)
+        return Plan(self.name(), side, tuple(waypoints), all_steps,
+                    tuple(detours))
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
@@ -610,7 +612,11 @@ class Nudge(Primitive):
         # the model expressed it in
         if self.frame == "tool" and arm.tool_r is not None:
             delta = arm.tool_r.apply(delta)
-        return V.ToolMoved(self.name(), world0, side, delta, tol_m=0.015)
+        # Tolerance scales with what was asked (V.moved_tol): a fixed 15 or
+        # 20 mm window is wider than the 10 mm bottom of NUDGE_GRID_M, so the
+        # finest correction on the menu could not fail. It scored a hand that
+        # moved 0 mm as TRUE on the 2026-09-19 agent-eval run.
+        return V.ToolMoved(self.name(), world0, side, delta)
 
 
 # --------------------------------------------------------------------------- #
@@ -663,6 +669,9 @@ class Retreat(Primitive):
             return V.Never(self.name(), world0,
                            "no tool pose reported, so a retreat cannot be measured")
         back = -arm.tool_r.as_matrix()[:, 2] * float(self.distance_m)
+        # Deliberately TIGHTER than the scaled default (0.4 x 100 mm = 40 mm):
+        # backing out of a container is a clearance move, and 30 mm is the
+        # clearance that matters.
         return V.ToolMoved(self.name(), world0, side, back, tol_m=0.03)
 
 

@@ -47,6 +47,35 @@ MAX_SOLVES_PER_KNOT = 8
 #: so hitting it is a bug, not a long move.
 MAX_KNOTS_PER_WAYPOINT = 200
 
+#: Clearance points a rejected waypoint is retried through, as ``(up, out)``
+#: metres from the tool point the leg STARTS at, keeping the orientation it
+#: starts with: lift the hand and swing it away from the body, then travel.
+#: "out" is +y for the left arm and -y for the right — away from the torso
+#: either way.
+#:
+#: SHORT, ORDERED CHEAPEST-DETOUR-FIRST, AND FIXED. ``plan()`` is pure, so the
+#: candidate a given world picks must not depend on anything except that
+#: world. These two were measured, not guessed: 144 candidates (up, out and a
+#: fore/aft offset, 0-25 cm each) were swept against 37 top-down grasps spread
+#: over the ``blocks-eval`` wagon (x 0.43-0.49, y -0.13..+0.13, both arms,
+#: every one starting from HOME). 33 of the 37 can be planned at all; these
+#: two cover ALL 33, in a mean of 1.45 attempts, and no third candidate in the
+#: sweep covers anything they miss — including every fore/aft variant, which
+#: is why the offset is two numbers and not three. The other four targets, far
+#: and near the centre line where the arm reaches across itself, have no
+#: working via among the 144 and are refused; that is what a refusal is for.
+VIA_OFFSETS_M: Tuple[Tuple[float, float], ...] = (
+    (0.20, 0.20),
+    (0.25, 0.25),
+)
+
+#: Refusals a detour can plausibly fix. A guard rejection is a statement about
+#: the PATH; ``ik_fail`` on a straight line that has already walked most of the
+#: way is usually the solver stuck in a local basin, which a different approach
+#: direction also moves. ``unreachable_object`` is not here: no via makes an
+#: arm longer.
+VIA_REASONS: Tuple[str, ...] = (GUARD_REJECT, IK_FAIL)
+
 #: How close the tool point must get to a knot before the path moves on.
 #: 3 mm, just above the IK's own 2 mm position tolerance: asking for tighter
 #: than the solver converges to is how a loop spins forever.
@@ -123,49 +152,150 @@ def knots(p0, r0: R, p1, r1: R,
         yield p0 + (p1 - p0) * f, r0 * R.from_rotvec(rotvec * f)
 
 
+def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
+              index: int) -> Tuple[List[JointStep], Optional[PlanError]]:
+    """ONE waypoint, straight line, no detour. The old whole of ``solve_path``.
+
+    Kept separate because the via search runs it three times — once to find
+    out that the straight line does not work, once per leg of the detour — and
+    all three must be the same code, or "the via worked" would mean something
+    different from "the straight line worked".
+    """
+    steps: List[JointStep] = []
+    pos_err, rot_err = _pose_error(kin, side, wp.p, wp.r)
+    if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
+        return steps, None
+    p0, r0 = kin.tool_pose(side)
+    for p_knot, r_knot in knots(p0, r0, wp.p, wp.r):
+        for _ in range(MAX_SOLVES_PER_KNOT):
+            pos_err, rot_err = _pose_error(kin, side, p_knot, r_knot)
+            if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
+                break
+            p7, r7 = ap.link7_from_tool(p_knot, r_knot)
+            result = kin.kin.solve_ee(side, p7, r7)
+            if not result.ok:
+                residual, _ = _pose_error(kin, side, wp.p, wp.r)
+                return steps, PlanError(
+                    _plan_reason(result.reason),
+                    _explain(result.reason, side, wp),
+                    waypoint_index=index,
+                    waypoint_label=wp.label, residual_m=residual,
+                    primitive=primitive, side=side)
+            steps.append(JointStep(side, kin.joints(side), index))
+    residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
+    if residual > ARRIVE_TOL_M * 4 or rot_residual > ARRIVE_TOL_RAD * 2:
+        return steps, PlanError(
+            UNREACHABLE_OBJECT,
+            f"the {side} tool point stopped converging on {wp.label!r}: "
+            f"{residual * 1000:.0f} mm and "
+            f"{np.degrees(rot_residual):.0f} deg short after the whole "
+            f"interpolated path",
+            waypoint_index=index, waypoint_label=wp.label,
+            residual_m=residual, primitive=primitive, side=side)
+    return steps, None
+
+
+def _outward(side: str) -> float:
+    """Which way is AWAY from the torso for this arm. +y is the robot's left."""
+    return 1.0 if side == "left" else -1.0
+
+
+def _via_note(wp: Waypoint, up: float, out: float) -> str:
+    return (f"the straight line to {wp.label!r} was refused; routed via a "
+            f"clearance point {up * 100:.0f} cm up and {out * 100:.0f} cm "
+            f"out from the torso")
+
+
+def _detour(kin: Kin, side: str, wp: Waypoint, *, primitive: str, index: int,
+            q_start: np.ndarray,
+            ) -> Tuple[Optional[List[JointStep]], str]:
+    """Try the candidate clearance points, then the READY re-seed. In order.
+
+    Deterministic by construction: a fixed list walked front to back, the first
+    one whose BOTH legs plan wins, and the mirror is put back to ``q_start``
+    between attempts so attempt *n* cannot inherit attempt *n-1*'s posture.
+    """
+    out_sign = _outward(side)
+    for up, out in VIA_OFFSETS_M:
+        kin.kin.set_joints(side, q_start)
+        p0, r0 = kin.tool_pose(side)
+        via = Waypoint(f"via:{wp.label}",
+                       p0 + np.array([0.0, out_sign * out, up]), r0)
+        leg1, error = _straight(kin, side, via, primitive=primitive, index=index)
+        if error is not None:
+            continue
+        leg2, error = _straight(kin, side, wp, primitive=primitive, index=index)
+        if error is None:
+            return leg1 + leg2, _via_note(wp, up, out)
+    # Last resort: the arm's own READY posture. It is a joint vector the kit
+    # SEARCHED for (``ik.find_ready_seed``: maximum clearance, guard-clean), so
+    # when the straight line dies on geometry near HOME, re-seeding the solver
+    # from there is a different basin rather than a different point on the same
+    # line. Skipped when this arm has no distinct READY, because ``ready()``
+    # falls back to HOME and ramping HOME->HOME is not a second attempt.
+    kin.kin.set_joints(side, q_start)
+    ready = np.asarray(kin.kin.ready(side), dtype=float)
+    if not np.allclose(ready, kin.kin.home(side)):
+        ramp, error = joint_ramp(kin, side, ready, primitive=primitive,
+                                 label="ready")
+        if error is None:
+            leg, error = _straight(kin, side, wp, primitive=primitive,
+                                   index=index)
+            if error is None:
+                return [JointStep(side, step.q, index) for step in ramp] + leg, (
+                    f"the straight line to {wp.label!r} was refused by the "
+                    f"guard; re-seeded from the READY posture")
+    return None, ""
+
+
 def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
-               primitive: str, start_index: int = 0,
-               ) -> Tuple[List[JointStep], Optional[PlanError]]:
+               primitive: str, start_index: int = 0, allow_via: bool = True,
+               ) -> Tuple[List[JointStep], Optional[PlanError], List[str]]:
     """Drive the tool point through ``waypoints``; return the steps or the refusal.
 
     Each waypoint is split into per-tick knots (see :func:`knots`) and each
     accepted ``solve_ee`` is one :class:`~.types.JointStep`. A waypoint already
     satisfied contributes no step, which is what makes a zero ``Nudge`` an
     empty plan rather than a fake one.
+
+    WHEN A KNOT IS GUARD-REJECTED THE STRAIGHT LINE IS NOT THE ANSWER. Measured
+    2026-09-19 on the ``blocks-eval`` scene: a top-down grasp over the wagon
+    has a standoff pose and a grasp pose that are both guard-CLEAN (36 mm of
+    body clearance), and the straight line from HOME to them puts ``Link4_R``
+    inside ``torso_belly`` at knot 1-3. Returning the first rejected knot's
+    refusal deleted the grasp from the model's menu — 61 of 61 turn-0
+    approaches refused — for a goal the arm can hold perfectly well. So a
+    guard-rejected waypoint is retried through :data:`VIA_OFFSETS_M`, and only
+    a waypoint no candidate reaches is refused. The refusal, when it comes,
+    is still the STRAIGHT line's: same reason, same knot index, same residual,
+    so nothing about the detour changes what a dead end looks like.
+
+    Returns ``(steps, error, notes)``; ``notes`` names any detour taken, so a
+    plan that went around something says so in its own record.
     """
     steps: List[JointStep] = []
+    notes: List[str] = []
     for index, wp in enumerate(waypoints):
-        pos_err, rot_err = _pose_error(kin, side, wp.p, wp.r)
-        if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
+        at = start_index + index
+        q_start = kin.joints(side)
+        leg, error = _straight(kin, side, wp, primitive=primitive, index=at)
+        if error is None:
+            steps += leg
             continue
-        p0, r0 = kin.tool_pose(side)
-        for p_knot, r_knot in knots(p0, r0, wp.p, wp.r):
-            for _ in range(MAX_SOLVES_PER_KNOT):
-                pos_err, rot_err = _pose_error(kin, side, p_knot, r_knot)
-                if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
-                    break
-                p7, r7 = ap.link7_from_tool(p_knot, r_knot)
-                result = kin.kin.solve_ee(side, p7, r7)
-                if not result.ok:
-                    residual, _ = _pose_error(kin, side, wp.p, wp.r)
-                    return steps, PlanError(
-                        _plan_reason(result.reason),
-                        _explain(result.reason, side, wp),
-                        waypoint_index=start_index + index,
-                        waypoint_label=wp.label, residual_m=residual,
-                        primitive=primitive, side=side)
-                steps.append(JointStep(side, kin.joints(side), start_index + index))
-        residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
-        if residual > ARRIVE_TOL_M * 4 or rot_residual > ARRIVE_TOL_RAD * 2:
-            return steps, PlanError(
-                UNREACHABLE_OBJECT,
-                f"the {side} tool point stopped converging on {wp.label!r}: "
-                f"{residual * 1000:.0f} mm and "
-                f"{np.degrees(rot_residual):.0f} deg short after the whole "
-                f"interpolated path",
-                waypoint_index=start_index + index, waypoint_label=wp.label,
-                residual_m=residual, primitive=primitive, side=side)
-    return steps, None
+        if not allow_via or error.reason not in VIA_REASONS:
+            return steps + leg, error, notes
+        detour, note = _detour(kin, side, wp, primitive=primitive, index=at,
+                               q_start=q_start)
+        if detour is None:
+            # Nothing worked. Re-walk the straight line so the steps handed
+            # back, and the refusal, describe the path that was ASKED for
+            # rather than the last candidate that happened to be tried.
+            kin.kin.set_joints(side, q_start)
+            leg, error = _straight(kin, side, wp, primitive=primitive, index=at)
+            return steps + leg, error, notes
+        steps += detour
+        notes.append(note)
+    return steps, None, notes
 
 
 def _plan_reason(ik_reason: str) -> str:

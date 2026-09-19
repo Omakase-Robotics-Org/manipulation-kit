@@ -205,6 +205,12 @@ Three things are load-bearing, and each is a bug somebody shipped:
   waypoint is split into per-tick knots and each one passes the same
   `solve_ee` the teleop stack runs, guard included. A refusal is a typed
   `PlanError` with the waypoint and the residual, never a silent no-op.
+- **A guard-rejected knot is routed around, not reported.** A top-down grasp
+  over a wagon can have a clean standoff, a clean grasp point, and a straight
+  line between them that puts the elbow through the torso. The rejected
+  waypoint is retried through a short measured list of clearance points
+  (`planning.VIA_OFFSETS_M`) and then a `ready()` re-seed; only a waypoint
+  nothing reaches is refused, and the refusal is still the straight line's.
 - **Orientation is derived, not emitted.** A caller names one of four
   approaches; the kit computes the wrist from the approach axis and the
   object's principal axis. `Nudge` is the only free-numeric verb — ±10/30/50 mm

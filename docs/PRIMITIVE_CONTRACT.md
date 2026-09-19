@@ -44,6 +44,22 @@ lands in a local minimum and returns `None` even though random restarts solve
 it. Walked in small steps, every knot converges — and the knots are also
 exactly the 50 Hz targets the robot wants.
 
+**A refused knot is routed around, not reported.** Interpolation needs
+somewhere to go when a knot is refused: on the `blocks-eval` wagon, a top-down
+grasp has a standoff and a grasp pose that are both guard-*clean* (36 mm of
+body clearance) and a straight line from HOME that puts `Link4_R` inside
+`torso_belly` at knot 1–3. Refusing there deleted the grasp from an agent's
+menu — 61 of 61 turn-0 approaches — for a goal the arm can hold. So a rejected
+waypoint is retried through `planning.VIA_OFFSETS_M`: a short, fixed,
+cheapest-first list of clearance points (lift the hand up and out from the
+torso, keep its orientation, then travel), each re-solving **both** legs, and
+then through a re-seed from the arm's searched `ready()` posture. The candidate
+list is measured, not guessed — 144 candidates swept against 37 grasps across
+the wagon, two cover all 33 that can be planned at all. A plan that detoured
+says so in `Plan.notes`. Nothing else changes: when no candidate works the
+refusal is the straight line's own, with the same reason, waypoint index and
+residual, and `solve_path(..., allow_via=False)` is the straight line alone.
+
 **A refusal is a typed value, never a silent no-op.** `PlanError` carries the
 reason, the waypoint index and label, and the residual:
 
@@ -73,6 +89,12 @@ Two rules hold for every verb, and both are tested:
 
 * **Never TRUE by default.** A verifier handed the world it was built from — an
   executor that did nothing — returns `FALSE` or `UNKNOWN`.
+* **Graded against what was asked.** A displacement verifier (`Nudge`,
+  `Retreat`) allows `max(3 mm, 0.4 × |Δ|)`, not one fixed window: the old
+  20 mm tolerance was wider than the 10 mm bottom of `NUDGE_GRID_M`, so the
+  finest correction on the menu scored TRUE even when the hand had not moved
+  at all. An *arrival* is still judged against a place (`TOOL_TOL_M`, 20 mm),
+  because that is what an absolute pose is.
 * **Measured, not intended.** `Grasp` reads `GripperReport.holding`, the
   torque-stop verdict off the wire, and cross-checks the jaw gap against the
   object's width so a gripper stalled on its own pads does not pass. `Place`

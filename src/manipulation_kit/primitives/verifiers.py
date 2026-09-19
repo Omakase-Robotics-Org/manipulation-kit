@@ -23,12 +23,34 @@ import numpy as np
 from ..world import ContainerView, ObjectView, SurfaceView, WorldView
 from .types import Verdict, VerdictReport, Verifier
 
-#: how close a measured tool point must be to a commanded one to count
+#: how close a measured tool point must be to a commanded ABSOLUTE pose to
+#: count. An arrival is judged against a place, so one number is right for it.
 TOOL_TOL_M = 0.02
+#: A DISPLACEMENT is judged against its own size instead. 20 mm is wider than
+#: the smallest step ``Nudge`` offers (``NUDGE_GRID_M`` starts at 10 mm), so a
+#: 10 mm nudge that moved nothing at all scored TRUE — the correction the fine
+#: grid exists for was the one the verifier could not measure (agent-eval run,
+#: 2026-09-19). The tolerance is now a fraction of what was asked for, with a
+#: floor at the IK's own convergence: below ~3 mm a FALSE would be measuring
+#: the solver, not the robot.
+MOVED_TOL_FRACTION = 0.4
+MIN_MOVED_TOL_M = 0.003
 #: fraction of a commanded displacement that must actually happen
 MOVED_FRACTION = 0.7
 #: a gripper at or below this closedness counts as open
 OPEN_CLOSEDNESS = 0.15
+
+
+def moved_tol(delta, *, fraction: float = MOVED_TOL_FRACTION,
+              floor_m: float = MIN_MOVED_TOL_M) -> float:
+    """How far off a commanded displacement may land and still count.
+
+    ``max(3 mm, 0.4 * |delta|)``: proportional, so the 10 mm end of the nudge
+    grid is graded by a 4 mm window and the 50 mm end by a 20 mm one, and a
+    hand that did not move fails BOTH.
+    """
+    return max(float(floor_m),
+               float(fraction) * float(np.linalg.norm(np.asarray(delta, dtype=float))))
 
 
 def _unknown(reason: str, **measured) -> VerdictReport:
@@ -93,11 +115,13 @@ class ToolMoved(Verifier):
     describes = "the hand moved by what was asked"
 
     def __init__(self, primitive: str, world0: WorldView, side: str, delta,
-                 tol_m: float = TOOL_TOL_M):
+                 tol_m: Optional[float] = None):
         super().__init__(primitive, world0)
         self.side = side
         self.delta = np.asarray(delta, dtype=float).reshape(3)
-        self.tol_m = float(tol_m)
+        #: ``None`` means "scale it to the request" — see :func:`moved_tol`.
+        #: A caller that passes a number owns it.
+        self.tol_m = moved_tol(self.delta) if tol_m is None else float(tol_m)
         self.before = _tool_point(world0, side)
 
     def measure(self, world1: WorldView) -> VerdictReport:
