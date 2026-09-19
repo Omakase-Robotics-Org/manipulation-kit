@@ -115,8 +115,20 @@ Built from the world **before**, called with a world **after**, returns a
 
 Two rules hold for every verb, and both are tested:
 
-* **Never TRUE by default.** A verifier handed the world it was built from — an
-  executor that did nothing — returns `FALSE` or `UNKNOWN`.
+* **Never TRUE by default — stated precisely.** A verifier handed the world it
+  was built from, *in a world where its postcondition was not already true*,
+  returns `FALSE` or `UNKNOWN`. The qualifier is load-bearing and was missing:
+  most of these are **state** predicates, not progress predicates, and a state
+  predicate handed a hand that is already holding the block is RIGHT to say
+  `TRUE` — a `GoHome` verifier called on arms already at HOME likewise. What
+  the rule forbids is a verdict that rests on the ACTION having been claimed
+  rather than on the state having been measured. `tests/primitives/
+  test_verifiers.py` therefore constructs each verb's "before" world with its
+  postcondition deliberately unmet, and that is the shape the rule has.
+
+  Two of them are genuinely **progress** predicates — `Nudge` and `Retreat`
+  measure a displacement from the world they were built in — and for those an
+  unchanged world can never pass, unconditionally.
 * **Graded against what was asked.** A displacement verifier (`Nudge`,
   `Retreat`) allows `max(3 mm, 0.4 × |Δ|)`, not one fixed window: the old
   20 mm tolerance was wider than the 10 mm bottom of `NUDGE_GRID_M`, so the
