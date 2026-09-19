@@ -52,9 +52,11 @@ pip install "git+https://github.com/Omakase-Robotics-Org/d1-firmware-client-py.g
 pip install -e '.[firmware]'
 ```
 
-The pin is a commit on purpose. Without SSH access to that organisation this
-step does not work yet, and the rest of this Quickstart does not either: the
-planning half below runs on the base install, the execution half does not.
+The pin is a commit on purpose. `d1-firmware-client-py` is a public repository, so this
+line needs no GitHub credentials — verified from a clean virtualenv with no SSH key
+(`d1fw-client 0.2.0`). What is still pending is publication to an index so that
+`pip install "manipulation-kit[firmware]"` alone resolves it. The planning half of this
+Quickstart runs on the base install; the execution half needs the client.
 Everything else — URDFs, `home_pose.json`, `safety_zones.json`, the tool
 configs — ships **inside the package** and resolves package-relative. There is
 nothing to download and no environment variable to set.
