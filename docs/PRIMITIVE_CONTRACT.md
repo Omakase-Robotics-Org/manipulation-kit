@@ -165,3 +165,51 @@ axis.
 that opens a socket is `manipulation_kit.executors.firmware`, behind the
 `[firmware]` extra — see its module docstring for why the default transport is
 a daemon-played trajectory rather than a 50 Hz stream.
+
+---
+
+## Addendum, 2026-09-19: what a verdict is allowed to rest on
+
+Added after the review of PR #16. Three rules, each of which had a
+counterexample in the code before it was written down.
+
+**A verifier may not certify evidence that is not there.** A missing gripper
+report is `UNKNOWN`, never "released" and never "still holding". An object that
+is not in the later observation is `UNKNOWN`, never "it did not move". The
+failure this prevents is a task marked done because nobody was looking; the
+failure it must not cause is a working robot that looks broken, which is why
+`UNKNOWN` is its own verdict and not a `FALSE`.
+
+**A verifier may not certify identity it cannot see.** A torque stall proves
+that *something* stopped the jaws. It does not distinguish the named block from
+anything else of the same width, and a gripper reporting a *different*
+`held_object` is a `FALSE`, not a detail. A named pickup becomes `TRUE` when
+the producer names what it holds, or when the named object is measured at the
+tool point; with neither, `UNKNOWN`, and the verdict names what would settle
+it.
+
+**A predicate is a set of measured clauses, and every clause is written out.**
+"Placed" is: the object's own *extent* inside the destination, its underside on
+the floor it should be standing on, the gripper released, and the gripper not
+holding something else instead. Not its centre, and not "the gripper dict was
+empty so it must have let go". Where the robot cannot measure a clause — this
+one publishes no velocity, so "at rest" is not available — the verdict says
+`supported` and says so explicitly rather than borrowing the stronger word.
+
+### And what a PLAN is allowed to rest on
+
+**Geometry is asked about the axis it happens on.** Jaw fit is the object's
+extent along that grasp's jaw axis; support height is its extent along base
++z from its *resolved* orientation. `min(size)` is not conservative, it is a
+different question. A tilt this version does not model is refused, not
+approximated.
+
+**A plan is bound to what it was checked against.** The measured joints of both
+arms, the observation revision, the frame stamps and the tool geometry travel
+with it, and an executor compares them before it moves. A plan is a safety
+claim about one world; running it in another is running an unchecked path.
+
+**A constrained leg does not take a detour.** Free-space transit may route
+around a refusal; a grasp descent, a lift, a bounded nudge and a retreat may
+not, because for those the shape of the path is the promise and an endpoint
+that was reached the long way has not kept it.
