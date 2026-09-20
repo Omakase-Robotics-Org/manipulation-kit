@@ -26,10 +26,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 
 from ... import safety, sides
 from ...guard import GuardGate, load_motion_guard

@@ -31,9 +31,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install without the mujoco extra
+        # [firmware] is in here on purpose: its dependencies are three
+        # PUBLISHED packages (httpx, attrs, typing_extensions), so a public
+        # runner can install it — which is the whole point of the change that
+        # replaced the unpublished d1fw-client. It is what lets the firmware
+        # client checks actually run rather than skip.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+          pip install -e '.[dev,firmware]'
       - name: mujoco really is absent
         # Otherwise a transitive dependency could quietly install it and this
         # job would stop testing the thing it exists to test.
@@ -77,7 +82,7 @@ jobs:
         # numpy default would be unverified against anything.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[mujoco,dev]'
+          pip install -e '.[mujoco,dev,firmware]'
       - name: Tests
         # -rs on purpose: this runner has no CAD (it is not in this
         # repository — LICENSE-STATUS.md), so the checks that OPEN a mesh skip
@@ -117,15 +122,116 @@ jobs:
           python - <<'PY'
           import glob, sys, zipfile
           names = zipfile.ZipFile(sorted(glob.glob("dist-wheel/*.whl"))[-1]).namelist()
-          leaked = [n for n in names
+          # The generated d1-firmwared client is machine output whose file
+          # names come from the daemon's own operation ids, so it is NOT
+          # searched for these words: it legitimately carries
+          # models/vendor_process.py, which has nothing to do with CAD
+          # vendoring. It has its own gate — tests/executors/
+          # test_firmware_client_snapshot.py, plus fresh-install below.
+          GENERATED = "manipulation_kit/executors/firmware/_client/"
+          handwritten = [n for n in names if not n.startswith(GENERATED)]
+          leaked = [n for n in handwritten
                     if "/wholebody/" in n or "/scripts/" in n
                     or "vendor_" in n or "prepare_visual_meshes" in n]
-          print(f"{len(names)} entries")
+          print(f"{len(names)} entries, {len(names) - len(handwritten)} generated")
           if leaked:
               sys.exit("research/vendoring code is in the wheel: " + ", ".join(leaked))
           assert any(n.endswith("description/d1/d1.urdf") for n in names), \
               "the guard URDF must ship inside the wheel"
+          assert any(n.endswith("firmware/_client/d1fw_api/client.py") for n in names), \
+              "the generated firmware client must ship inside the wheel"
           print("ok")
+          PY
+
+  fresh-install:
+    # OUTSIDE THE CHECKOUT, from the BUILT WHEEL. Every other job installs
+    # `-e .` from the work tree, which cannot catch a module that never made
+    # it into the package or an asset that only resolves from a source
+    # directory. This one builds the wheel, installs it into a clean venv in
+    # an empty directory, and runs the documented first steps from there.
+    #
+    # It installs `[firmware]` too, which it could not do before: that extra
+    # used to name the unpublished `d1fw-client`. It now names three published
+    # packages and carries the generated client INSIDE the wheel, so a clean
+    # venv with no network beyond PyPI must be able to import the executor —
+    # and that is checked below, offline.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel -o dist-wheel
+      - name: Install it somewhere else entirely
+        run: |
+          mkdir -p /tmp/outsider && cd /tmp/outsider
+          python -m venv venv
+          ./venv/bin/pip install --upgrade pip
+          ./venv/bin/pip install "$(echo "$GITHUB_WORKSPACE"/dist-wheel/*.whl)[firmware]"
+      - name: The Quickstart's planning half runs from the wheel
+        run: |
+          cd /tmp/outsider
+          ./venv/bin/python - <<'PY'
+          from manipulation_kit.arms import get_arm_kinematics
+          from manipulation_kit.primitives import Grasp
+          from manipulation_kit.primitives.offer import (candidates_for, offer,
+                                                         why_nothing)
+          from manipulation_kit.primitives.schema import decode, tool_schemas
+          from manipulation_kit.world import (ArmView, ContainerView, GripperView,
+                                              ObjectView, SurfaceView, WorldView)
+
+          kin = get_arm_kinematics("d1/arm", quiet=True)
+          world = WorldView.of(
+              [ObjectView("red_block", p=(0.38, 0.25, 0.035), size=(0.05, 0.04, 0.05)),
+               ContainerView("box", p=(0.33, 0.34, 0.05), size=(0.16, 0.14, 0.08),
+                             interior=(0.14, 0.12, 0.07)),
+               SurfaceView("table", p=(0.40, 0.0, 0.0), size=(0.9, 0.8, 0.02))],
+              arms=[ArmView(s, joints=kin.joints(s)) for s in ("left", "right")],
+              grippers=[GripperView(s, 0.0, jaw_gap_m=0.04)
+                        for s in ("left", "right")])
+
+          offered, refused = offer(candidates_for(world), world, kin)
+          assert offered, why_nothing(refused)
+          assert any(o.primitive.name() == "grasp" for o in offered)
+
+          schemas = {s["name"]: s for s in tool_schemas(world)}
+          names = schemas["grasp"]["parameters"]["properties"]["object"]["enum"]
+          assert names == ["red_block"], names
+          call = decode("grasp", {"object": "red_block", "side": "left"}, world)
+          assert isinstance(call, Grasp)
+          plan = call.plan(world, kin)
+          assert plan.ok and plan.binding is not None and plan.binding.guarded
+          print(f"ok: {len(offered)} offered, {len(plan.joint_steps())} joint steps")
+          PY
+      - name: The firmware extra installs and its client ships inside the wheel
+        # No daemon, no network, no `uv`. The executor must import, the bundled
+        # generated client must be there, and its recorded spec hash must be
+        # the hash of the document beside it — from the WHEEL, which is the
+        # only place that can prove the generated tree and the two JSON files
+        # were actually packaged.
+        run: |
+          cd /tmp/outsider
+          ./venv/bin/python - <<'PY'
+          import hashlib
+          from manipulation_kit.executors.firmware import (FirmwareExecutor,
+                                                           ensure, resolve_client)
+          snapshot = ensure.snapshot()
+          on_disk = hashlib.sha256(ensure.BUNDLED_SPEC.read_bytes()).hexdigest()
+          assert snapshot["spec_sha256"] == on_disk, "snapshot metadata drifted"
+          assert (ensure.BUNDLED_PACKAGE / "client.py").is_file(), \
+              "the generated client did not make it into the wheel"
+
+          # A daemon that is not there is not drift: the bundled tree, with a note.
+          resolution = resolve_client("http://127.0.0.1:1", timeout_s=0.5)
+          assert resolution.source == "bundled", resolution
+          assert "unreachable" in resolution.note, resolution.note
+
+          tree = ensure.import_tree(resolution)
+          assert hasattr(tree, "Client")
+          print("ok:", resolution.line())
           PY
 
   version-bump:

@@ -128,6 +128,13 @@ DESC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 # decimated).
 ARM_MESH_DIR = {"R": "../d1_arm/right/meshes",
                 "L": "../d1_arm/left/meshes"}
+#: The vendor D1 arm URDF per side, relative to `description/d1/`.  Same files
+#: the meshes above come from, and the SOURCE OF THE ARM LINK INERTIALS: this
+#: generator's J1..J7+TCP chain is byte-derived from them, so their link frames
+#: ARE these link frames and the vendor CAD inertial drops straight in.  See
+#: :func:`vendor_arm_inertials`.
+ARM_VENDOR_URDF = {"R": "../d1_arm/right/d1_arm_right.urdf",
+                   "L": "../d1_arm/left/d1_arm_left.urdf"}
 YUBI_MESH_DIR = "../d1_yubi_description_v2/yubi_description/meshes"
 BODY_MESH_DIR = "meshes/body"
 
@@ -671,7 +678,29 @@ CAMERA_OPTICAL_RPY = (0.0, math.pi / 2.0, 0.0)   # link +x -> optical +z
 #: sweeps and uncalibrated renders.
 #:
 #: Applied about head_link +z (the lateral axis; head_link +y points down).
-HEAD_CAMERA_PITCH = math.radians(15.0)
+#:
+#: PER HARDWARE REVISION, not a bare literal.  d1-1..d1-3 wear the 15 deg head
+#: part; the next units are built at 20 deg (Shu, 2026-09-20).  The table lives
+#: in :mod:`manipulation_kit.description` so a consumer composing its own asset
+#: can ask for a revision by name; `--hardware-revision` selects one here and
+#: the committed URDFs are the default revision.
+def head_camera_pitch(revision):
+    """Head-camera mount tilt for ``revision``, radians below horizontal."""
+    from manipulation_kit.description import head_camera_tilt_deg  # noqa: PLC0415
+
+    return math.radians(head_camera_tilt_deg(revision))
+
+
+def default_hardware_revision():
+    from manipulation_kit.description import DEFAULT_HARDWARE_REVISION  # noqa: PLC0415
+
+    return DEFAULT_HARDWARE_REVISION
+
+
+def head_camera_tilt_deg(revision):
+    from manipulation_kit.description import head_camera_tilt_deg as _tilt  # noqa: PLC0415
+
+    return _tilt(revision)
 HEAD_CAMERA_MESH = "headcamera_Link.STL"
 #: Host link of the head camera, and the vendor mesh whose front face locates
 #: it.  The mesh rides `head_link` at identity (BODY_MESH_HOSTS), so the AABB
@@ -1184,13 +1213,15 @@ def optical_frame(name, parent, indent="  "):
             + frame_link(name, indent))
 
 
-def head_camera():
+def head_camera(revision):
     """`head_camera_link` (+ its optical frame) on the head tilt link.
 
     Placed at the CENTRE OF THE FRONT FACE of the vendor camera housing,
     solved from the mesh — see the CAMERAS block for why the front face is the
-    +x one and for what is still uncalibrated.
+    +x one and for what is still uncalibrated.  ``revision`` picks the head
+    part's design tilt (:func:`head_camera_pitch`).
     """
+    pitch = head_camera_pitch(revision)
     lo, hi = _mesh_aabb_in_link(HEAD_CAMERA_HOST, HEAD_CAMERA_MESH)
     xyz = (hi[0], (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0)
     size = " x ".join("%.1f" % ((hi[i] - lo[i]) * 1000) for i in range(3))
@@ -1205,9 +1236,10 @@ def head_camera():
             "       (+z out of the lens, +x image right, +y image down) so a\n"
             "       renderer mounted there needs no extra rotation. At the\n"
             "       parked neck pose it looks straight ahead pitched\n"
-            f"       {math.degrees(HEAD_CAMERA_PITCH):.1f} deg BELOW horizontal — the design mount tilt\n"
-            "       from the head-part CAD section (2026-09-17), which the\n"
-            "       axis-aligned housing mesh cannot carry. That is a DESIGN\n"
+            f"       {math.degrees(pitch):.1f} deg BELOW horizontal — the design mount tilt\n"
+            f"       of hardware revision {revision}, from the head-part CAD\n"
+            "       section (2026-09-17), which the axis-aligned housing mesh\n"
+            "       cannot carry. That is a DESIGN\n"
             "       value, not a calibrated one: the d1-3 ArUco calibration\n"
             "       reads 12.2-12.8 deg below head_link forward, and a\n"
             "       consumer that needs the real extrinsic reads the\n"
@@ -1216,7 +1248,7 @@ def head_camera():
             "       See the CAMERAS block in the generator and\n"
             "       description/d1/README.md. -->\n"
             '  <joint name="head_camera_mount" type="fixed">\n'
-            f'    <origin xyz="{_xyz(xyz)}" rpy="0 0 {_fmt(HEAD_CAMERA_PITCH)}"/>\n'
+            f'    <origin xyz="{_xyz(xyz)}" rpy="0 0 {_fmt(pitch)}"/>\n'
             f'    <parent link="{HEAD_CAMERA_HOST}"/>\n'
             '    <child link="head_camera_link"/>\n'
             '  </joint>\n'
@@ -1230,6 +1262,62 @@ def inertial(mass=0.5):
             f"      <mass value=\"{_fmt(mass)}\"/>\n"
             "      <inertia ixx=\"1e-3\" ixy=\"0\" ixz=\"0\" iyy=\"1e-3\" iyz=\"0\" izz=\"1e-3\"/>\n"
             "    </inertial>\n")
+
+
+_VENDOR_ARM_INERTIALS = {}
+
+
+def vendor_arm_inertials(side):
+    """``{link name: <inertial> XML}`` read from the vendor D1 arm URDF.
+
+    The arm links used to carry this family's 0.5 kg / 1e-3 diagonal
+    PLACEHOLDER, which is what :func:`inertial` still emits for the body links
+    whose real inertials nobody has.  The arm's are not in that position: the
+    vendor ships CAD masses, COMs and tensors in
+    ``description/d1_arm/{left,right}``, and this generator's J1..J7+TCP chain
+    is byte-derived from those same files (asserted by
+    ``test_arm_chain_identical_across_all_models_and_sides``), so the link
+    frames are identical and the vendor inertial drops straight in with no
+    transform.
+
+    Consumers were reinstating them downstream — d1-isaaclab's URDF builder
+    injected exactly these elements into every asset it composed — which is a
+    robot fact living outside the robot description.  An arm link at 0.5 kg
+    against a real 1.54 kg is a 3x error in the load every joint carries, so
+    gravity compensation, contact forces and the lift's duty are all wrong in
+    a sim used to EVALUATE a policy.
+
+    The values are copied VERBATIM, as the vendor's own strings, rather than
+    re-formatted through :func:`_fmt`: they are a transcription of someone
+    else's CAD, and a transcription that rounds is a transcription that can
+    disagree with its source.  ``TCP_Link`` is massless in the vendor files
+    and stays massless here — it is a pure frame at the end of the chain, not
+    a part.
+    """
+    if side not in _VENDOR_ARM_INERTIALS:
+        path = os.path.join(DESC_DIR, ARM_VENDOR_URDF[side])
+        root = ET.parse(path).getroot()
+        found = {}
+        for link in root.findall("link"):
+            element = link.find("inertial")
+            if element is not None:
+                found[link.get("name")] = _vendor_inertial_xml(element)
+        _VENDOR_ARM_INERTIALS[side] = found
+    return _VENDOR_ARM_INERTIALS[side]
+
+
+def _vendor_inertial_xml(element, indent="    "):
+    """One vendor ``<inertial>`` re-serialised in this file's house style."""
+    origin = element.find("origin")
+    keys = ("ixx", "ixy", "ixz", "iyy", "iyz", "izz")
+    inertia = element.find("inertia")
+    return (f"{indent}<inertial>\n"
+            f"{indent}  <origin xyz=\"{origin.get('xyz')}\""
+            f" rpy=\"{origin.get('rpy')}\"/>\n"
+            f"{indent}  <mass value=\"{element.find('mass').get('value')}\"/>\n"
+            f"{indent}  <inertia "
+            + " ".join(f'{k}="{inertia.get(k)}"' for k in keys) + "/>\n"
+            f"{indent}</inertial>\n")
 
 
 def arm_mesh_visual(link, side, meshes):
@@ -1258,9 +1346,10 @@ def arm(side, end_effector, meshes=False, cameras=False):
           f"    <parent link=\"torso_column\"/>\n"
           f"    <child link=\"Base_{side}\"/>\n"
           f"  </joint>\n")
+    vendor = vendor_arm_inertials(side)
     links = ["Base"] + [f"Link{i}" for i in range(1, 8)]
     for ln in links:
-        s += (f"  <link name=\"{ln}_{side}\">\n" + inertial()
+        s += (f"  <link name=\"{ln}_{side}\">\n" + vendor[f"{ln}_{side}"]
               + arm_mesh_visual(ln, side, meshes)
               + seg_collision(ln, side) + "  </link>\n")
     for i, (jn, rpy, xyz, lo, hi, eff) in enumerate(ARM_CHAIN):
@@ -1274,7 +1363,7 @@ def arm(side, end_effector, meshes=False, cameras=False):
               f"    <limit lower=\"{_fmt(lo)}\" upper=\"{_fmt(hi)}\" effort=\"{_fmt(eff)}\" velocity=\"3.1416\"/>\n"
               f"  </joint>\n")
     # TCP flange
-    s += (f"  <link name=\"TCP_Link_{side}\">\n" + inertial(0.05)
+    s += (f"  <link name=\"TCP_Link_{side}\">\n" + vendor[f"TCP_Link_{side}"]
           + arm_mesh_visual("TCP_Link", side, meshes)
           + seg_collision("TCP_Link", side) + "  </link>\n")
     s += (f"  <joint name=\"JointTCP_{side}\" type=\"fixed\">\n"
@@ -1608,7 +1697,7 @@ def wholebody_root():
     return s
 
 
-def neck(articulated, meshes=False):
+def neck(articulated, meshes=False, revision=None):
     """Head subtree hanging off torso_column.
 
     articulated=False (d1.urdf, the guard model): ONE static `head_link`
@@ -1653,7 +1742,7 @@ def neck(articulated, meshes=False):
               + box_elem(f"{child}_shell", box[0], box[1],
                          "vendor mesh bbox in this link's frame")
               + "  </link>\n")
-    return (s + head_camera() + torso_cameras()).rstrip("\n")
+    return (s + head_camera(revision) + torso_cameras()).rstrip("\n")
 
 
 def torso_cameras():
@@ -1681,15 +1770,18 @@ def torso_cameras():
     return out
 
 
-def main(filename="d1.urdf", out_dir=None):
+def main(filename="d1.urdf", out_dir=None, revision=None):
     wholebody, end_effector, meshes = OUTPUTS[filename]
+    revision = revision or default_hardware_revision()
     robot = os.path.splitext(filename)[0]
     u = ['<?xml version="1.0" encoding="utf-8"?>']
     u.append("<!-- AUTO-GENERATED by description/d1/tools/generate_d1_urdf.py — edit the")
     u.append("     generator, not this file.  Full-body D1 COLLISION model: primitives only")
     u.append("     (boxes/cylinders/spheres), no meshes.  See the generator header for the")
     u.append("     frame convention and the provenance of every number.")
-    u.append(f"     END EFFECTOR: {end_effector}. -->")
+    u.append(f"     END EFFECTOR: {end_effector}.")
+    u.append(f"     HARDWARE REVISION: {revision} (head-camera mount tilt "
+             f"{head_camera_tilt_deg(revision):g} deg). -->")
     u.append(f'<robot name="{robot}">')
     if wholebody:
         u.append(wholebody_root())
@@ -1712,7 +1804,7 @@ def main(filename="d1.urdf", out_dir=None):
              '  </joint>')
 
     # head — swept static box for the guard model, articulated PTU otherwise
-    u.append(neck(articulated=wholebody, meshes=meshes))
+    u.append(neck(articulated=wholebody, meshes=meshes, revision=revision))
 
     # chassis: floor-relative boxes, hung off the floor in both variants
     u.append("\n  <!-- Chassis: authored floor-relative (z = 0 is the floor) and"
@@ -1770,6 +1862,11 @@ if __name__ == "__main__":
     # up-to-date regression test to regenerate and diff without touching
     # the committed files).
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument("--hardware-revision", default=None,
+                    help="which D1 head part to build for; changes the "
+                         "head-camera mount tilt only "
+                         "(manipulation_kit.description.HEAD_CAMERA_TILT_DEG). "
+                         "Default: the revision the committed URDFs describe.")
     args = ap.parse_args()
     for _name in (args.only or sorted(OUTPUTS)):
-        main(_name, out_dir=args.out_dir)
+        main(_name, out_dir=args.out_dir, revision=args.hardware_revision)

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.4.1"
-description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs (pure computation; hardware via d1-firmwared)"
+version = "0.13.0"
+description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]
 classifiers = [
@@ -46,6 +46,26 @@ mujoco = [
     "mujoco>=3.0,<=3.3.7; python_version < '3.10'",
     "mujoco>=3.0; python_version >= '3.10'",
 ]
+# The ONE package in this project that opens a socket:
+# manipulation_kit.executors.firmware, which runs a planned primitive on a real
+# D1 through the d1-firmwared REST daemon. It is an extra so the base install
+# keeps the repository's no-socket promise, and nothing else here imports it.
+#
+# These three are the RUNTIME DEPENDENCIES OF THE GENERATED CLIENT that ships
+# inside the package (executors/firmware/_client/d1fw_api, emitted by
+# openapi-python-client) — httpx for the transport, attrs for the models,
+# typing_extensions for `Self` on Python 3.10. That is the whole list, and it
+# is deliberately a list of PUBLISHED packages: there is no `d1fw-client` here
+# and no git URL, because a wheel whose metadata points at an unpublished
+# repository is not installable by the people this repository is public for.
+#
+# `uv` is NOT here either, and must not be. It is an OPTIONAL RUNTIME TOOL: it
+# is what lets a robot regenerate the client on the spot when the daemon's
+# OpenAPI document has moved past the bundled snapshot (it provisions the
+# Python 3.11 the generator needs, which the robots do not have). Without it
+# the bundled client is used with a warning. Installing a developer toolchain
+# as a package dependency would be the wrong trade in both directions.
+firmware = ["httpx>=0.23", "attrs>=21.3", "typing_extensions>=4.0"]
 # Mesh work: the CAD vendoring/decimation tools under tools/vendoring/ (which
 # are outside the wheel, and need the private assets repository — see
 # tools/vendoring/README.md).
@@ -59,6 +79,10 @@ dev = ["pytest", "yourdfpy"]
 [project.scripts]
 mkit-urdf = "manipulation_kit.description.cli:main"
 mkit-toolconfig = "manipulation_kit.hands.cli:main"
+# Maintainer tool: regenerate the committed d1-firmwared client snapshot from a
+# daemon or from a spec file. Consumers never need it — their client self-heals
+# into ~/.cache at connect time.
+mkit-firmware-client = "manipulation_kit.executors.firmware.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -102,6 +126,15 @@ where = ["src"]
     "descriptions/*.xml", "descriptions/README.md", "descriptions/meshes/*.STL",
 ]
 "manipulation_kit.hands.linkerbot.o30" = ["README.md"]
+# The bundled d1-firmwared client is generated CODE (found by packages.find on
+# its own __init__.py files), but the two non-Python files beside it have to be
+# named: the OpenAPI document it was generated from and the snapshot metadata.
+# Without them a wheel could not tell whether the daemon in front of it serves
+# the same document — which is the entire point of shipping them.
+"manipulation_kit.executors.firmware._client" = ["SNAPSHOT.json", "openapi/*.json"]
+# The generator config travels too: regeneration happens at RUNTIME on a robot,
+# from the installed wheel, not from a checkout.
+"manipulation_kit.executors.firmware._gen" = ["config.yaml"]
 
 [tool.pytest.ini_options]
 # Test files live in tests/<area>/ with no __init__.py, so two areas cannot both

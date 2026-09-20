@@ -17,7 +17,6 @@ import pytest
 
 np = pytest.importorskip("numpy")
 pytest.importorskip("scipy")
-from scipy.spatial.transform import Rotation as R  # noqa: E402
 
 from manipulation_kit.arms import sides  # noqa: E402
 from manipulation_kit.arms.ik import KinematicChain, solve_ik  # noqa: E402

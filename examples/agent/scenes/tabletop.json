@@ -1,0 +1,63 @@
+{
+  "_README": [
+    "A MEASURED scene. Every number here is something you put a tape measure",
+    "or a caliper on; nothing in it is detected. This is the first-hour path:",
+    "automatic perception can come later, and the kit never needs it — it",
+    "needs an observation.",
+    "",
+    "UNITS AND CONVENTIONS, because getting one of these wrong is the whole",
+    "of the 8.47 mm class of mistake:",
+    "  * metres and radians. Always. There are no millimetres in this file.",
+    "  * 'base' is the robot's base frame: +x forward, +y the robot's LEFT,",
+    "    +z up, origin on the torso platform. It is where the kit's inverse",
+    "    kinematics reports, so it is the root of every transform.",
+    "  * 'p' is the object's CENTRE, not its bottom and not a corner. A 50 mm",
+    "    cube standing on a table whose top is at z = 0.010 has p[2] = 0.035.",
+    "  * 'size' is the full extent along the object's OWN three axes, in the",
+    "    order (length, width, height) of that object's frame. A yawed box has",
+    "    the same size and a different 'yaw_rad'.",
+    "  * 'yaw_rad' rotates the object about base +z. Use 'quat_xyzw' instead",
+    "    if you have a full orientation.",
+    "  * a 'container' also takes 'interior': the usable INNER extent, which",
+    "    is what a placement is checked against. If you leave it out the kit",
+    "    marks it ESTIMATED and refuses to place into it, because the walls",
+    "    then are not where anybody said they are.",
+    "  * 'frame_id' names the frame the pose was measured in. Objects measured",
+    "    against a table you calibrated go in that frame; the transform goes",
+    "    in 'frames'. A frame with 'max_age_s' expires, and everything",
+    "    measured in it then refuses rather than returning a plausible number.",
+    "",
+    "The 'table' entry is a SURFACE, which is what a Place lands on and what",
+    "a Lift is checked as having left."
+  ],
+  "frames": [],
+  "objects": [
+    {
+      "name": "table",
+      "kind": "surface",
+      "frame_id": "base",
+      "p": [0.40, 0.0, 0.0],
+      "size": [0.90, 0.80, 0.02],
+      "yaw_rad": 0.0
+    },
+    {
+      "name": "red_block",
+      "kind": "object",
+      "colour": "red",
+      "frame_id": "base",
+      "p": [0.38, 0.25, 0.035],
+      "size": [0.05, 0.04, 0.05],
+      "yaw_rad": 0.0
+    },
+    {
+      "name": "box",
+      "kind": "container",
+      "frame_id": "base",
+      "p": [0.33, 0.34, 0.050],
+      "size": [0.16, 0.14, 0.08],
+      "interior": [0.14, 0.12, 0.07],
+      "rim_height_m": 0.04,
+      "yaw_rad": 0.0
+    }
+  ]
+}

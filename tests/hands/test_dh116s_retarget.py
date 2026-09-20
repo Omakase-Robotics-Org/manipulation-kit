@@ -4,7 +4,6 @@ The input contract is a ``flex(channel_name) -> [0, 1]`` callable; tests
 build synthetic ones from dicts."""
 
 import numpy as np
-import pytest
 
 from manipulation_kit.hands.leadshine.dh116s.retarget import (
     AXIS_NAMES,

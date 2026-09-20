@@ -1,3 +1,10 @@
+> **ARCHIVED, 2026-09-19.** This file came verbatim from d1-sdk. The
+> `omakase-arm …` commands below **do not run in this repository** — that CLI
+> is not part of `manipulation-kit`. What is still current is the CSV FORMAT,
+> which `examples/make_joint_test_gesture.py`, `examples/preview_gesture.py`
+> and `tests/data/test_gesture_motion.csv` read and write. To move a real arm,
+> see the Quickstart in the top-level README.
+
 # D1 dual-arm conversational gestures — teach & smooth playback
 
 Two C++ tools turn drag-teaching into smooth, repeatable D1 (D1 arm dual-arm)
