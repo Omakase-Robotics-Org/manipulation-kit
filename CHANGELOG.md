@@ -6,6 +6,68 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.13.0 — 2026-09-20
+
+**Two robot facts that consumers were reinstating downstream come home.** Both
+were found while d1-isaaclab was being refactored to consume this package as
+its single source of truth for the D1's shape: anything the sim had to patch
+back in after loading a description was, by definition, a fact this package
+was failing to state.
+
+### Changed
+
+* **Every arm link carries the vendor CAD inertial.** `Base_*`, `Link1_*` …
+  `Link7_*` used to get the family's 0.5 kg / 1e-3 diagonal PLACEHOLDER while
+  the vendor D1 arm URDFs — committed in this repository at
+  `description/d1_arm/{left,right}` — carried the real masses, COMs and
+  tensors all along. The generator now reads them from those files and emits
+  them verbatim (`vendor_arm_inertials`). One side of the arm chain goes from
+  4.05 kg of placeholder to the vendor's 8.08 kg, so gravity compensation,
+  contact forces and the lift's duty are right in any sim that loads these
+  files without editing them first. `TCP_Link_*` is massless in the vendor
+  files and is now massless here too (it was 0.05 kg), because it is a pure
+  frame at the end of the chain, not a part.
+
+  This is a **dynamics change** for anything that loads `d1_wholebody*.urdf`
+  as a physics asset. It is not a change for the guard (`d1.urdf` is a keep-out
+  model; inertials are not read), for IK, or for any planner.
+
+* **The head-camera mount tilt is a named HARDWARE REVISION, not a literal.**
+  15° is a property of the head PART: d1-1, d1-2 and d1-3 wear it by design,
+  and the units built next are 20° (Shu, 2026-09-20). So
+  `manipulation_kit.description.HEAD_CAMERA_TILT_DEG` maps `"rev1" -> 15.0`
+  and `"rev2" -> 20.0`, `head_camera_tilt_deg(revision)` resolves one (an
+  unknown revision raises rather than defaulting), the generated URDFs name
+  the revision they were built for in their header, and
+  `mkit-urdf build --hardware-revision rev2` builds the other one. The
+  committed URDFs are `rev1` and their `head_camera_mount` yaw is unchanged at
+  0.261799 rad.
+
+  **A per-robot deviation is still not this number.** d1-3's ArUco fit reads
+  ~2.5° off nominal; that belongs in that robot's `cameras_d1-3.json` as an
+  absolute `head_link` -> camera extrinsic, and folding it into a shared
+  description — as d1-isaaclab's composed asset did, at 17.25° — makes every
+  other robot wrong.
+
+### Added
+
+* `manipulation_kit.description.HEAD_CAMERA_TILT_DEG`,
+  `DEFAULT_HARDWARE_REVISION` and `head_camera_tilt_deg()`.
+* `mkit-urdf build --hardware-revision` (and `--hardware-revision` on the
+  generator script).
+* `tests/test_arm_inertials_and_head_revision.py`.
+
+### Not changed, and worth saying so
+
+The **gripper** jaw origin (0.100 m, the measured pad centre), the ±0.032 m
+stroke and the 1.5 kg gripper mass are already the 2026-09-16 calliper
+measurements and stay exactly as they are. d1-isaaclab's composed asset
+carried the superseded vendor-CAD 0.10847 / ±0.035 / rescaled-to-1.5 versions
+of all three; the fix for that is downstream, in the consumer, not here. The
+camera plate (0.1053 kg) and wrist camera (0.03 kg) are hardware on top of the
+1.5 kg gripper, not part of it, so the whole-body gripper links summing to
+1.635 kg is correct and the tool config's 1.5 kg is correct.
+
 ## 0.12.0 — 2026-09-19
 
 **The `[firmware]` extra no longer depends on an unpublished package.** It used

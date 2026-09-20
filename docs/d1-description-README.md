@@ -331,7 +331,12 @@ no rotation is needed anywhere downstream.
   face is 15° below horizontal, aiming the field of view down at the
   workspace (Shu, 2026-09-17). That supersedes the 17.25° previously read off
   the D435 slab normal (0.955, 0.005, −0.297) in the 2026-08-23 full-robot
-  CAD.
+  CAD. **It is a property of the head PART, not of the D1**, so it is a named
+  hardware revision rather than a literal — `rev1` (15°) is what d1-1, d1-2
+  and d1-3 wear and what the committed URDFs describe; `rev2` (20°) is the
+  part the next units are built with (Shu, 2026-09-20). See
+  `manipulation_kit.description.HEAD_CAMERA_TILT_DEG` and
+  `mkit-urdf build --hardware-revision`.
 - *Wrists (YUBI).* The YUBI camera housing is a 35 × 32 × 42 mm box centred at
   (−0.0175, 0, 0) — it extends *backwards* along −x, so the link origin plane
   already is the lens face — and the fingers reach +x (tips at x = +0.109). The
@@ -360,7 +365,8 @@ a calibrated extrinsic:
    already known to need a 180° rotation on the real head-camera stream
    somewhere. Do not trust image-space left/right from these frames until they
    are checked against a real frame.
-3. the **pitch on a particular robot**. 15° is what the part is designed to;
+3. the **pitch on a particular robot**. 15° is what the `rev1` part is
+   designed to;
    the ArUco calibration on d1-3 (`d1-inference`
    `calibrate_head_aruco.py`, session `d1-3-tokyo-20260916`, neck sweep) reads
    the optical axis 12.2–12.8° below `head_link` forward with −1.3…−1.9° of

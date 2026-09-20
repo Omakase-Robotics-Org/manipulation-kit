@@ -1,6 +1,7 @@
 """``mkit-urdf`` — build, export and complete the D1 description.
 
     mkit-urdf build [--only d1.urdf]          regenerate the URDFs in place
+    mkit-urdf build --hardware-revision rev2  ... for the next head part
     mkit-urdf export <variant> --dest DIR     vendor a variant, with provenance
     mkit-urdf export <variant> --dest DIR --check   fail on drift
     mkit-urdf variants                        list what can be built
@@ -56,6 +57,8 @@ def cmd_build(args) -> int:
     argv = []
     for name in args.only or []:
         argv += ["--only", name]
+    if args.hardware_revision:
+        argv += ["--hardware-revision", args.hardware_revision]
     rc = _run(GENERATOR, argv)
     if rc == 0 and args.yubi:
         rc = _run(YUBI_GENERATOR, [])
@@ -207,6 +210,11 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build", help="regenerate the URDFs from the generator")
+    b.add_argument("--hardware-revision", default=None,
+                   help="which D1 head part to build for (rev1 = d1-1..d1-3 "
+                        "at 15 deg, rev2 = the next units at 20 deg). Only "
+                        "the head-camera mount tilt depends on it. Default: "
+                        "the revision the committed URDFs describe.")
     b.add_argument("--only", action="append",
                    help="regenerate one file (e.g. d1.urdf); repeatable")
     b.add_argument("--yubi", action="store_true",
