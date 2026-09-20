@@ -122,14 +122,24 @@ jobs:
           python - <<'PY'
           import glob, sys, zipfile
           names = zipfile.ZipFile(sorted(glob.glob("dist-wheel/*.whl"))[-1]).namelist()
-          leaked = [n for n in names
+          # The generated d1-firmwared client is machine output whose file
+          # names come from the daemon's own operation ids, so it is NOT
+          # searched for these words: it legitimately carries
+          # models/vendor_process.py, which has nothing to do with CAD
+          # vendoring. It has its own gate — tests/executors/
+          # test_firmware_client_snapshot.py, plus fresh-install below.
+          GENERATED = "manipulation_kit/executors/firmware/_client/"
+          handwritten = [n for n in names if not n.startswith(GENERATED)]
+          leaked = [n for n in handwritten
                     if "/wholebody/" in n or "/scripts/" in n
                     or "vendor_" in n or "prepare_visual_meshes" in n]
-          print(f"{len(names)} entries")
+          print(f"{len(names)} entries, {len(names) - len(handwritten)} generated")
           if leaked:
               sys.exit("research/vendoring code is in the wheel: " + ", ".join(leaked))
           assert any(n.endswith("description/d1/d1.urdf") for n in names), \
               "the guard URDF must ship inside the wheel"
+          assert any(n.endswith("firmware/_client/d1fw_api/client.py") for n in names), \
+              "the generated firmware client must ship inside the wheel"
           print("ok")
           PY
 
