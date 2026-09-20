@@ -208,7 +208,9 @@ class FrameGraph:
         With ``r=None`` only the position is returned, so a producer that has
         a point and no orientation does not have to invent one.
         """
-        p = np.asarray(p, dtype=float).reshape(3)
+        # A copy, not a view: producers freeze their arrays (``setflags(write=False)``)
+        # and recent scipy refuses read-only input in ``Rotation.apply``.
+        p = np.array(p, dtype=float, copy=True).reshape(3)
         if frame_id == BASE:
             return (p, r) if r is not None else p
         fp, fr = self.pose_in_base(frame_id)
