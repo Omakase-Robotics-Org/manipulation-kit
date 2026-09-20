@@ -38,4 +38,47 @@ GUARD_URDF = ROOT / "d1" / "d1.urdf"
 #: The authoritative whole-body asset: D1 wearing the stock parallel gripper.
 WHOLEBODY_GRIPPER_URDF = ROOT / "d1" / "d1_wholebody_gripper.urdf"
 
-__all__ = ["ROOT", "GUARD_URDF", "WHOLEBODY_GRIPPER_URDF"]
+#: Downward tilt of the head-camera mount face, DEGREES below horizontal, per
+#: D1 HARDWARE REVISION. This is a DESIGN value of the head part — the D435 is
+#: bolted to a machined face, not aimed — so it changes when the part changes,
+#: and it is the one number in this description that is not the same on every
+#: robot that will exist.
+#:
+#: * ``"rev1"`` — 15 deg. The head part on d1-1, d1-2 and d1-3, read off the
+#:   head-part CAD section Shu supplied 2026-09-17 and confirmed by Shu
+#:   2026-09-20 as by design rather than as a build tolerance.
+#: * ``"rev2"`` — 20 deg. The head part the NEXT units are built with
+#:   (Shu, 2026-09-20). No robot wears it yet, so no URDF is committed for it;
+#:   generate one with ``mkit-urdf build --hardware-revision rev2``.
+#:
+#: NOMINAL, AND NOT A SUBSTITUTE FOR CALIBRATION. What a simulator or a
+#: perception stack consumes is the PER-ROBOT extrinsic in that robot's
+#: ``cameras_<robot>.json``, which is an absolute ``head_link`` -> camera
+#: transform fitted from ArUco. d1-3's fit sits ~2.3 deg off this nominal;
+#: that deviation belongs to d1-3, not to the head part, and must never be
+#: folded back into this table or into a shared URDF.
+HEAD_CAMERA_TILT_DEG = {"rev1": 15.0, "rev2": 20.0}
+
+#: The revision the COMMITTED URDFs in this package describe.
+DEFAULT_HARDWARE_REVISION = "rev1"
+
+
+def head_camera_tilt_deg(revision: str = DEFAULT_HARDWARE_REVISION) -> float:
+    """Head-camera mount tilt for one hardware revision, degrees below horizontal.
+
+    Consumers that compose their own asset off this package (d1-isaaclab's
+    ``robot/build_urdf.py``) name the revision they are building for, so that
+    "which head part is this robot wearing" is an explicit choice rather than
+    whatever literal the generator last had in it.
+    """
+    try:
+        return HEAD_CAMERA_TILT_DEG[revision]
+    except KeyError:
+        raise ValueError(
+            f"unknown D1 hardware revision {revision!r}; known revisions: "
+            + ", ".join(sorted(HEAD_CAMERA_TILT_DEG))) from None
+
+
+__all__ = ["ROOT", "GUARD_URDF", "WHOLEBODY_GRIPPER_URDF",
+           "HEAD_CAMERA_TILT_DEG", "DEFAULT_HARDWARE_REVISION",
+           "head_camera_tilt_deg"]
