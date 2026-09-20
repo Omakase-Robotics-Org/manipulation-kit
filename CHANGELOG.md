@@ -6,6 +6,77 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.12.0 — 2026-09-19
+
+**The `[firmware]` extra no longer depends on an unpublished package.** It used
+to name `d1fw-client`, which lives in a repository nobody outside the org can
+`pip install` by name, so the README carried an interim "install this git URL
+first" step and CI could not test the extra at all. Shu's decision on
+2026-09-19: do what `d1-inference` does — ship a generated client, and check it
+against the daemon's live OpenAPI document at connect time, regenerating on the
+spot when they differ.
+
+### Breaking
+
+* **`manipulation_kit.executors.firmware` is a PACKAGE, not a module.** Every
+  name it exported is re-exported from it unchanged
+  (`from manipulation_kit.executors.firmware import FirmwareExecutor` still
+  works), but `manipulation_kit.executors.firmware.py` is now
+  `…/firmware/executor.py` and the private `_client_class()` is gone —
+  replaced by `ensure_client()`. A consumer that imported the submodule path or
+  that helper has to move.
+* **`firmware = ["d1fw-client"]` → `firmware = ["httpx", "attrs",
+  "typing_extensions"]`.** `d1fw-client` is no longer installed, used or
+  mentioned. A venv that has it keeps it; nothing here imports it.
+* **Execution needs Python 3.10.** The generated client is emitted with PEP 604
+  unions at module scope. Planning, the guard, IK and the whole rest of the
+  package still run on 3.9, and the suite says so by skipping rather than by
+  passing quietly.
+
+### Added
+
+* **`manipulation_kit.executors.firmware.ensure`** — `ensure_client(base_url,
+  *, cache_dir, policy)`. Fetches `GET <base_url>/openapi.json` (2 s timeout),
+  sha256s it, and: identical to the bundled snapshot → use the bundled client;
+  different → regenerate from *that* document into
+  `~/.cache/manipulation-kit/d1fw/<sha>/` and import from there; cannot
+  regenerate → `WARNING` + bundled (`policy="auto"`) or
+  `ClientUnavailable` (`policy="strict"`); daemon unreachable → bundled with
+  the reason in the note. `policy="bundled"` never asks. One INFO line per
+  connect names the spec hash, the source and the path.
+  `FirmwareExecutor(client_policy=…)` passes the policy through.
+* **`executors/firmware/_client/`** — the committed snapshot: the generated
+  `d1fw_api` (302 files, `openapi-python-client==0.29.1`, lowered to Python
+  3.10), the OpenAPI document it came from, and `SNAPSHOT.json` recording its
+  sha256, `info.version` and provenance. The document is
+  `Omakase-Robotics-Org/d1-firmware@1937f575` `openapi/d1-firmwared.v1.json`,
+  obtained through the public `d1-firmware-client-py@bfd6a678`, which vendors
+  it; the firmware repository itself is private.
+* **`executors/firmware/client.py`** — `FirmwareClient`, the four verbs the
+  executor drives (`request`, `arm_state`, `gripper_state`, `gripper_set`) over
+  the generated client's `httpx` session, with the daemon's envelope checked
+  once and states parsed into validated frozen dataclasses. `api_module()`
+  reaches every other generated operation without guessing the tree's name.
+* **`mkit-firmware-client`** — maintainer tool. `refresh --url http://d1-2:4750`
+  or `refresh --spec <file>` rewrites the document, the generated tree and
+  `SNAPSHOT.json` together; `check [--url …]` verifies the committed snapshot
+  is self-consistent and, optionally, matches a daemon.
+* Tests: the snapshot matches its recorded hash and imports; the three policies
+  against a **real loopback OpenAPI server** (match → bundled, drift +
+  generator → cache, drift without a generator → warning or refusal); and the
+  adapter itself against a daemon-shaped server — the first bytes this suite
+  has ever put on a socket.
+
+### Notes
+
+* **`uv` is an optional runtime tool, never a pip dependency.** It is only used
+  to run `openapi-python-client` (which needs Python 3.11, and the robots run
+  3.10) when a regeneration is actually required. Without it a drifted daemon
+  gets a warning and the bundled client.
+* CI now installs `[firmware]` in every job, including `fresh-install`, which
+  imports the executor from the built wheel in a clean venv with no daemon and
+  no network. That was impossible while the extra named an unpublished package.
+
 ## 0.11.0 — 2026-09-19
 
 Fixes for the review of PR #16 (findings R1-R14). Several are behaviour

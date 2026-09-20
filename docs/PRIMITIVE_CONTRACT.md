@@ -176,7 +176,9 @@ axis.
 `manipulation_kit.executor` with two pure test doubles. The only implementation
 that opens a socket is `manipulation_kit.executors.firmware`, behind the
 `[firmware]` extra — see its module docstring for why the default transport is
-a daemon-played trajectory rather than a 50 Hz stream.
+a daemon-played trajectory rather than a 50 Hz stream, and
+`manipulation_kit.executors.firmware.ensure` for how its client is kept in step
+with the daemon's own OpenAPI document.
 
 ---
 

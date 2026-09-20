@@ -31,9 +31,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install without the mujoco extra
+        # [firmware] is in here on purpose: its dependencies are three
+        # PUBLISHED packages (httpx, attrs, typing_extensions), so a public
+        # runner can install it — which is the whole point of the change that
+        # replaced the unpublished d1fw-client. It is what lets the firmware
+        # client checks actually run rather than skip.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+          pip install -e '.[dev,firmware]'
       - name: mujoco really is absent
         # Otherwise a transitive dependency could quietly install it and this
         # job would stop testing the thing it exists to test.
@@ -77,7 +82,7 @@ jobs:
         # numpy default would be unverified against anything.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[mujoco,dev]'
+          pip install -e '.[mujoco,dev,firmware]'
       - name: Tests
         # -rs on purpose: this runner has no CAD (it is not in this
         # repository — LICENSE-STATUS.md), so the checks that OPEN a mesh skip
@@ -135,11 +140,11 @@ jobs:
     # directory. This one builds the wheel, installs it into a clean venv in
     # an empty directory, and runs the documented first steps from there.
     #
-    # It deliberately does NOT install `[firmware]`: that extra names
-    # `d1fw-client`, which is not published, and a job that pretended
-    # otherwise would be testing a fiction. The planning half of the
-    # Quickstart is what an outside reader can run today, and it is what this
-    # checks.
+    # It installs `[firmware]` too, which it could not do before: that extra
+    # used to name the unpublished `d1fw-client`. It now names three published
+    # packages and carries the generated client INSIDE the wheel, so a clean
+    # venv with no network beyond PyPI must be able to import the executor —
+    # and that is checked below, offline.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -155,7 +160,7 @@ jobs:
           mkdir -p /tmp/outsider && cd /tmp/outsider
           python -m venv venv
           ./venv/bin/pip install --upgrade pip
-          ./venv/bin/pip install "$GITHUB_WORKSPACE"/dist-wheel/*.whl
+          ./venv/bin/pip install "$(echo "$GITHUB_WORKSPACE"/dist-wheel/*.whl)[firmware]"
       - name: The Quickstart's planning half runs from the wheel
         run: |
           cd /tmp/outsider
@@ -191,19 +196,33 @@ jobs:
           assert plan.ok and plan.binding is not None and plan.binding.guarded
           print(f"ok: {len(offered)} offered, {len(plan.joint_steps())} joint steps")
           PY
-      - name: The firmware extra is honest about needing a client
+      - name: The firmware extra installs and its client ships inside the wheel
+        # No daemon, no network, no `uv`. The executor must import, the bundled
+        # generated client must be there, and its recorded spec hash must be
+        # the hash of the document beside it — from the WHEEL, which is the
+        # only place that can prove the generated tree and the two JSON files
+        # were actually packaged.
         run: |
           cd /tmp/outsider
-          ./venv/bin/python -c "
-          from manipulation_kit.executors.firmware import FirmwareUnavailable, _client_class
-          try:
-              _client_class()
-          except FirmwareUnavailable as exc:
-              assert 'd1fw-client' in str(exc)
-              print('ok:', exc)
-          else:
-              raise SystemExit('d1fw-client should not be installed here')
-          "
+          ./venv/bin/python - <<'PY'
+          import hashlib
+          from manipulation_kit.executors.firmware import (FirmwareExecutor,
+                                                           ensure, resolve_client)
+          snapshot = ensure.snapshot()
+          on_disk = hashlib.sha256(ensure.BUNDLED_SPEC.read_bytes()).hexdigest()
+          assert snapshot["spec_sha256"] == on_disk, "snapshot metadata drifted"
+          assert (ensure.BUNDLED_PACKAGE / "client.py").is_file(), \
+              "the generated client did not make it into the wheel"
+
+          # A daemon that is not there is not drift: the bundled tree, with a note.
+          resolution = resolve_client("http://127.0.0.1:1", timeout_s=0.5)
+          assert resolution.source == "bundled", resolution
+          assert "unreachable" in resolution.note, resolution.note
+
+          tree = ensure.import_tree(resolution)
+          assert hasattr(tree, "Client")
+          print("ok:", resolution.line())
+          PY
 
   version-bump:
     # Consumers pin this repository by COMMIT; pip decides whether to reinstall

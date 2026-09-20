@@ -40,26 +40,50 @@ face the jaws close on), and a tape measure.
 
 ```sh
 pip install -e .                 # numpy + scipy. Planning only.
-pip install -e '.[firmware]'     # + d1fw-client, for the one module with a wire
+pip install -e '.[firmware]'     # + httpx/attrs, for the one module with a wire
 ```
 
-`[firmware]` names `d1fw-client` as a plain distribution. **Until that package
-is published, install it explicitly first** — this step is interim, and Shu
-decides publication separately:
+That is the whole install. **There is no separate client package to fetch**,
+no git URL and no credential: `[firmware]` names three published distributions
+(`httpx`, `attrs`, `typing_extensions`), which are the runtime dependencies of
+a **generated** d1-firmwared client that ships inside this package.
 
-```sh
-pip install "git+https://github.com/Omakase-Robotics-Org/d1-firmware-client-py.git@bfd6a678"
-pip install -e '.[firmware]'
+#### What happens on your first connect
+
+The firmware is a binary plus an OpenAPI document, and the client has to match
+the document. So the first time you construct a `FirmwareExecutor` (or a
+`FirmwareClient`) the package asks the daemon for its own document
+(`GET /openapi.json`, 2 s timeout), hashes it, and compares it to the hash of
+the document the bundled client was generated from. One line says what it
+decided:
+
+```
+d1fw client: spec a66b5a65 source=bundled path=…/executors/firmware/_client/d1fw_api
 ```
 
-The pin is a commit on purpose. `d1-firmware-client-py` is a public repository, so this
-line needs no GitHub credentials — verified from a clean virtualenv with no SSH key
-(`d1fw-client 0.2.0`). What is still pending is publication to an index so that
-`pip install "manipulation-kit[firmware]"` alone resolves it. The planning half of this
-Quickstart runs on the base install; the execution half needs the client.
-Everything else — URDFs, `home_pose.json`, `safety_zones.json`, the tool
-configs — ships **inside the package** and resolves package-relative. There is
-nothing to download and no environment variable to set.
+* **Same document** — the bundled client is used. One GET, nothing else.
+* **The firmware is newer than this release** — the client is **regenerated on
+  the spot** from *that daemon's* document into
+  `~/.cache/manipulation-kit/d1fw/<sha>/` and imported from there
+  (`source=regenerated`; the next connect says `source=cache`). Regeneration
+  runs `openapi-python-client`, which needs Python 3.11, so it goes through
+  [`uv`](https://astral.sh/uv) — **an optional tool, not a dependency**:
+
+  ```sh
+  curl -LsSf https://astral.sh/uv/install.sh | sh   # only needed for this
+  ```
+
+* **Newer firmware and no `uv`** — a loud `WARNING`, and the bundled client is
+  used anyway so you are not stopped dead. Pass `client_policy="strict"` to
+  refuse instead, or `"bundled"` to never ask at all (air-gapped installs).
+* **Daemon unreachable** — not drift, nothing to compare: the bundled client,
+  with the reason in the log line.
+
+Execution needs Python 3.10 or newer (the generated client is emitted with
+modern typing); the planning half of this Quickstart runs on 3.9 like the rest
+of the package. Everything else — URDFs, `home_pose.json`, `safety_zones.json`,
+the tool configs — ships **inside the package** and resolves package-relative.
+There is nothing to download and no environment variable to set.
 
 ### 2. Connect and preflight
 
@@ -206,7 +230,7 @@ hand over nothing.
 pip install -e .            # everything below: numpy + scipy, nothing else
 pip install -e '.[dev]'     # + pytest, for the test suite
 pip install -e '.[mujoco]'  # + the OPTIONAL alternative IK substrate
-pip install -e '.[firmware]'  # + d1fw-client, for executors/firmware.py ONLY
+pip install -e '.[firmware]'  # + httpx/attrs, for executors/firmware/ ONLY
 ```
 
 **MuJoCo is not required.** Inverse kinematics runs on numpy over the URDF this
@@ -342,7 +366,10 @@ src/manipulation_kit/     the installed package — this, and only this, is the 
                  canonical argument table and a dependency-free JSON Schema
                  export), reach.py (which hand can do the whole task)
   executor.py    the Executor protocol and two pure test doubles
-  executors/     the ONE place with a wire: firmware.py, behind [firmware]
+  executors/     the ONE place with a wire: firmware/, behind [firmware].
+                 Its _client/ is a GENERATED d1-firmwared client plus the
+                 OpenAPI document it came from; ensure.py re-checks that
+                 document against the live daemon on every connect
   guard/         MotionGuard — stdlib-only joint limits + torso keep-out +
                  self-collision over the primitives-only whole-body URDF
   hands/         "<maker>/<model>" identity: tool configs, CAD descriptions,
@@ -433,8 +460,11 @@ barriers `wait_arrived` / `wait_gripper_settled`) and two pure doubles:
 that opens a socket** — a deliberate exception to the promise at the top of
 this file, decided by Shu on 2026-09-19, so that lease handling, mode entry and
 the rate clamp exist once instead of in every consumer. It is behind the
-optional `[firmware]` extra (`d1fw-client`), nothing else in the package
-imports it, and its tests run against a fake client. Its default transport is
+optional `[firmware]` extra — whose dependencies are the runtime deps of a
+**generated** client this package ships and re-checks against the daemon's own
+OpenAPI document on every connect (see the Quickstart). Nothing else in the
+package imports it; its tests run against a fake client and, for the wire
+itself, against a loopback server. Its default transport is
 `POST /v1/arm/trajectory/start`: a plan is already fully checked, so uploading
 it once puts the timing on the component with a real-time loop and adds a
 second, independent guard pass over the whole path. Streaming

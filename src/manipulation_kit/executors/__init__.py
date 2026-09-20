@@ -12,9 +12,16 @@ The exception is fenced, not waived:
 
 * nothing here is imported by anything else in the package — the only way in is
   to name it, ``from manipulation_kit.executors.firmware import FirmwareExecutor``;
-* it needs the optional ``[firmware]`` extra (``d1fw-client``). Without the
-  extra the import fails with one line saying so, and the base kit keeps its
-  no-socket install;
-* it is tested against a fake client, never a robot, so the suite still runs
-  on a laptop and a green CI still means nothing was on the network.
+* it needs the optional ``[firmware]`` extra — the runtime dependencies of the
+  **generated** d1-firmwared client that ships inside it (httpx, attrs,
+  typing_extensions). No private package, no git pin. Without the extra the
+  import of the transport fails with one line saying so, and the base kit keeps
+  its no-socket install;
+* the client is not written by hand and not assumed to be current: it is
+  generated from the daemon's OpenAPI document, and on every connect that
+  document is fetched from the live daemon and compared. See
+  :mod:`manipulation_kit.executors.firmware.ensure`;
+* it is tested against a fake client, and for the wire itself against a
+  loopback HTTP server — never a robot. The suite still runs on a laptop and a
+  green CI still means nothing reached the network.
 """
