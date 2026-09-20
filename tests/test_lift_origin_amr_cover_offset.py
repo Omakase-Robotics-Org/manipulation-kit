@@ -254,13 +254,22 @@ def test_the_column_visuals_carry_no_offset(urdf_root):
         assert xyz == pytest.approx([0.0, 0.0, 0.0], abs=1e-12), mesh
 
 
-def test_the_torso_keepout_kept_its_cad_shape(model):
-    """torso_core is the keep-out the C++/JS validators mirror: unchanged."""
+def test_the_torso_keepout_starts_at_the_sleeve_lip(model):
+    """torso_core is the keep-out the C++/JS validators mirror. It keeps the
+    CAD top (0.49 m) and now starts at the moving sleeve's lower lip, 79 mm
+    above the lift origin: the band below is fixed column already covered by
+    the chassis lift_pole box, so the guard loses no keep-out at q_lift = 0."""
+    from manipulation_kit.description.d1.tools.generate_d1_urdf import (
+        TORSO_SLEEVE_LIP_M,
+    )
     core = next(p for p in model.collisions["torso_column"]
                 if p.name == "torso_core")
-    assert core.size[2] == pytest.approx(CAD_TORSO_CORE_HEIGHT, abs=1e-9)
-    assert core.origin.t[2] == pytest.approx(CAD_TORSO_CORE_HEIGHT / 2.0,
+    assert TORSO_SLEEVE_LIP_M == pytest.approx(0.079)
+    height = CAD_TORSO_CORE_HEIGHT - TORSO_SLEEVE_LIP_M
+    assert core.size[2] == pytest.approx(height, abs=1e-9)
+    assert core.origin.t[2] == pytest.approx(TORSO_SLEEVE_LIP_M + height / 2.0,
                                              abs=1e-9)
+    assert core.size[0] == pytest.approx(0.09) and core.size[1] == pytest.approx(0.11)
 
 
 def test_the_guard_chest_keepout_is_unchanged():

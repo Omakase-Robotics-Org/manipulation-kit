@@ -742,10 +742,25 @@ BACK_FISHEYE_XYZ = (-0.1093, 0.0015, 0.4822)
 # Boxes named *_exempt are modeled but skipped by the pyguard keep-out check
 # (the arms coexist with them by construction).
 # --------------------------------------------------------------------------
+# The moving sleeve's lower lip, in the torso_column frame (= above the lift
+# origin).  Measured on d1-3 with the lift retracted: the lip sits at world
+# z = 0.592 m against a lift origin of 0.513 m (d1-isaaclab, ustea physical
+# mount check, 2026-09-13; pinned there by tests/test_ustea_mount.py).  The
+# torso_core keep-out used to start at 0.0, i.e. 79 mm below the lip, which is
+# volume that does NOT ride the lift: it is the fixed column, and it is already
+# inside the chassis-side lift_pole box (X +/-70, Y -67..73, world z
+# 0.389 .. 0.889) which encloses torso_core's X +/-45, Y +/-55 footprint.
+# Starting torso_core at the lip therefore removes no keep-out at q_lift = 0,
+# and at most the top 3 mm of the band at full 0.30 m extension (band world z
+# 0.813 .. 0.892 against the pole top at 0.889); in a simulator the old box
+# collided with the AMR cover on every episode, which is how it was found.
+# Shu approved shrinking the keep-out on 2026-09-20 (d1-isaaclab #55 review).
+TORSO_SLEEVE_LIP_M = 0.079
+
 BODY_BOXES = [
     ("torso_core",
-     (-0.045, -0.055, 0.0), (0.045, 0.055, 0.49),
-     "legacy keep-out column (safety_zones.json torso_keepout_box, chest-bracket width) - kept for continuity with the C++/JS validators"),
+     (-0.045, -0.055, TORSO_SLEEVE_LIP_M), (0.045, 0.055, 0.49),
+     "keep-out column (safety_zones.json torso_keepout_box, chest-bracket width), starting at the moving sleeve's lower lip - the 79 mm below it is fixed column inside lift_pole"),
     ("torso_frame",
      (-0.085, -0.082, 0.385), (0.085, 0.088, 0.56),
      "robot support frame 1120100258 between the shoulders - CAD bbox X+/-85 Y+/-85 Z-115..60"),
