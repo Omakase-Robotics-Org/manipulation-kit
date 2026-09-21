@@ -15,8 +15,15 @@
      registered TCP is the pad TIP, Z = 129 mm (see toolconfig.py). The
      earlier 108.5 mm centre, 143.5 mm tip and 136 mm TCP were vendor CAD and
      a d1-sdk default carried over with it, and were long by 8.5 / 14.5 / 7 mm.
-     The jaw MESHES still reach the CAD's 143.5 mm; replacing a mesh needs a
-     CAD drop, so that residual is recorded rather than hidden.
+     The jaw MESHES are vendor CAD and model the CAD's 70 mm opening: each
+     jaw mesh's inner pad FACE is 35 mm from its link origin. Replacing a
+     mesh needs a CAD drop, so instead each jaw's visual and collision
+     <origin> carries a 3 mm shift along the TRAVEL axis toward the centre
+     (the link's local Z): minus for tcp_r, plus for tcp_l. The faces then
+     sit at 32 mm, i.e. the measured 64 mm open and 0 mm closed, and the
+     driver's stop is 52 mm. ALONG the approach axis the meshes are
+     untouched and still reach 6 mm past the measured 129 mm pad tip; that
+     residual is recorded rather than hidden.
 
      Jaw convention: tcp_r_joint spans 0 .. 0.032 m and tcp_l_joint mimics it
      with multiplier minus one over 0.032 .. 0 m. Both jaws move inward as
@@ -102,7 +109,7 @@
     </inertial>
     <visual>
       <origin
-        xyz="0 0 0"
+        xyz="0 0 -0.003"
         rpy="0 0 0" />
       <geometry>
         <mesh
@@ -116,7 +123,7 @@
     </visual>
     <collision>
       <origin
-        xyz="0 0 0"
+        xyz="0 0 -0.003"
         rpy="0 0 0" />
       <geometry>
         <mesh
@@ -160,7 +167,7 @@
     </inertial>
     <visual>
       <origin
-        xyz="0 0 0"
+        xyz="0 0 0.003"
         rpy="0 0 0" />
       <geometry>
         <mesh
@@ -174,7 +181,7 @@
     </visual>
     <collision>
       <origin
-        xyz="0 0 0"
+        xyz="0 0 0.003"
         rpy="0 0 0" />
       <geometry>
         <mesh

@@ -42,9 +42,19 @@ vendor drop — see ``descriptions/README.md``):
    centre and their limits to ± 32 mm. This is the FIRST edit here that
    changes vendor kinematics rather than an export artefact, and it is made
    on purpose: a CAD number that disagrees with a calliper on the assembled
-   robot is wrong about the robot. The jaw MESHES are untouched — they still
-   reach 6 mm past the measured pad tip — because replacing a mesh needs a
-   CAD drop, not a measurement. See GEOMETRY below.
+   robot is wrong about the robot. See GEOMETRY below.
+7. **Jaw mesh origins shifted onto the measured half-opening.** The CAD
+   modelled a 70 mm opening, so each jaw mesh's inner pad FACE sits at
+   ``CAD_JAW_STROKE_M`` = 35 mm in its own link frame, and a consumer that
+   renders or collides the MESH sees a 70 mm open / 6 mm closed gripper where
+   the joints say 64 / 0. Replacing the mesh needs a CAD drop, so instead
+   each jaw's ``<visual>`` and ``<collision>`` origin carries a
+   ``JAW_STROKE_M - CAD_JAW_STROKE_M`` = **-3 mm** shift ALONG THE TRAVEL
+   AXIS, toward the centre: the link's local +z (the joint axis), minus for
+   ``tcp_r`` whose face is at +35 mm and plus for ``tcp_l`` whose face is at
+   -35 mm. The faces then sit at ±32 mm at ``q = 0``. This moves the mesh
+   only across the jaw gap; along the APPROACH axis it is untouched and still
+   reaches 6 mm past the measured pad tip.
 
 Needs ``trimesh`` and ``fast-simplification`` (dev-only; neither is a
 dependency of this package).
@@ -168,8 +178,15 @@ HEADER = """<?xml version="1.0" encoding="utf-8"?>
      registered TCP is the pad TIP, Z = 129 mm (see toolconfig.py). The
      earlier 108.5 mm centre, 143.5 mm tip and 136 mm TCP were vendor CAD and
      a d1-sdk default carried over with it, and were long by 8.5 / 14.5 / 7 mm.
-     The jaw MESHES still reach the CAD's 143.5 mm; replacing a mesh needs a
-     CAD drop, so that residual is recorded rather than hidden.
+     The jaw MESHES are vendor CAD and model the CAD's 70 mm opening: each
+     jaw mesh's inner pad FACE is 35 mm from its link origin. Replacing a
+     mesh needs a CAD drop, so instead each jaw's visual and collision
+     <origin> carries a 3 mm shift along the TRAVEL axis toward the centre
+     (the link's local Z): minus for tcp_r, plus for tcp_l. The faces then
+     sit at 32 mm, i.e. the measured 64 mm open and 0 mm closed, and the
+     driver's stop is 52 mm. ALONG the approach axis the meshes are
+     untouched and still reach 6 mm past the measured 129 mm pad tip; that
+     residual is recorded rather than hidden.
 
      Jaw convention: tcp_r_joint spans 0 .. 0.032 m and tcp_l_joint mimics it
      with multiplier minus one over 0.032 .. 0 m. Both jaws move inward as
@@ -203,7 +220,8 @@ def rewrite_urdf(text: str) -> str:
     text, n = re.subn(r'velocity="0"', f'velocity="{FINGER_VELOCITY_MPS}"', text)
     if n != 2:
         raise SystemExit(f"expected 2 zero velocity limits to patch, found {n}")
-    return _rewrite_base_inertial(_rewrite_jaw_geometry(text))
+    return _rewrite_base_inertial(
+        _rewrite_jaw_mesh_origins(_rewrite_jaw_geometry(text)))
 
 
 def _rewrite_jaw_geometry(text: str) -> str:
@@ -225,6 +243,46 @@ def _rewrite_jaw_geometry(text: str) -> str:
         raise SystemExit(
             f"expected 2 jaw stroke limits of {CAD_JAW_STROKE_M} m to "
             f"retarget onto the measured {JAW_STROKE_M} m, found {n}")
+    return text
+
+
+#: Which way the INNER PAD FACE of each jaw mesh lies along the link's local
+#: +z, which is the jaw travel axis (the joint axis is ``0 0 -1`` in that same
+#: frame). ``tcp_r_Link.STL`` spans local z 35 … 75 mm and ``tcp_l_Link.STL``
+#: spans -75 … -35 mm, so the faces are at +35 and -35 mm respectively and both
+#: jaws close toward z = 0.
+JAW_MESH_FACE_SIGN = {"r": +1.0, "l": -1.0}
+
+
+def jaw_mesh_offset(jaw: str) -> float:
+    """How far to shift jaw ``jaw``'s mesh so its face lands on the measured
+    half-opening: signed, in metres, along the link's local +z."""
+    return JAW_MESH_FACE_SIGN[jaw] * (JAW_STROKE_M - CAD_JAW_STROKE_M)
+
+
+def _jaw_mesh_origin_re(jaw: str) -> re.Pattern:
+    """A jaw mesh's ``<origin>`` xyz, in a ``<visual>`` or ``<collision>``."""
+    return re.compile(
+        r'(<origin\s+xyz=")([^"]*)("\s+rpy="[^"]*"\s*/>\s*<geometry>\s*'
+        rf'<mesh\s+filename="meshes/tcp_{jaw}_Link\.STL")')
+
+
+def _rewrite_jaw_mesh_origins(text: str) -> str:
+    """Shift each jaw mesh onto the MEASURED half-opening (edit 7).
+
+    The CAD opened to 70 mm; the callipers say 64. The mesh cannot be
+    re-cut here, so it is MOVED: ``JAW_STROKE_M - CAD_JAW_STROKE_M`` along the
+    travel axis, toward the centre. Every jaw mesh reference gets it — visual
+    AND collision — or the two disagree about where the jaw is.
+    """
+    for jaw in ("r", "l"):
+        offset = jaw_mesh_offset(jaw)
+        text, n = _jaw_mesh_origin_re(jaw).subn(
+            rf'\g<1>0 0 {offset:g}\g<3>', text)
+        if n != 2:
+            raise SystemExit(
+                f"expected 2 tcp_{jaw}_Link mesh origins (visual + collision) "
+                f"to shift by {offset} m, found {n}")
     return text
 
 

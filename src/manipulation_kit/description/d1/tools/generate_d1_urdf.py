@@ -353,6 +353,27 @@ GRIPPER_ADAPTER_COLOUR = ("gripper_spacer", "0.55 0.42 0.16 1")
 # half-opening (32 mm) and is 40 mm thick.  The CAD jaw MESH is longer than
 # this — it reaches base z 135 mm at the joint's measured origin — which is
 # the mesh residual recorded in descriptions/README.md.
+# The jaw VISUAL mesh is vendor CAD cut for the CAD's 70 mm opening: its inner
+# pad FACE sits at local z = 35 mm (tcp_r; -35 mm for tcp_l), 3 mm outside the
+# MEASURED 32 mm half-opening the joints and the boxes above use. Rendering it
+# at the link origin therefore draws a gripper that is 70 mm open and 6 mm
+# "closed", and any consumer that collides the mesh (Isaac builds its convex
+# hulls from it) grasps against those numbers instead of the real 64 / 0 — and
+# against a DRIVEN opening of 51.96 mm, which is narrower still.
+# Re-cutting the mesh needs a CAD drop, so it is MOVED: each jaw mesh is
+# offset by JAW_STROKE - CAD_JAW_STROKE = -3 mm along the travel axis, toward
+# the centre. That is the link's local z, so the sign follows which side the
+# face is on: minus for r, plus for l. ALONG the approach axis (local x) the
+# mesh is untouched and still overshoots the measured pad tip by 6 mm.
+# dx-manipulator hands/d1/parallel_gripper/descriptions/gripper.urdf carries
+# the identical offsets; tests/guard/test_description_consistency.py pins the
+# two together.
+CAD_JAW_STROKE_M = 0.035            # what the vendor CAD opened to, per jaw
+GRIPPER_JAW_MESH_FACE_SIGN = {"r": +1.0, "l": -1.0}
+GRIPPER_JAW_MESH_ORIGIN = {
+    jaw: (0.0, 0.0, sign * (GRIPPER_JAW_LIMITS["r"][1] - CAD_JAW_STROKE_M))
+    for jaw, sign in GRIPPER_JAW_MESH_FACE_SIGN.items()
+}
 GRIPPER_JAW_BOX = {
     "r": ((-0.029, -0.019, 0.032), (0.029, 0.019, 0.072)),
     "l": ((-0.029, -0.019, -0.072), (0.029, 0.019, -0.032)),
@@ -1469,13 +1490,16 @@ def full_inertial(mass, com, inertia, note, indent="    "):
             f"{indent}</inertial>\n")
 
 
-def mesh_visual(name, kind, indent="    "):
+def mesh_visual(name, kind, indent="    ", origin=(0.0, 0.0, 0.0)):
     """``<visual>`` referencing a vendored gripper STL, path relative to the
     URDF file so it resolves outside ROS and from any working directory.
-    ``kind`` picks the vendor material: "base" (housing) or "jaw"."""
+    ``kind`` picks the vendor material: "base" (housing) or "jaw".
+
+    ``origin`` places the mesh in its link frame. Only the jaws use it — see
+    :data:`GRIPPER_JAW_MESH_ORIGIN`."""
     material, rgba = GRIPPER_COLOUR[kind]
     return (f"{indent}<visual>\n"
-            f"{indent}  <origin xyz=\"0 0 0\" rpy=\"0 0 0\"/>\n"
+            f"{indent}  <origin xyz=\"{_xyz(origin)}\" rpy=\"0 0 0\"/>\n"
             f"{indent}  <geometry><mesh filename=\"{GRIPPER_MESH_DIR}/{name}\"/></geometry>\n"
             f"{indent}  <material name=\"{material}\">"
             f"<color rgba=\"{rgba}\"/></material>\n"
@@ -1552,7 +1576,9 @@ def parallel_gripper(side, meshes=False, cameras=False):
               + full_inertial(GRIPPER_JAW_MASS, GRIPPER_JAW_COM[jaw],
                               GRIPPER_JAW_INERTIA[jaw],
                               "CAD inertial, verbatim (41.6 g, 5.5% of the tool)")
-              + (mesh_visual(GRIPPER_MESH[jaw], "jaw") if meshes else "")
+              + (mesh_visual(GRIPPER_MESH[jaw], "jaw",
+                             origin=GRIPPER_JAW_MESH_ORIGIN[jaw])
+                 if meshes else "")
               + box_elem(f"{p}_tcp_{jaw}_jaw", blo, bhi,
                          f"MEASURED pad on tcp_{jaw}_Link: 58 mm deep, root at 71 mm, "
                          f"tip at 129 mm from the flange; q=0 is the 64 mm OPEN gap")

@@ -36,6 +36,14 @@ over: the vendored ``tcp_{r,l}_Link.STL`` jaw meshes are ~10 mm longer than
 the measured 58 mm pads, and ``camera_plate.STL`` still models an 8 mm disc.
 The constants and the primitive collision boxes follow the measurement; the
 meshes are vendor CAD and are only replaced by a new CAD drop.
+
+The one thing that could NOT be left as a residual is the jaw meshes ACROSS
+the gap. The CAD was cut for a 70 mm opening, so each jaw mesh's inner pad
+FACE sits at :data:`CAD_JAW_STROKE_M` = 35 mm in its own link frame — and a
+consumer that renders or collides the mesh (Isaac builds its convex hulls
+from it) then works to a 70 mm open / 6 mm closed gripper while the joints
+say 64 / 0 and the DRIVER only reaches 51.96 mm. So the mesh is not re-cut,
+it is MOVED: see :data:`JAW_MESH_ORIGIN_Z_M`.
 """
 from __future__ import annotations
 
@@ -51,6 +59,30 @@ from . import description_path
 #: finger travels half of that (d1-3, 2026-09-16, callipers). The vendor CAD
 #: claimed 35 mm per finger / a 70 mm gap.
 JAW_STROKE_M = 0.032
+
+#: The half-opening the vendor CAD was cut for, and therefore where each jaw
+#: mesh's inner pad FACE sits in its OWN link frame: ``tcp_r_Link.STL`` spans
+#: local z 35 … 75 mm and ``tcp_l_Link.STL`` spans -75 … -35 mm. Kept for the
+#: record, and because :data:`JAW_MESH_ORIGIN_Z_M` is derived from it.
+CAD_JAW_STROKE_M = 0.035
+
+#: Which way along a jaw link's local +z its pad face lies. Local +z IS the
+#: jaw travel axis (both joints carry ``axis = 0 0 -1`` in that frame), so
+#: both jaws close toward z = 0 and the face signs are opposite.
+JAW_MESH_FACE_SIGN = {"r": +1.0, "l": -1.0}
+
+#: The offset the URDF gives each jaw's ``<visual>`` AND ``<collision>`` mesh,
+#: metres along the link's local +z. It is ``JAW_STROKE_M -
+#: CAD_JAW_STROKE_M`` = **-3 mm** applied toward the centre, which lands the
+#: pad face on the MEASURED half-opening: the faces sit at
+#: ``JAW_MESH_FACE_SIGN[jaw] * JAW_STROKE_M`` at ``q = 0``, i.e. 64 mm apart
+#: open, meeting closed, and :data:`DRIVEN_OPEN_GAP_M` apart at the driver's
+#: stop. Only the gap direction moves; along the approach axis the mesh is
+#: untouched and still overshoots :data:`PAD_TIP_Z_M` by 6 mm.
+JAW_MESH_ORIGIN_Z_M = {
+    jaw: sign * (JAW_STROKE_M - CAD_JAW_STROKE_M)
+    for jaw, sign in JAW_MESH_FACE_SIGN.items()
+}
 
 #: Gap between the jaw faces at ``q = 0``. Both jaws close inward as ``|q|``
 #: grows, so ``q = 0`` is OPEN and ``|q| = JAW_STROKE_M`` is CLOSED — the

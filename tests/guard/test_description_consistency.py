@@ -563,6 +563,38 @@ def test_gripper_jaws_open_64mm_and_close_to_zero():
             f"{side} jaws do not both close INWARD at |q| = 0.032: {travel}")
 
 
+def test_gripper_jaw_visual_meshes_carry_the_hand_urdfs_shift():
+    """The whole-body file draws the jaws with the SAME mesh offset the hand
+    description authors, so the rendered gripper and the collision boxes agree
+    on a 64 mm opening.
+
+    The vendor CAD was cut for 70 mm: each jaw mesh's inner pad face sits at
+    35 mm in its link frame. The hand URDF moves it 3 mm toward the centre
+    rather than re-cutting it (a mesh is only replaced by a CAD drop), and
+    this file is generated, so the two can drift apart in exactly one way —
+    someone changes one generator and not the other."""
+    from manipulation_kit.hands.d1.parallel_gripper.description import (
+        JAW_MESH_ORIGIN_Z_M)
+
+    root = ET.parse(D1_WB_GRIPPER).getroot()
+    for side in ("R", "L"):
+        for jaw in ("r", "l"):
+            link = next(l for l in root.findall("link")
+                        if l.get("name") == f"gripper_{side}_tcp_{jaw}_link")
+            visual = next(v for v in link.findall("visual")
+                          if v.find("geometry/mesh") is not None)
+            assert visual.find("geometry/mesh").get("filename").endswith(
+                f"tcp_{jaw}_Link.STL")
+            xyz = tuple(float(v) for v in
+                        visual.find("origin").get("xyz").split())
+            assert _close(xyz, (0.0, 0.0, JAW_MESH_ORIGIN_Z_M[jaw]), 1e-9), (
+                f"gripper_{side}_tcp_{jaw}_link's mesh is at {xyz}, but the "
+                f"hand description places it at z = {JAW_MESH_ORIGIN_Z_M[jaw]}")
+            # ... and that is the measured half-opening, not the CAD's
+            assert abs(GRIPPER_JAW_STROKE - (0.035 + JAW_MESH_ORIGIN_Z_M[jaw]
+                                             * (1 if jaw == "r" else -1))) < 1e-9
+
+
 def test_gripper_mount_frame_is_the_tool_flange():
     """The gripper is bolted to TCP_Link with NO translation, and the jaw
     joints hang at the MEASURED pad centre, so the registered TCP (129 mm =
