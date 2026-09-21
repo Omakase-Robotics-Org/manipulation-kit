@@ -652,7 +652,8 @@ class ToolGate:
         return tool_from_link7(p7, r7)
 
     def _measured(self, executor: "Executor", side: str
-                  ) -> Tuple[Optional[np.ndarray], Optional[SettleReport]]:
+                  ) -> Tuple[Optional[np.ndarray], Optional[SettleReport],
+                             Optional[RawState]]:
         """The arm's posture ONCE IT HAS STOPPED, and the settle that says so.
 
         Not a nicety: the correction feeds a STEADY-STATE offset forward, and
@@ -677,7 +678,7 @@ class ToolGate:
         state = executor.state()
         q = state.joints.get(side)
         return (None if q is None
-                else np.asarray(q, dtype=float).reshape(ARM_DOF)), settle
+                else np.asarray(q, dtype=float).reshape(ARM_DOF)), settle, state
 
     def _miss(self, kin, side: str, q_cmd, q_meas) -> "ToolMiss":
         """How far the tool ended up from where it was sent, DECOMPOSED.
@@ -714,7 +715,7 @@ class ToolGate:
             return (_with_label(arrival, label, detail=(
                 f"{arrival.detail}; and the tool point could not be computed: "
                 f"no kinematic model ({exc})")), None)
-        q_meas, settle = self._measured(executor, side)
+        q_meas, settle, state = self._measured(executor, side)
         if q_meas is None:
             return (ArrivalReport(
                 False, arrival.worst_error_rad, arrival.waited_s,
@@ -722,6 +723,19 @@ class ToolGate:
                 f"{side} arm, so where the tool ended up cannot be measured",
                 waypoint_label=label), None)
         miss = self._miss(kin, side, want[JOINT_SLICE[side]], q_meas)
+        if not arrival.arrived and settle is not None and settle.settled:
+            # THE BARRIER'S OWN WAIT IS NOT THE ARM'S LAST CHANCE. The joint
+            # gate has a deadline (2 s of an Isaac tick budget, 3 s of wall
+            # clock on the robot) and a long travel can still be converging
+            # when it expires — before this gate existed, that travel simply
+            # ran on into the next leg. The settle that follows holds the same
+            # command and lets it finish, so the honest question is where the
+            # arm is NOW, not where it was when the clock ran out.
+            worst = _joint_error(state, want)
+            if np.isfinite(worst) and worst <= self.tol_rad:
+                arrival = ArrivalReport(
+                    True, worst, arrival.waited_s + settle.waited_s,
+                    f"arrived once the arm stopped ({arrival.detail})")
         if not arrival.arrived:
             # The joint barrier failed FIRST. It stays the answer — the arm is
             # still travelling, or it stopped short — but the tool numbers go
@@ -793,7 +807,7 @@ class ToolGate:
         sent: Optional[np.ndarray] = None
         for index in range(1, self.max_rounds + 1):
             before = miss.across_m
-            q_meas, _settle = self._measured(executor, side)
+            q_meas, _settle, _state = self._measured(executor, side)
             if q_meas is None:
                 return self._refuse(
                     arrival, miss, label, rounds,
@@ -810,7 +824,7 @@ class ToolGate:
             sent = command
             again = _arrival_of(executor, command, tol_rad=self.tol_rad,
                                 timeout_s=self.timeout_s)
-            q_meas, settled = self._measured(executor, side)
+            q_meas, settled, _state = self._measured(executor, side)
             if q_meas is None:
                 rounds.append(Correction(
                     index, before, float("nan"),
@@ -992,6 +1006,21 @@ def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
     return (f"{arrival.detail}. Nudge the tool the measured amount and "
             f"re-plan, or approach the object along a different axis; the "
             f"jaws are not over it and closing them would miss")
+
+
+def _joint_error(state: Optional[RawState], want) -> float:
+    """Worst measured joint error against a commanded 16-vector [rad]."""
+    if state is None:
+        return float("nan")
+    want = np.asarray(want, dtype=float).reshape(WIRE_DIM)
+    worst = 0.0
+    for side in SIDES:
+        q = state.joints.get(side)
+        if q is None:
+            return float("nan")
+        worst = max(worst, float(np.max(np.abs(
+            np.asarray(q, dtype=float) - want[JOINT_SLICE[side]]))))
+    return worst
 
 
 def _arm_stopped(settle: SettleReport) -> bool:

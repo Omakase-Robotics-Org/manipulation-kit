@@ -408,6 +408,38 @@ def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
     assert _strokes(robot) == [0.0]
 
 
+def test_an_arm_still_travelling_when_the_clock_runs_out_gets_the_settle(
+        d1_arm, observe):
+    """The joint gate's deadline is not the arm's last chance.
+
+    A long travel can still be converging when the 2-3 s budget expires, and
+    before this barrier existed that travel simply ran on into the next leg.
+    The settle holds the same command and lets it finish, so the question is
+    where the arm is NOW — measured on blocks-eval, where a HOME -> standoff
+    travel hit the harness's 2 s tick budget and was 75 mm out at the moment
+    the clock stopped.
+    """
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = _grasp(world, d1_arm)
+
+    class LateButArriving(DroopingExecutor):
+        """Its own wait_arrived always times out; the arm is there anyway."""
+
+        def wait_arrived(self, q16, *, tol_rad=ARRIVE_TOL_RAD, timeout_s=3.0):
+            self.gated = True
+            return ArrivalReport(False, math.radians(9.0), float(timeout_s),
+                                 "still 9.00 deg from the commanded posture")
+
+    robot = LateButArriving(world, offset_rad=0.0)
+    report = run(plan, robot, kin=d1_arm)
+    assert report.completed, report.error
+    assert all(a.arrived for a in report.arrivals)
+    assert all(a.settled for a in report.arrivals)
+    # the transport's own wait never succeeded; what carried it is the settle
+    assert all(a.waited_s >= 3.0 for a in report.arrivals)
+    assert _strokes(robot) == [0.0, 1.0]
+
+
 def test_an_arm_that_has_not_stopped_is_not_measured_at_all(d1_arm, observe):
     """The correction feeds a STEADY-STATE offset forward. A tool point read
     while the arm is still converging is where it was passing, not where it is

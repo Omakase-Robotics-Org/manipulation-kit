@@ -56,6 +56,15 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
   that waits for the jaws too — the Isaac one does, deliberately — must not
   refuse a barrier about the arm, and did: "still moving at 0.0 deg/s ... the
   right jaws are still moving".
+* **The joint gate's deadline is not the arm's last chance.** When
+  `wait_arrived` times out but the settle that follows says the arm has
+  stopped, the barrier re-asks where the arm is NOW and accepts it if it is
+  within `tol_rad`. A long travel that was still converging used to run
+  straight on into the next leg (there was no barrier there at all); turning
+  that into a refusal because a 2 s tick budget expired would have been a new
+  failure of its own — measured with Astra on blocks-eval, a HOME → standoff
+  travel sat 75 mm out at the moment the clock stopped and was fine a moment
+  later.
 * **In-place correction**, on by default (`run(..., correct_arrival=True)`).
   A tool miss on a settled arm is a steady-state offset, so it is fed forward:
   the same commanded tool pose shifted by −Δp (and, when the rotation is itself
