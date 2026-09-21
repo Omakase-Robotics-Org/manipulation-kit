@@ -997,7 +997,17 @@ def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
     (2026-09-21). The two misses have different answers and the barrier knows
     which one it saw.
     """
-    if abs(arrival.tool_along_m) > gate.tol_along_m:
+    if arrival.settled is None:
+        # The JOINT barrier is what failed: the arm never got to the posture
+        # at all, so the tool numbers describe a journey rather than a miss.
+        return (f"{arrival.detail}. The arm did not reach the commanded "
+                f"posture — it was still travelling, or something stopped it. "
+                f"Re-observe before asking for the same move again")
+    if (arrival.tool_across_m <= gate.tol_m
+            and abs(arrival.tool_along_m) > gate.tol_along_m):
+        # Lined up and short: that is what CONTACT looks like. Only then — a
+        # miss that is off in BOTH is not a story about the surface, and
+        # measured with Astra this wording went out on an arm 320 mm away.
         return (f"{arrival.detail}. The arm is stationary short of the "
                 f"waypoint along its own approach axis, which is what CONTACT "
                 f"looks like: something is under the fingers. Re-observe, or "
@@ -1069,7 +1079,7 @@ def _same(a: Optional[np.ndarray], b: Optional[np.ndarray]) -> bool:
             and np.array_equal(np.asarray(a), np.asarray(b)))
 
 
-def _off_by(plan: Plan, side: str, arrival: ArrivalReport,
+def barrier_refusal(plan: Plan, side: str, arrival: ArrivalReport,
             gate: "ToolGate") -> RunRefusal:
     """The typed half of a failed tool-space barrier.
 
@@ -1323,7 +1333,7 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
                     # The REFUSAL's detail, not the arrival's: it is the same
                     # sentence plus the move that answers it, and a consumer
                     # that only reads ``error`` is owed that too.
-                    refusal = _off_by(plan, step.side, arrival, gate)
+                    refusal = barrier_refusal(plan, step.side, arrival, gate)
                     return stop(index, BARRIER_FAILED, refusal.detail, refusal)
         elif isinstance(step, GripStep):
             # ARRIVE BEFORE YOU CLOSE. A stroke run while the arm is still

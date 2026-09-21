@@ -74,7 +74,7 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         JOINT_SLICE, SIDES, STROKE_TIMEOUT_S,
                         TRANSPORT_ERROR, ArrivalReport, RawState, RunReport,
                         SettleReport, StrokeReport, ToolGate, WIRE_DIM,
-                        arrive_labels, _off_by)
+                        arrive_labels, barrier_refusal)
 from ...primitives.types import GripStep, JointStep, Plan, SettleStep
 from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
                      RateRefused)
@@ -746,7 +746,7 @@ class FirmwareExecutor:
                         corrected[JOINT_SLICE[closing.side]], dtype=float)
                 if arrival.arrived:
                     return None
-                refusal = _off_by(plan, closing.side, arrival, gate)
+                refusal = barrier_refusal(plan, closing.side, arrival, gate)
                 return report(index, BARRIER_FAILED, refusal.detail, refusal)
 
             for index, step in enumerate(plan.steps):

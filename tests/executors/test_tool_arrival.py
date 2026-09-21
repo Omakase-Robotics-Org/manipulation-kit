@@ -356,6 +356,35 @@ def test_a_transport_that_cannot_say_where_the_arm_is_fails_the_barrier(
     assert "no measured joints" in report.error
 
 
+def test_the_remedy_is_about_the_miss_that_actually_happened(d1_arm, observe):
+    """A miss that is off in BOTH directions is not a story about a surface.
+
+    Measured with Astra (2026-09-21): the contact wording went out on an arm
+    320 mm from the waypoint, which had simply not got there.
+    """
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = _grasp(world, d1_arm)
+    report = run(plan, DroopingExecutor(world), kin=d1_arm,
+                 correct_arrival=False)
+    assert report.refusal.reason == "arrived_off_by"
+    assert "CONTACT" not in report.refusal.detail, (
+        "the jaws are 17 mm off across the axis; the surface is not the story")
+
+    class NeverArrives(DroopingExecutor):
+        def wait_arrived(self, q16, *, tol_rad=ARRIVE_TOL_RAD, timeout_s=3.0):
+            self.gated = True
+            return ArrivalReport(False, math.radians(51.2), float(timeout_s),
+                                 "still 51.20 deg from the commanded posture")
+
+        def settle(self, timeout_s: float) -> SettleReport:
+            self.settles.append(float(timeout_s))
+            return SettleReport(False, float(timeout_s), 40.0, "still moving")
+
+    far = run(plan, NeverArrives(world), kin=d1_arm)
+    assert not far.completed
+    assert "did not reach the commanded posture" in far.refusal.detail
+
+
 def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
                                                                     observe):
     """Depth is what CONTACT takes, and pushing into it is F5.
