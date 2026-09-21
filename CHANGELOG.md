@@ -82,7 +82,10 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
   `not_settled`, `stroke_unfinished` (`RUN_REASONS`). The schema version does
   not move — nothing that could read a refusal/2 object reads this one any less
   well. So the agent gets "the right tool point is 27 mm from the grasp pose
-  after 2 corrections", not a jaw stall three steps later.
+  after 2 corrections", not a jaw stall three steps later — and, with it, the
+  MOVE that answers it, which is not the same move for the two misses: a
+  lateral miss is a nudge, a miss along the approach axis is contact under the
+  fingers and asking for the same descent again will not move it.
 * `ArrivalReport` carries `tool_error_m`, `tool_across_m`, `tool_along_m`,
   `tool_rot_error_rad`, `settled`, `corrections` and `waypoint_label` beside
   the unchanged `worst_error_deg`, so every `run.arrivals[*]` in a trace can be

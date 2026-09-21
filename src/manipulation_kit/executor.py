@@ -974,6 +974,26 @@ def _report(arrived: bool, arrival: ArrivalReport, miss: "ToolMiss",
                          miss.across_m, miss.along_m)
 
 
+def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
+    """The refusal, plus what would actually answer it.
+
+    A number with no move attached costs the caller a turn to work out, and
+    an agent given one spends that turn re-asking for the same verb with a
+    different argument — measured, five of twelve turns of an Astra trial
+    (2026-09-21). The two misses have different answers and the barrier knows
+    which one it saw.
+    """
+    if abs(arrival.tool_along_m) > gate.tol_along_m:
+        return (f"{arrival.detail}. The arm is stationary short of the "
+                f"waypoint along its own approach axis, which is what CONTACT "
+                f"looks like: something is under the fingers. Re-observe, or "
+                f"stand off and come in along a different approach — asking "
+                f"for the same descent again will not move it")
+    return (f"{arrival.detail}. Nudge the tool the measured amount and "
+            f"re-plan, or approach the object along a different axis; the "
+            f"jaws are not over it and closing them would miss")
+
+
 def _arm_stopped(settle: SettleReport) -> bool:
     """Is the ARM stationary, whatever else the settle was waiting for?"""
     worst = float(settle.worst_velocity_deg_s)
@@ -1041,7 +1061,7 @@ def _off_by(plan: Plan, side: str, arrival: ArrivalReport,
     else:
         reason = ARRIVED_OFF_BY if off else ARRIVAL_UNKNOWN
     return RunRefusal(
-        reason, arrival.detail,
+        reason, _remedy(arrival, gate) if off else arrival.detail,
         arrival.waypoint_label, arrival.tool_error_m,
         arrival.tool_rot_error_rad, stage="tool_arrival",
         attempted=tuple(

@@ -169,6 +169,9 @@ def test_without_correction_the_stroke_is_refused_with_arrived_off_by(
         "the miss is caught BEFORE the descent, which is the leg that may not "
         "be re-routed")
     assert report.refusal.residual_m > ARRIVE_TOL_M
+    # and it says what would ANSWER it: a number with no move attached costs
+    # the caller a turn to work out what to do with
+    assert "Nudge" in report.refusal.detail
     # the jaws never closed: the opening stroke is the only one
     assert _strokes(robot) == [0.0]
     arrival = report.arrivals[-1]
@@ -397,6 +400,8 @@ def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
     assert arrival.tool_across_m <= ARRIVE_TOL_M, "the jaws are lined up"
     assert abs(arrival.tool_along_m) > ARRIVE_TOL_ALONG_M
     assert "stopped" in arrival.detail and "deeper" in arrival.detail
+    assert "CONTACT" in report.refusal.detail, (
+        "the remedy for a depth miss is not the remedy for a lateral one")
     assert _strokes(robot) == [0.0]
 
 
