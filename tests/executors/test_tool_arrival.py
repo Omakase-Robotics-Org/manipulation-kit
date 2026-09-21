@@ -416,6 +416,20 @@ def test_an_arm_that_has_not_stopped_is_not_measured_at_all(d1_arm, observe):
             return SettleReport(False, float(timeout_s), 12.0,
                                 "still moving at 12.0 deg/s")
 
+    class JawsStillMoving(DroopingExecutor):
+        """The arm HAS stopped; the barrier's settle is waiting for the jaws.
+
+        The plan's own settle, later, gets the jaws at rest — which is the
+        real sequence: the hand is ramping open while the arm parks.
+        """
+
+        def settle(self, timeout_s: float) -> SettleReport:
+            self.settles.append(float(timeout_s))
+            if float(timeout_s) != 2.0:
+                return SettleReport(True, 0.0, 0.0, "everything is at rest")
+            return SettleReport(False, float(timeout_s), 0.0,
+                                "the right jaws are still moving")
+
     robot = NeverStops(world)
     report = run(plan, robot, kin=d1_arm)
     assert not report.completed
@@ -426,6 +440,14 @@ def test_an_arm_that_has_not_stopped_is_not_measured_at_all(d1_arm, observe):
     assert arrival.corrections == (), "nothing to feed forward from a blur"
     assert _strokes(robot) == [0.0]
     assert robot.settles[0] == 2.0, "the gate's own settle budget"
+
+    # ...and a settle that failed on the JAWS is not a moving arm. Measured on
+    # blocks-eval: a grasp refused with "still moving at 0.0 deg/s ... the
+    # right jaws are still moving", on a perfectly stationary arm.
+    quiet = JawsStillMoving(world, offset_rad=math.radians(1.2))
+    second = run(plan, quiet, kin=d1_arm)
+    assert second.completed, second.error
+    assert all(a.settled for a in second.arrivals)
 
 
 def test_the_barrier_runs_once_per_gated_waypoint_and_not_per_knot(d1_arm,

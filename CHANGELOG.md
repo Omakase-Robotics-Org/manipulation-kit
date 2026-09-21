@@ -51,7 +51,11 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
   is going to be: measured on `blocks-eval`, reading at the instant the 3° gate
   passed made every correction round chase the same settle — 23.8 → 14.9 → 9.1
   → 7.2 mm, converging on nothing. An arm that will not stop is the typed
-  refusal `not_settled`, and nothing is fed forward from a blur.
+  refusal `not_settled`, and nothing is fed forward from a blur. The settle's
+  FLAG is read with its NUMBER (`ARM_STATIONARY_DEG_S`, 3 deg/s): a settle
+  that waits for the jaws too — the Isaac one does, deliberately — must not
+  refuse a barrier about the arm, and did: "still moving at 0.0 deg/s ... the
+  right jaws are still moving".
 * **In-place correction**, on by default (`run(..., correct_arrival=True)`).
   A tool miss on a settled arm is a steady-state offset, so it is fed forward:
   the same commanded tool pose shifted by −Δp (and, when the rotation is itself

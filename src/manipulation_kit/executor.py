@@ -265,6 +265,17 @@ ARRIVE_TOL_ROT_RAD = math.radians(5.0)
 #: different moment of the same settle. With the arm stopped first, one round
 #: does it.
 ARRIVE_SETTLE_S = 2.0
+#: Below this, the ARM is stopped as far as this barrier is concerned [deg/s].
+#:
+#: A settle is allowed to be about the whole robot — the Isaac one waits for
+#: the jaws too, deliberately, because a verifier read while a stroke is still
+#: closing is F13. This barrier is not asking that question: it wants to know
+#: whether the TOOL POINT has stopped moving, and a hand still ramping open
+#: says nothing about it. MEASURED on blocks-eval: a grasp was refused with
+#: "still moving at 0.0 deg/s ... the right jaws are still moving", i.e. on a
+#: perfectly stationary arm. So the flag is read WITH its number, and 3 deg/s
+#: is the same threshold the harness itself calls stationary.
+ARM_STATIONARY_DEG_S = 3.0
 #: How many ``solve_ee`` calls ONE correction may take. The same number, and
 #: the same reason, as ``planning.MAX_SOLVES_PER_KNOT``: the solver is local
 #: and works on LINK7, so reaching a TOOL pose is a few small solves, and
@@ -654,6 +665,15 @@ class ToolGate:
         wait = getattr(executor, "settle", None)
         if wait is not None and self.settle_timeout_s > 0:
             settle = wait(self.settle_timeout_s)
+            if not settle.settled and _arm_stopped(settle):
+                # It failed on something that is not the arm — the jaws, on
+                # every executor whose settle waits for them too. The tool
+                # point is not moving, which is the only thing this barrier
+                # asked.
+                settle = SettleReport(
+                    True, settle.waited_s, settle.worst_velocity_deg_s,
+                    f"the arms are stationary at "
+                    f"{settle.worst_velocity_deg_s:.1f} deg/s ({settle.detail})")
         state = executor.state()
         q = state.joints.get(side)
         return (None if q is None
@@ -952,6 +972,12 @@ def _report(arrived: bool, arrival: ArrivalReport, miss: "ToolMiss",
                          detail or arrival.detail, miss.total_m, miss.rot_rad,
                          tuple(corrections), label, settled,
                          miss.across_m, miss.along_m)
+
+
+def _arm_stopped(settle: SettleReport) -> bool:
+    """Is the ARM stationary, whatever else the settle was waiting for?"""
+    worst = float(settle.worst_velocity_deg_s)
+    return bool(np.isfinite(worst) and worst <= ARM_STATIONARY_DEG_S)
 
 
 def _with_label(report: ArrivalReport, label: str, *, detail: str = "",
