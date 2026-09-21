@@ -53,12 +53,22 @@ opening and the 136 mm TCP that `d1-sdk` carried over with them were long by
 8.5 / 14.5 / 6 / 7 mm respectively.
 
 **What the measurement does NOT fix.** The jaw meshes (`tcp_{r,l}_Link.STL`)
-still reach 6 mm past the measured pad tip, and `camera_plate.STL` still
-models an 8 mm disc against a measured 2 mm. Meshes are vendor CAD; only a
-new CAD drop replaces one. The constants, the joint origins and the primitive
-collision boxes follow the measurement, so anything planning against a TCP or
-a collision primitive is right and anything rendering a mesh is ~6 mm
-generous. Also unresolved: with 51.96 mm at the driver's 1.16 rad ceiling
+still reach 6 mm past the measured pad tip *along the approach axis*, and
+`camera_plate.STL` still models an 8 mm disc against a measured 2 mm. Meshes
+are vendor CAD; only a new CAD drop replaces one. The constants, the joint
+origins and the primitive collision boxes follow the measurement, so anything
+planning against a TCP or a collision primitive is right and anything
+rendering a mesh is ~6 mm generous at the tip.
+
+**What the measurement DID fix in the meshes: the gap.** The CAD was cut for
+a 70 mm opening, so each jaw mesh's inner pad FACE sits at ±35 mm in its own
+link frame. Left there, a consumer that renders or *collides the mesh* —
+Isaac builds its convex hulls from it — works to a 70 mm open / 6 mm closed
+gripper while the joints say 64 / 0 and the driver only reaches 51.96 mm.
+That is not a cosmetic residual, so the mesh is not re-cut, it is **moved**:
+each jaw's `<visual>` and `<collision>` origin carries a 3 mm shift along the
+travel axis toward the centre (local −z for `tcp_r`, +z for `tcp_l`), landing
+the faces at ±32 mm. Local change 8 below. Also unresolved: with 51.96 mm at the driver's 1.16 rad ceiling
 (d1-3, 2026-08-24) and 64 mm wide open, a linear rad→mm map through zero puts
 the open stop at 1.43 rad rather than the ~1.55 rad of travel the CAD implied.
 Both gaps are measured; the map between them is not.
@@ -111,6 +121,17 @@ fresh drop rather than hand-editing the committed files.
    change that alters vendor *kinematics* rather than an export artefact, and
    it is deliberate: a CAD number that a calliper contradicts on the assembled
    robot is wrong about the robot.
+8. **Jaw mesh origins shifted onto the measured half-opening** (2026-09-21).
+   Each jaw's `<visual>` *and* `<collision>` `<origin>` moves from `0 0 0` to
+   `JAW_STROKE_M − CAD_JAW_STROKE_M` = **−3 mm** along the jaw travel axis,
+   toward the centre — the link's own +z, so `tcp_r_Link` gets `0 0 -0.003`
+   and `tcp_l_Link` gets `0 0 0.003`. The face-to-face gap at `q = 0` becomes
+   the measured **64 mm** (was the CAD's 70), closed becomes **0 mm** (was
+   6 mm of interpenetration-free slack that let sim jaws miss), and the
+   driven stop is 51.96 mm. Nothing moves along the approach axis, so the
+   6 mm tip overshoot in item 7 is unchanged. The whole-body generator
+   (`description/d1/tools/generate_d1_urdf.py`) carries the identical
+   offsets and a test pins the two files together.
 
 ## Mass: the CAD said 0.328 kg, the scale says 1.5 kg
 

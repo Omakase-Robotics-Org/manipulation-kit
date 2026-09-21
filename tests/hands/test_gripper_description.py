@@ -13,6 +13,10 @@ import pytest
 
 from manipulation_kit.hands.d1.parallel_gripper import description_path
 from manipulation_kit.hands.d1.parallel_gripper.description import (
+    CAD_JAW_STROKE_M,
+    DRIVEN_OPEN_GAP_M,
+    JAW_MESH_FACE_SIGN,
+    JAW_MESH_ORIGIN_Z_M,
     JAW_OPEN_GAP_M,
     JAW_STROKE_M,
     JAW_TIP_Z_M,
@@ -192,6 +196,83 @@ def test_the_jaw_mesh_overshoots_the_measured_pad_tip():
     # the CAD tip carried back to the measured joint origin.
     assert mesh_tip == pytest.approx(
         tc.CAD_JAW_TIP_Z_MM / 1000.0 - (0.10847 - PAD_CENTRE_Z_M), abs=1e-4)
+
+
+def _jaw_mesh_origins(root, jaw):
+    """Every ``<origin>`` z that places ``tcp_<jaw>_Link``'s mesh, by tag."""
+    link = root.find(f"link[@name='tcp_{jaw}_Link']")
+    out = {}
+    for tag in ("visual", "collision"):
+        element = link.find(tag)
+        assert element.find("geometry/mesh").get("filename").endswith(
+            f"tcp_{jaw}_Link.STL")
+        out[tag] = [float(v) for v in element.find("origin").get("xyz").split()]
+    return out
+
+
+def _mesh_z_extent(path):
+    """(min, max) of a binary STL's local z, in metres."""
+    blob = path.read_bytes()
+    count = struct.unpack("<I", blob[80:84])[0]
+    zs = [struct.unpack_from("<f", blob, 84 + 50 * t + 12 + 4 * c + 8)[0]
+          for t in range(count) for c in (0, 3, 6)]
+    return min(zs), max(zs)
+
+
+def test_the_jaw_meshes_are_authored_onto_the_measured_half_opening():
+    """The pad FACE has to sit at ``JAW_STROKE_M`` from the link origin.
+
+    This is the URDF-only half, so it runs on a checkout with no CAD: the
+    mesh was cut for the CAD's 70 mm opening (face at ``CAD_JAW_STROKE_M``),
+    and the description makes up the difference with a mesh ``<origin>``.
+    Visual and collision must carry the SAME offset or the jaw is drawn
+    somewhere it does not collide, and the offset must be along the TRAVEL
+    axis only — the local z the joint axis names — because moving it in x
+    would silently re-cut the pad depth.
+    """
+    root = _root()
+    for jaw in ("r", "l"):
+        origins = _jaw_mesh_origins(root, jaw)
+        assert origins["visual"] == origins["collision"], (
+            f"tcp_{jaw}_Link is drawn somewhere it does not collide")
+        x, y, z = origins["visual"]
+        assert (x, y) == (0.0, 0.0), "the shift must be along the travel axis"
+        assert z == pytest.approx(JAW_MESH_ORIGIN_Z_M[jaw], abs=1e-12)
+        # ... and that offset is exactly what lands the CAD face on the
+        # measured half-opening, toward the centre.
+        face = JAW_MESH_FACE_SIGN[jaw] * CAD_JAW_STROKE_M + z
+        assert face == pytest.approx(
+            JAW_MESH_FACE_SIGN[jaw] * JAW_STROKE_M, abs=1e-12)
+        assert abs(face) < CAD_JAW_STROKE_M, "the mesh moved outward"
+
+    # The two faces are the openings every consumer plans against.
+    assert 2 * JAW_STROKE_M == pytest.approx(JAW_OPEN_GAP_M, abs=1e-12)
+    assert DRIVEN_OPEN_GAP_M < JAW_OPEN_GAP_M
+
+
+@needs_assets
+def test_the_jaw_mesh_faces_measure_the_measured_half_opening():
+    """The same claim with the CAD actually opened: mesh extent plus authored
+    origin puts the pad faces ``JAW_OPEN_GAP_M`` apart at ``q = 0``, and the
+    jaws are ``JAW_STROKE_M`` of travel from touching."""
+    root = _root()
+    meshes = {p.name: p for p in mesh_paths()}
+    faces = {}
+    for jaw in ("r", "l"):
+        lo, hi = _mesh_z_extent(meshes[f"tcp_{jaw}_Link.STL"])
+        # the CAD is cut about the CAD half-opening, untouched on disk
+        assert min(abs(lo), abs(hi)) == pytest.approx(CAD_JAW_STROKE_M, abs=1e-6)
+        z = _jaw_mesh_origins(root, jaw)["visual"][2]
+        # the face is the extent NEAREST the centre once placed
+        placed = sorted((lo + z, hi + z), key=abs)
+        faces[jaw] = placed[0]
+        assert faces[jaw] == pytest.approx(
+            JAW_MESH_FACE_SIGN[jaw] * JAW_STROKE_M, abs=1e-6), (
+            f"tcp_{jaw}_Link's pad face is not at the measured half-opening")
+        # ... and the mesh kept its 40 mm thickness: it MOVED, it was not cut
+        assert (hi - lo) == pytest.approx(0.040, abs=1e-6)
+    assert faces["r"] - faces["l"] == pytest.approx(JAW_OPEN_GAP_M, abs=1e-6), (
+        "q = 0 must be the MEASURED 64 mm opening, mesh face to mesh face")
 
 
 def test_urdf_mass_is_the_measured_mass_not_the_cad_mass():

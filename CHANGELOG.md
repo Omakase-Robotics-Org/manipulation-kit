@@ -6,6 +6,65 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.14.1 — 2026-09-21
+
+**The jaw meshes now open 64 mm, like the joints always said.** The vendor CAD
+was cut for a 70 mm opening: `tcp_r_Link.STL` spans local z 35 … 75 mm and
+`tcp_l_Link.STL` −75 … −35 mm, so each jaw's inner pad FACE sits **35 mm**
+from its link origin. 0.14.0 moved the joint origins and limits onto the
+callipers (32 mm per jaw, a 64 mm gap) but left the meshes where the CAD put
+them, because a mesh is only replaced by a CAD drop. That was fine for anyone
+planning against a TCP or a collision *primitive* — and wrong for everyone
+who renders or **collides the mesh**. Isaac builds its convex hulls from it,
+so `d1-isaaclab`'s D1 grasps with jaws that are 70 mm open and 6 mm "closed"
+while this package's gate, its `DRIVEN_OPEN_GAP_M` and the real robot all say
+64 / 0 / **51.96**. Measured consequence on `blocks-eval` (seed 7): the
+tool-space arrival gate added in 0.14.0 is calibrated to the 52 mm opening
+and refuses lateral misses those 70 mm sim jaws would still catch, and
+descents jam 17–25 mm short along the approach axis on the over-long collider.
+
+### Changed
+
+* **`hands/d1/parallel_gripper/descriptions/gripper.urdf` and
+  `gripper_with_camera.urdf`**: each jaw's `<visual>` *and* `<collision>`
+  mesh `<origin>` moves from `0 0 0` by `JAW_STROKE_M − CAD_JAW_STROKE_M` =
+  **−3 mm** along the jaw travel axis, toward the centre. That axis is the
+  link's own +z (both joints carry `axis="0 0 -1"` in that frame), and the
+  sign follows which side the face is on, so `tcp_r_Link` gets `0 0 -0.003`
+  and `tcp_l_Link` gets `0 0 0.003`. The mesh is MOVED, not re-cut: it keeps
+  its 40 mm thickness, and nothing changes along the approach axis — the jaw
+  meshes still overshoot the measured 129 mm pad tip by 6 mm, unchanged and
+  still recorded.
+
+  Pad face to pad face the description now reads **64 mm at `q = 0`, 0 mm at
+  `|q| = JAW_STROKE_M`**, and `DRIVEN_OPEN_Q` puts the driver's stop at
+  **51.96 mm** — the kit's own three numbers, for the first time true of the
+  geometry as well as of the joints.
+* **`description/d1/d1_wholebody_gripper.urdf`** (and `dist/`) regenerated:
+  `generate_d1_urdf.py` gains `GRIPPER_JAW_MESH_ORIGIN`, derived the same way
+  from the same two constants, and emits it on the jaw visuals. Its collision
+  boxes were already on the measured 32 mm and are untouched.
+* **`tools/vendoring/vendor_gripper_description.py`** gains the shift as local
+  change 7, so a fresh vendor drop is re-vendored with it instead of being
+  hand-patched. `descriptions/README.md` records it as local change 8.
+
+### Added
+
+* `description.CAD_JAW_STROKE_M` (0.035 — where the CAD put the face),
+  `JAW_MESH_FACE_SIGN` and `JAW_MESH_ORIGIN_Z_M`, so a consumer that has to
+  place a pad face reads it from here rather than re-measuring an STL.
+  `d1-isaaclab`'s scene geometry and jaw colliders import these.
+* Tests: the pad face is at `±JAW_STROKE_M` at `q = 0`, asserted from the
+  authored `<origin>` alone on a CAD-free checkout and again from the real
+  mesh bounds when `$MKIT_ASSETS_DIR` is set; visual and collision must carry
+  the same offset; and the whole-body file's jaw mesh origins must equal the
+  hand description's.
+
+### Unchanged
+
+* No tolerance in the 0.14.0 arrival gate moves. The gate was right about the
+  robot; the sim geometry was wrong about the gripper.
+
 ## 0.14.0 — 2026-09-21
 
 **The arrival barrier learns to ask about the jaws.** `wait_arrived` compares
