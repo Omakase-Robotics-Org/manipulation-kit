@@ -746,8 +746,8 @@ class FirmwareExecutor:
                         corrected[JOINT_SLICE[closing.side]], dtype=float)
                 if arrival.arrived:
                     return None
-                return report(index, BARRIER_FAILED, arrival.detail,
-                              _off_by(plan, closing.side, arrival, gate))
+                refusal = _off_by(plan, closing.side, arrival, gate)
+                return report(index, BARRIER_FAILED, refusal.detail, refusal)
 
             for index, step in enumerate(plan.steps):
                 if isinstance(step, JointStep):

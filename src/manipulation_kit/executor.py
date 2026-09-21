@@ -1291,8 +1291,11 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
             if label is not None and _leaves_waypoint(plan.steps, index):
                 arrival = gate_at(step.side, label, at)
                 if not arrival.arrived:
-                    return stop(index, BARRIER_FAILED, arrival.detail,
-                                _off_by(plan, step.side, arrival, gate))
+                    # The REFUSAL's detail, not the arrival's: it is the same
+                    # sentence plus the move that answers it, and a consumer
+                    # that only reads ``error`` is owed that too.
+                    refusal = _off_by(plan, step.side, arrival, gate)
+                    return stop(index, BARRIER_FAILED, refusal.detail, refusal)
         elif isinstance(step, GripStep):
             # ARRIVE BEFORE YOU CLOSE. A stroke run while the arm is still
             # travelling closes the jaws somewhere along the path.
