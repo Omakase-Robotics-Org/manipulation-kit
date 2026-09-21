@@ -464,7 +464,9 @@ the tool: measured on `blocks-eval` (2026-09-21), grasps that passed it by
 `arrive=True` (`Grasp`'s standoff and descent, `Place`'s transit and set-down),
 and at those the runner additionally computes the **tool point** of the
 commanded and the measured posture with this package's own FK and requires
-5 mm / 2° (`ARRIVE_TOL_M`, `ARRIVE_TOL_ROT_RAD`). A miss is corrected *in
+5 mm / 2° (`ARRIVE_TOL_M`, `ARRIVE_TOL_ROT_RAD`) — after `settle`, because a
+tool point read while the arm is still converging is where it was passing
+rather than where it ends up. A miss is corrected *in
 place* — the same tool pose re-solved with the measured offset fed forward,
 seeded at the commanded joints, guarded, at most twice — and if it still
 misses, the run stops with `stop_reason="barrier_failed"` and a typed

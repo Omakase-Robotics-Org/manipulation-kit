@@ -31,6 +31,13 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
   (`primitives.approach.tool_from_link7`) and requires `ARRIVE_TOL_M` (**5 mm**)
   and `ARRIVE_TOL_ROT_RAD` (**2°**). It asks the transport for nothing new:
   both postures are ones every `Executor` already reports.
+* **The arm is stopped before the tool point is read** (`ARRIVE_SETTLE_S`,
+  **2 s**), through the `settle` every executor already implements. A reading
+  taken while the arm is still converging is where it was passing, not where it
+  is going to be: measured on `blocks-eval`, reading at the instant the 3° gate
+  passed made every correction round chase the same settle — 23.8 → 14.9 → 9.1
+  → 7.2 mm, converging on nothing. An arm that will not stop is the typed
+  refusal `not_settled`, and nothing is fed forward from a blur.
 * **In-place correction**, on by default (`run(..., correct_arrival=True)`).
   A tool miss on a settled arm is a steady-state offset, so it is fed forward:
   the same commanded tool pose shifted by −Δp (and, when the rotation is itself

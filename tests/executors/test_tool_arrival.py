@@ -341,6 +341,34 @@ def test_a_transport_that_cannot_say_where_the_arm_is_fails_the_barrier(
     assert "no measured joints" in report.error
 
 
+def test_an_arm_that_has_not_stopped_is_not_measured_at_all(d1_arm, observe):
+    """The correction feeds a STEADY-STATE offset forward. A tool point read
+    while the arm is still converging is where it was passing, not where it is
+    going to be — measured on blocks-eval, reading at the instant the 3 deg
+    joint gate passed gave 23.8 -> 14.9 -> 9.1 mm, three rounds chasing the
+    same settle. So the barrier stops the arm first, and an arm that will not
+    stop is its own typed refusal."""
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = _grasp(world, d1_arm)
+
+    class NeverStops(DroopingExecutor):
+        def settle(self, timeout_s: float) -> SettleReport:
+            self.settles.append(float(timeout_s))
+            return SettleReport(False, float(timeout_s), 12.0,
+                                "still moving at 12.0 deg/s")
+
+    robot = NeverStops(world)
+    report = run(plan, robot, kin=d1_arm)
+    assert not report.completed
+    assert report.stop_reason == "barrier_failed"
+    assert report.refusal.reason == "not_settled"
+    arrival = report.arrivals[-1]
+    assert arrival.settled is False
+    assert arrival.corrections == (), "nothing to feed forward from a blur"
+    assert _strokes(robot) == [0.0]
+    assert robot.settles[0] == 2.0, "the gate's own settle budget"
+
+
 def test_the_barrier_runs_once_per_gated_waypoint_and_not_per_knot(d1_arm,
                                                                    observe):
     """A 25 cm travel is a dozen knots. It is ONE arrival."""

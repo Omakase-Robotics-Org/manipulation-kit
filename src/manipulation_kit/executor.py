@@ -145,6 +145,9 @@ class ArrivalReport:
     corrections: Tuple[Correction, ...] = ()
     #: which waypoint this barrier was gating, when it was gating one
     waypoint_label: str = ""
+    #: had the arm STOPPED when the tool point was read? ``None`` when the
+    #: barrier did not ask (no tool gate, or a transport with no settle).
+    settled: Optional[bool] = None
 
     def to_json(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
@@ -161,6 +164,8 @@ class ArrivalReport:
             "detail": self.detail}
         if self.waypoint_label:
             out["waypoint_label"] = self.waypoint_label
+        if self.settled is not None:
+            out["settled"] = bool(self.settled)
         if self.corrections:
             out["corrections"] = [c.to_json() for c in self.corrections]
         return out
@@ -215,6 +220,17 @@ ARRIVE_TOL_M = 0.005
 #: the position gate. It is TIGHTER than the 3 deg joint tolerance on purpose:
 #: the joint number tolerates droop, this one describes the jaws.
 ARRIVE_TOL_ROT_RAD = math.radians(2.0)
+#: How long the arm is given to STOP at a gated waypoint before the tool point
+#: is read [s].
+#:
+#: A measurement taken while the arm is still converging is not a steady-state
+#: offset, and feeding it forward corrects for a position the arm was passing
+#: through. MEASURED on blocks-eval (2026-09-21): reading at the instant the
+#: 3 deg joint gate passed, three rounds took 23.8 -> 14.9 -> 9.1 -> 7.2 mm
+#: and never converged, because each round was measuring the same descent at a
+#: different moment of the same settle. With the arm stopped first, one round
+#: does it.
+ARRIVE_SETTLE_S = 2.0
 #: How many in-place corrections one waypoint gets before the run stops.
 #:
 #: Two. The correction feeds the measured steady-state offset forward, so the
@@ -489,6 +505,7 @@ class ToolGate:
                  tol_rot_rad: float = ARRIVE_TOL_ROT_RAD,
                  correct: bool = True,
                  max_rounds: int = MAX_ARRIVAL_CORRECTIONS,
+                 settle_timeout_s: float = ARRIVE_SETTLE_S,
                  guarded: bool = True):
         self.kin = kin
         self.tol_rad = float(tol_rad)
@@ -497,6 +514,7 @@ class ToolGate:
         self.tol_rot_rad = float(tol_rot_rad)
         self.correct = bool(correct)
         self.max_rounds = int(max_rounds)
+        self.settle_timeout_s = float(settle_timeout_s)
         #: was the PLAN guarded? Then so is every posture this gate invents.
         self.guarded = bool(guarded)
 
@@ -535,11 +553,24 @@ class ToolGate:
                 lock.release()
         return tool_from_link7(p7, r7)
 
-    @staticmethod
-    def _measured(executor: "Executor", side: str) -> Optional[np.ndarray]:
+    def _measured(self, executor: "Executor", side: str
+                  ) -> Tuple[Optional[np.ndarray], Optional[SettleReport]]:
+        """The arm's posture ONCE IT HAS STOPPED, and the settle that says so.
+
+        Not a nicety: the correction feeds a STEADY-STATE offset forward, and
+        a posture read mid-settle is not one. Measured on blocks-eval, reading
+        at the instant the coarse joint gate passed made every round correct
+        for a pose the arm was travelling through — 23.8, 14.9, 9.1, 7.2 mm,
+        converging on nothing.
+        """
+        settle = None
+        wait = getattr(executor, "settle", None)
+        if wait is not None and self.settle_timeout_s > 0:
+            settle = wait(self.settle_timeout_s)
         state = executor.state()
         q = state.joints.get(side)
-        return None if q is None else np.asarray(q, dtype=float).reshape(ARM_DOF)
+        return (None if q is None
+                else np.asarray(q, dtype=float).reshape(ARM_DOF)), settle
 
     def _error(self, kin, side: str, q_cmd, q_meas) -> Tuple[float, float,
                                                              np.ndarray, Any,
@@ -570,7 +601,7 @@ class ToolGate:
             return (_with_label(arrival, label, detail=(
                 f"{arrival.detail}; and the tool point could not be computed: "
                 f"no kinematic model ({exc})")), None)
-        q_meas = self._measured(executor, side)
+        q_meas, settle = self._measured(executor, side)
         if q_meas is None:
             return (ArrivalReport(
                 False, arrival.worst_error_rad, arrival.waited_s,
@@ -587,22 +618,37 @@ class ToolGate:
             # the same fact said usefully.
             return (_with_label(arrival, label, tool_error_m=error_m,
                                 tool_rot_error_rad=error_rad), None)
+        if settle is not None and not settle.settled:
+            # STILL MOVING, so there is no tool point to report: the number
+            # just read is where the arm was passing, not where it is going to
+            # be, and a measurement on a moving robot is not a measurement
+            # (F13). Nothing to feed forward either — a correction needs a
+            # STEADY-STATE offset.
+            return (ArrivalReport(
+                False, arrival.worst_error_rad, arrival.waited_s,
+                f"the {side} arm had not stopped at "
+                f"{label or 'this waypoint'}, so where the tool ended up is "
+                f"not yet a fact: {settle.detail}",
+                error_m, error_rad, (), label, False), None)
         if error_m <= self.tol_m and error_rad <= self.tol_rot_rad:
             return (ArrivalReport(
                 True, arrival.worst_error_rad, arrival.waited_s,
                 f"the tool point is {error_m * 1000:.1f} mm and "
                 f"{math.degrees(error_rad):.1f} deg from the commanded pose",
-                error_m, error_rad, (), label), None)
+                error_m, error_rad, (), label,
+                None if settle is None else settle.settled), None)
         return self._correct(executor, kin, want, side, label=label, t=t,
                              arrival=arrival, p_cmd=p_cmd, r_cmd=r_cmd,
                              error_m=error_m, error_rad=error_rad)
 
     # -- the correction ---------------------------------------------------- #
     def _refuse(self, arrival: ArrivalReport, label: str, error_m: float,
-                error_rad: float, rounds: Sequence[Correction], why: str
+                error_rad: float, rounds: Sequence[Correction], why: str,
+                settled: Optional[bool] = True
                 ) -> Tuple[ArrivalReport, Optional[np.ndarray]]:
         return (ArrivalReport(False, arrival.worst_error_rad, arrival.waited_s,
-                              why, error_m, error_rad, tuple(rounds), label),
+                              why, error_m, error_rad, tuple(rounds), label,
+                              settled),
                 None)
 
     def _correct(self, executor, kin, want: np.ndarray, side: str, *,
@@ -634,7 +680,7 @@ class ToolGate:
         sent: Optional[np.ndarray] = None
         for index in range(1, self.max_rounds + 1):
             before = error_m
-            q_meas = self._measured(executor, side)
+            q_meas, _settle = self._measured(executor, side)
             if q_meas is None:
                 return self._refuse(
                     arrival, label, error_m, error_rad, rounds,
@@ -652,7 +698,7 @@ class ToolGate:
             sent = command
             again = _arrival_of(executor, command, tol_rad=self.tol_rad,
                                 timeout_s=self.timeout_s)
-            q_meas = self._measured(executor, side)
+            q_meas, settled = self._measured(executor, side)
             if q_meas is None:
                 rounds.append(Correction(
                     index, before, float("nan"),
@@ -667,6 +713,11 @@ class ToolGate:
             error_m = float(np.linalg.norm(p_now - np.asarray(p_cmd, dtype=float)))
             error_rad = float(np.linalg.norm((r_now.inv() * r_cmd).as_rotvec()))
             rounds.append(Correction(index, before, error_m))
+            if settled is not None and not settled.settled:
+                return self._refuse(
+                    arrival, label, error_m, error_rad, rounds,
+                    f"{off}, and after the correction the {side} arm had not "
+                    f"stopped: {settled.detail}", False)
             if not again.arrived:
                 return self._refuse(
                     arrival, label, error_m, error_rad, rounds,
@@ -679,7 +730,7 @@ class ToolGate:
                     f"{math.degrees(error_rad):.1f} deg from the commanded "
                     f"pose after {index} correction"
                     f"{'' if index == 1 else 's'}",
-                    error_m, error_rad, tuple(rounds), label), sent)
+                    error_m, error_rad, tuple(rounds), label, True), sent)
         return self._refuse(
             arrival, label, error_m, error_rad, rounds,
             f"the {side} tool point is {error_m * 1000:.1f} mm and "
@@ -803,8 +854,12 @@ def _off_by(plan: Plan, side: str, arrival: ArrivalReport,
         arrival.tool_error_m > gate.tol_m
         or (np.isfinite(arrival.tool_rot_error_rad)
             and arrival.tool_rot_error_rad > gate.tol_rot_rad))
+    if arrival.settled is False:
+        reason = NOT_SETTLED
+    else:
+        reason = ARRIVED_OFF_BY if off else ARRIVAL_UNKNOWN
     return RunRefusal(
-        ARRIVED_OFF_BY if off else ARRIVAL_UNKNOWN, arrival.detail,
+        reason, arrival.detail,
         arrival.waypoint_label, arrival.tool_error_m,
         arrival.tool_rot_error_rad, stage="tool_arrival",
         attempted=tuple(
