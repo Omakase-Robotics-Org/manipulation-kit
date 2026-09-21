@@ -463,7 +463,13 @@ def test_trajectory_segments_respect_the_same_rate_ceiling(executor, d1_arm, obs
 def test_gripper_strokes_split_the_trajectory_so_ordering_survives(
         executor, d1_arm, observe):
     """Open, travel, close: if the whole path went up as one job the stroke
-    would land at the wrong moment."""
+    would land at the wrong moment.
+
+    The travel is TWO jobs, not one, and that is the tool-space barrier: a
+    grasp's standoff is a waypoint the plan marks ``arrive``, so the batch is
+    flushed and the jaw pocket measured there before the descent — which is
+    the one leg that may not be re-routed — is uploaded at all.
+    """
     world = observe(d1_arm, block_p=REACHABLE)
     plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
     with executor as robot:
@@ -471,7 +477,7 @@ def test_gripper_strokes_split_the_trajectory_so_ordering_survives(
     order = [p for m, p, _b in executor.client.calls
              if p in ("/v1/arm/trajectory/start", "/v1/gripper/a/set")]
     assert order == ["/v1/gripper/a/set", "/v1/arm/trajectory/start",
-                     "/v1/gripper/a/set"]
+                     "/v1/arm/trajectory/start", "/v1/gripper/a/set"]
 
 
 def test_a_failed_trajectory_stops_the_run_with_the_daemons_own_message(

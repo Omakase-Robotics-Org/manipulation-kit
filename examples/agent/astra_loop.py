@@ -258,8 +258,14 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         verdict = primitive.verifier(world)(after)
         record.verdict = verdict.to_json()
         record.observation_after = after.to_json()
+        # WHY the transport stopped, not just that it did. A barrier failure
+        # now carries a typed reason and a number ("the tool point is 27 mm
+        # from the grasp pose after 2 corrections"); a model told only
+        # "barrier_failed" has to guess what to do differently.
+        how = ("ok" if report.completed else
+               f"{report.stop_reason} — {report.error}")
         _say(messages, call_id,
-             f"{label_for(primitive)}: transport {'ok' if report.completed else report.stop_reason}; "
+             f"{label_for(primitive)}: transport {how}; "
              f"measured {verdict.verdict} — {verdict.reason}")
         goal_report = goal.verifier(world)(after)
         record.goal_verdict = goal_report.to_json()

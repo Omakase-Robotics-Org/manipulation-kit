@@ -13,7 +13,8 @@ from __future__ import annotations
 from manipulation_kit.primitives import verbs
 import numpy as np
 
-from manipulation_kit.executor import (GRIPPER_INDEX, JOINT_SLICE,
+from manipulation_kit.executor import (ARRIVE_SETTLE_S, GRIPPER_INDEX,
+                                       JOINT_SLICE,
                                        KinematicExecutor, RecordingExecutor,
                                        WIRE_DIM, run, wire)
 from manipulation_kit.primitives import (Carry, GoHome, GripStep, Grasp,
@@ -220,7 +221,12 @@ def test_the_gripper_closedness_travels_in_the_wire_vector(d1_arm, observe):
     executor = _recorder(world)
     run(plan, executor)
     assert [(s, c) for s, c, _g in executor.grips] == [("left", 0.0), ("left", 1.0)]
-    assert executor.settles == [verbs.SETTLE_S]
+    # the plan's own settle is the LAST one; the ones before it are the
+    # tool-space barrier stopping the arm at each gated waypoint before it
+    # reads the jaw pocket, which is what makes that reading a fact
+    assert executor.settles[-1] == verbs.SETTLE_S
+    assert executor.settles[:-1] == [ARRIVE_SETTLE_S] * 2, (
+        "a grasp gates its standoff and its descent")
     # after the opening stroke every commanded vector carries the open jaws
     assert all(v[GRIPPER_INDEX["left"]] == 0.0 for _t, v in executor.sent)
 
