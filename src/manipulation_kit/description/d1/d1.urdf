@@ -15,10 +15,10 @@
       <mass value="20"/>
       <inertia ixx="1e-3" ixy="0" ixz="0" iyy="1e-3" iyz="0" izz="1e-3"/>
     </inertial>
-    <!-- legacy keep-out column (safety_zones.json torso_keepout_box, chest-bracket width) - kept for continuity with the C++/JS validators -->
+    <!-- keep-out column (safety_zones.json torso_keepout_box, chest-bracket width), starting at the moving sleeve's lower lip - the 79 mm below it is fixed column inside lift_pole -->
     <collision name="torso_core">
-      <origin xyz="0 0 0.245" rpy="0 0 0"/>
-      <geometry><box size="0.09 0.11 0.49"/></geometry>
+      <origin xyz="0 0 0.2845" rpy="0 0 0"/>
+      <geometry><box size="0.09 0.11 0.411"/></geometry>
     </collision>
     <!-- robot support frame 1120100258 between the shoulders - CAD bbox X+/-85 Y+/-85 Z-115..60 -->
     <collision name="torso_frame">

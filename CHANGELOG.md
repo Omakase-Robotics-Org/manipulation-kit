@@ -6,6 +6,34 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.13.1 — 2026-09-20
+
+**The torso keep-out starts at the moving sleeve's lip.** `torso_core` ran the
+full 0 .. 0.49 m of `torso_column`, i.e. from the lift origin up. The bottom
+79 mm of that is not torso: with the lift retracted the sleeve's lower lip sits
+at world z = 0.592 m against a lift origin of 0.513 m (measured on d1-3,
+d1-isaaclab ustea physical-mount check), so that band is the fixed column — and
+it lies entirely inside the chassis-side `lift_pole` box (X ±70, Y −67..73,
+world z 0.389 .. 0.889), which encloses `torso_core`'s X ±45 / Y ±55 footprint.
+
+### Changed
+
+* `torso_core` now spans z 0.079 .. 0.49 m (`TORSO_SLEEVE_LIP_M`), size
+  0.09 × 0.11 × 0.411. The guard loses no keep-out at q_lift = 0; at full
+  0.30 m extension the top 3 mm of the removed band (world 0.889 .. 0.892)
+  are no longer covered by any box. Every simulator that loaded the old box
+  saw it collide with the AMR cover on every episode (d1-isaaclab carried a
+  local carve for exactly this, now retired). Approved by Shu 2026-09-20.
+* `dist/d1-collision` and `dist/d1-wholebody-gripper` re-exported.
+
+### Downstream
+
+* d1-firmware's Rust guard (`d1fw-core/src/guard`) mirrors the keep-out from
+  this URDF and pins it with `tests/golden/guard_vectors.json`; bumping its kit
+  pin needs `tools/gen_guard_vectors.py` re-run and the vectors reviewed.
+* d1-isaaclab `robot/build_urdf.py` should drop `carve_torso_core` once it
+  pins this version.
+
 ## 0.13.0 — 2026-09-20
 
 **Two robot facts that consumers were reinstating downstream come home.** Both
