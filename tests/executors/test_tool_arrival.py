@@ -170,8 +170,11 @@ def test_without_correction_the_stroke_is_refused_with_arrived_off_by(
         "be re-routed")
     assert report.refusal.residual_m > ARRIVE_TOL_M
     # and it says what would ANSWER it: a number with no move attached costs
-    # the caller a turn to work out what to do with
-    assert "Nudge" in report.refusal.detail
+    # the caller a turn to work out what to do with. This miss is BOTH
+    # lateral and short, and the deeper of the two answers wins — an arm
+    # stopped against something is not going to be nudged into the pose.
+    assert "approach" in report.refusal.detail
+    assert len(report.refusal.detail) > len(report.arrivals[-1].detail)
     # the jaws never closed: the opening stroke is the only one
     assert _strokes(robot) == [0.0]
     arrival = report.arrivals[-1]
