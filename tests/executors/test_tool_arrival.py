@@ -23,7 +23,8 @@ import math
 
 import numpy as np
 
-from manipulation_kit.executor import (ARRIVE_TOL_M, ARRIVE_TOL_RAD,
+from manipulation_kit.executor import (ARRIVE_TOL_ALONG_M, ARRIVE_TOL_M,
+                                       ARRIVE_TOL_RAD,
                                        JOINT_SLICE, SIDES, ArrivalReport,
                                        RawState, SettleReport, StrokeReport,
                                        ToolGate, run)
@@ -183,19 +184,27 @@ def test_without_correction_the_stroke_is_refused_with_arrived_off_by(
 
 def test_with_correction_the_tool_lands_and_the_stroke_proceeds(d1_arm,
                                                                 observe):
+    """1.2 deg of droop, not the 2.5 above, and the difference is a property
+    of the SOLVER rather than of the barrier: this scene's standoff is one of
+    the plateaus ``planning`` documents ("the last four knots of a HOME ->
+    standoff travel at (0.38, 0.25) sit at 4.7-9.1 mm however many solves they
+    are given"), where a re-solve takes out about half the miss and stops. 1.2
+    deg is 8 mm at the tool, which one round lands inside 5 mm; 2.5 deg is
+    17 mm, which it cannot, and THAT is the refusal the test above pins."""
     world = observe(d1_arm, block_p=REACHABLE)
     plan = _grasp(world, d1_arm)
-    robot = DroopingExecutor(world)
+    robot = DroopingExecutor(world, offset_rad=math.radians(1.2))
     report = run(plan, robot, kin=d1_arm)
 
     assert report.completed, report.error
     assert _strokes(robot) == [0.0, 1.0], "open, descend, close"
     for arrival in report.arrivals:
         assert arrival.arrived
-        assert arrival.tool_error_m <= ARRIVE_TOL_M, (
-            f"{arrival.waypoint_label}: {arrival.tool_error_m * 1000:.1f} mm")
+        assert arrival.tool_across_m <= ARRIVE_TOL_M, (
+            f"{arrival.waypoint_label}: {arrival.tool_across_m * 1000:.1f} mm")
+        assert abs(arrival.tool_along_m) <= ARRIVE_TOL_ALONG_M
     corrected = [a for a in report.arrivals if a.corrections]
-    assert corrected, "a 2.5 deg droop has to have been corrected"
+    assert corrected, "a droop of 8 mm at the tool has to have been corrected"
     for arrival in corrected:
         assert len(arrival.corrections) <= 2
         first = arrival.corrections[0]
@@ -225,7 +234,7 @@ def test_a_fake_that_never_converges_fails_after_exactly_two_rounds(d1_arm,
     assert len(arrival.corrections) == 2, [c.to_json() for c in
                                            arrival.corrections]
     assert all(c.sent for c in arrival.corrections)
-    assert arrival.tool_error_m > ARRIVE_TOL_M
+    assert arrival.tool_across_m > ARRIVE_TOL_M
     assert "after 2 corrections" in arrival.detail
     assert _strokes(robot) == [0.0], "no stroke on an unverified pose"
     assert len(report.refusal.attempted) == 2, "the rounds travel with it"
@@ -339,6 +348,56 @@ def test_a_transport_that_cannot_say_where_the_arm_is_fails_the_barrier(
     assert report.stop_reason == "barrier_failed"
     assert report.refusal.reason == "arrival_unknown"
     assert "no measured joints" in report.error
+
+
+def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
+                                                                    observe):
+    """Depth is what CONTACT takes, and pushing into it is F5.
+
+    A descent deliberately ends with the fingertips 3 mm off the surface
+    (``approach.SUPPORT_CLEARANCE_M``), so an arm that parks a centimetre high
+    with the jaws still lined up has met something. The barrier says so and
+    stops; it does not command the same pose deeper, which is how ten grasps
+    out of ten jammed their fingers on the table.
+    """
+    from manipulation_kit.primitives.approach import link7_from_tool
+
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = _grasp(world, d1_arm)
+
+    class StopsShort(DroopingExecutor):
+        """Every command lands 12 mm short ALONG the approach axis — 2.5 deg
+        in joints, inside the joint barrier and outside the tool one."""
+
+        short_m = 0.012
+
+        def measured(self):
+            if self.commanded is None:
+                return {s: np.array(q) for s, q in self.start.items()}
+            out = {s: np.array(self.commanded[JOINT_SLICE[s]], dtype=float)
+                   for s in SIDES}
+            q = out[self.side]
+            gate = ToolGate(kin=d1_arm)
+            p, r = gate._tool(d1_arm, self.side, q)
+            axis = np.asarray(r.as_matrix()[:, 2], dtype=float)
+            p7, r7 = link7_from_tool(p - axis * self.short_m, r)
+            d1_arm.set_joints(self.side, q)
+            result = d1_arm.solve_ee(self.side, p7, r7)
+            if result.ok:
+                out[self.side] = np.array(result.q, dtype=float)
+            d1_arm.set_joints(self.side, q)
+            return out
+
+    robot = StopsShort(world, offset_rad=0.0)
+    report = run(plan, robot, kin=d1_arm)
+    assert not report.completed
+    assert report.refusal.reason == "arrived_off_by"
+    arrival = report.arrivals[-1]
+    assert arrival.corrections == (), "a shove is not a correction"
+    assert arrival.tool_across_m <= ARRIVE_TOL_M, "the jaws are lined up"
+    assert abs(arrival.tool_along_m) > ARRIVE_TOL_ALONG_M
+    assert "stopped" in arrival.detail and "deeper" in arrival.detail
+    assert _strokes(robot) == [0.0]
 
 
 def test_an_arm_that_has_not_stopped_is_not_measured_at_all(d1_arm, observe):

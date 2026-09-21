@@ -463,10 +463,12 @@ the tool: measured on `blocks-eval` (2026-09-21), grasps that passed it by
 2.2–2.8° then closed the jaws beside the block. So a plan may mark a waypoint
 `arrive=True` (`Grasp`'s standoff and descent, `Place`'s transit and set-down),
 and at those the runner additionally computes the **tool point** of the
-commanded and the measured posture with this package's own FK and requires
-5 mm / 2° (`ARRIVE_TOL_M`, `ARRIVE_TOL_ROT_RAD`) — after `settle`, because a
-tool point read while the arm is still converging is where it was passing
-rather than where it ends up. A miss is corrected *in
+commanded and the measured posture with this package's own FK — after
+`settle`, because a tool point read while the arm is still converging is where
+it was passing rather than where it ends up — and judges the miss split about
+the approach axis: **5 mm** across it (`ARRIVE_TOL_M`, where the jaws close),
+**10 mm** along it (`ARRIVE_TOL_ALONG_M`, where a descent is stopped by
+contact on purpose) and **5°** (`ARRIVE_TOL_ROT_RAD`). A miss is corrected *in
 place* — the same tool pose re-solved with the measured offset fed forward,
 seeded at the commanded joints, guarded, at most twice — and if it still
 misses, the run stops with `stop_reason="barrier_failed"` and a typed

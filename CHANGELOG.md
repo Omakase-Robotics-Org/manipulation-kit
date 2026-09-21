@@ -28,9 +28,23 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
 * `manipulation_kit.executor.ToolGate`: the barrier itself. At a gated
   waypoint it runs the joint-space arrival, then computes the tool point of
   the commanded and of the measured posture with this package's own FK
-  (`primitives.approach.tool_from_link7`) and requires `ARRIVE_TOL_M` (**5 mm**)
-  and `ARRIVE_TOL_ROT_RAD` (**2°**). It asks the transport for nothing new:
-  both postures are ones every `Executor` already reports.
+  (`primitives.approach.tool_from_link7`) and judges the miss **decomposed
+  about the approach axis** (`ToolMiss`): `ARRIVE_TOL_M` (**5 mm**) ACROSS it,
+  where the jaws close, `ARRIVE_TOL_ALONG_M` (**10 mm**) along it, where a
+  descent is stopped by contact on purpose, and `ARRIVE_TOL_ROT_RAD`
+  (**5°**). It asks the transport for nothing new: both postures are ones
+  every `Executor` already reports.
+
+  The three numbers are bounded by numbers this package already owns. Across:
+  the driven jaws take 43.96 mm against a 40 mm block, so 4 mm is spare per
+  side. Along: the tool point is the CENTRE of a 58 mm pad, and
+  `approach.SUPPORT_CLEARANCE_M` deliberately parks the fingertips 3 mm above
+  the surface, so a position-controlled arm stops a few mm high when they
+  touch — measured on `blocks-eval`, grasps whose jaws closed correctly sat
+  3.8–4.4 mm short along the axis and 2–4 mm across, while the ones that
+  jammed were 13–17 mm short AND 10–12 mm across. Rotation: below 2.9 deg is
+  inside the IK's own convergence (`safety.IK_ROT_TOL`) and above ~11.7 deg
+  the presented width outgrows the jaws, so 5° sits clear of both.
 * **The arm is stopped before the tool point is read** (`ARRIVE_SETTLE_S`,
   **2 s**), through the `settle` every executor already implements. A reading
   taken while the arm is still converging is where it was passing, not where it
@@ -46,6 +60,17 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
   the plan used, sent, re-measured. At most `MAX_ARRIVAL_CORRECTIONS` (**2**)
   rounds. A correction the guard or the IK refuses is **not sent**, and a plan
   that was guarded may not be corrected by a model with no guard installed.
+
+  Two things the correction deliberately does not do. It does not push a
+  descent deeper than `ARRIVE_TOL_ALONG_M` past its waypoint — what stops a
+  descent short is usually contact, and shoving is F5 — and when ONLY the
+  depth is wrong (the jaws lined up, the arm parked high) it refuses at once
+  instead of spending rounds. And it re-solves up to `MAX_CORRECTION_SOLVES`
+  (**8**) times per round, exactly as `planning._straight` walks a knot,
+  because the IK's target is Link7 and its tolerances are Link7's: one solve
+  the solver calls converged can leave the TOOL, 100 mm further out, 8 mm off —
+  measured, one solve took a 17.0 mm miss to 7.8 mm and the next rounds
+  returned the same joints.
 * `RunReport.refusal` — a typed `RunRefusal` in the `manipulation_kit.refusal/2`
   shape a plan refusal already uses (same keys, same units: `residual_m` is the
   tool error, `residual_rad` the rotation error, `attempted` the correction
@@ -54,9 +79,10 @@ grasp needed was never being asked for. `Approach` alone had a tool-space check
   not move — nothing that could read a refusal/2 object reads this one any less
   well. So the agent gets "the right tool point is 27 mm from the grasp pose
   after 2 corrections", not a jaw stall three steps later.
-* `ArrivalReport` carries `tool_error_m`, `tool_rot_error_rad`, `corrections`
-  and `waypoint_label` beside the unchanged `worst_error_deg`, so every
-  `run.arrivals[*]` in a trace can be argued with afterwards.
+* `ArrivalReport` carries `tool_error_m`, `tool_across_m`, `tool_along_m`,
+  `tool_rot_error_rad`, `settled`, `corrections` and `waypoint_label` beside
+  the unchanged `worst_error_deg`, so every `run.arrivals[*]` in a trace can be
+  argued with afterwards.
 
 ### Changed
 

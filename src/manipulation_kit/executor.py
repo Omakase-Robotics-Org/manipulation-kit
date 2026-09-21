@@ -148,6 +148,11 @@ class ArrivalReport:
     #: had the arm STOPPED when the tool point was read? ``None`` when the
     #: barrier did not ask (no tool gate, or a transport with no settle).
     settled: Optional[bool] = None
+    #: ``tool_error_m`` split about the approach axis: the component the jaws
+    #: close in, and the one that says how deep the descent got (signed, +
+    #: past the waypoint). The gate judges these two, not the total.
+    tool_across_m: float = float("nan")
+    tool_along_m: float = float("nan")
 
     def to_json(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
@@ -164,6 +169,9 @@ class ArrivalReport:
             "detail": self.detail}
         if self.waypoint_label:
             out["waypoint_label"] = self.waypoint_label
+        if np.isfinite(self.tool_across_m):
+            out["tool_across_m"] = round(float(self.tool_across_m), 5)
+            out["tool_along_m"] = round(float(self.tool_along_m), 5)
         if self.settled is not None:
             out["settled"] = bool(self.settled)
         if self.corrections:
@@ -214,12 +222,38 @@ STROKE_TIMEOUT_S = 3.0
 #: IK converges to about 2 mm, so a 3 mm gate would fire on the solver's own
 #: convergence noise and correct what is already as good as the plan.
 ARRIVE_TOL_M = 0.005
-#: ...and the orientation half, 2 deg. A parallel gripper is forgiving in
-#: roll about its own approach axis and is not forgiving in the other two: at
-#: the 58 mm pad depth, 2 deg is 2 mm of pad skew, which is the same order as
-#: the position gate. It is TIGHTER than the 3 deg joint tolerance on purpose:
-#: the joint number tolerates droop, this one describes the jaws.
-ARRIVE_TOL_ROT_RAD = math.radians(2.0)
+#: How far the tool point may be short of (or past) the waypoint ALONG the
+#: approach axis [m]. A different question with a different answer.
+#:
+#: ACROSS the axis is where a grasp is won or lost: the jaws close on that
+#: plane, and :data:`ARRIVE_TOL_M` is the slack the pads have. ALONG it, the
+#: tool point is the pad CENTRE of a 58 mm deep pad, so 10 mm still leaves two
+#: thirds of the pad on the object — and the last millimetres of a descent are
+#: taken up by CONTACT, deliberately: ``approach.SUPPORT_CLEARANCE_M`` stops
+#: the fingertips 3 mm above what the object stands on and a position-
+#: controlled arm parks a few mm high when they touch. MEASURED on blocks-eval
+#: (2026-09-21), grasps whose jaws closed correctly sat 3.8-4.4 mm short along
+#: the axis and 2-4 mm across it, while the ones that jammed were 13-17 mm
+#: short AND 10-12 mm across. One number for both would either refuse every
+#: working grasp or accept the jams.
+ARRIVE_TOL_ALONG_M = 0.010
+#: ...and the orientation half, 5 deg.
+#:
+#: Bounded from BOTH sides by numbers this package already owns, and the band
+#: is narrower than it looks. Below: the IK's own rotation convergence is
+#: ``safety.IK_ROT_TOL`` = 0.05 rad = 2.9 deg and the planner walks a path
+#: window of ``planning.PATH_TOL_RAD`` = 6.9 deg, so a gate tighter than about
+#: 3 deg refuses postures the planner itself calls converged — and asks the
+#: correction to re-solve to a tolerance the solver does not have. Above: a
+#: parallel gripper is forgiving in roll until the object's PRESENTED width
+#: grows past the jaws, which for a 40 mm cube in a 43.96 mm opening happens
+#: at 11.7 deg (``approach.grasp_orientation``). 5 deg sits clear of the
+#: solver's noise and well inside where the geometry bites.
+#:
+#: (The 2 deg this was first written with was below IK_ROT_TOL: measured on
+#: blocks-eval, grasps whose jaws closed correctly tracked 2.5-3.0 deg of
+#: wrist error, which is ~1 mm of contact-line shift on a 40 mm block.)
+ARRIVE_TOL_ROT_RAD = math.radians(5.0)
 #: How long the arm is given to STOP at a gated waypoint before the tool point
 #: is read [s].
 #:
@@ -231,6 +265,17 @@ ARRIVE_TOL_ROT_RAD = math.radians(2.0)
 #: different moment of the same settle. With the arm stopped first, one round
 #: does it.
 ARRIVE_SETTLE_S = 2.0
+#: How many ``solve_ee`` calls ONE correction may take. The same number, and
+#: the same reason, as ``planning.MAX_SOLVES_PER_KNOT``: the solver is local
+#: and works on LINK7, so reaching a TOOL pose is a few small solves, and
+#: eight means it is circling.
+MAX_CORRECTION_SOLVES = 8
+#: ...and how close it has to get before the correction is sent. The planner's
+#: own knot tolerances (``planning.ARRIVE_TOL_M`` / ``ARRIVE_TOL_RAD``): asking
+#: the correction to beat the path that produced the waypoint is asking the
+#: same solver for a precision it has already been shown not to have.
+SOLVE_TOL_M = 0.003
+SOLVE_TOL_RAD = 0.06
 #: How many in-place corrections one waypoint gets before the run stops.
 #:
 #: Two. The correction feeds the measured steady-state offset forward, so the
@@ -481,6 +526,46 @@ def _fallback_kinematics(model: str = DEFAULT_ARM_MODEL):
     return _FALLBACK_KIN[model]
 
 
+@dataclass(frozen=True)
+class ToolMiss:
+    """One tool-pose error, split the way the gripper feels it.
+
+    ``across_m`` is the component perpendicular to the approach axis — the
+    plane the jaws close in, and the one that decides whether the pads land on
+    the object or beside it. ``along_m`` is the component down that axis: how
+    deep the descent got, signed positive PAST the waypoint.
+    """
+
+    total_m: float
+    across_m: float
+    along_m: float
+    rot_rad: float
+    p_cmd: np.ndarray
+    r_cmd: Any
+    p_meas: np.ndarray
+    r_meas: Any
+
+    @classmethod
+    def between(cls, p_cmd, r_cmd, p_meas, r_meas) -> "ToolMiss":
+        p_cmd = np.asarray(p_cmd, dtype=float)
+        p_meas = np.asarray(p_meas, dtype=float)
+        delta = p_meas - p_cmd
+        #: the TCP frame's +z is the approach axis (see primitives.approach)
+        axis = np.asarray(r_cmd.as_matrix()[:, 2], dtype=float)
+        along = float(np.dot(delta, axis))
+        return cls(float(np.linalg.norm(delta)),
+                   float(np.linalg.norm(delta - along * axis)), along,
+                   float(np.linalg.norm((r_meas.inv() * r_cmd).as_rotvec())),
+                   p_cmd, r_cmd, p_meas, r_meas)
+
+    def sentence(self, side: str, label: str) -> str:
+        return (f"the {side} tool point is {self.across_m * 1000:.1f} mm "
+                f"across the approach axis and {self.along_m * 1000:+.1f} mm "
+                f"along it from the pose commanded at "
+                f"{label or 'this waypoint'}, {math.degrees(self.rot_rad):.1f} "
+                f"deg off")
+
+
 class ToolGate:
     """"Is the JAW POCKET where the plan said?" — measured, and corrected.
 
@@ -502,6 +587,7 @@ class ToolGate:
     def __init__(self, *, kin=None, tol_rad: float = ARRIVE_TOL_RAD,
                  timeout_s: float = ARRIVE_TIMEOUT_S,
                  tol_m: float = ARRIVE_TOL_M,
+                 tol_along_m: float = ARRIVE_TOL_ALONG_M,
                  tol_rot_rad: float = ARRIVE_TOL_ROT_RAD,
                  correct: bool = True,
                  max_rounds: int = MAX_ARRIVAL_CORRECTIONS,
@@ -511,6 +597,7 @@ class ToolGate:
         self.tol_rad = float(tol_rad)
         self.timeout_s = float(timeout_s)
         self.tol_m = float(tol_m)
+        self.tol_along_m = float(tol_along_m)
         self.tol_rot_rad = float(tol_rot_rad)
         self.correct = bool(correct)
         self.max_rounds = int(max_rounds)
@@ -572,14 +659,21 @@ class ToolGate:
         return (None if q is None
                 else np.asarray(q, dtype=float).reshape(ARM_DOF)), settle
 
-    def _error(self, kin, side: str, q_cmd, q_meas) -> Tuple[float, float,
-                                                             np.ndarray, Any,
-                                                             np.ndarray, Any]:
+    def _miss(self, kin, side: str, q_cmd, q_meas) -> "ToolMiss":
+        """How far the tool ended up from where it was sent, DECOMPOSED.
+
+        Along the approach axis and across it, because the two mean different
+        things: across is where the jaws close, along is how deep the descent
+        got — and a descent is stopped by CONTACT on purpose.
+        """
         p_cmd, r_cmd = self._tool(kin, side, q_cmd)
         p_meas, r_meas = self._tool(kin, side, q_meas)
-        rot = float(np.linalg.norm((r_meas.inv() * r_cmd).as_rotvec()))
-        return (float(np.linalg.norm(p_meas - p_cmd)), rot,
-                p_cmd, r_cmd, p_meas, r_meas)
+        return ToolMiss.between(p_cmd, r_cmd, p_meas, r_meas)
+
+    def _ok(self, miss: "ToolMiss") -> bool:
+        return (miss.across_m <= self.tol_m
+                and abs(miss.along_m) <= self.tol_along_m
+                and miss.rot_rad <= self.tol_rot_rad)
 
     # -- the barrier ------------------------------------------------------- #
     def check(self, executor: "Executor", q16, side: str, *, label: str = "",
@@ -594,7 +688,6 @@ class ToolGate:
         want = np.asarray(q16, dtype=float).reshape(WIRE_DIM)
         arrival = _arrival_of(executor, want, tol_rad=self.tol_rad,
                               timeout_s=self.timeout_s)
-        kin = None
         try:
             kin = self.model(executor)
         except Exception as exc:  # noqa: BLE001 - no model, no tool answer
@@ -608,61 +701,61 @@ class ToolGate:
                 f"{type(executor).__name__} reports no measured joints for the "
                 f"{side} arm, so where the tool ended up cannot be measured",
                 waypoint_label=label), None)
-        q_cmd = want[JOINT_SLICE[side]]
-        error_m, error_rad, p_cmd, r_cmd, _p, _r = self._error(
-            kin, side, q_cmd, q_meas)
+        miss = self._miss(kin, side, want[JOINT_SLICE[side]], q_meas)
         if not arrival.arrived:
             # The joint barrier failed FIRST. It stays the answer — the arm is
             # still travelling, or it stopped short — but the tool numbers go
             # with it, because "2.8 deg short" and "27 mm off at the tool" are
             # the same fact said usefully.
-            return (_with_label(arrival, label, tool_error_m=error_m,
-                                tool_rot_error_rad=error_rad), None)
+            return (_with_label(arrival, label, miss=miss), None)
         if settle is not None and not settle.settled:
             # STILL MOVING, so there is no tool point to report: the number
             # just read is where the arm was passing, not where it is going to
             # be, and a measurement on a moving robot is not a measurement
             # (F13). Nothing to feed forward either — a correction needs a
             # STEADY-STATE offset.
-            return (ArrivalReport(
-                False, arrival.worst_error_rad, arrival.waited_s,
+            return (_report(False, arrival, miss, label, settled=False, detail=(
                 f"the {side} arm had not stopped at "
                 f"{label or 'this waypoint'}, so where the tool ended up is "
-                f"not yet a fact: {settle.detail}",
-                error_m, error_rad, (), label, False), None)
-        if error_m <= self.tol_m and error_rad <= self.tol_rot_rad:
-            return (ArrivalReport(
-                True, arrival.worst_error_rad, arrival.waited_s,
-                f"the tool point is {error_m * 1000:.1f} mm and "
-                f"{math.degrees(error_rad):.1f} deg from the commanded pose",
-                error_m, error_rad, (), label,
-                None if settle is None else settle.settled), None)
+                f"not yet a fact: {settle.detail}")), None)
+        if self._ok(miss):
+            return (_report(True, arrival, miss, label,
+                            settled=None if settle is None else settle.settled,
+                            detail=miss.sentence(side, label)), None)
         return self._correct(executor, kin, want, side, label=label, t=t,
-                             arrival=arrival, p_cmd=p_cmd, r_cmd=r_cmd,
-                             error_m=error_m, error_rad=error_rad)
+                             arrival=arrival, miss=miss)
 
     # -- the correction ---------------------------------------------------- #
-    def _refuse(self, arrival: ArrivalReport, label: str, error_m: float,
-                error_rad: float, rounds: Sequence[Correction], why: str,
+    def _refuse(self, arrival: ArrivalReport, miss: "ToolMiss", label: str,
+                rounds: Sequence[Correction], why: str,
                 settled: Optional[bool] = True
                 ) -> Tuple[ArrivalReport, Optional[np.ndarray]]:
-        return (ArrivalReport(False, arrival.worst_error_rad, arrival.waited_s,
-                              why, error_m, error_rad, tuple(rounds), label,
-                              settled),
-                None)
+        return (_report(False, arrival, miss, label, settled=settled,
+                        detail=why, corrections=rounds), None)
+
+    def _tolerances(self) -> str:
+        return (f"(tolerance {self.tol_m * 1000:.0f} mm across, "
+                f"{self.tol_along_m * 1000:.0f} mm along, "
+                f"{math.degrees(self.tol_rot_rad):.0f} deg)")
 
     def _correct(self, executor, kin, want: np.ndarray, side: str, *,
-                 label: str, t: float, arrival: ArrivalReport,
-                 p_cmd, r_cmd, error_m: float, error_rad: float
+                 label: str, t: float, arrival: ArrivalReport, miss: "ToolMiss"
                  ) -> Tuple[ArrivalReport, Optional[np.ndarray]]:
-        """Feed the measured offset forward, up to :attr:`max_rounds` times."""
-        off = (f"the {side} tool point is {error_m * 1000:.1f} mm and "
-               f"{math.degrees(error_rad):.1f} deg from the pose commanded at "
-               f"{label or 'this waypoint'} (tolerance "
-               f"{self.tol_m * 1000:.0f} mm / "
-               f"{math.degrees(self.tol_rot_rad):.0f} deg)")
+        """Feed the measured LATERAL offset forward, up to ``max_rounds`` times."""
+        off = f"{miss.sentence(side, label)} {self._tolerances()}"
+        if miss.across_m <= self.tol_m and miss.rot_rad <= self.tol_rot_rad:
+            # ONLY THE DEPTH IS WRONG, and depth is what contact takes: the
+            # descent stopped short of the waypoint. Commanding it deeper
+            # presses the fingers into whatever stopped them — that is F5, ten
+            # grasps out of ten — so this is a refusal and the answer belongs
+            # to the caller: re-observe, nudge, or approach from elsewhere.
+            return self._refuse(
+                arrival, miss, label, (),
+                f"{off}. The jaws are lined up and the descent stopped "
+                f"{abs(miss.along_m) * 1000:.1f} mm short; pushing deeper "
+                f"would drive the fingers into whatever stopped them")
         if not self.correct or self.max_rounds < 1:
-            return self._refuse(arrival, label, error_m, error_rad, (),
+            return self._refuse(arrival, miss, label, (),
                                 f"{off}, and correction is switched off")
         gate = getattr(kin, "gate", None)
         if self.guarded and not getattr(gate, "installed", False):
@@ -671,7 +764,7 @@ class ToolGate:
             # no guard installed is exactly what the plan's own ``guarded``
             # flag exists to stop.
             return self._refuse(
-                arrival, label, error_m, error_rad, (),
+                arrival, miss, label, (),
                 f"{off}. It cannot be corrected: this plan was checked by a "
                 f"collision guard and the model given to the barrier has none "
                 f"installed, so the corrected posture could not be guarded")
@@ -679,18 +772,17 @@ class ToolGate:
         command = np.array(want, dtype=float)
         sent: Optional[np.ndarray] = None
         for index in range(1, self.max_rounds + 1):
-            before = error_m
+            before = miss.across_m
             q_meas, _settle = self._measured(executor, side)
             if q_meas is None:
                 return self._refuse(
-                    arrival, label, error_m, error_rad, rounds,
+                    arrival, miss, label, rounds,
                     f"{off}, and the {side} arm's joints cannot be read")
-            q_new, why = self._solve(kin, side, command, q_meas, p_cmd, r_cmd,
-                                     error_rad)
+            q_new, why = self._solve(kin, side, command, q_meas, miss)
             if q_new is None:
                 rounds.append(Correction(index, before, float("nan"),
                                          sent=False, detail=why))
-                return self._refuse(arrival, label, error_m, error_rad, rounds,
+                return self._refuse(arrival, miss, label, rounds,
                                     f"{off}. The correction was refused: {why}")
             command = np.array(command, dtype=float)
             command[JOINT_SLICE[side]] = q_new
@@ -704,56 +796,55 @@ class ToolGate:
                     index, before, float("nan"),
                     detail="the joints could not be read back"))
                 return self._refuse(
-                    arrival, label, error_m, error_rad, rounds,
+                    arrival, miss, label, rounds,
                     f"{off}, and after the correction the {side} arm's joints "
                     f"could not be read back")
             # AGAINST THE ORIGINAL COMMANDED POSE. The shifted target is a
             # means; landing on the pose the plan asked for is the end.
             p_now, r_now = self._tool(kin, side, q_meas)
-            error_m = float(np.linalg.norm(p_now - np.asarray(p_cmd, dtype=float)))
-            error_rad = float(np.linalg.norm((r_now.inv() * r_cmd).as_rotvec()))
-            rounds.append(Correction(index, before, error_m))
+            miss = ToolMiss.between(miss.p_cmd, miss.r_cmd, p_now, r_now)
+            rounds.append(Correction(index, before, miss.across_m))
             if settled is not None and not settled.settled:
                 return self._refuse(
-                    arrival, label, error_m, error_rad, rounds,
+                    arrival, miss, label, rounds,
                     f"{off}, and after the correction the {side} arm had not "
                     f"stopped: {settled.detail}", False)
             if not again.arrived:
                 return self._refuse(
-                    arrival, label, error_m, error_rad, rounds,
+                    arrival, miss, label, rounds,
                     f"{off}, and the corrected posture was not reached: "
                     f"{again.detail}")
-            if error_m <= self.tol_m and error_rad <= self.tol_rot_rad:
-                return (ArrivalReport(
-                    True, again.worst_error_rad, again.waited_s,
-                    f"the tool point is {error_m * 1000:.1f} mm and "
-                    f"{math.degrees(error_rad):.1f} deg from the commanded "
-                    f"pose after {index} correction"
-                    f"{'' if index == 1 else 's'}",
-                    error_m, error_rad, tuple(rounds), label, True), sent)
+            if self._ok(miss):
+                return (_report(
+                    True, again, miss, label, settled=True,
+                    detail=(f"{miss.sentence(side, label)} after {index} "
+                            f"correction{'' if index == 1 else 's'}"),
+                    corrections=rounds), sent)
         return self._refuse(
-            arrival, label, error_m, error_rad, rounds,
-            f"the {side} tool point is {error_m * 1000:.1f} mm and "
-            f"{math.degrees(error_rad):.1f} deg from the pose commanded at "
-            f"{label or 'this waypoint'} after {len(rounds)} corrections "
-            f"(tolerance {self.tol_m * 1000:.0f} mm / "
-            f"{math.degrees(self.tol_rot_rad):.0f} deg)")
+            arrival, miss, label, rounds,
+            f"{miss.sentence(side, label)} after {len(rounds)} corrections "
+            f"{self._tolerances()}")
 
-    def _solve(self, kin, side: str, command: np.ndarray, q_meas, p_cmd, r_cmd,
-               error_rad: float) -> Tuple[Optional[np.ndarray], str]:
-        """The same tool pose, shifted by minus the MEASURED offset.
+    def _solve(self, kin, side: str, command: np.ndarray, q_meas,
+               miss: "ToolMiss") -> Tuple[Optional[np.ndarray], str]:
+        """The same tool pose, shifted by minus the measured LATERAL offset.
 
-        An arm that lands 8 mm low under a command is asked for a command 8 mm
-        high, and lands where the plan wanted it. The offset is measured
-        against the pose the arm is CURRENTLY commanded at — which after the
-        first round is no longer the plan's — so the rounds compose instead of
-        each re-applying the whole of the first error.
+        An arm that lands 8 mm to the side under a command is asked for a
+        command 8 mm the other way, and lands where the plan wanted it. The
+        offset is measured against the pose the arm is CURRENTLY commanded at —
+        which after the first round is no longer the plan's — so the rounds
+        compose instead of each re-applying the whole of the first error.
+
+        ONLY the lateral half is fed forward. The component along the approach
+        axis is what contact takes, and asking a stopped arm to go deeper is
+        how fingers jam (F5); a descent that stopped short is a replan, not a
+        shove.
 
         Seeded at the commanded joints, so the solver stays in the branch the
         plan chose. Guarded twice: ``solve_ee`` consults the gate itself, and
         the committed vector is re-checked here, because a correction that is
         only as safe as one call is one refactor away from being safe by
-        accident. The orientation is only fed forward when it is itself out of
+        accident. The orientation is fed forward only when it is itself out of
         tolerance: a gripper is forgiving about roll and a correction that
         chases rotation noise spends a round for nothing.
         """
@@ -774,16 +865,70 @@ class ToolGate:
                             JOINT_SLICE[s]])
                 p_c, r_c = self._tool(kin, side, q_cmd)
                 p_now, r_now = self._tool(kin, side, q_meas)
-                p_target = np.asarray(p_cmd, dtype=float) - (p_now - p_c)
-                r_target = r_cmd
-                if error_rad > self.tol_rot_rad:
-                    r_target = (r_now * r_c.inv()).inv() * r_cmd
-                p7, r7 = link7_from_tool(p_target, r_target)
-                result = kin.solve_ee(side, p7, r7, q0=q_cmd)
-                if not getattr(result, "ok", False):
-                    return None, (
-                        f"the IK refused the corrected pose ({result.reason})")
-                q_new = np.array(result.q, dtype=float).reshape(ARM_DOF)
+                axis = np.asarray(r_c.as_matrix()[:, 2], dtype=float)
+                delta = np.asarray(p_now, dtype=float) - np.asarray(p_c,
+                                                                    dtype=float)
+                p_target = np.asarray(miss.p_cmd, dtype=float) - delta
+                # A BOUNDED SHOVE. The full feed-forward would ask a descent
+                # that stopped short to go all the way down, and what stops a
+                # descent short is usually contact — F5, fingers jammed on the
+                # table, ten grasps out of ten. So the target may sit at most
+                # one ``tol_along_m`` PAST the waypoint along the approach
+                # axis: enough to take out a gravity droop, not enough to
+                # press the fingers into whatever stopped them.
+                past = float(np.dot(p_target - np.asarray(miss.p_cmd,
+                                                          dtype=float), axis))
+                if past > self.tol_along_m:
+                    p_target = p_target - (past - self.tol_along_m) * axis
+                r_target = miss.r_cmd
+                if miss.rot_rad > self.tol_rot_rad:
+                    r_target = (r_now * r_c.inv()).inv() * miss.r_cmd
+                # RE-SOLVED UNTIL THE TOOL IS THERE, exactly as the planner
+                # walks a knot (``planning._straight``). One ``solve_ee`` is
+                # not enough and the reason is geometric: the IK's target is
+                # LINK7 and its tolerances are Link7's (2 mm / 2.9 deg,
+                # ``safety.IK_POS_TOL`` / ``IK_ROT_TOL``), while the tool point
+                # is 100 mm further along +z — so a solution the solver calls
+                # converged can leave the TOOL 7 mm out, and re-asking from it
+                # does nothing because from Link7's point of view it has
+                # arrived. Measured: one solve took a 17.0 mm miss to 7.8 mm
+                # and the next two rounds returned the same joints.
+                kin.set_joints(side, q_cmd)
+                reached = False
+                for _ in range(MAX_CORRECTION_SOLVES):
+                    p_fk, r_fk = self._tool(kin, side, kin.joints(side))
+                    if (float(np.linalg.norm(p_fk - p_target)) <= SOLVE_TOL_M
+                            and float(np.linalg.norm(
+                                (r_fk.inv() * r_target).as_rotvec()))
+                            <= SOLVE_TOL_RAD):
+                        reached = True
+                        break
+                    p7, r7 = link7_from_tool(p_target, r_target)
+                    result = kin.solve_ee(side, p7, r7)
+                    if not getattr(result, "ok", False):
+                        if getattr(result, "reason", "") == "guard_reject":
+                            return None, ("the motion guard refused the "
+                                          "corrected posture, so it was not "
+                                          "sent")
+                        return None, (f"the IK could not solve the corrected "
+                                      f"pose ({result.reason})")
+                q_new = np.array(kin.joints(side), dtype=float).reshape(ARM_DOF)
+                if not reached:
+                    # The solver PLATEAUS — ``planning`` says so in its own
+                    # words ("the last four knots ... sit at 4.7-9.1 mm however
+                    # many solves they are given"). A plateau is not a failure
+                    # while the posture it plateaued on is still closer to the
+                    # target than the arm is to the waypoint; when it is not,
+                    # there is nothing to gain and the round is refused rather
+                    # than spent.
+                    short = float(np.linalg.norm(
+                        self._tool(kin, side, q_new)[0] - p_target))
+                    if short > SOLVE_TOL_M and short >= miss.total_m:
+                        return None, (
+                            f"the IK stopped {short * 1000:.1f} mm from the "
+                            f"corrected pose after {MAX_CORRECTION_SOLVES} "
+                            f"solves, no closer than the "
+                            f"{miss.total_m * 1000:.1f} mm the arm already is")
                 if (getattr(getattr(kin, "gate", None), "installed", False)
                         and not kin.guard_ok(side, q_new)):
                     return None, ("the motion guard refused the corrected "
@@ -799,14 +944,24 @@ class ToolGate:
                 lock.release()
 
 
+def _report(arrived: bool, arrival: ArrivalReport, miss: "ToolMiss",
+            label: str, *, settled: Optional[bool] = None, detail: str = "",
+            corrections: Sequence[Correction] = ()) -> ArrivalReport:
+    """One ArrivalReport, with every number the barrier measured on it."""
+    return ArrivalReport(arrived, arrival.worst_error_rad, arrival.waited_s,
+                         detail or arrival.detail, miss.total_m, miss.rot_rad,
+                         tuple(corrections), label, settled,
+                         miss.across_m, miss.along_m)
+
+
 def _with_label(report: ArrivalReport, label: str, *, detail: str = "",
-                tool_error_m: float = float("nan"),
-                tool_rot_error_rad: float = float("nan")) -> ArrivalReport:
+                miss: Optional["ToolMiss"] = None) -> ArrivalReport:
     """The same report, told which waypoint it was about (and how far off)."""
-    return ArrivalReport(report.arrived, report.worst_error_rad,
-                         report.waited_s, detail or report.detail,
-                         tool_error_m, tool_rot_error_rad, report.corrections,
-                         label)
+    if miss is None:
+        return ArrivalReport(report.arrived, report.worst_error_rad,
+                             report.waited_s, detail or report.detail,
+                             waypoint_label=label)
+    return _report(report.arrived, report, miss, label, detail=detail)
 
 
 def arrive_labels(plan: Plan) -> Dict[int, str]:
@@ -851,7 +1006,8 @@ def _off_by(plan: Plan, side: str, arrival: ArrivalReport,
     """
     measured = np.isfinite(arrival.tool_error_m)
     off = measured and (
-        arrival.tool_error_m > gate.tol_m
+        arrival.tool_across_m > gate.tol_m
+        or abs(arrival.tool_along_m) > gate.tol_along_m
         or (np.isfinite(arrival.tool_rot_error_rad)
             and arrival.tool_rot_error_rad > gate.tol_rot_rad))
     if arrival.settled is False:
