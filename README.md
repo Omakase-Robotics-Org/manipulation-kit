@@ -456,6 +456,25 @@ barriers `wait_arrived` / `wait_gripper_settled`) and two pure doubles:
 `RecordingExecutor`, which accepts everything and moves nothing, and
 `KinematicExecutor`, which mirrors the plan onto the model.
 
+**A barrier about the jaws, not about seven angles.** `wait_arrived` answers a
+joint-space question, and its tolerance has to be wide enough for the real
+arm's gravity droop (3°, F16) — which at a half-metre reach is *centimetres* at
+the tool: measured on `blocks-eval` (2026-09-21), grasps that passed it by
+2.2–2.8° then closed the jaws beside the block. So a plan may mark a waypoint
+`arrive=True` (`Grasp`'s standoff and descent, `Place`'s transit and set-down),
+and at those the runner additionally computes the **tool point** of the
+commanded and the measured posture with this package's own FK and requires
+5 mm / 2° (`ARRIVE_TOL_M`, `ARRIVE_TOL_ROT_RAD`). A miss is corrected *in
+place* — the same tool pose re-solved with the measured offset fed forward,
+seeded at the commanded joints, guarded, at most twice — and if it still
+misses, the run stops with `stop_reason="barrier_failed"` and a typed
+`RunReport.refusal` (`arrived_off_by`, carrying the tool error in metres, the
+rotation error in radians and the waypoint label) instead of a jaw-stall
+symptom two steps later. It needs nothing new from the transport: the two
+postures are ones every executor already reports. Pass the model the plan was
+built with — `run(plan, executor, kin=kin)` — or the gate takes `executor.kin`
+if the transport has one and otherwise builds the kit's own guarded `d1/arm`.
+
 `manipulation_kit.executors.firmware` is **the one module in this repository
 that opens a socket** — a deliberate exception to the promise at the top of
 this file, decided by Shu on 2026-09-19, so that lease handling, mode entry and

@@ -6,6 +6,85 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.14.0 — 2026-09-21
+
+**The arrival barrier learns to ask about the jaws.** `wait_arrived` compares
+seven angles, and its 3° tolerance exists because the real arm droops about a
+degree under gravity (F16, J1 ~0.9°). MEASURED on `blocks-eval` (seed 7,
+2026-09-21): a `grasp` straight from HOME succeeded 1 of 3, and every failure
+passed that barrier at 2.2–2.8° and then closed the jaws beside the block
+("stalled at 13.5 mm inside `block_red`'s 43.8 mm", 66 mm "wider than", 33 mm).
+At a half-metre reach 2.8° is centimetres at the tool point, so the barrier the
+grasp needed was never being asked for. `Approach` alone had a tool-space check
+— in its *verifier*, after the fact — and `Grasp` / `Place` had none at all.
+
+### Added
+
+* `Waypoint.arrive` (default `False`). A plan can now say "the TOOL has to be
+  measurably on this one". `Grasp.plan` sets it on `standoff` and `grasp`,
+  `Place.plan` on `over_destination` and the release waypoint. Everything else,
+  `Approach` included, is unchanged — its verifier already measures the tool
+  point, and its stroke happens before the arm moves.
+* `manipulation_kit.executor.ToolGate`: the barrier itself. At a gated
+  waypoint it runs the joint-space arrival, then computes the tool point of
+  the commanded and of the measured posture with this package's own FK
+  (`primitives.approach.tool_from_link7`) and requires `ARRIVE_TOL_M` (**5 mm**)
+  and `ARRIVE_TOL_ROT_RAD` (**2°**). It asks the transport for nothing new:
+  both postures are ones every `Executor` already reports.
+* **In-place correction**, on by default (`run(..., correct_arrival=True)`).
+  A tool miss on a settled arm is a steady-state offset, so it is fed forward:
+  the same commanded tool pose shifted by −Δp (and, when the rotation is itself
+  out of tolerance, pre-rotated by the inverse error), re-solved from the
+  commanded joints through `solve_ee`, collision-checked against the same guard
+  the plan used, sent, re-measured. At most `MAX_ARRIVAL_CORRECTIONS` (**2**)
+  rounds. A correction the guard or the IK refuses is **not sent**, and a plan
+  that was guarded may not be corrected by a model with no guard installed.
+* `RunReport.refusal` — a typed `RunRefusal` in the `manipulation_kit.refusal/2`
+  shape a plan refusal already uses (same keys, same units: `residual_m` is the
+  tool error, `residual_rad` the rotation error, `attempted` the correction
+  rounds). New reasons only: `arrived_off_by`, `arrival_unknown`,
+  `not_settled`, `stroke_unfinished` (`RUN_REASONS`). The schema version does
+  not move — nothing that could read a refusal/2 object reads this one any less
+  well. So the agent gets "the right tool point is 27 mm from the grasp pose
+  after 2 corrections", not a jaw stall three steps later.
+* `ArrivalReport` carries `tool_error_m`, `tool_rot_error_rad`, `corrections`
+  and `waypoint_label` beside the unchanged `worst_error_deg`, so every
+  `run.arrivals[*]` in a trace can be argued with afterwards.
+
+### Changed
+
+* `run()` / `run_steps()` take `kin=`, `correct_arrival=`, `tool_tol_m=`,
+  `tool_rot_tol_rad=` and `max_corrections=`. `kin` is the model the barrier
+  computes with: the caller's, else `executor.kin`, else the kit's own guarded
+  `d1/arm`, built once per process. **Pass the model the plan was built
+  against** — the corrections are guarded by *that* model's guard.
+* The barrier now runs at the END of a gated waypoint (once per waypoint, not
+  per interpolation knot), so a standoff miss is caught BEFORE the descent —
+  the one leg a plan may not re-route. The pre-stroke barrier is unchanged for
+  everything else and is not paid for twice when the waypoint gate just ran.
+* `FirmwareExecutor.run_plan` gates the same waypoints: a gated waypoint flushes
+  the trajectory batch and measures before the next leg is uploaded, so a grasp
+  now uploads two jobs (travel, descent) instead of one. It accepts the gate
+  through a new keyword; an out-of-tree `run_plan` that does not take it keeps
+  the joint-space barrier and is not broken.
+* `RecordingExecutor.pretend_arrived` now pretends the POSTURE as well —
+  it reports the last commanded joints. A double that claims an arrival while
+  reporting joints a radian away is not pretending, it is lying, and the tool
+  gate reads the measurement. The honest default (nothing moves, so nothing
+  arrives) is untouched: that is the executor a verifier must fail against.
+
+### Downstream
+
+* **d1-isaaclab** (`scripts/eval/agent_eval`): `IsaacExecutor` already
+  satisfies the barrier — it publishes measured joints and takes
+  `send_joints` — so nothing is required. One line is worth adding:
+  `run_plan()` should pass `kin=` the `d1/arm` model `run_trials` already
+  builds, so corrections are guarded by the same model the plans were, instead
+  of by a second one built inside the wheel.
+* Anything reading `RunReport.to_json()` gets two new keys (`refusal`, and
+  `tool_error_m` / `tool_rot_error_deg` / `corrections` inside `arrivals[*]`).
+  Additive only.
+
 ## 0.13.1 — 2026-09-20
 
 **The torso keep-out starts at the moving sleeve's lip.** `torso_core` ran the

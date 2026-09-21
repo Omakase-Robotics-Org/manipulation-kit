@@ -614,12 +614,16 @@ class Grasp(Primitive):
         side, p_stand, p_grasp, r_tcp, _ = self._geometry(world)
         waypoints = [
             # getting to the standoff is free-space transit: a detour is a
-            # better answer than a refusal.
-            Waypoint("standoff", p_stand, r_tcp, allow_via=True),
+            # better answer than a refusal. THE TOOL IS CHECKED THERE, before
+            # the descent: an arm that starts the 80 mm travel from 25 mm off
+            # to the side arrives 25 mm off to the side, and the descent is
+            # the one leg that may not be re-routed (F17).
+            Waypoint("standoff", p_stand, r_tcp, allow_via=True, arrive=True),
             # the descent is NOT. Its straightness along the approach axis is
             # the whole promise of the verb, and a 25 cm clearance hop that
-            # ends on the grasp point has left the corridor (R10).
-            Waypoint("grasp", p_grasp, r_tcp, allow_via=False)]
+            # ends on the grasp point has left the corridor (R10). The tool is
+            # checked here too — this is the pose the jaws close on.
+            Waypoint("grasp", p_grasp, r_tcp, allow_via=False, arrive=True)]
         item = world.find(self.object)
         raised = ap.grasp_point(item, self.approach, world.frames)[1]
         p_obj = item.pose_in_base(world.frames)[0]
@@ -990,10 +994,15 @@ class Place(Primitive):
                               np.array([float(p_tool[0]), float(p_tool[1]),
                                         max(float(p_tool[2]), float(above[2]))]),
                               r_tool, allow_via=False),
+                     # the transit pose over the destination is this verb's
+                     # standoff, and the set-down is a constrained descent,
+                     # like a grasp's: both are checked AT THE TOOL, because
+                     # the release happens where the tool ends up and not
+                     # where seven angles say it should be (F17).
                      Waypoint("over_destination", above, r_tool,
-                              allow_via=False),
-                     # the set-down is a constrained descent, like a grasp's
-                     Waypoint(label, release, r_tool, allow_via=False)]))
+                              allow_via=False, arrive=True),
+                     Waypoint(label, release, r_tool, allow_via=False,
+                              arrive=True)]))
         plan, best, error = _first_reachable(self, world, kin, side, attempts)
         if plan is None:
             if not self.allow_drop and rim_release[2] > releases[0][1][2] + 1e-6:

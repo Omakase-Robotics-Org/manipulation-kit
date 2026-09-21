@@ -20,14 +20,15 @@ one transport that has a wire.
 
 from __future__ import annotations
 
+import inspect
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
 
 import numpy as np
 
-from .primitives.approach import tool_revision
-from .primitives.types import (GripStep, JointStep, Plan, SettleStep)
+from .primitives.approach import link7_from_tool, tool_from_link7, tool_revision
+from .primitives.types import (GripStep, JointStep, Plan, SettleStep, Waypoint)
 
 #: wire layout — see the module docstring
 ARM_DOF = 7
@@ -87,6 +88,33 @@ class SettleReport:
 
 
 @dataclass(frozen=True)
+class Correction:
+    """One in-place re-solve of a waypoint the tool arrived off.
+
+    Recorded per round, before and after, because "it was corrected" is a
+    claim with a number behind it or it is nothing: a round that moved the
+    tool from 27 mm to 26 mm is a round that did not work, and it looks
+    exactly like one that did until the two numbers are beside each other.
+    """
+
+    round: int
+    tool_error_before_m: float
+    tool_error_after_m: float = float("nan")
+    #: was the corrected posture actually commanded? ``False`` when the guard
+    #: (or the IK) refused it — a refused correction is NOT sent.
+    sent: bool = True
+    detail: str = ""
+
+    def to_json(self) -> Dict[str, Any]:
+        return {"round": int(self.round),
+                "tool_error_before_m": round(float(self.tool_error_before_m), 5),
+                "tool_error_after_m": (
+                    None if not np.isfinite(self.tool_error_after_m)
+                    else round(float(self.tool_error_after_m), 5)),
+                "sent": bool(self.sent), "detail": self.detail}
+
+
+@dataclass(frozen=True)
 class ArrivalReport:
     """Did the arm MEASURABLY get to the posture it was commanded to?
 
@@ -95,20 +123,47 @@ class ArrivalReport:
     waypoint; a stopped arm can be short of the target and a stationary arm
     can still have moving jaws (R7). Everything that must not happen until the
     arm is really there — a close, a release, a verdict — waits on this.
+
+    THERE ARE TWO ANSWERS HERE AND THEY ARE DIFFERENT. ``worst_error_rad`` is
+    about seven angles; ``tool_error_m`` is about the jaw pocket, computed by
+    the kit's own forward kinematics from the SAME two postures. A tolerance
+    wide enough for the real arm's gravity droop (3 deg, F16) is centimetres
+    at the tool at a half-metre reach, which is how a grasp that passed every
+    barrier closed beside the block (F17). Both travel, always, so a trace can
+    be argued with afterwards.
     """
 
     arrived: bool
     worst_error_rad: float = float("nan")
     waited_s: float = 0.0
     detail: str = ""
+    #: distance between the COMMANDED tool point and the MEASURED one [m]
+    tool_error_m: float = float("nan")
+    #: the orientation half, as a rotation-vector magnitude [rad]
+    tool_rot_error_rad: float = float("nan")
+    #: the in-place corrections this barrier ran, in order
+    corrections: Tuple[Correction, ...] = ()
+    #: which waypoint this barrier was gating, when it was gating one
+    waypoint_label: str = ""
 
     def to_json(self) -> Dict[str, Any]:
-        return {"arrived": bool(self.arrived),
-                "worst_error_deg": (None if not np.isfinite(self.worst_error_rad)
-                                    else round(float(np.degrees(
-                                        self.worst_error_rad)), 3)),
-                "waited_s": round(float(self.waited_s), 3),
-                "detail": self.detail}
+        out: Dict[str, Any] = {
+            "arrived": bool(self.arrived),
+            "worst_error_deg": (None if not np.isfinite(self.worst_error_rad)
+                                else round(float(np.degrees(
+                                    self.worst_error_rad)), 3)),
+            "tool_error_m": (None if not np.isfinite(self.tool_error_m)
+                             else round(float(self.tool_error_m), 5)),
+            "tool_rot_error_deg": (
+                None if not np.isfinite(self.tool_rot_error_rad)
+                else round(float(np.degrees(self.tool_rot_error_rad)), 3)),
+            "waited_s": round(float(self.waited_s), 3),
+            "detail": self.detail}
+        if self.waypoint_label:
+            out["waypoint_label"] = self.waypoint_label
+        if self.corrections:
+            out["corrections"] = [c.to_json() for c in self.corrections]
+        return out
 
 
 @dataclass(frozen=True)
@@ -142,6 +197,32 @@ class StrokeReport:
 ARRIVE_TOL_RAD = math.radians(3.0)
 ARRIVE_TIMEOUT_S = 3.0
 STROKE_TIMEOUT_S = 3.0
+
+#: How far the TOOL POINT may be from the commanded one at a waypoint that
+#: says :attr:`~manipulation_kit.primitives.types.Waypoint.arrive` [m].
+#:
+#: 5 mm, and the number is picked from both ends. Below it, the driven jaws
+#: still close on a blocks-eval cube: the graspable width is 43.96 mm against
+#: a 40 mm block, so 4 mm of the opening is spare per side and a 5 mm miss is
+#: inside the pads. Above it, nothing is gained by being stricter — the
+#: planner's own knot tolerance is 3 mm (``planning.ARRIVE_TOL_M``) and the
+#: IK converges to about 2 mm, so a 3 mm gate would fire on the solver's own
+#: convergence noise and correct what is already as good as the plan.
+ARRIVE_TOL_M = 0.005
+#: ...and the orientation half, 2 deg. A parallel gripper is forgiving in
+#: roll about its own approach axis and is not forgiving in the other two: at
+#: the 58 mm pad depth, 2 deg is 2 mm of pad skew, which is the same order as
+#: the position gate. It is TIGHTER than the 3 deg joint tolerance on purpose:
+#: the joint number tolerates droop, this one describes the jaws.
+ARRIVE_TOL_ROT_RAD = math.radians(2.0)
+#: How many in-place corrections one waypoint gets before the run stops.
+#:
+#: Two. The correction feeds the measured steady-state offset forward, so the
+#: first round removes most of a systematic droop and the second removes what
+#: the first one's own new posture adds; a third round that has not converged
+#: is not converging, and the honest answer is the typed refusal rather than
+#: an arm nodding at a block while the model waits.
+MAX_ARRIVAL_CORRECTIONS = 2
 
 
 @runtime_checkable
@@ -204,6 +285,65 @@ TRANSPORT_ERROR = "transport_error"
 STOP_REASONS: Tuple[str, ...] = (NOT_BOUND, UNGUARDED, STALE_BINDING,
                                  REFUSED_PLAN, BARRIER_FAILED, TRANSPORT_ERROR)
 
+#: WHY a barrier failed, in the same vocabulary a plan refusal uses.
+#:
+#: ``stop_reason`` says a barrier stopped the run; this says which one and
+#: with what numbers, so "the right tool point is 27 mm from the grasp pose
+#: after 2 corrections" reaches the caller instead of a jaw-stall symptom
+#: three steps later.
+ARRIVED_OFF_BY = "arrived_off_by"
+ARRIVAL_UNKNOWN = "arrival_unknown"
+NOT_SETTLED = "not_settled"
+STROKE_UNFINISHED = "stroke_unfinished"
+RUN_REASONS: Tuple[str, ...] = (ARRIVED_OFF_BY, ARRIVAL_UNKNOWN, NOT_SETTLED,
+                                STROKE_UNFINISHED)
+
+
+@dataclass(frozen=True)
+class RunRefusal:
+    """Why execution stopped, as data rather than as a sentence.
+
+    Deliberately the SHAPE a plan refusal already has
+    (:meth:`~manipulation_kit.primitives.types.PlanError.to_json`,
+    ``manipulation_kit.refusal/2``): same keys, same units — ``residual_m`` is
+    metres and ``residual_rad`` is radians — so a caller that can read one
+    refusal can read the other without a second parser. Only the REASON
+    vocabulary is new (:data:`RUN_REASONS`), which is why the schema version
+    does not move: nothing that could read a refusal/2 object can read this
+    one any less well.
+    """
+
+    reason: str
+    detail: str = ""
+    waypoint_label: str = ""
+    residual_m: float = float("nan")
+    residual_rad: float = float("nan")
+    stage: str = ""
+    attempted: Tuple[str, ...] = ()
+    primitive: str = ""
+    side: str = ""
+
+    def __post_init__(self) -> None:
+        if self.reason not in RUN_REASONS:
+            raise ValueError(f"unknown execution-refusal reason "
+                             f"{self.reason!r}; the vocabulary is {RUN_REASONS}")
+
+    def to_json(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"schema": "manipulation_kit.refusal/2",
+                               "reason": self.reason, "detail": self.detail,
+                               "primitive": self.primitive, "side": self.side}
+        if self.waypoint_label:
+            out["waypoint_label"] = self.waypoint_label
+        if np.isfinite(self.residual_m):
+            out["residual_m"] = round(float(self.residual_m), 5)
+        if np.isfinite(self.residual_rad):
+            out["residual_rad"] = round(float(self.residual_rad), 5)
+        if self.stage:
+            out["stage"] = self.stage
+        if self.attempted:
+            out["attempted"] = list(self.attempted)
+        return out
+
 
 @dataclass(frozen=True)
 class RunReport:
@@ -230,16 +370,21 @@ class RunReport:
     stopped_at: int = -1
     arrivals: Tuple[ArrivalReport, ...] = ()
     strokes: Tuple[StrokeReport, ...] = ()
+    #: the typed half of ``error``, when the stop has one
+    refusal: Optional[RunRefusal] = None
 
     def to_json(self) -> Dict[str, Any]:
-        return {"primitive": self.plan_primitive, "side": self.side,
-                "completed": self.completed, "steps_sent": self.steps_sent,
-                "settled": None if self.settle is None else self.settle.settled,
-                "stop_reason": self.stop_reason,
-                "stopped_at": self.stopped_at,
-                "arrivals": [a.to_json() for a in self.arrivals],
-                "strokes": [s.to_json() for s in self.strokes],
-                "error": self.error}
+        out = {"primitive": self.plan_primitive, "side": self.side,
+               "completed": self.completed, "steps_sent": self.steps_sent,
+               "settled": None if self.settle is None else self.settle.settled,
+               "stop_reason": self.stop_reason,
+               "stopped_at": self.stopped_at,
+               "arrivals": [a.to_json() for a in self.arrivals],
+               "strokes": [s.to_json() for s in self.strokes],
+               "error": self.error}
+        if self.refusal is not None:
+            out["refusal"] = self.refusal.to_json()
+        return out
 
 
 def check_binding(plan: Plan, executor: "Executor", *,
@@ -295,11 +440,391 @@ def _stroke_of(executor: "Executor", side: str, *, timeout_s: float
     return wait(side, timeout_s=timeout_s)
 
 
+# --------------------------------------------------------------------------- #
+# the tool-space barrier
+# --------------------------------------------------------------------------- #
+
+#: the arm model the barrier falls back to when nobody hands it one
+DEFAULT_ARM_MODEL = "d1/arm"
+_FALLBACK_KIN: Dict[str, Any] = {}
+
+
+def _fallback_kinematics(model: str = DEFAULT_ARM_MODEL):
+    """The kit's own guarded model, built once per process and shared.
+
+    A last resort, not a default worth relying on: the barrier's corrections
+    are collision-checked against THIS model's guard, so a caller whose plan
+    was made against a differently configured guard should pass that model in
+    (``run(..., kin=kin)``) rather than let a second one be built behind its
+    back. Built with the same factory and the same defaults the planners use,
+    so when it IS used it is the same geometry and the same guard config.
+    """
+    if model not in _FALLBACK_KIN:
+        from .arms import get_arm_kinematics  # noqa: PLC0415 - optional cost
+        _FALLBACK_KIN[model] = get_arm_kinematics(model, quiet=True)
+    return _FALLBACK_KIN[model]
+
+
+class ToolGate:
+    """"Is the JAW POCKET where the plan said?" — measured, and corrected.
+
+    The joint-space barrier (:meth:`Executor.wait_arrived`) answers a question
+    about seven angles. This one answers the question the verb was about, by
+    running the kit's own forward kinematics over the two postures the
+    executor can already report — the one it was COMMANDED and the one it
+    MEASURES — and comparing the tool points. Nothing new is asked of the
+    transport: no RPC, no pose read, no extra protocol method.
+
+    When the tool is off and the arm has settled there, the offset is a
+    steady-state error (gravity droop, a controller's deadband), so it is fed
+    FORWARD: re-solve the same commanded tool pose shifted by minus the
+    measured offset, seeded at the commanded joints, guard it, send it, look
+    again. At most :data:`MAX_ARRIVAL_CORRECTIONS` rounds, then a typed
+    refusal — never a stroke onto an unverified pose.
+    """
+
+    def __init__(self, *, kin=None, tol_rad: float = ARRIVE_TOL_RAD,
+                 timeout_s: float = ARRIVE_TIMEOUT_S,
+                 tol_m: float = ARRIVE_TOL_M,
+                 tol_rot_rad: float = ARRIVE_TOL_ROT_RAD,
+                 correct: bool = True,
+                 max_rounds: int = MAX_ARRIVAL_CORRECTIONS,
+                 guarded: bool = True):
+        self.kin = kin
+        self.tol_rad = float(tol_rad)
+        self.timeout_s = float(timeout_s)
+        self.tol_m = float(tol_m)
+        self.tol_rot_rad = float(tol_rot_rad)
+        self.correct = bool(correct)
+        self.max_rounds = int(max_rounds)
+        #: was the PLAN guarded? Then so is every posture this gate invents.
+        self.guarded = bool(guarded)
+
+    # -- kinematics -------------------------------------------------------- #
+    def model(self, executor: "Executor"):
+        """The kinematic model to compute with: the caller's, the executor's,
+        or the kit's own — in that order, and the choice is stated once."""
+        if self.kin is not None:
+            return self.kin
+        own = getattr(executor, "kin", None)
+        if own is not None:
+            return own
+        return _fallback_kinematics()
+
+    @staticmethod
+    def _tool(kin, side: str, q) -> Tuple[np.ndarray, Any]:
+        """The tool pose for a joint vector, with the model put back.
+
+        Same borrow-and-restore contract as
+        :class:`manipulation_kit.primitives.planning.Kin`: the model is shared
+        with whoever is planning on it, so the lock is held and the joints go
+        back even on the way out through an exception.
+        """
+        lock = getattr(kin, "lock", None)
+        if lock is not None:
+            lock.acquire()
+        try:
+            saved = np.array(kin.joints(side), dtype=float)
+            try:
+                kin.set_joints(side, np.asarray(q, dtype=float).reshape(ARM_DOF))
+                p7, r7 = kin.ee_pose(side)
+            finally:
+                kin.set_joints(side, saved)
+        finally:
+            if lock is not None:
+                lock.release()
+        return tool_from_link7(p7, r7)
+
+    @staticmethod
+    def _measured(executor: "Executor", side: str) -> Optional[np.ndarray]:
+        state = executor.state()
+        q = state.joints.get(side)
+        return None if q is None else np.asarray(q, dtype=float).reshape(ARM_DOF)
+
+    def _error(self, kin, side: str, q_cmd, q_meas) -> Tuple[float, float,
+                                                             np.ndarray, Any,
+                                                             np.ndarray, Any]:
+        p_cmd, r_cmd = self._tool(kin, side, q_cmd)
+        p_meas, r_meas = self._tool(kin, side, q_meas)
+        rot = float(np.linalg.norm((r_meas.inv() * r_cmd).as_rotvec()))
+        return (float(np.linalg.norm(p_meas - p_cmd)), rot,
+                p_cmd, r_cmd, p_meas, r_meas)
+
+    # -- the barrier ------------------------------------------------------- #
+    def check(self, executor: "Executor", q16, side: str, *, label: str = "",
+              t: float = 0.0) -> Tuple[ArrivalReport, Optional[np.ndarray]]:
+        """Gate one waypoint. Returns the report and the vector now commanded.
+
+        The second half of the pair is what makes a correction real to the
+        rest of the run: after a corrected posture is sent, THAT is the
+        command the arm is under, and the steps that follow have to carry it
+        rather than the one that missed.
+        """
+        want = np.asarray(q16, dtype=float).reshape(WIRE_DIM)
+        arrival = _arrival_of(executor, want, tol_rad=self.tol_rad,
+                              timeout_s=self.timeout_s)
+        kin = None
+        try:
+            kin = self.model(executor)
+        except Exception as exc:  # noqa: BLE001 - no model, no tool answer
+            return (_with_label(arrival, label, detail=(
+                f"{arrival.detail}; and the tool point could not be computed: "
+                f"no kinematic model ({exc})")), None)
+        q_meas = self._measured(executor, side)
+        if q_meas is None:
+            return (ArrivalReport(
+                False, arrival.worst_error_rad, arrival.waited_s,
+                f"{type(executor).__name__} reports no measured joints for the "
+                f"{side} arm, so where the tool ended up cannot be measured",
+                waypoint_label=label), None)
+        q_cmd = want[JOINT_SLICE[side]]
+        error_m, error_rad, p_cmd, r_cmd, _p, _r = self._error(
+            kin, side, q_cmd, q_meas)
+        if not arrival.arrived:
+            # The joint barrier failed FIRST. It stays the answer — the arm is
+            # still travelling, or it stopped short — but the tool numbers go
+            # with it, because "2.8 deg short" and "27 mm off at the tool" are
+            # the same fact said usefully.
+            return (_with_label(arrival, label, tool_error_m=error_m,
+                                tool_rot_error_rad=error_rad), None)
+        if error_m <= self.tol_m and error_rad <= self.tol_rot_rad:
+            return (ArrivalReport(
+                True, arrival.worst_error_rad, arrival.waited_s,
+                f"the tool point is {error_m * 1000:.1f} mm and "
+                f"{math.degrees(error_rad):.1f} deg from the commanded pose",
+                error_m, error_rad, (), label), None)
+        return self._correct(executor, kin, want, side, label=label, t=t,
+                             arrival=arrival, p_cmd=p_cmd, r_cmd=r_cmd,
+                             error_m=error_m, error_rad=error_rad)
+
+    # -- the correction ---------------------------------------------------- #
+    def _refuse(self, arrival: ArrivalReport, label: str, error_m: float,
+                error_rad: float, rounds: Sequence[Correction], why: str
+                ) -> Tuple[ArrivalReport, Optional[np.ndarray]]:
+        return (ArrivalReport(False, arrival.worst_error_rad, arrival.waited_s,
+                              why, error_m, error_rad, tuple(rounds), label),
+                None)
+
+    def _correct(self, executor, kin, want: np.ndarray, side: str, *,
+                 label: str, t: float, arrival: ArrivalReport,
+                 p_cmd, r_cmd, error_m: float, error_rad: float
+                 ) -> Tuple[ArrivalReport, Optional[np.ndarray]]:
+        """Feed the measured offset forward, up to :attr:`max_rounds` times."""
+        off = (f"the {side} tool point is {error_m * 1000:.1f} mm and "
+               f"{math.degrees(error_rad):.1f} deg from the pose commanded at "
+               f"{label or 'this waypoint'} (tolerance "
+               f"{self.tol_m * 1000:.0f} mm / "
+               f"{math.degrees(self.tol_rot_rad):.0f} deg)")
+        if not self.correct or self.max_rounds < 1:
+            return self._refuse(arrival, label, error_m, error_rad, (),
+                                f"{off}, and correction is switched off")
+        gate = getattr(kin, "gate", None)
+        if self.guarded and not getattr(gate, "installed", False):
+            # The PLAN was checked by a guard. A posture this gate invents is
+            # a posture nobody checked, and inventing it against a model with
+            # no guard installed is exactly what the plan's own ``guarded``
+            # flag exists to stop.
+            return self._refuse(
+                arrival, label, error_m, error_rad, (),
+                f"{off}. It cannot be corrected: this plan was checked by a "
+                f"collision guard and the model given to the barrier has none "
+                f"installed, so the corrected posture could not be guarded")
+        rounds: List[Correction] = []
+        command = np.array(want, dtype=float)
+        sent: Optional[np.ndarray] = None
+        for index in range(1, self.max_rounds + 1):
+            before = error_m
+            q_meas = self._measured(executor, side)
+            if q_meas is None:
+                return self._refuse(
+                    arrival, label, error_m, error_rad, rounds,
+                    f"{off}, and the {side} arm's joints cannot be read")
+            q_new, why = self._solve(kin, side, command, q_meas, p_cmd, r_cmd,
+                                     error_rad)
+            if q_new is None:
+                rounds.append(Correction(index, before, float("nan"),
+                                         sent=False, detail=why))
+                return self._refuse(arrival, label, error_m, error_rad, rounds,
+                                    f"{off}. The correction was refused: {why}")
+            command = np.array(command, dtype=float)
+            command[JOINT_SLICE[side]] = q_new
+            executor.send_joints(command, t=t)
+            sent = command
+            again = _arrival_of(executor, command, tol_rad=self.tol_rad,
+                                timeout_s=self.timeout_s)
+            q_meas = self._measured(executor, side)
+            if q_meas is None:
+                rounds.append(Correction(
+                    index, before, float("nan"),
+                    detail="the joints could not be read back"))
+                return self._refuse(
+                    arrival, label, error_m, error_rad, rounds,
+                    f"{off}, and after the correction the {side} arm's joints "
+                    f"could not be read back")
+            # AGAINST THE ORIGINAL COMMANDED POSE. The shifted target is a
+            # means; landing on the pose the plan asked for is the end.
+            p_now, r_now = self._tool(kin, side, q_meas)
+            error_m = float(np.linalg.norm(p_now - np.asarray(p_cmd, dtype=float)))
+            error_rad = float(np.linalg.norm((r_now.inv() * r_cmd).as_rotvec()))
+            rounds.append(Correction(index, before, error_m))
+            if not again.arrived:
+                return self._refuse(
+                    arrival, label, error_m, error_rad, rounds,
+                    f"{off}, and the corrected posture was not reached: "
+                    f"{again.detail}")
+            if error_m <= self.tol_m and error_rad <= self.tol_rot_rad:
+                return (ArrivalReport(
+                    True, again.worst_error_rad, again.waited_s,
+                    f"the tool point is {error_m * 1000:.1f} mm and "
+                    f"{math.degrees(error_rad):.1f} deg from the commanded "
+                    f"pose after {index} correction"
+                    f"{'' if index == 1 else 's'}",
+                    error_m, error_rad, tuple(rounds), label), sent)
+        return self._refuse(
+            arrival, label, error_m, error_rad, rounds,
+            f"the {side} tool point is {error_m * 1000:.1f} mm and "
+            f"{math.degrees(error_rad):.1f} deg from the pose commanded at "
+            f"{label or 'this waypoint'} after {len(rounds)} corrections "
+            f"(tolerance {self.tol_m * 1000:.0f} mm / "
+            f"{math.degrees(self.tol_rot_rad):.0f} deg)")
+
+    def _solve(self, kin, side: str, command: np.ndarray, q_meas, p_cmd, r_cmd,
+               error_rad: float) -> Tuple[Optional[np.ndarray], str]:
+        """The same tool pose, shifted by minus the MEASURED offset.
+
+        An arm that lands 8 mm low under a command is asked for a command 8 mm
+        high, and lands where the plan wanted it. The offset is measured
+        against the pose the arm is CURRENTLY commanded at — which after the
+        first round is no longer the plan's — so the rounds compose instead of
+        each re-applying the whole of the first error.
+
+        Seeded at the commanded joints, so the solver stays in the branch the
+        plan chose. Guarded twice: ``solve_ee`` consults the gate itself, and
+        the committed vector is re-checked here, because a correction that is
+        only as safe as one call is one refactor away from being safe by
+        accident. The orientation is only fed forward when it is itself out of
+        tolerance: a gripper is forgiving about roll and a correction that
+        chases rotation noise spends a round for nothing.
+        """
+        q_cmd = np.asarray(command, dtype=float)[JOINT_SLICE[side]]
+        lock = getattr(kin, "lock", None)
+        if lock is not None:
+            lock.acquire()
+        try:
+            saved = {s: np.array(kin.joints(s), dtype=float)
+                     for s in getattr(kin, "sides", SIDES)}
+            try:
+                # BOTH arms at what they are commanded: the guard judges the
+                # two-arm posture, and the other arm's own command is part of
+                # it (R8).
+                for s in saved:
+                    if s in JOINT_SLICE:
+                        kin.set_joints(s, np.asarray(command, dtype=float)[
+                            JOINT_SLICE[s]])
+                p_c, r_c = self._tool(kin, side, q_cmd)
+                p_now, r_now = self._tool(kin, side, q_meas)
+                p_target = np.asarray(p_cmd, dtype=float) - (p_now - p_c)
+                r_target = r_cmd
+                if error_rad > self.tol_rot_rad:
+                    r_target = (r_now * r_c.inv()).inv() * r_cmd
+                p7, r7 = link7_from_tool(p_target, r_target)
+                result = kin.solve_ee(side, p7, r7, q0=q_cmd)
+                if not getattr(result, "ok", False):
+                    return None, (
+                        f"the IK refused the corrected pose ({result.reason})")
+                q_new = np.array(result.q, dtype=float).reshape(ARM_DOF)
+                if (getattr(getattr(kin, "gate", None), "installed", False)
+                        and not kin.guard_ok(side, q_new)):
+                    return None, ("the motion guard refused the corrected "
+                                  "posture, so it was not sent")
+                return q_new, ""
+            finally:
+                for s, q in saved.items():
+                    kin.set_joints(s, q)
+        except Exception as exc:  # noqa: BLE001 - a model that cannot solve
+            return None, f"the corrected pose could not be solved: {exc}"
+        finally:
+            if lock is not None:
+                lock.release()
+
+
+def _with_label(report: ArrivalReport, label: str, *, detail: str = "",
+                tool_error_m: float = float("nan"),
+                tool_rot_error_rad: float = float("nan")) -> ArrivalReport:
+    """The same report, told which waypoint it was about (and how far off)."""
+    return ArrivalReport(report.arrived, report.worst_error_rad,
+                         report.waited_s, detail or report.detail,
+                         tool_error_m, tool_rot_error_rad, report.corrections,
+                         label)
+
+
+def arrive_labels(plan: Plan) -> Dict[int, str]:
+    """``{waypoint index: label}`` for the waypoints that demand a tool check.
+
+    Read off the plan rather than off the verb, so a hand-built plan and a
+    primitive's plan are gated by exactly the same rule, and a plan that asks
+    for nothing gets the barrier it always had.
+    """
+    return {index: (wp.label or f"waypoint {index}")
+            for index, wp in enumerate(getattr(plan, "waypoints", ()))
+            if isinstance(wp, Waypoint) and wp.arrive}
+
+
+def _leaves_waypoint(steps: Sequence[Any], index: int) -> bool:
+    """Is the step after ``index`` somewhere other than the same waypoint?
+
+    The gate belongs at the END of a waypoint's knots — one measured wait per
+    waypoint, not one per interpolation knot, which on a 25 cm travel would be
+    a dozen of them.
+    """
+    step = steps[index]
+    nxt = steps[index + 1] if index + 1 < len(steps) else None
+    return not (isinstance(nxt, JointStep) and nxt.waypoint == step.waypoint
+                and nxt.side == step.side)
+
+
+def _same(a: Optional[np.ndarray], b: Optional[np.ndarray]) -> bool:
+    return (a is not None and b is not None
+            and np.array_equal(np.asarray(a), np.asarray(b)))
+
+
+def _off_by(plan: Plan, side: str, arrival: ArrivalReport,
+            gate: "ToolGate") -> RunRefusal:
+    """The typed half of a failed tool-space barrier.
+
+    ``arrived_off_by`` when the tool point is measurably off the pose the plan
+    commanded — the number the caller can act on ("27 mm at the grasp pose
+    after 2 corrections": nudge, re-observe, or pick another approach) —
+    against ``arrival_unknown`` for a barrier that could not measure at all,
+    which is a transport problem and not a geometry one.
+    """
+    measured = np.isfinite(arrival.tool_error_m)
+    off = measured and (
+        arrival.tool_error_m > gate.tol_m
+        or (np.isfinite(arrival.tool_rot_error_rad)
+            and arrival.tool_rot_error_rad > gate.tol_rot_rad))
+    return RunRefusal(
+        ARRIVED_OFF_BY if off else ARRIVAL_UNKNOWN, arrival.detail,
+        arrival.waypoint_label, arrival.tool_error_m,
+        arrival.tool_rot_error_rad, stage="tool_arrival",
+        attempted=tuple(
+            f"round {c.round}: {c.tool_error_before_m * 1000:.1f} mm -> "
+            + ("refused" if not c.sent else
+               ("unknown" if not np.isfinite(c.tool_error_after_m)
+                else f"{c.tool_error_after_m * 1000:.1f} mm"))
+            for c in arrival.corrections),
+        primitive=plan.primitive, side=side)
+
+
 def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
         allow_unbound: bool = False, allow_unguarded: bool = False,
         arrive_tol_rad: float = ARRIVE_TOL_RAD,
         arrive_timeout_s: float = ARRIVE_TIMEOUT_S,
-        stroke_timeout_s: float = STROKE_TIMEOUT_S) -> RunReport:
+        stroke_timeout_s: float = STROKE_TIMEOUT_S,
+        kin=None, correct_arrival: bool = True,
+        tool_tol_m: float = ARRIVE_TOL_M,
+        tool_rot_tol_rad: float = ARRIVE_TOL_ROT_RAD,
+        max_corrections: int = MAX_ARRIVAL_CORRECTIONS) -> RunReport:
     """Walk a plan's steps through an executor, in order, at ``hz``.
 
     Joint steps are batched into one 16-vector per step so both arms move
@@ -307,6 +832,11 @@ def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
     disagreeing about the posture the guard just approved.
 
     Nothing is sent until :func:`check_binding` passes.
+
+    ``kin`` is the kinematic model the TOOL-SPACE barrier computes with (see
+    :class:`ToolGate`). Pass the one the plan was built against; with nothing
+    passed the gate takes ``executor.kin`` if the transport carries one, and
+    otherwise builds the kit's own guarded ``d1/arm`` once per process.
     """
     if not getattr(plan, "ok", False):
         return RunReport(getattr(plan, "primitive", "?"),
@@ -331,21 +861,42 @@ def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
     # than this loop re-timing it over a socket. See
     # manipulation_kit.executors.firmware for the argument. It gets the SAME
     # barrier settings; ``hz`` used to be silently dropped on this path.
+    gate = ToolGate(kin=kin, tol_rad=arrive_tol_rad,
+                    timeout_s=arrive_timeout_s, tol_m=tool_tol_m,
+                    tol_rot_rad=tool_rot_tol_rad, correct=correct_arrival,
+                    max_rounds=max_corrections,
+                    guarded=bool(getattr(binding, "guarded", True)))
     own = getattr(executor, "run_plan", None)
     if own is not None:
-        return own(plan, arrive_tol_rad=arrive_tol_rad,
-                   arrive_timeout_s=arrive_timeout_s,
-                   stroke_timeout_s=stroke_timeout_s)
+        # A transport that predates the tool-space gate keeps the joint-space
+        # barrier and says so by its own signature; the kwarg is offered, not
+        # forced, so an out-of-tree ``run_plan`` is not broken by this change.
+        return own(plan, **_accepted(own, arrive_tol_rad=arrive_tol_rad,
+                                     arrive_timeout_s=arrive_timeout_s,
+                                     stroke_timeout_s=stroke_timeout_s,
+                                     gate=gate))
     return run_steps(plan, executor, hz=hz, arrive_tol_rad=arrive_tol_rad,
                      arrive_timeout_s=arrive_timeout_s,
-                     stroke_timeout_s=stroke_timeout_s)
+                     stroke_timeout_s=stroke_timeout_s, gate=gate)
+
+
+def _accepted(fn, **kwargs) -> Dict[str, Any]:
+    """The subset of ``kwargs`` ``fn`` can take, by its own signature."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):       # a builtin / C callable
+        return dict(kwargs)
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(kwargs)
+    return {k: v for k, v in kwargs.items() if k in params}
 
 
 def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
               schedule: Optional[Sequence[float]] = None,
               arrive_tol_rad: float = ARRIVE_TOL_RAD,
               arrive_timeout_s: float = ARRIVE_TIMEOUT_S,
-              stroke_timeout_s: float = STROKE_TIMEOUT_S) -> RunReport:
+              stroke_timeout_s: float = STROKE_TIMEOUT_S,
+              gate: Optional[ToolGate] = None) -> RunReport:
     """The step-by-step walk itself, with no delegation.
 
     Separate from :func:`run` so an executor that OVERRIDES ``run_plan`` can
@@ -362,12 +913,27 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
     after one, the stroke must have reached a terminal state; a settle that
     fails ends the run. Every one of those used to be a step that returned
     immediately and a report that said ``completed``.
+
+    AND THE BARRIER IS ALSO ABOUT THE TOOL. At every waypoint the plan marks
+    :attr:`~manipulation_kit.primitives.types.Waypoint.arrive` — a grasp's
+    standoff and descent, a place's transit and set-down — the jaw pocket
+    itself has to be where the plan put it, measured by :class:`ToolGate`,
+    corrected in place when it is not, and refused with ``arrived_off_by``
+    when the correction does not land it. A joint tolerance loose enough for
+    the real arm's droop is centimetres at the tool (F17), and the descent
+    that follows a standoff cannot be re-routed, so the error has to be caught
+    BEFORE it rather than diagnosed after the jaws close on nothing.
     """
     period = 1.0 / float(hz)
     sent = 0
     settle: Optional[SettleReport] = None
     arrivals: List[ArrivalReport] = []
     strokes: List[StrokeReport] = []
+    if gate is None:
+        gate = ToolGate(tol_rad=arrive_tol_rad, timeout_s=arrive_timeout_s,
+                        guarded=bool(getattr(getattr(plan, "binding", None),
+                                             "guarded", True)))
+    labels = arrive_labels(plan)
     begin = getattr(executor, "begin_run", None)
     if begin is not None:
         begin(plan)
@@ -419,16 +985,37 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
         grippers[side] = float(value)
     last_vector: Optional[np.ndarray] = None
 
-    def stop(index: int, reason: str, detail: str) -> RunReport:
+    def stop(index: int, reason: str, detail: str,
+             refusal: Optional[RunRefusal] = None) -> RunReport:
         end = getattr(executor, "end_run", None)
         if end is not None:
             end(plan)
         return RunReport(plan.primitive, plan.side, False, sent, settle,
                          error=detail, stop_reason=reason, stopped_at=index,
-                         arrivals=tuple(arrivals), strokes=tuple(strokes))
+                         arrivals=tuple(arrivals), strokes=tuple(strokes),
+                         refusal=refusal)
 
     times = None if schedule is None else list(schedule)
     joint_index = 0
+    #: the vector the last barrier was run against, so a waypoint gate and the
+    #: stroke that follows it do not pay for the same measurement twice
+    gated: Optional[np.ndarray] = None
+
+    def gate_at(side: str, label: str, at: float):
+        """Run the tool-space gate, keep the report, adopt any correction."""
+        nonlocal last_vector, gated
+        report, corrected = gate.check(executor, last_vector, side,
+                                       label=label, t=at)
+        arrivals.append(report)
+        if corrected is not None:
+            # THE CORRECTION IS NOW THE COMMAND. Everything after it — the
+            # next dual-arm vector, the pre-stroke barrier — has to carry the
+            # posture the arm is actually under, not the one that missed.
+            last_vector = corrected
+            joints[side] = np.array(corrected[JOINT_SLICE[side]], dtype=float)
+        gated = last_vector
+        return report
+
     for index, step in enumerate(plan.steps):
         if isinstance(step, JointStep):
             joints[step.side] = np.asarray(step.q, dtype=float)
@@ -438,10 +1025,21 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
             executor.send_joints(last_vector, t=at)
             joint_index += 1
             sent += 1
+            gated = None
+            # THE WAYPOINT ENDS HERE, and this one says the tool has to be on
+            # it. Catching a miss at the standoff is the whole point: the
+            # descent that follows may not be re-routed, so an error carried
+            # into it arrives at the block.
+            label = labels.get(step.waypoint)
+            if label is not None and _leaves_waypoint(plan.steps, index):
+                arrival = gate_at(step.side, label, at)
+                if not arrival.arrived:
+                    return stop(index, BARRIER_FAILED, arrival.detail,
+                                _off_by(plan, step.side, arrival, gate))
         elif isinstance(step, GripStep):
             # ARRIVE BEFORE YOU CLOSE. A stroke run while the arm is still
             # travelling closes the jaws somewhere along the path.
-            if last_vector is not None:
+            if last_vector is not None and not _same(gated, last_vector):
                 arrival = _arrival_of(executor, last_vector,
                                       tol_rad=arrive_tol_rad,
                                       timeout_s=arrive_timeout_s)
@@ -501,7 +1099,27 @@ class RecordingExecutor:
         self.pretend_arrived = False
 
     def state(self) -> RawState:
-        return self._state
+        """Where the arm is — which, for a recorder, is where it started.
+
+        UNLESS the test asked it to pretend. ``pretend_arrived`` is a claim
+        about the BARRIERS, and the tool-space half of them reads the measured
+        posture: a double that says "arrived" while reporting joints a
+        radian away is not pretending, it is lying, and the gate would
+        (correctly) refuse it. So the pretence is whole — the last commanded
+        posture is reported back — and the honest default, the one the
+        "a verifier must FAIL against this" tests use, is untouched.
+        """
+        if not self.pretend_arrived or not self.sent:
+            return self._state
+        commanded = self.sent[-1][1]
+        return RawState(
+            joints={s: np.array(commanded[JOINT_SLICE[s]], dtype=float)
+                    for s in self._state.joints},
+            grippers=dict(self._state.grippers),
+            holding=dict(self._state.holding),
+            stationary=self._state.stationary, stamp=self._state.stamp,
+            extra=dict(self._state.extra),
+            commanded_grippers=dict(self._state.commanded_grippers))
 
     def send_joints(self, q16, *, t: float) -> None:
         q = np.asarray(q16, dtype=float).reshape(WIRE_DIM)

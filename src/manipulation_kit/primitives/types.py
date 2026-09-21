@@ -202,6 +202,25 @@ class Waypoint:
     #: and a detour that satisfies the endpoint has not done what was asked
     #: (R10).
     allow_via: bool = True
+    #: Must the arm be measurably ON this waypoint — AT THE TOOL — before the
+    #: plan goes on?
+    #:
+    #: The joint-space barrier every plan already gets is a statement about
+    #: seven angles; this one is a statement about the jaw pocket, and they
+    #: are not the same claim. MEASURED 2026-09-21 on ``blocks-eval``: a
+    #: descent that began 2.2-2.8 deg from the commanded posture — inside the
+    #: executor's 3 deg, which exists to tolerate the real arm's gravity droop
+    #: (F16, J1 ~0.9 deg) — put the tool CENTIMETRES off at a 0.5 m reach, and
+    #: the stroke closed the jaws beside the block ("stalled at 13.5 mm inside
+    #: block_red's 43.8 mm"). A tolerance loose enough for the droop is too
+    #: loose for the jaws.
+    #:
+    #: ``False`` by default: it costs a measured wait and, when the tool is
+    #: off, a correction, so it is spent where the tool point IS the promise —
+    #: a grasp's standoff and descent, a place's transit and set-down. Free
+    #: transit legs (and ``Approach``, whose verifier already measures the
+    #: tool point) do not set it.
+    arrive: bool = False
 
     def __post_init__(self) -> None:
         p = np.array(self.p, dtype=float).reshape(3)
@@ -212,7 +231,8 @@ class Waypoint:
         return {"label": self.label,
                 "p": [round(float(v), 4) for v in self.p],
                 "quat_xyzw": [round(float(v), 4) for v in self.r.as_quat()],
-                "allow_via": bool(self.allow_via)}
+                "allow_via": bool(self.allow_via),
+                "arrive": bool(self.arrive)}
 
 
 @dataclass(frozen=True)

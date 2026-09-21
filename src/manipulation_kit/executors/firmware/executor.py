@@ -73,7 +73,8 @@ from ...arms import safety, sides
 from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         JOINT_SLICE, SIDES, STROKE_TIMEOUT_S,
                         TRANSPORT_ERROR, ArrivalReport, RawState, RunReport,
-                        SettleReport, StrokeReport, WIRE_DIM)
+                        SettleReport, StrokeReport, ToolGate, WIRE_DIM,
+                        arrive_labels, _off_by)
 from ...primitives.types import GripStep, JointStep, Plan, SettleStep
 from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
                      RateRefused)
@@ -671,7 +672,8 @@ class FirmwareExecutor:
     # -- the preferred path: one upload ------------------------------------ #
     def run_plan(self, plan: Plan, *, arrive_tol_rad: float = None,
                  arrive_timeout_s: float = None,
-                 stroke_timeout_s: float = None) -> RunReport:
+                 stroke_timeout_s: float = None,
+                 gate: "ToolGate" = None) -> RunReport:
         """Play a pre-checked plan, trajectory-first. Used by
         :func:`manipulation_kit.executor.run` when this executor is passed.
 
@@ -679,6 +681,14 @@ class FirmwareExecutor:
         must be measurably at the commanded posture before a stroke, the
         stroke must reach a terminal state, and a failed settle ends the run.
         Transport ``completed`` is not any of those.
+
+        Including the TOOL-SPACE one. A trajectory upload is still a command
+        about seven angles, so a waypoint the plan marks ``arrive`` flushes
+        the batch here — the arm has to be measurably ON it, at the jaw
+        pocket, before the next leg is uploaded — and an uncorrectable miss
+        ends the run with ``arrived_off_by`` rather than with a jaw stall two
+        steps later (F17). The gate the generic runner would have used is
+        passed in; with nothing passed this transport builds the same one.
         """
         if not getattr(plan, "ok", False):
             from ...executor import REFUSED_PLAN  # noqa: PLC0415
@@ -690,6 +700,11 @@ class FirmwareExecutor:
                     else arrive_timeout_s)
         stroke_s = (self.stroke_timeout_s if stroke_timeout_s is None
                     else stroke_timeout_s)
+        if gate is None:
+            gate = ToolGate(tol_rad=tol, timeout_s=arrive_s,
+                            guarded=bool(getattr(getattr(plan, "binding", None),
+                                                 "guarded", True)))
+        labels = arrive_labels(plan)
         self.begin_run(plan)
         if self.transport == "stream":
             # run_steps, NOT run: run() delegates to run_plan, which is this.
@@ -711,23 +726,55 @@ class FirmwareExecutor:
         batch: List[JointStep] = []
         last: Dict[str, np.ndarray] = {}
 
-        def report(index: int, reason: str, detail: str) -> RunReport:
+        def report(index: int, reason: str, detail: str,
+                   refusal=None) -> RunReport:
             self.cancel_jobs()
             return RunReport(plan.primitive, plan.side, False, sent, settle,
                              error=detail, stop_reason=reason,
                              stopped_at=index, arrivals=tuple(arrivals),
-                             strokes=tuple(strokes))
+                             strokes=tuple(strokes), refusal=refusal)
 
         try:
+            def gate_at(closing: JointStep, index: int):
+                """Flush, then measure the TOOL at the waypoint just finished."""
+                arrival, corrected = gate.check(
+                    self, self._vector(last), closing.side,
+                    label=labels[closing.waypoint])
+                arrivals.append(arrival)
+                if corrected is not None:
+                    last[closing.side] = np.array(
+                        corrected[JOINT_SLICE[closing.side]], dtype=float)
+                if arrival.arrived:
+                    return None
+                return report(index, BARRIER_FAILED, arrival.detail,
+                              _off_by(plan, closing.side, arrival, gate))
+
             for index, step in enumerate(plan.steps):
                 if isinstance(step, JointStep):
+                    if (batch and step.waypoint != batch[-1].waypoint
+                            and batch[-1].waypoint in labels):
+                        # A GATED WAYPOINT ENDS HERE. Upload what is queued and
+                        # measure before the next leg is even composed: an
+                        # error carried into a descent arrives at the block.
+                        closing = batch[-1]
+                        sent += self._play(batch)
+                        batch = []
+                        stopped = gate_at(closing, index)
+                        if stopped is not None:
+                            return stopped
                     batch.append(step)
                     last[step.side] = np.asarray(step.q, dtype=float)
                     continue
                 sent += self._play(batch)
+                played = batch
                 batch = []
                 if isinstance(step, GripStep):
-                    if last:
+                    if last and played and played[-1].waypoint in labels:
+                        # the LAST leg before a stroke is gated at the tool too
+                        stopped = gate_at(played[-1], index)
+                        if stopped is not None:
+                            return stopped
+                    elif last:
                         arrival = self.wait_arrived(self._vector(last),
                                                     tol_rad=tol,
                                                     timeout_s=arrive_s)
