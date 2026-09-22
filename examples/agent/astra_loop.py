@@ -299,7 +299,11 @@ def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
         return MirrorRobot(kin)
     from manipulation_kit.executors.firmware import FirmwareExecutor  # noqa: PLC0415
     from live import LiveRobot  # noqa: PLC0415
-    return LiveRobot(FirmwareExecutor(base_url=robot_url), kin, scene)
+    from manipulation_kit.executors.firmware.client import FirmwareClient  # noqa: PLC0415
+    # The daemon answers /v1/gripper/{side}/set only when the stroke is done;
+    # the client default of 2 s is too short for a real close (d1-2, 2026-09-22).
+    client = FirmwareClient(robot_url, timeout=20.0)
+    return LiveRobot(FirmwareExecutor(base_url=robot_url, client=client), kin, scene)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
