@@ -986,9 +986,15 @@ STROKE_UNFINISHED = "stroke_unfinished"
 #: and every later stroke ended ``fault`` with the jaws stationary — which
 #: the barrier accepted as a finished stroke. Astra review, finding 13.)
 GRIPPER_FAULT = "gripper_fault"
+#: A stroke the plan marked ``GripStep.expect_hold`` finished WITHOUT a
+#: measured hold (``StrokeReport.holding`` false or unknown). The run stops
+#: before the next step, because that step depends on the hold: in a
+#: ``handover`` it is the giving hand opening, and a receiver that closed on
+#: air would turn it into a drop.
+HOLD_NOT_CONFIRMED = "hold_not_confirmed"
 RUN_REASONS: Tuple[str, ...] = (ARRIVED_OFF_BY, ARRIVAL_UNKNOWN, NOT_SETTLED,
                                 STROKE_UNFINISHED, GRIPPER_FAULT,
-                                CONTROLLER_FAULT)
+                                HOLD_NOT_CONFIRMED, CONTROLLER_FAULT)
 
 
 @dataclass(frozen=True)
@@ -1155,6 +1161,26 @@ def stroke_refusal(plan: Plan, side: str, stroke: "StrokeReport") -> "RunRefusal
         f"the {side} gripper stroke did not reach a terminal state: "
         f"{stroke.detail}",
         stage="gripper_stroke", primitive=plan.primitive, side=side)
+
+
+def hold_refusal(plan: Plan, step: GripStep, stroke: "StrokeReport"
+                 ) -> Optional["RunRefusal"]:
+    """The refusal for a settled stroke whose plan needed a HOLD, or ``None``.
+
+    Only for a :class:`GripStep` with ``expect_hold``; every other stroke is
+    judged by :func:`stroke_refusal` alone. Unknown (``holding is None``) is
+    a refusal too: the step after this one is only safe on a measured hold.
+    """
+    if not getattr(step, "expect_hold", False) or stroke.holding is True:
+        return None
+    measured = ("reports nothing held" if stroke.holding is False
+                else "cannot say whether it holds anything")
+    return RunRefusal(
+        HOLD_NOT_CONFIRMED,
+        f"the {step.side} gripper closed ({stroke.kind or 'stroke settled'}) "
+        f"and {measured}; the next step depends on that hold, so the run "
+        f"stops here with everything else as it is",
+        stage="gripper_stroke", primitive=plan.primitive, side=step.side)
 
 
 def fault_refusal(plan: Plan, detail: str) -> "RunRefusal":
@@ -2095,6 +2121,9 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
             strokes.append(stroke)
             if not stroke.settled:
                 refusal = stroke_refusal(plan, step.side, stroke)
+                return stop(index, BARRIER_FAILED, refusal.detail, refusal)
+            refusal = hold_refusal(plan, step, stroke)
+            if refusal is not None:
                 return stop(index, BARRIER_FAILED, refusal.detail, refusal)
             sent += 1
         elif isinstance(step, SettleStep):

@@ -178,7 +178,7 @@ python examples/agent/jev_menu.py --task "put the red block in the box"
 # the loop measuring its own scene from a frame, once, before turn 0
 python examples/agent/astra_loop.py --perceive snapshot --trace /tmp/run/t.jsonl \
     --object charger --destination cup \
-    --perceive-opts "--table-width 0.60 --anchor camera --neck-pitch 0.52"
+    --perceive-opts "--table-width 0.60 --neck-pitch 0.52 --robot-profile d1-2"
 ```
 
 `pip install openai` first for the second one — it is not a dependency of this
@@ -421,8 +421,8 @@ docs/            the institutional notes, verbatim
 ## Primitives and the agent examples
 
 Above the IK there is a small set of **verbs**: `Approach Grasp Lift Carry
-Place Release Nudge Retreat GoHome`, plus the `Pour` contract whose body is a
-learned policy. Each is a frozen dataclass with the same three parts —
+Place Release Nudge Retreat GoHome`, the contact verbs `Probe Press`, the
+two-arm `Handover`, plus the `Pour` contract whose body is a learned policy. Each is a frozen dataclass with the same three parts —
 `preconditions(world)`, a pure `plan(world, kin)`, and a `verifier(world0)`
 that returns a **measured** verdict from a later observation. The full contract
 is [`docs/PRIMITIVE_CONTRACT.md`](docs/PRIMITIVE_CONTRACT.md).
@@ -481,6 +481,98 @@ Three things are load-bearing, and each is a bug somebody shipped:
   object fits the jaws is its extent along *the jaw axis of that grasp*, not
   its smallest side; how tall it stands is its extent along base +z from its
   *resolved* orientation. A tilted box is refused rather than approximated.
+
+### The vocabulary (0.16): directions, contact, probe/press, handover
+
+**A direction is the way the hand TRAVELS**, never an orientation — the wrist
+is derived from it (`orientation.align_tool`) and the roll is the kit's one
+sweep (`grasp_geometry.roll_candidates`; the plan's notes say which it took).
+Name an alias or give any vector in a named frame:
+
+| alias | vector | frame |
+|---|---|---|
+| `down` | (0, 0, -1) | base |
+| `up` | (0, 0, +1) | base |
+| `forward` | (+1, 0, 0) | base — away from the robot |
+| `backward` | (-1, 0, 0) | base |
+| `left` | (0, +1, 0) | base — toward the robot's left |
+| `right` | (0, -1, 0) | base |
+| `along_tool` | (0, 0, +1) | tool — the hand's own approach axis |
+
+```python
+from manipulation_kit.world import Direction
+Grasp(object="cube", direction="down")                                  # an alias
+Grasp(object="cube", direction={"axis": [1, 0, -1], "frame": "base"})   # 45 deg down-forward
+Probe(side="left", direction=Direction((0, 0, 1), frame="object:shelf")) # the shelf's own +z
+```
+
+(0.15's `approach="side_left"` travelled toward -y: it is `right`, not
+`left` — see the CHANGELOG's migration table.) A verb whose direction is how
+the hand **arrives** sets `Primitive.DIRECTION_ARRIVES`; the operator's
+`allowed_directions` restricts exactly those (`agent.policy.DIRECTED_VERBS`:
+approach, grasp, probe, press, handover).
+
+**Where on the hand**: `Grasp(contact="pad")` (the default: between the pad
+centres) or `contact="tip"` (between the finger tips — a card lying on a
+table). **`tip` is experimental**: planned and verified on the kinematic
+mirror only, until the tip grasp trial of
+[`docs/probe-hardware-trial.md`](docs/probe-hardware-trial.md) passes on d1-2.
+
+**Contact** is a verb, not a guess: `Probe(side, direction="down",
+max_travel_m=0.15)` travels until a joint torque rises and reports where
+(`declare_as="table"` publishes the measured surface; three probes fit a
+plane); `Press(target=..., direction="forward", force_nm=...)` pushes, holds
+and returns. Position mode only — a watched straight line, never a torque
+command — and gated on hardware by the same document.
+
+**`Handover(object="cube")`** passes a held object to the other hand: the
+giving hand meets at a point both arms reach, the receiving hand approaches
+(travelling `direction`, default `left` = toward a left-hand giver) and
+grasps, the giver opens and backs out. The receiver's close must end
+measurably holding before the giver opens (`GripStep.expect_hold`).
+
+**The scene is an obstacle set**: every declared surface, container and object
+is a box the arm's links keep clear of (`primitives.clearance.SceneGate`,
+refusals name the obstacle and the penetration), free transits rise over
+things, and a contact leg's gate (`SceneGate.for_contact`) leaves out only the
+surface it is aimed at.
+
+**The operator policy** is data, not environment variables:
+
+```python
+from manipulation_kit.agent import OperatorPolicy
+policy = OperatorPolicy(max_grip="soft", allowed_directions=("down",),
+                        vel_ratio=0.15, look_before_stroke=True,
+                        droop_margin_m=0.012)        # d1-2's measured arm sag
+```
+
+`look_before_stroke` needs **measured wrist-camera intrinsics per robot**.
+d1-2's two fisheyes were measured on 2026-09-22 (d1-inference
+`d1-calibrate-wrist`, `calibration/wrist_fisheye.py`) and live in its **robot
+profile** (`manipulation_kit.description.robot_profile.RobotProfile.named("d1-2")`,
+with the hand gap and the head camera's measured mount; `--robot-profile`, or
+`"robot": {"profile": "d1-2"}` in a scene). The wrist lens's extrinsic is still
+the nominal plate geometry, so **`--no-look-before-stroke` is the documented
+setting for a robot's first live run**. See [`docs/agent.md`](docs/agent.md).
+
+**Isaac** is an executor, registered by d1-isaaclab rather than imported:
+
+```python
+# d1-isaaclab: scripts/eval/agent_eval/kit_executor.py
+from manipulation_kit.agent import LiveRobot
+
+def isaac(*, kin, policy, scene=None, url=None, wrist_intrinsics=None, **_):
+    ...                     # build the env client, executor and world source
+    return LiveRobot(executor, source, kin, name="isaac", closing=(client,),
+                     wrist_intrinsics=wrist_intrinsics)
+```
+```toml
+[project.entry-points."manipulation_kit.executors"]
+isaac = "agent_eval.kit_executor:isaac"
+```
+
+then `astra_loop.py --executor isaac --isaac-url tcp://HOST:8977` (full
+snippet in `docs/agent.md`).
 
 ### Running a plan
 

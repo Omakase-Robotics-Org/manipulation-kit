@@ -16,11 +16,13 @@ What moved INTO the wheel on 2026-09-22 (redesign step 7): the loop itself,
 the operator policy, the robot adapters and the decision trace —
 ``manipulation_kit.agent``. What is left here is genuinely about a model:
 
-``astra_loop.py`` the prompt, the OpenAI client, the scripted stand-in and
-                  ``main()`` over ``manipulation_kit.agent.run``
+``astra_loop.py`` the prompt, the OpenAI client and ``main()`` over
+                  ``manipulation_kit.agent.run`` (under 200 lines)
+``scripted.py``   the scripted stand-in for a model (no key, no network)
 ``snapshot.py``   the camera-grab contract: fresh, labelled frames or a stop
 ``detector.py``   a model as the box detector for ``perceive.py``
 ``perceive.py``   one head frame -> a scene file, over ``manipulation_kit.perception``
+``run_scene.py``  the scene a run starts from: ``--perceive`` or ``--scene``
 ``menu.py``       the Jev-style typed-choice RENDERER: ranking, the cap, the
                   wait/rescan/stop answers, the question itself
 ``jev_menu.py``   print one such request

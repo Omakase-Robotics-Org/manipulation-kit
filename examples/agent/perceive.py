@@ -139,6 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
     robot.add_argument("--lift", type=float, default=None,
                        help="slider height_m; does NOT move the camera in "
                             "base, only reports the table's floor height")
+    robot.add_argument("--robot-profile", default=None, metavar="NAME|FILE",
+                       help="this robot's measured profile (e.g. d1-2): its "
+                            "head-camera MOUNT is applied on top of the URDF "
+                            "nominal and the camera says calibrated. Without "
+                            "it the frame is the nominal one")
     scene = parser.add_argument_group(
         "OPTIONAL scene numbers — you should not need any of these")
     scene.add_argument("--table-width", type=float, default=None,
@@ -182,7 +187,12 @@ def head_camera(args: argparse.Namespace, width: int, height: int, *,
                 neck=None, lift=None) -> HeadCamera:
     """The camera: from the LIVE neck/lift states when given (typed, from the
     executor), else from the recorded frame's joint flags. Both at once is
-    two answers to one question, and is refused."""
+    two answers to one question, and is refused. ``--robot-profile`` adds the
+    robot's MEASURED head mount."""
+    from manipulation_kit.description.robot_profile import (  # noqa: PLC0415
+        RobotProfile)
+    profile = RobotProfile.resolve(getattr(args, "robot_profile", None))
+    mount = None if profile is None else profile.head_mount_delta
     intrinsics = {"fx": args.fx, "fy": args.fy, "cx": args.cx, "cy": args.cy}
     if args.intrinsics is not None:
         intrinsics.update(read_intrinsics(args.intrinsics))
@@ -193,12 +203,13 @@ def head_camera(args: argparse.Namespace, width: int, height: int, *,
         if args.lift is not None and lift is not None:
             raise SystemExit("--lift given AND a live lift state")
         return HeadCamera.from_config(HeadCameraConfig.from_intrinsics(
-            intrinsics, width=width, height=height, neck=neck, lift=lift))
+            intrinsics, width=width, height=height, neck=neck, lift=lift),
+            mount_delta=mount)
     return HeadCamera.from_robot(
         width=width, height=height, fx=intrinsics["fx"],
         fy=intrinsics.get("fy"), cx=intrinsics.get("cx"),
         cy=intrinsics.get("cy"), neck_pitch=args.neck_pitch or 0.0,
-        neck_yaw=args.neck_yaw or 0.0, lift_m=args.lift)
+        neck_yaw=args.neck_yaw or 0.0, lift_m=args.lift, mount_delta=mount)
 
 
 def _mask(frame, plane, wanted):

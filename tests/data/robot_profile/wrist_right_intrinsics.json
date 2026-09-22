@@ -1,0 +1,142 @@
+{
+  "model": "fisheye",
+  "width": 640,
+  "height": 480,
+  "fx": 237.63819955960315,
+  "fy": 238.95176258931406,
+  "cx": 328.37260250300966,
+  "cy": 225.57549500574052,
+  "distortion": [
+    -0.037428329813206214,
+    -0.003566793700033574,
+    -0.0019754802512323374,
+    0.0004794796874036616
+  ],
+  "source": "d1-calibrate-wrist d1-2 right, 37 ChArUco view(s), 2026-09-22",
+  "rms_px": 0.3922,
+  "valid_radius_px": 325.8,
+  "hfov_usable_deg": 179.60976170687144,
+  "k": [
+    -0.037428329813206214,
+    -0.003566793700033574,
+    -0.0019754802512323374,
+    0.0004794796874036616
+  ],
+  "schema_version": 1,
+  "kind": "wrist_camera_intrinsics",
+  "robot": "d1-2",
+  "side": "right",
+  "camera_slot": "right_hand",
+  "camera_key": "right_wrist_0_rgb",
+  "created": "2026-09-22T21:53:29+00:00",
+  "board": {
+    "name": "charuco-7x5-a4",
+    "kind": "charuco",
+    "squares_x": 7,
+    "squares_y": 5,
+    "square_mm": 35.0,
+    "marker_mm": 26.0,
+    "dictionary": "DICT_6X6_250",
+    "paper": "A4 landscape, 100 % scale (NOT fit-to-page)"
+  },
+  "frames_source": "/tmp/claude-1000/-home-shu-Programs-shuai/4572b3dd-bd63-4bf1-97b0-c4f1379592df/scratchpad/wristcal-frames/wristcal/right",
+  "views_used": 37,
+  "views_dropped": [],
+  "fit_initialisation": "equidistant 150 deg",
+  "per_view_rms_px": {
+    "01": 0.1814,
+    "02": 0.1852,
+    "03": 0.1972,
+    "04": 0.1751,
+    "05": 0.6577,
+    "06": 0.176,
+    "07": 0.1349,
+    "08": 0.1201,
+    "09": 0.1288,
+    "10": 0.3252,
+    "11": 0.1666,
+    "12": 0.8711,
+    "13": 0.9394,
+    "14": 0.3214,
+    "15": 0.3136,
+    "16": 0.256,
+    "17": 0.3141,
+    "18": 0.3117,
+    "19": 0.6268,
+    "20": 0.391,
+    "21": 0.1839,
+    "22": 0.1588,
+    "23": 0.4747,
+    "25": 0.1962,
+    "26": 0.3944,
+    "27": 0.2451,
+    "29": 0.5475,
+    "30": 0.182,
+    "31": 0.2479,
+    "32": 0.5241,
+    "33": 0.5035,
+    "34": 0.4154,
+    "39": 0.1898,
+    "40": 0.2469,
+    "41": 0.2737,
+    "47": 0.2186,
+    "48": 0.1754
+  },
+  "model_scores_rms_px": {
+    "fisheye": 0.3922
+  },
+  "coverage": {
+    "grid": [
+      8,
+      6
+    ],
+    "cells_hit": 34,
+    "cells_frac": 0.7083333333333334,
+    "reach_halfwidth": 1.0181550061963964,
+    "reach_halfdiag": 0.8145240049571172,
+    "image_corners_hit": {
+      "top_left": false,
+      "top_right": true,
+      "bottom_left": false,
+      "bottom_right": false
+    },
+    "map": [
+      ".+++++++",
+      "++++++++",
+      "++####++",
+      "+++##+++",
+      "....+.++",
+      "........"
+    ]
+  },
+  "gate": {
+    "verdict": "PASS",
+    "reasons": [],
+    "rms_good_px": 0.5,
+    "rms_max_px": 1.0
+  },
+  "distortion_model": "OpenCV cv2.fisheye (equidistant, theta_d = theta(1+k1 t^2+k2 t^4+k3 t^6+k4 t^8))",
+  "scene_block": {
+    "robot": {
+      "wrist_camera": {
+        "right": {
+          "fx": 237.6382,
+          "fy": 238.9518,
+          "cx": 328.3726,
+          "cy": 225.5755,
+          "width": 640,
+          "height": 480,
+          "model": "fisheye",
+          "k": [
+            -0.037428329813206214,
+            -0.003566793700033574,
+            -0.0019754802512323374,
+            0.0004794796874036616
+          ],
+          "valid_radius_px": 325.8,
+          "hfov_usable_deg": 179.61
+        }
+      }
+    }
+  }
+}

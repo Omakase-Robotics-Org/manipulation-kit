@@ -507,6 +507,63 @@ class NotHolding(Verifier):
         return _true(f"the {self.side} gripper is open and empty", **measured)
 
 
+class ToolClearOf(Verifier):
+    """A hand's tool point is at least ``min_gap_m`` OUTSIDE an object's box.
+
+    The giving hand's half of a ``handover``: opening the jaws is not the end
+    of the give — a hand still around the object drags it when it moves next.
+    The gap is measured from the tool point (the pad centre) to the object's
+    own oriented box, so a hand that backed straight out along its approach
+    axis is measured on the axis it backed out along.
+
+    Like the other clearance verdicts, a POSITIVE gap to an inferred pose
+    (``attached`` to the other hand, ``predicted``) stays TRUE and says so; a
+    negative one is UNKNOWN, because a pose nobody saw cannot convict.
+    """
+
+    describes = "the hand is clear of the object"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str,
+                 name: str, min_gap_m: float):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.name = name
+        self.min_gap_m = float(min_gap_m)
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        tool = _tool_point(world1, self.side)
+        if tool is None:
+            return _unknown(f"the {self.side} arm reports no tool point, so "
+                            f"its clearance from {self.name!r} cannot be "
+                            f"measured")
+        item = world1.find(self.name)
+        if item is None:
+            return _unknown(_why_missing(world1, self.name))
+        try:
+            p, r = item.pose_in_base(world1.frames)
+        except LookupError:
+            return _unknown(_why_missing(world1, self.name))
+        local = r.inv().apply(np.asarray(tool, dtype=float) - np.asarray(p))
+        half = np.asarray(item.size, dtype=float).reshape(3) / 2.0
+        gap = float(np.linalg.norm(np.maximum(np.abs(local) - half, 0.0)))
+        measured = {"gap_m": round(gap, 4),
+                    "min_gap_m": round(self.min_gap_m, 4)}
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = item.provenance
+        if gap >= self.min_gap_m:
+            return _true(f"the {self.side} hand's tool point is "
+                         f"{gap * 1000:.0f} mm clear of {self.name!r}"
+                         + (f" — {inferred}" if inferred else ""), **measured)
+        if inferred:
+            return _unknown(f"by its inferred pose {self.name!r} is only "
+                            f"{gap * 1000:.0f} mm from the {self.side} hand, "
+                            f"but {inferred}", **measured)
+        return _false(f"the {self.side} hand is only {gap * 1000:.0f} mm from "
+                      f"{self.name!r} (needs {self.min_gap_m * 1000:.0f} mm)",
+                      **measured)
+
+
 class ObjectRose(Verifier):
     """The OBJECT went up — not the hand. Lift is about the thing, not the arm.
 

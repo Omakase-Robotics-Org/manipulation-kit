@@ -255,7 +255,7 @@ if __name__ == "__main__":
 * A table probe with `stopped_by: "max_travel"` → the hand did not reach the
   wagon within 120 mm, or the rise never got to 4 Nm (check `travel_mm`).
 * `dz_mm` consistently of one sign → a systematic offset (tool point, fingertip
-  lead `TIP_BELOW_TOOL_M` = 29 mm, lift offset, or the tape). A spread → the
+  lead `grasp_geometry.PAD.lead_m` = 29 mm, lift offset, or the tape). A spread → the
   detection; `std` is the number to look at.
 * `stopped_by: "guard"` → the daemon's own guard or slew gate aborted the job,
   or something else cancelled it; its message is in `contact.detail`.
@@ -267,6 +267,44 @@ if __name__ == "__main__":
   and its face within 3 mm of every contact (`SurfaceMeasured`).
 * One `Press(target=…, direction="forward")` on a fixed panel, `force_nm`
   4–6: the hand returns to its standoff (`ToolAt`) and G1 still holds.
+
+## 6. Tip grasp trial — same session
+
+`Grasp(contact="tip")` takes a flat thing between the finger TIPS instead of
+the pad centres (`grasp_geometry.TIP`: 129 mm from the flange, nothing
+leading, 2 mm clearance a side). Like the contact verbs it has been planned
+and verified on kinematic mirrors only. **Until this trial passes, the kit's
+default stays `contact="pad"`**, and the generated ROBOT FACTS tell the model
+that `tip` is experimental and unmeasured on hardware.
+
+| gate | acceptance |
+|---|---|
+| T1 — lifted | **10 / 10**: the `Grasp` verdict TRUE and a following `Lift(height_m=0.05)` verdict TRUE (`ObjectRose`) |
+| T2 — no table contact | **zero** contacts of the pads with the wagon: nobody sees the pads touch (film it), and no arm joint's `feedback_torque` rises more than 2 Nm during the descent (print `state().arms["left"].torque_nm` before and at the grasp pose) |
+| T3 — controller health | zero controller errors, as G1 |
+
+About 15 minutes, right after the probe trial, same set-up:
+
+1. A **6 mm card** (a stack of cardboard, or a phone-sized plastic card) flat
+   on the wagon under the left hand, its long side along the robot's x.
+   Measure its centre and size into a scene (`kind: object`, `size [L, W,
+   0.006]`), with the wagon top as a `surface` — the same file the loop uses,
+   `"robot": {"profile": "d1-2"}` included.
+2. Per trial: `Approach(object="card", side="left", contact="tip")`, then
+   `Grasp(object="card", side="left", contact="tip", grip="soft")`, then
+   `Lift(object="card", side="left", height_m=0.05)`, each planned, run with
+   `run(plan, robot, kin=kin)` and verified from a fresh observation; then
+   `Place` it back (or put it back by hand, re-measure, and restate the
+   scene). The same pad grasp on the card must be REFUSED at planning
+   (`object_too_flat`) — check it once, it is the control.
+3. Report per trial: the three verdicts, the torque rise during the descent,
+   `plan.notes` (the descent floor and the pad-tip clearance the plan
+   claims) and any controller error. Stop at the first controller fault.
+
+If T1-T3 pass, the default can move and the ROBOT FACTS line drops the
+"experimental" warning (`agent/loop.py`, `robot_facts`); if the pads touch the
+wagon, the 2 mm tip clearance (`TIP_CLEARANCE_PER_SIDE_M`) and the droop
+margin are the numbers to revisit.
 
 ## What the kit needs from d1-firmware (to file)
 

@@ -155,6 +155,10 @@ def direction_doc() -> str:
 def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
     """JSON Schema function definitions, narrowed by ROLE and by holding state.
 
+    Holding state: a verb whose ``Primitive.applicable(world)`` is ``False``
+    is left out — today only ``handover``, which is described only while
+    exactly one hand holds a named object and the other is free.
+
     With a ``world``, every object-naming argument is narrowed to an ``enum``
     of the names that can legally fill that role — graspable things for
     ``object``, containers and surfaces for ``to``, vessels for pour. That is
@@ -168,6 +172,11 @@ def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
     """
     out: List[Dict[str, Any]] = []
     for cls in verbs():
+        if world is not None and not cls.applicable(world):
+            # a verb whose meaning needs a state this world is not in
+            # (``handover`` with no hand holding) is not described;
+            # ``decode`` and the plan still refuse it with the typed reason
+            continue
         overrides = cls.arg_enums()
         roles = cls.arg_roles()
         properties: Dict[str, Any] = {}

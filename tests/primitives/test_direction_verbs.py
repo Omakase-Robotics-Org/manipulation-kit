@@ -114,7 +114,8 @@ def test_tool_schemas_expose_direction_as_alias_or_vector(d1_arm, observe):
                 for s in tool_schemas() if "direction" in s["parameters"]["properties"]}
     assert defaults == {"approach": "down", "grasp": "down", "lift": "up",
                         "retreat": {"axis": [0.0, 0.0, -1.0], "frame": "tool"},
-                        "probe": "down", "press": "forward"}
+                        "probe": "down", "press": "forward",
+                        "handover": "left"}
     # without a world the object frames are a pattern, not an empty enum
     free = next(s for s in tool_schemas() if s["name"] == "grasp"
                 )["parameters"]["properties"]["direction"]["oneOf"][1]

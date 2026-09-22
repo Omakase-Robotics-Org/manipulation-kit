@@ -34,8 +34,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from ..world import ContainerView, SurfaceView, WorldView
 from ..world.direction import Direction
 from .types import GRASP_DIRECTIONS, Plan, PlanError, Primitive
-from .verbs import (Approach, Carry, GoHome, Grasp, Lift, Nudge, NUDGE_GRID_M,
-                    Place, Release, Retreat)
+from .verbs import (Approach, Carry, GoHome, Grasp, Handover, Lift, Nudge,
+                    NUDGE_GRID_M, Place, Release, Retreat)
 
 
 @dataclass(frozen=True)
@@ -118,6 +118,9 @@ def label_for(primitive: Primitive) -> str:
         return f"back the {args['side']} hand out {args['distance_m'] * 100:.0f} cm"
     if verb == "go_home":
         return "return both arms to HOME"
+    if verb == "handover":
+        return (f"hand {args['object']} from the {args['from_side']} hand to "
+                f"the {args['to_side']} hand")
     if verb == "pour":
         return f"pour {args['source']} into {args['target']}"
     return verb
@@ -208,6 +211,12 @@ def candidates_for(world: WorldView, *,
                 task.append(Carry(object=held, to=name, side=side))
                 task.append(Place(object=held, to=name, side=side))
             task.append(Release(side=side))
+            if Handover.applicable(world):
+                # the receiver travels TOWARD the giver: +y onto a left-hand
+                # giver's object, -y onto a right-hand one's
+                task.append(Handover(object=held, from_side=side,
+                                     to_side="right" if side == "left"
+                                     else "left", direction=side))
         if not corrections:
             continue
         for axis in ("dx", "dy", "dz"):

@@ -119,6 +119,8 @@ where = ["src"]
 # `git clean -xdf` first, or build from a fresh clone.
 "manipulation_kit.config" = ["*.json", "tool_configs/*.json", "tool_configs/*.md"]
 "manipulation_kit.description" = [
+    # the measured per-robot profiles (description.robot_profile)
+    "profiles/*.json",
     "d1/*.urdf", "d1/*.xml", "d1/*.md", "d1/CMakeLists.txt",
     "d1/meshes/body/*", "d1/meshes/gripper/*", "d1/meshes/body_hifi/*",
     "d1_yubi_description_v2/*.xml", "d1_yubi_description_v2/*.md",

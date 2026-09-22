@@ -1,0 +1,76 @@
+{
+  "schema": "manipulation_kit.robot_profile/1",
+  "name": "d1-2",
+  "hand": {
+    "open_gap_m": 0.0605,
+    "source": "d1-firmwared 0.3.0 open_rad 1.35 on d1-2 (2026-09-22) through the hand description's 44.8 mm/rad map"
+  },
+  "head_mount_delta": {
+    "xyz_m": [
+      -0.023868,
+      -0.04302,
+      0.024568
+    ],
+    "rpy_deg": [
+      5.59889,
+      2.26847,
+      1.33778
+    ],
+    "nominal_xyz_m": [
+      0.0966561,
+      -0.0732024,
+      -0.028299499999999995
+    ],
+    "nominal_quat_xyzw": [
+      -0.106064274,
+      0.699105583,
+      0.106063884,
+      0.699108151
+    ],
+    "source": "d1-inference head_aruco interior-row fit (pitch > -0.62, 32 poses, sessions 20260911-054337 + 055008), RMS 3.89 px / max 9.55 px, adopted for d1-2 2026-09-10; the delta of its head_link_to_camera against the nominal it was fitted from (manipulation_kit d1_wholebody_gripper.urdf, 17.25 deg head tilt), as recorded in d1-isaaclab assets/d1/cameras_d1-2.json provenance.head",
+    "rms_px": 3.892
+  },
+  "wrist_cameras": {
+    "left": {
+      "fx": 238.54464330199528,
+      "fy": 239.6710285822928,
+      "cx": 313.9953141483106,
+      "cy": 224.75686492142916,
+      "width": 640,
+      "height": 480,
+      "model": "fisheye",
+      "k": [
+        -0.033292080458809964,
+        -0.016422483703523335,
+        0.008259598689387115,
+        -0.002041109188182926
+      ],
+      "valid_radius_px": 304.3,
+      "source": "d1-calibrate-wrist d1-2 left, 48 ChArUco view(s), 2026-09-22",
+      "rms_px": 0.218
+    },
+    "right": {
+      "fx": 237.63819955960315,
+      "fy": 238.95176258931406,
+      "cx": 328.37260250300966,
+      "cy": 225.57549500574052,
+      "width": 640,
+      "height": 480,
+      "model": "fisheye",
+      "k": [
+        -0.037428329813206214,
+        -0.003566793700033574,
+        -0.0019754802512323374,
+        0.0004794796874036616
+      ],
+      "valid_radius_px": 325.8,
+      "source": "d1-calibrate-wrist d1-2 right, 37 ChArUco view(s), 2026-09-22",
+      "rms_px": 0.3922
+    }
+  },
+  "notes": [
+    "d1-2's measured numbers. Wrist lenses: d1-calibrate-wrist (d1-inference PR #77) 2026-09-22, 48 ChArUco views each, gate PASS; their EXTRINSIC (the lens on the plate) is still the kit's nominal plate geometry.",
+    "The head mount delta is applied to the nominal it was measured against (recorded here), not to the kit's current URDF nominal.",
+    "On hardware the daemon's open_rad wins over hand.open_gap_m."
+  ]
+}

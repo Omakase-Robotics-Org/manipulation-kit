@@ -99,6 +99,13 @@ UNREACHABLE_OBJECT = "unreachable_object"
 #: smaller clearance — measured 2026-09-19, the blocks-eval bin rim plus a
 #: constant 100 mm sits 109 mm outside the holding arm's reach.
 UNREACHABLE_DESTINATION = "unreachable_destination"
+#: no MEETING POSE of a ``handover`` plans for both arms: every candidate of
+#: ``reach.HANDOVER_MEETING_POINTS_M`` was tried and each was refused for the
+#: giving arm's transit, the receiving arm's approach or grasp, or the giving
+#: arm's retreat. Distinct from ``unreachable_destination``: there is no
+#: destination the model named — the kit chose every point it tried — so the
+#: answer is to move the object (or the robot), not to name another place.
+UNREACHABLE_HANDOVER = "unreachable_handover"
 NO_SUCH_OBJECT = "no_such_object"
 FRAME_STALE = "frame_stale"
 UNKNOWN_FRAME = "unknown_frame"
@@ -119,8 +126,8 @@ BAD_ARGUMENT = "bad_argument"
 
 PLAN_REASONS: Tuple[str, ...] = (
     IK_FAIL, INFEASIBLE, GUARD_REJECT, UNREACHABLE_OBJECT,
-    UNREACHABLE_DESTINATION, NO_SUCH_OBJECT, FRAME_STALE, UNKNOWN_FRAME,
-    PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED, INCOMPLETE_OBSERVATION,
+    UNREACHABLE_DESTINATION, UNREACHABLE_HANDOVER, NO_SUCH_OBJECT, FRAME_STALE,
+    UNKNOWN_FRAME, PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED, INCOMPLETE_OBSERVATION,
     STALE_PLAN, UNSUPPORTED_GEOMETRY, BAD_ARGUMENT)
 
 #: Unmet codes the kit itself produces. Open to extension by a consumer, but
@@ -256,6 +263,12 @@ class GripStep:
     closedness: float             # 0 open .. 1 closed
     grip: str = "soft"
     waypoint: int = -1
+    #: the run may go on only if this stroke ends MEASURABLY holding
+    #: (``StrokeReport.holding is True``). Set where what follows depends on
+    #: the hold — a handover's receiving close, before the giving hand opens:
+    #: a receiver that closed on air would otherwise be followed by the giver
+    #: dropping the object. Unknown is a stop, not a pass.
+    expect_hold: bool = False
 
 
 @dataclass(frozen=True)
@@ -554,9 +567,12 @@ def _step_json(step: Step) -> Dict[str, Any]:
                 "q_rad": [round(float(v), 6) for v in step.q],
                 "waypoint": int(step.waypoint)}
     if isinstance(step, GripStep):
-        return {"step": "grip", "side": step.side,
-                "closedness": round(float(step.closedness), 4),
-                "grip": step.grip, "waypoint": int(step.waypoint)}
+        out = {"step": "grip", "side": step.side,
+               "closedness": round(float(step.closedness), 4),
+               "grip": step.grip, "waypoint": int(step.waypoint)}
+        if step.expect_hold:
+            out["expect_hold"] = True
+        return out
     if isinstance(step, SettleStep):
         return {"step": "settle", "timeout_s": round(float(step.timeout_s), 3)}
     if isinstance(step, ContactStep):
@@ -835,6 +851,18 @@ class Primitive:
         so once, so the schema export and ``decode`` cannot disagree.
         """
         return {}
+
+    @classmethod
+    def applicable(cls, world: WorldView) -> bool:
+        """Is this verb worth DESCRIBING to a model in this world at all?
+
+        ``True`` for every verb but the ones whose very meaning needs a world
+        state — ``handover`` needs one hand holding a named thing and the
+        other measurably free. :func:`.schema.tool_schemas` leaves a verb out
+        when this says ``False``; ``decode`` and ``plan`` still refuse it with
+        the typed reason, so hiding it is a prompt economy, never the check.
+        """
+        return True
 
     def preconditions(self, world: WorldView) -> List[Unmet]:  # pragma: no cover
         raise NotImplementedError

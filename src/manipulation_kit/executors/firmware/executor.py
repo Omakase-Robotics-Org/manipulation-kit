@@ -78,8 +78,8 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         NeckState, RawState, RunReport, SettleReport,
                         StrokeReport, ToolGate, WIRE_DIM, arrive_labels,
                         barrier_refusal, contact_kin, contact_report,
-                        controller_fault, fault_refusal, retract_path,
-                        stroke_refusal)
+                        controller_fault, fault_refusal, hold_refusal,
+                        retract_path, stroke_refusal)
 from ...primitives.types import (ContactCriterion, ContactStep, GripStep,
                                  JointStep, Plan, SettleStep)
 from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
@@ -1137,6 +1137,10 @@ class FirmwareExecutor:
                     strokes.append(stroke)
                     if not stroke.settled:
                         refusal = stroke_refusal(plan, step.side, stroke)
+                        return report(index, BARRIER_FAILED, refusal.detail,
+                                      refusal)
+                    refusal = hold_refusal(plan, step, stroke)
+                    if refusal is not None:
                         return report(index, BARRIER_FAILED, refusal.detail,
                                       refusal)
                     sent += 1
