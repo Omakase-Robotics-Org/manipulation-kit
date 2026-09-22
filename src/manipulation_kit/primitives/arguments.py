@@ -31,9 +31,33 @@ import math
 from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..hands.d1.parallel_gripper.description import HAND_POSES
 from ..world.direction import ALIASES, Direction
 from .types import (BAD_ARGUMENT, GRIPS, NUDGE_FRAMES,
                     NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, SIDE_CHOICES, Unmet)
+
+#: THE MODEL-FACING BOUNDS OF THE CONTACT VERBS. A contact threshold is a
+#: number a model may pick — "touch lightly", "press firmly" — but only inside
+#: a window that is safe on the arm it drives, and the operator policy
+#: (``agent.policy``, redesign step 7) may clamp it further.
+#:
+#: ``contact_nm`` 1.5-6 Nm. Below 1.5 Nm the rise is inside what an arm
+#: moving at contact speed shows WITHOUT touching anything (gravity torque
+#: changing with posture over a 15 cm leg, the controller's own tracking
+#: effort); above 6 Nm a probe leans on what it touches instead of feeling
+#: it — the default 4 Nm is the design's number (C.3), pending the d1-2 gate.
+#: ``force_nm`` 2-8 Nm: a press must be able to exceed a probe's default and
+#: must stay under 2x the probe ceiling, where the watch stops at once
+#: (``executor.CONTACT_ABORT_FACTOR``). Neither is measured on hardware yet —
+#: ``docs/probe-hardware-trial.md`` is the trial that measures them.
+CONTACT_NM_RANGE: Tuple[float, float] = (1.5, 6.0)
+FORCE_NM_RANGE: Tuple[float, float] = (2.0, 8.0)
+#: the longest contact leg a model may ask for [m]
+MAX_CONTACT_TRAVEL_M = 0.30
+#: the deepest a press may push past the declared face [m]
+MAX_PRESS_DEPTH_M = 0.03
+#: the longest a press may hold [s]
+MAX_HOLD_S = 5.0
 
 #: What an argument NAMES in the world. Roles narrow both the schema and the
 #: runtime check: a table is not a grasp candidate and a loose block is not a
@@ -138,7 +162,9 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
              role=ROLE_DESTINATION),
     Argument("source", "name", "the vessel to pour FROM, by name",
              role=ROLE_VESSEL),
-    Argument("target", "name", "the vessel to pour INTO, by name",
+    Argument("target", "name",
+             "the thing to act ON, by name: the vessel to pour into (pour), "
+             "the thing whose near face to press (press)",
              role=ROLE_VESSEL),
     _enum("side", SIDE_CHOICES,
           "which hand; 'auto' lets the robot pick, and the plan says which"),
@@ -188,16 +214,42 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
     Argument("allow_drop", "bool",
              "may the object be RELEASED above its destination when the arm "
              "cannot reach down to set it down?"),
+    # -- the contact verbs (probe / press) --------------------------------- #
+    _number("max_travel_m", 0.01, MAX_CONTACT_TRAVEL_M, "m",
+            "how far the hand may travel along its direction looking for "
+            "something to touch; it stops at the first resistance"),
+    _number("contact_nm", CONTACT_NM_RANGE[0], CONTACT_NM_RANGE[1], "Nm",
+            "how much a joint's torque must RISE over its value before the "
+            "motion for the resistance to count as contact (measured, never "
+            "commanded: the arm stays in position control)"),
+    _number("depth_m", 0.0, MAX_PRESS_DEPTH_M, "m",
+            "how far past the target's near face the press may push"),
+    _number("force_nm", FORCE_NM_RANGE[0], FORCE_NM_RANGE[1], "Nm",
+            "the joint-torque rise at which the press has pressed hard "
+            "enough and stops (measured, never commanded)"),
+    _number("hold_s", 0.0, MAX_HOLD_S, "s",
+            "how long to keep pressing once it has pressed"),
+    Argument("declare_as", "string",
+             "publish the measured contact as a SURFACE with this name (a new "
+             "name, or an existing surface to re-measure); '' publishes "
+             "nothing. Three probes under one name fit a plane"),
+    _enum("hand", HAND_POSES,
+          "what the hand is while it touches: 'closed' = pads shut, one "
+          "blunt fingertip; 'open' = both tips lead; 'pinched' = nearly shut"),
 )}
 
 
 def argument(name: str, verb: Optional[str] = None,
-             arg_enums: Optional[Dict[str, Sequence[str]]] = None) -> Argument:
+             arg_enums: Optional[Dict[str, Sequence[str]]] = None,
+             arg_roles: Optional[Dict[str, str]] = None) -> Argument:
     """The canonical description of ``name``, narrowed for ``verb``.
 
     ``Primitive.arg_enums`` is the per-verb widening/narrowing — ``go_home`` is
     the only verb for which ``side="both"`` means anything — and it lives on
     the verb so the two exports cannot disagree about it.
+    ``Primitive.arg_roles`` does the same for what a NAME argument may name:
+    ``target`` is a vessel for ``pour`` and anything in the world for
+    ``press``.
     """
     base = ARGUMENTS.get(name)
     if base is None:
@@ -205,6 +257,8 @@ def argument(name: str, verb: Optional[str] = None,
     if arg_enums and name in arg_enums:
         return Argument(base.name, "enum", base.doc,
                         values=tuple(arg_enums[name]))
+    if arg_roles and name in arg_roles and base.kind == "name":
+        return Argument(base.name, "name", base.doc, role=arg_roles[name])
     return base
 
 
@@ -216,9 +270,10 @@ def check_arguments(primitive: Any) -> List[Unmet]:
     nonfinite number never reaches a snap.
     """
     overrides = primitive.arg_enums()
+    roles = primitive.arg_roles()
     unmet: List[Unmet] = []
     for field in fields(primitive):
-        spec = argument(field.name, primitive.name(), overrides)
+        spec = argument(field.name, primitive.name(), overrides, roles)
         if spec.kind == "bool":
             value = getattr(primitive, field.name)
             if not isinstance(value, bool):

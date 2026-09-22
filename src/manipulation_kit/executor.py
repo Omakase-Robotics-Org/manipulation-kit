@@ -31,7 +31,8 @@ from typing import (Any, Dict, List, Mapping, Optional, Protocol, Sequence,
 import numpy as np
 
 from .primitives.orientation import link7_from_tool, tool_from_link7, tool_revision
-from .primitives.types import (GripStep, JointStep, Plan, SettleStep, Waypoint)
+from .primitives.types import (ContactCriterion, ContactStep, GripStep,
+                               JointStep, Plan, SettleStep, Waypoint)
 
 #: wire layout — see the module docstring
 ARM_DOF = 7
@@ -431,6 +432,357 @@ class StrokeReport:
         return out
 
 
+#: Why a contact leg (:class:`~manipulation_kit.primitives.types.ContactStep`)
+#: stopped. ``contact``: the criterion was met — something resisted.
+#: ``max_travel``: the whole leg was travelled and nothing did. ``fault``: the
+#: arm controller latched during the leg. ``guard``: the transport refused or
+#: aborted the motion itself (the daemon's motion guard or slew gate, a
+#: cancel nobody here asked for). ``unmeasured``: the transport cannot
+#: measure what the criterion is about (no joint torque, or a tool force no
+#: transport here estimates) — so the leg was never started.
+CONTACT = "contact"
+MAX_TRAVEL = "max_travel"
+CONTACT_FAULT = "fault"
+CONTACT_GUARD = "guard"
+UNMEASURED = "unmeasured"
+CONTACT_STOPS: Tuple[str, ...] = (CONTACT, MAX_TRAVEL, CONTACT_FAULT,
+                                  CONTACT_GUARD, UNMEASURED)
+#: How many state reads the pre-motion torque baseline is averaged over. One
+#: reading carries the controller's sample noise straight into the threshold.
+CONTACT_BASELINE_SAMPLES = 3
+#: A rise this many times the criterion's threshold is contact AT ONCE,
+#: without waiting out ``settle_s``: the confirm window exists to reject a
+#: transient, and a transient does not double the threshold.
+CONTACT_ABORT_FACTOR = 2.0
+
+
+@dataclass(frozen=True)
+class ContactReport:
+    """Where a contact leg stopped, and why — MEASURED, never the command.
+
+    ``p_tool`` is the tool point (the pad centre) at the posture the arm
+    REPORTED when the leg stopped, through the kit's own forward kinematics:
+    on contact the command is ahead of the arm by exactly the amount the
+    surface is pushing back, so the command is the one number that is not
+    where the surface is. ``travel_m`` is how far that measured tool point
+    got along the leg; ``normal_hint`` is minus the travel — the way the
+    surface pushes back. ``torque_nm`` is the largest rise over the pre-motion
+    baseline, on joint ``joint`` (0-based).
+
+    ``leg_t_s`` is how far along the leg's own timing the COMMAND had got
+    when it was frozen — what a retract plays back from. ``q_stop`` is the
+    measured posture itself.
+    """
+
+    made: bool
+    p_tool: np.ndarray
+    travel_m: float
+    normal_hint: np.ndarray
+    torque_nm: float
+    stopped_by: str
+    detail: str = ""
+    side: str = ""
+    joint: int = -1
+    q_stop: Optional[np.ndarray] = None
+    leg_t_s: float = 0.0
+    elapsed_s: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.stopped_by not in CONTACT_STOPS:
+            raise ValueError(f"unknown contact stop {self.stopped_by!r}; the "
+                             f"vocabulary is {CONTACT_STOPS}")
+        object.__setattr__(self, "p_tool",
+                           np.array(self.p_tool, dtype=float).reshape(3))
+        object.__setattr__(self, "normal_hint",
+                           np.array(self.normal_hint, dtype=float).reshape(3))
+        if self.q_stop is not None:
+            object.__setattr__(self, "q_stop", _vec7(self.q_stop, "q_stop"))
+
+    def to_json(self) -> Dict[str, Any]:
+        def num(value: float, places: int) -> Optional[float]:
+            return (None if not np.isfinite(value)
+                    else round(float(value), places))
+        out: Dict[str, Any] = {
+            "made": bool(self.made), "stopped_by": self.stopped_by,
+            "side": self.side,
+            "p_tool": [num(v, 4) for v in self.p_tool],
+            "travel_m": num(self.travel_m, 4),
+            "normal_hint": [num(v, 4) for v in self.normal_hint],
+            "torque_nm": num(self.torque_nm, 3),
+            "leg_t_s": num(self.leg_t_s, 3),
+            "elapsed_s": num(self.elapsed_s, 3), "detail": self.detail}
+        if self.joint >= 0:
+            out["joint"] = int(self.joint)
+        return out
+
+
+class ContactWatch:
+    """The contact criterion, applied to a stream of MEASURED arm states.
+
+    One implementation for every transport — the streamed default, the
+    firmware trajectory override, a simulator — so "contact" means the same
+    thing whichever wire carried the leg. Fed ``(t, JointState)`` samples, it
+    answers one of three words:
+
+    ``free``        keep moving.
+    ``confirming``  a joint's torque has risen past the threshold: FREEZE the
+                    command (resend it / cancel the trajectory) and keep
+                    sampling. A rise that goes away was a transient —
+                    acceleration, a cable — and the motion resumes.
+    ``contact``     the rise has held, with the arm stalled, for
+                    ``settle_s``; or it has reached
+                    :data:`CONTACT_ABORT_FACTOR` x the threshold at once.
+    """
+
+    FREE = "free"
+    CONFIRMING = "confirming"
+    CONTACT = "contact"
+
+    def __init__(self, criterion: ContactCriterion, baseline_nm) -> None:
+        self.criterion = criterion
+        self.baseline = np.asarray(baseline_nm, dtype=float).reshape(ARM_DOF)
+        self.peak_nm = 0.0
+        self.joint = -1
+        self._since: Optional[float] = None
+
+    def sample(self, t: float, arm: JointState) -> str:
+        rise = np.abs(np.asarray(arm.torque_nm, dtype=float) - self.baseline)
+        j = int(np.argmax(rise))
+        if float(rise[j]) > self.peak_nm:
+            self.peak_nm, self.joint = float(rise[j]), j
+        threshold = self.criterion.joint_torque_nm
+        if float(rise[j]) >= CONTACT_ABORT_FACTOR * threshold:
+            return self.CONTACT
+        if float(rise[j]) < threshold:
+            self._since = None
+            return self.FREE
+        still = (arm.qd is None or float(np.max(np.abs(arm.qd)))
+                 <= self.criterion.stall_velocity_rad_s)
+        if not still:
+            self._since = None
+            return self.CONFIRMING
+        if self._since is None:
+            self._since = float(t)
+        if float(t) - self._since >= self.criterion.settle_s - 1e-9:
+            return self.CONTACT
+        return self.CONFIRMING
+
+
+def interpolate_leg(timed: Sequence[Tuple[float, Any]], t: float) -> np.ndarray:
+    """The leg's joint command at leg time ``t`` (linear between knots)."""
+    times = [float(k[0]) for k in timed]
+    if t <= times[0]:
+        return np.asarray(timed[0][1], dtype=float).reshape(ARM_DOF)
+    for (t0, q0), (t1, q1) in zip(timed, timed[1:]):
+        if t <= float(t1):
+            span = float(t1) - float(t0)
+            f = 1.0 if span <= 0 else (float(t) - float(t0)) / span
+            return (np.asarray(q0, dtype=float)
+                    + f * (np.asarray(q1, dtype=float) - np.asarray(q0, dtype=float)))
+    return np.asarray(timed[-1][1], dtype=float).reshape(ARM_DOF)
+
+
+def leg_ticks(timed: Sequence[Tuple[float, Any]], hz: float
+              ) -> List[Tuple[float, np.ndarray]]:
+    """The leg resampled at ``hz``: ``(leg time, q)`` per command tick."""
+    end = float(timed[-1][0])
+    count = max(1, int(math.ceil(end * float(hz) - 1e-9)))
+    return [(min(end, k / float(hz)), interpolate_leg(timed, k / float(hz)))
+            for k in range(1, count + 1)]
+
+
+def retract_path(step: ContactStep, report: "ContactReport"
+                 ) -> List[Tuple[float, np.ndarray]]:
+    """The leg played BACK from where its command was frozen to its start.
+
+    ``(t, q)`` knots, ``t`` from the start of the retract at the leg's own
+    speed — the same knots the guard approved on the way in, in reverse.
+    """
+    timed = step.timed_path()
+    here = float(min(report.leg_t_s, timed[-1][0]))
+    back = [(0.0, interpolate_leg(timed, here))]
+    for t, q in reversed(timed):
+        if float(t) < here - 1e-9:
+            back.append((here - float(t), np.asarray(q, dtype=float)))
+    return back
+
+
+def contact_kin(executor: Any, kin=None):
+    """The kinematic model a contact report is measured with: the caller's,
+    the executor's own, or the kit's — the tool gate's order."""
+    if kin is not None:
+        return kin
+    own = getattr(executor, "kin", None)
+    return own if own is not None else _fallback_kinematics()
+
+
+def contact_report(kin, side: str, timed, *, q_start, q_stop, made: bool,
+                   stopped_by: str, torque_nm: float = float("nan"),
+                   joint: int = -1, leg_t_s: float = 0.0,
+                   elapsed_s: float = 0.0, detail: str = "",
+                   direction=None) -> "ContactReport":
+    """Build the report from two MEASURED postures and the leg's geometry.
+
+    ``direction`` is the leg's planned travel in the base frame (the
+    ``ContactStep``'s); without one it is the leg's end tool point minus its
+    start one, by forward kinematics over the knots it was given.
+    """
+    if direction is not None:
+        axis = np.asarray(direction, dtype=float).reshape(3)
+    else:
+        p_a, _ = ToolGate._tool(kin, side, timed[0][1])
+        p_b, _ = ToolGate._tool(kin, side, timed[-1][1])
+        axis = np.asarray(p_b, dtype=float) - np.asarray(p_a, dtype=float)
+    n = float(np.linalg.norm(axis))
+    u = axis / n if n > 1e-9 else np.zeros(3)
+    p0, _ = ToolGate._tool(kin, side, q_start)
+    q_end = q_start if q_stop is None else q_stop
+    p1, _ = ToolGate._tool(kin, side, q_end)
+    travel = float(np.dot(np.asarray(p1) - np.asarray(p0), u))
+    return ContactReport(made, p1, travel, -u, float(torque_nm), stopped_by,
+                         detail, side, joint,
+                         None if q_stop is None else np.asarray(q_stop),
+                         float(leg_t_s), float(elapsed_s))
+
+
+def stream_move_until(executor: Any, path: Sequence[Tuple[float, Any]], *,
+                      side: str, criterion: ContactCriterion,
+                      hz: float = 50.0, kin=None, t0: float = 0.0,
+                      command=None, direction=None) -> "ContactReport":
+    """THE DEFAULT ``move_until``: stream the leg, watch the torque, stop.
+
+    For any transport that streams joints (``send_joints``) and reports
+    joint torque (``JointState.torque_nm``). ``path`` is the leg as
+    ``(t, q)`` knots (``ContactStep.timed_path()``); it is resampled at
+    ``hz`` and sent one tick at a time, and after EVERY tick the arm is read
+    and the :class:`ContactWatch` asked. On ``confirming`` the command is
+    frozen (the same knot is re-sent), so the arm stops pushing while the
+    rise is confirmed; on ``contact`` the leg ends. Time is PLAN time — tick
+    ``k`` goes out at ``t0 + k / hz`` — so a transport paces it exactly as it
+    paces every other step.
+
+    ``command`` is the 16-vector the rest of the robot is under (the other
+    arm, both grippers). Without it the other arm is held where it is
+    measured and each hand at its commanded closedness.
+
+    The report is MEASURED: where the arm REPORTS it is when the leg ends,
+    never the knot that was sent.
+    """
+    kin = contact_kin(executor, kin)
+    timed = [(float(t), np.asarray(q, dtype=float).reshape(ARM_DOF))
+             for t, q in path]
+    period = 1.0 / float(hz)
+
+    def unmeasured(why: str, q) -> "ContactReport":
+        return contact_report(kin, side, timed, direction=direction,
+                              q_start=q, q_stop=None, made=False,
+                              stopped_by=UNMEASURED, detail=why)
+
+    samples = [executor.state() for _ in range(CONTACT_BASELINE_SAMPLES)]
+    first = samples[0].arms.get(side)
+    if first is None:
+        raise KeyError(f"{type(executor).__name__} reports no {side} arm")
+    q_start = np.asarray(first.q, dtype=float)
+    if criterion.tool_force_n is not None:
+        return unmeasured("the criterion asks for a TOOL FORCE and this "
+                          "transport estimates none; watch joint torque "
+                          "(tool_force_n=None)", q_start)
+    for state in samples:
+        arm = state.arms.get(side)
+        if arm is not None and arm.faulted:
+            return contact_report(kin, side, timed, direction=direction,
+                                  q_start=q_start, q_stop=arm.q, made=False,
+                                  stopped_by=CONTACT_FAULT,
+                                  detail=controller_fault(state) or "")
+        if arm is None or arm.torque_nm is None:
+            return unmeasured(f"{type(executor).__name__} publishes no joint "
+                              f"torque for the {side} arm, so nothing could "
+                              f"tell contact from free motion; the leg was "
+                              f"not started", q_start)
+    baseline = np.mean([s.arms[side].torque_nm for s in samples], axis=0)
+    watch = ContactWatch(criterion, baseline)
+    if command is None:
+        state = samples[-1]
+        joints = {s: np.asarray(a.q, dtype=float) for s, a in state.arms.items()}
+        grippers = {}
+        for s, hand in state.hands.items():
+            value = hand.commanded if hand.commanded is not None else hand.closedness
+            if value is not None:
+                grippers[s] = float(value)
+        command = wire(joints, grippers)
+    vector = np.array(command, dtype=float).reshape(WIRE_DIM)
+    ticks = leg_ticks(timed, hz)
+    index = -1
+    leg_t = 0.0
+    elapsed = 0.0
+    tail = 0.0
+    t = float(t0)
+    verdict = ContactWatch.FREE
+    while True:
+        if verdict == ContactWatch.FREE and index + 1 < len(ticks):
+            index += 1
+            leg_t, q_cmd = ticks[index]
+            vector[JOINT_SLICE[side]] = q_cmd
+        executor.send_joints(vector, t=t)
+        t += period
+        elapsed += period
+        state = executor.state()
+        arm = state.arms.get(side)
+        if arm is None or arm.torque_nm is None:
+            return contact_report(
+                kin, side, timed, direction=direction, q_start=q_start,
+                q_stop=None if arm is None else arm.q, made=False,
+                stopped_by=UNMEASURED, leg_t_s=leg_t, elapsed_s=elapsed,
+                detail="the arm's torque stopped being reported mid-leg")
+        if arm.faulted:
+            return contact_report(
+                kin, side, timed, direction=direction, q_start=q_start,
+                q_stop=arm.q, made=False, stopped_by=CONTACT_FAULT,
+                torque_nm=watch.peak_nm, joint=watch.joint, leg_t_s=leg_t,
+                elapsed_s=elapsed,
+                detail=controller_fault(state) or "")
+        verdict = watch.sample(elapsed, arm)
+        if verdict == ContactWatch.CONTACT:
+            return contact_report(
+                kin, side, timed, direction=direction, q_start=q_start,
+                q_stop=arm.q, made=True, stopped_by=CONTACT,
+                torque_nm=watch.peak_nm, joint=watch.joint, leg_t_s=leg_t,
+                elapsed_s=elapsed,
+                detail=(f"joint {watch.joint + 1} rose "
+                        f"{watch.peak_nm:.2f} Nm over its pre-motion torque "
+                        f"(threshold {criterion.joint_torque_nm:.2f} Nm)"))
+        if verdict == ContactWatch.FREE and index + 1 >= len(ticks):
+            # THE END OF THE LEG IS WATCHED TOO, for one settle window: a
+            # surface met on the last tick is still a surface.
+            tail += period
+            if tail >= criterion.settle_s - 1e-9:
+                return contact_report(
+                    kin, side, timed, direction=direction, q_start=q_start,
+                    q_stop=arm.q, made=False, stopped_by=MAX_TRAVEL,
+                    torque_nm=watch.peak_nm, joint=watch.joint,
+                    leg_t_s=leg_t, elapsed_s=elapsed,
+                    detail=(f"travelled the whole leg and nothing resisted "
+                            f"(largest rise {watch.peak_nm:.2f} Nm, threshold "
+                            f"{criterion.joint_torque_nm:.2f} Nm)"))
+
+
+class StreamingContact:
+    """Mixin: give a streaming transport the kit's default ``move_until``.
+
+    A transport opts IN — ``move_until`` is a capability, and a transport
+    that has not said it can watch torque must fail a contact step rather
+    than have one played on it. Requires ``state()`` publishing
+    ``JointState.torque_nm`` and ``send_joints``.
+    """
+
+    def move_until(self, path, *, side: str, criterion: ContactCriterion,
+                   hz: float = 50.0, kin=None, t0: float = 0.0,
+                   command=None, direction=None) -> "ContactReport":
+        return stream_move_until(self, path, side=side, criterion=criterion,
+                                 hz=hz, kin=kin, t0=t0, command=command,
+                                 direction=direction)
+
+
 #: Default barriers. Both are generous — they are deadlines, not budgets.
 ARRIVE_TOL_RAD = math.radians(3.0)
 ARRIVE_TIMEOUT_S = 3.0
@@ -551,6 +903,16 @@ class Executor(Protocol):
     ``firmware_spec: str``
         which firmware contract this transport drives; recorded in a plan's
         binding and compared by :func:`check_binding`.
+    ``move_until(path, *, side, criterion, hz, kin) -> ContactReport``
+        play a contact leg (``ContactStep``) as a position-commanded motion
+        WATCHED by :class:`ContactWatch`, stop it on the criterion, and say
+        where the tool stopped, measured. :func:`stream_move_until` is the
+        default for any streaming transport that reports joint torque
+        (opt in with :class:`StreamingContact`); the firmware transport
+        overrides it with a trajectory upload, a state poll and a cancel;
+        the kinematic mirror reports ``made=False, stopped_by="max_travel"``.
+        A transport without it FAILS a contact step (``transport_error``) —
+        a contact leg is never played blind.
 
     MODES: position only. This kit commands position control and nothing
     else (Shu, 2026-09-22); ``JointState.mode`` is READ so a latched
@@ -702,6 +1064,8 @@ class RunReport:
     strokes: Tuple[StrokeReport, ...] = ()
     #: the typed half of ``error``, when the stop has one
     refusal: Optional[RunRefusal] = None
+    #: every contact leg's MEASURED outcome, in order
+    contacts: Tuple["ContactReport", ...] = ()
 
     def to_json(self) -> Dict[str, Any]:
         out = {"primitive": self.plan_primitive, "side": self.side,
@@ -714,6 +1078,8 @@ class RunReport:
                "error": self.error}
         if self.refusal is not None:
             out["refusal"] = self.refusal.to_json()
+        if self.contacts:
+            out["contacts"] = [c.to_json() for c in self.contacts]
         return out
 
 
@@ -1568,6 +1934,7 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
     settle: Optional[SettleReport] = None
     arrivals: List[ArrivalReport] = []
     strokes: List[StrokeReport] = []
+    contacts: List[ContactReport] = []
     if gate is None:
         gate = ToolGate(tol_rad=arrive_tol_rad, timeout_s=arrive_timeout_s,
                         guarded=bool(getattr(getattr(plan, "binding", None),
@@ -1648,10 +2015,13 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
         return RunReport(plan.primitive, plan.side, False, sent, settle,
                          error=detail, stop_reason=reason, stopped_at=index,
                          arrivals=tuple(arrivals), strokes=tuple(strokes),
-                         refusal=refusal)
+                         refusal=refusal, contacts=tuple(contacts))
 
     times = None if schedule is None else list(schedule)
     joint_index = 0
+    #: the plan time of the last command sent, so a contact leg continues
+    #: the run's own timeline instead of restarting it
+    t_last = -period
     #: the vector the last barrier was run against, so a waypoint gate and the
     #: stroke that follows it do not pay for the same measurement twice
     gated: Optional[np.ndarray] = None
@@ -1687,7 +2057,9 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
             last_vector = wire(joints, grippers)
             at = (joint_index * period if times is None
                   else float(times[joint_index]))
+            at = max(at, t_last + period)
             executor.send_joints(last_vector, t=at)
+            t_last = at
             joint_index += 1
             sent += 1
             gated = None
@@ -1732,13 +2104,80 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
                 # BOTH runners used to carry on here and report completion.
                 return stop(index, BARRIER_FAILED,
                             f"the arms did not settle: {settle.detail}")
+        elif isinstance(step, ContactStep):
+            watch = getattr(executor, "move_until", None)
+            if watch is None:
+                # LOUDLY. Playing the leg's knots as ordinary joint steps
+                # would drive a position-controlled arm into whatever it
+                # meets with nothing watching.
+                return stop(index, TRANSPORT_ERROR, (
+                    f"{type(executor).__name__} implements no move_until, so "
+                    f"the {step.side} contact leg cannot be watched for "
+                    f"resistance; a contact leg is never played blind"))
+            if last_vector is None:
+                last_vector = wire(joints, grippers)
+            report = watch(step.timed_path(), side=step.side,
+                           criterion=step.criterion,
+                           **_accepted(watch, hz=hz, kin=gate.kin,
+                                       t0=t_last + period,
+                                       command=last_vector,
+                                       direction=step.direction.vector()))
+            contacts.append(report)
+            if report.stopped_by == CONTACT_FAULT:
+                fault = _fault_now(executor) or report.detail
+                return stop(index, CONTROLLER_FAULT, fault,
+                            fault_refusal(plan, fault))
+            if report.stopped_by in (CONTACT_GUARD, UNMEASURED):
+                return stop(index, TRANSPORT_ERROR, (
+                    f"the {step.side} contact leg stopped by "
+                    f"{report.stopped_by}: {report.detail}"))
+            t_last += max(period, report.elapsed_s)
+            for q in _after_contact(step, report, hz):
+                vector = np.array(last_vector, dtype=float)
+                vector[JOINT_SLICE[step.side]] = q
+                t_last += period
+                executor.send_joints(vector, t=t_last)
+                last_vector = vector
+            joints[step.side] = np.array(last_vector[JOINT_SLICE[step.side]],
+                                         dtype=float)
+            gated = None
+            sent += 1
         else:
             return stop(index, TRANSPORT_ERROR, f"not a plan step: {step!r}")
     end = getattr(executor, "end_run", None)
     if end is not None:
         end(plan)
     return RunReport(plan.primitive, plan.side, True, sent, settle,
-                     arrivals=tuple(arrivals), strokes=tuple(strokes))
+                     arrivals=tuple(arrivals), strokes=tuple(strokes),
+                     contacts=tuple(contacts))
+
+
+def _after_contact(step: ContactStep, report: ContactReport,
+                   hz: float) -> List[np.ndarray]:
+    """What a streaming runner commands once a contact leg has stopped.
+
+    Three shapes, and each is a plain position command:
+
+    * no retract (a probe): ONE command at the posture the arm MEASURED at
+      the stop. The frozen command sits inside the surface by however far
+      the arm was pushing; re-commanding the measurement stops the push and
+      leaves the tool touching.
+    * a hold (a press that made contact): the frozen command, kept for
+      ``hold_s`` — the press IS the command being held against the surface.
+    * a retract: the leg played back to its start at the leg's own speed.
+    """
+    if not step.retract:
+        if report.q_stop is None:
+            return []
+        return [np.asarray(report.q_stop, dtype=float)]
+    timed = retract_path(step, report)
+    out: List[np.ndarray] = []
+    if report.made and step.hold_s > 0.0:
+        out += [np.asarray(timed[0][1], dtype=float)] * max(
+            1, int(math.ceil(step.hold_s * float(hz))))
+    if len(timed) > 1:
+        out += [q for _t, q in leg_ticks(timed, hz)]
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1944,3 +2383,29 @@ class KinematicExecutor:
     def tool_pose(self, side: str):
         from .primitives.orientation import tool_from_link7
         return tool_from_link7(*self.kin.ee_pose(side))
+
+    # -- contact ----------------------------------------------------------- #
+    def move_until(self, path, *, side: str, criterion: ContactCriterion,
+                   hz: float = 50.0, kin=None, direction=None,
+                   **_ignored) -> ContactReport:
+        """A mirror has no contact: the whole leg is travelled, and SAID so.
+
+        ``made=False, stopped_by="max_travel"`` — honest, and a dry-run keeps
+        working: the plan runs to the end of its leg, and the verifier
+        reports that nothing was touched instead of the run failing.
+        """
+        timed = [(float(t), np.asarray(q, dtype=float)) for t, q in path]
+        q_start = np.array(self.kin.joints(side), dtype=float)
+        for t, q in timed[1:]:
+            self.sent.append((float(t), wire(
+                {s: (q if s == side else self.kin.joints(s)) for s in SIDES},
+                self.grippers)))
+        self.kin.set_joints(side, timed[-1][1])
+        return contact_report(
+            self.kin, side, timed, direction=direction, q_start=q_start,
+            q_stop=timed[-1][1],
+            made=False, stopped_by=MAX_TRAVEL, leg_t_s=timed[-1][0],
+            elapsed_s=timed[-1][0],
+            detail=("a kinematic mirror has no contact and measures no "
+                    "torque: the whole leg was travelled and nothing could "
+                    "resist"))

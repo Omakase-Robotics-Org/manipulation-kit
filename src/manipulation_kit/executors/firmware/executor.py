@@ -71,12 +71,17 @@ import numpy as np
 
 from ...arms import safety, sides
 from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
-                        CONTROLLER_FAULT, JOINT_SLICE, SIDES,
-                        TRANSPORT_ERROR, ArrivalReport, LiftState, NeckState,
-                        RawState, RunReport, SettleReport, StrokeReport,
-                        ToolGate, WIRE_DIM, arrive_labels, barrier_refusal,
-                        controller_fault, fault_refusal, stroke_refusal)
-from ...primitives.types import GripStep, JointStep, Plan, SettleStep
+                        CONTACT, CONTACT_BASELINE_SAMPLES, CONTACT_FAULT,
+                        CONTACT_GUARD, CONTROLLER_FAULT, JOINT_SLICE,
+                        MAX_TRAVEL, SIDES, TRANSPORT_ERROR, UNMEASURED,
+                        ArrivalReport, ContactReport, ContactWatch, LiftState,
+                        NeckState, RawState, RunReport, SettleReport,
+                        StrokeReport, ToolGate, WIRE_DIM, arrive_labels,
+                        barrier_refusal, contact_kin, contact_report,
+                        controller_fault, fault_refusal, retract_path,
+                        stroke_refusal)
+from ...primitives.types import (ContactCriterion, ContactStep, GripStep,
+                                 JointStep, Plan, SettleStep)
 from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
                      hand_state, joint_state)
 from .client import lift_state as _lift_state
@@ -178,6 +183,13 @@ MAX_COMMAND_STEP_DEG = math.degrees(safety.MAX_JOINT_STEP_RAD)
 #: snap to a stale command — on d1-2 (2026-09-10) one joint's command sat 48
 #: degrees from its measurement.
 ANCHOR_GAP_DEG = 3.0
+
+
+def _given_text(value: Any) -> str:
+    """A generated optional string (``None`` / ``Unset`` / text) as text."""
+    if value is None or type(value).__name__ == "Unset":
+        return "(no message)"
+    return str(value)
 
 
 def _wire_side(side: str) -> str:
@@ -767,6 +779,208 @@ class FirmwareExecutor:
                     f"{worst:.1f} deg/s")
             self._sleep(min(self.period, max(0.0, float(timeout_s) - waited)))
 
+    # -- contact: a short trajectory, a state poll, a cancel --------------- #
+    def move_until(self, path, *, side: str, criterion: ContactCriterion,
+                   hz: float = None, kin=None, direction=None,
+                   **_ignored) -> ContactReport:
+        """Play a contact leg on the daemon, watch the torque, cancel on contact.
+
+        POSITION MODE ONLY (Shu, 2026-09-22): nothing here sets a mode or a
+        torque. The leg is uploaded as an ordinary guarded trajectory
+        (``arm.arm_trajectory_start``: the daemon re-checks every sample
+        against its own motion guard), the MOVING arm's generated
+        ``ArmState`` is polled at this executor's rate alongside the job's
+        generated ``TrajectoryStatus``, and every sample goes through the
+        same :class:`~manipulation_kit.executor.ContactWatch` the streamed
+        default uses. When the watch says ``confirming`` the job is cancelled
+        (``arm.arm_trajectory_cancel``: "the arms hold the last accepted
+        target"), which freezes the command while the rise is confirmed; a
+        rise that goes away resumes the rest of the leg as a new job from the
+        measured posture. Everything read comes through the generated client.
+
+        What the document does NOT give this, and a d1-firmware issue should:
+        a stop condition evaluated by the daemon's own 1 ms loop (here the
+        stop latency is one HTTP poll, ~``1/hz``), the playback index or the
+        setpoint in ``TrajectoryStatus`` (the frozen point is inferred from
+        ``elapsed_ms``), and a tool-force estimate (``tool_force_n`` is
+        therefore ``unmeasured``).
+        """
+        kin = contact_kin(self, kin)
+        period = self.period if hz is None else 1.0 / float(hz)
+        timed = [(float(t), np.asarray(q, dtype=float).reshape(7))
+                 for t, q in path]
+        wire = _wire_side(side)
+        other = SIDES[1] if side == SIDES[0] else SIDES[0]
+        self.renew()
+        samples = [joint_state(self.client.arm_state(wire))
+                   for _ in range(CONTACT_BASELINE_SAMPLES)]
+        q_start = np.asarray(samples[0].q, dtype=float)
+
+        def done(stopped_by: str, q_stop, *, made: bool = False,
+                 watch: Optional[ContactWatch] = None, leg_t: float = 0.0,
+                 elapsed: float = 0.0, detail: str = "") -> ContactReport:
+            return contact_report(
+                kin, side, timed, direction=direction, q_start=q_start,
+                q_stop=q_stop, made=made,
+                stopped_by=stopped_by,
+                torque_nm=float("nan") if watch is None else watch.peak_nm,
+                joint=-1 if watch is None else watch.joint, leg_t_s=leg_t,
+                elapsed_s=elapsed, detail=detail)
+
+        if criterion.tool_force_n is not None:
+            return done(UNMEASURED, None, detail=(
+                "the criterion asks for a TOOL FORCE and d1-firmwared "
+                "publishes none; watch joint torque (tool_force_n=None)"))
+        for arm in samples:
+            if arm.faulted:
+                return done(CONTACT_FAULT, arm.q, detail=(
+                    f"the {side} arm controller reports mode {arm.mode!r} "
+                    f"with error code {arm.error_code}"))
+            if arm.torque_nm is None:
+                return done(UNMEASURED, None, detail=(
+                    f"the daemon publishes no feedback_torque for the {side} "
+                    f"arm; the leg was not started"))
+        watch = ContactWatch(criterion,
+                             np.mean([a.torque_nm for a in samples], axis=0))
+        q_other = np.degrees(joint_state(
+            self.client.arm_state(_wire_side(other))).q)
+        end = float(timed[-1][0])
+
+        def upload(from_t: float, q_now) -> Any:
+            """The rest of the leg, from ``from_t``, starting AT ``q_now``."""
+            here = np.degrees(np.asarray(q_now, dtype=float))
+            ahead = [(t - from_t, q) for t, q in timed if t > from_t + 1e-9]
+            if not ahead:
+                return None
+            points = []
+            for t, q in [(0.0, None)] + ahead:
+                deg = here if q is None else np.degrees(q)
+                pair = {side: deg, other: q_other}
+                points.append((0.0 if q is None else INTERPOLATION_S + t,
+                               pair["left"], pair["right"]))
+            status = self.client.trajectory_start(
+                points, holder=self.holder if self.lease is not None else None)
+            job = int(status.id)
+            self._jobs.append(job)
+            return job
+
+        def cancel(job) -> None:
+            if job is None:
+                return
+            try:
+                self.client.trajectory_cancel(job)
+            finally:
+                if job in self._jobs:
+                    self._jobs.remove(job)
+
+        started = self._clock()
+        job = upload(0.0, q_start)
+        job_t0 = started
+        job_from = 0.0
+        leg_t = 0.0
+        tail = 0.0
+        deadline = started + end + INTERPOLATION_S + 5.0
+        try:
+            while True:
+                self._sleep(period)
+                self.renew()
+                arm = joint_state(self.client.arm_state(wire))
+                now = self._clock()
+                elapsed = now - started
+                if job is not None:
+                    status = self.client.trajectory_status(job)
+                    phase = _word(status.phase) or ""
+                    played = max(0.0, float(status.elapsed_ms) / 1000.0
+                                 - INTERPOLATION_S)
+                    leg_t = min(end, job_from + played)
+                    if phase == "completed":
+                        self._jobs.remove(job)
+                        job, leg_t = None, end
+                    elif phase in ("failed", "cancelled"):
+                        self._jobs.remove(job)
+                        job = None
+                        if not arm.faulted:
+                            return done(CONTACT_GUARD, arm.q, watch=watch,
+                                        leg_t=leg_t, elapsed=elapsed, detail=(
+                                            f"trajectory {status.id} {phase}: "
+                                            f"{_given_text(status.message)}"))
+                if arm.faulted:
+                    cancel(job)
+                    job = None
+                    return done(CONTACT_FAULT, arm.q, watch=watch, leg_t=leg_t,
+                                elapsed=elapsed, detail=(
+                                    f"the {side} arm controller latched during "
+                                    f"the leg: mode {arm.mode!r}, error code "
+                                    f"{arm.error_code}"))
+                if arm.torque_nm is None:
+                    cancel(job)
+                    job = None
+                    return done(UNMEASURED, arm.q, watch=watch, leg_t=leg_t,
+                                elapsed=elapsed,
+                                detail="feedback_torque stopped being published")
+                verdict = watch.sample(elapsed, arm)
+                if verdict == ContactWatch.CONTACT:
+                    cancel(job)
+                    job = None
+                    return done(CONTACT, arm.q, made=True, watch=watch,
+                                leg_t=leg_t, elapsed=elapsed, detail=(
+                                    f"joint {watch.joint + 1} rose "
+                                    f"{watch.peak_nm:.2f} Nm over its "
+                                    f"pre-motion torque (threshold "
+                                    f"{criterion.joint_torque_nm:.2f} Nm)"))
+                if verdict == ContactWatch.CONFIRMING:
+                    # FREEZE: the daemon holds the last accepted target.
+                    cancel(job)
+                    job = None
+                    continue
+                if job is None and leg_t < end - 1e-9:
+                    # A transient: resume the rest of the leg from where the
+                    # arm is, as a new job (the daemon anchors on feedback).
+                    job = upload(leg_t, arm.q)
+                    job_from, job_t0 = leg_t, now
+                    deadline = now + (end - leg_t) + INTERPOLATION_S + 5.0
+                    continue
+                if job is None:
+                    tail += period
+                    if tail >= criterion.settle_s - 1e-9:
+                        return done(MAX_TRAVEL, arm.q, watch=watch, leg_t=end,
+                                    elapsed=elapsed, detail=(
+                                        f"travelled the whole leg and nothing "
+                                        f"resisted (largest rise "
+                                        f"{watch.peak_nm:.2f} Nm, threshold "
+                                        f"{criterion.joint_torque_nm:.2f} Nm)"))
+                elif now > deadline:
+                    cancel(job)
+                    job = None
+                    return done(CONTACT_GUARD, arm.q, watch=watch, leg_t=leg_t,
+                                elapsed=elapsed, detail=(
+                                    f"the contact leg was still playing "
+                                    f"{now - job_t0:.1f}s into its job; "
+                                    f"cancelled"))
+        except BaseException:
+            cancel(job)
+            raise
+
+    def _after_contact(self, step: ContactStep, report: ContactReport,
+                       index: int) -> int:
+        """Relieve, hold or retract after a contact leg, as trajectory jobs.
+
+        The same three shapes as the generic runner's
+        (``executor._after_contact``): a probe is re-commanded at the posture
+        it MEASURED, a press holds its frozen command (which the cancelled
+        job left in place) for ``hold_s`` and then plays the leg back to its
+        standoff. Returns the number of waypoints sent.
+        """
+        if not step.retract:
+            if report.q_stop is None:
+                return 0
+            return self._play([JointStep(step.side, report.q_stop, index)])
+        if report.made and step.hold_s > 0.0:
+            self._sleep(float(step.hold_s))
+        back = retract_path(step, report)
+        return self._play([JointStep(step.side, q, index)
+                           for _t, q in back[1:]])
+
     # -- the preferred path: one upload ------------------------------------ #
     def run_plan(self, plan: Plan, *, hz: float = None,
                  arrive_tol_rad: float = None,
@@ -832,6 +1046,7 @@ class FirmwareExecutor:
         settle: Optional[SettleReport] = None
         arrivals: List[ArrivalReport] = []
         strokes: List[StrokeReport] = []
+        contacts: List[ContactReport] = []
         batch: List[JointStep] = []
         last: Dict[str, np.ndarray] = {}
 
@@ -848,7 +1063,8 @@ class FirmwareExecutor:
             return RunReport(plan.primitive, plan.side, False, sent, settle,
                              error=detail, stop_reason=reason,
                              stopped_at=index, arrivals=tuple(arrivals),
-                             strokes=tuple(strokes), refusal=refusal)
+                             strokes=tuple(strokes), refusal=refusal,
+                             contacts=tuple(contacts))
 
         try:
             fault = controller_fault(self.state())
@@ -929,6 +1145,23 @@ class FirmwareExecutor:
                     sent += 1
                     if not settle.settled:
                         return report(index, BARRIER_FAILED, settle.detail)
+                elif isinstance(step, ContactStep):
+                    contact = self.move_until(
+                        step.timed_path(), side=step.side,
+                        criterion=step.criterion, kin=gate.kin,
+                        direction=step.direction.vector())
+                    contacts.append(contact)
+                    if contact.stopped_by == CONTACT_FAULT:
+                        fault = self._fault_now() or contact.detail
+                        return report(index, CONTROLLER_FAULT, fault,
+                                      fault_refusal(plan, fault))
+                    if contact.stopped_by in (CONTACT_GUARD, UNMEASURED):
+                        return report(index, TRANSPORT_ERROR, (
+                            f"the {step.side} contact leg stopped by "
+                            f"{contact.stopped_by}: {contact.detail}"))
+                    sent += 1 + self._after_contact(step, contact, step.waypoint)
+                    last[step.side] = np.asarray(
+                        self.state().joints[step.side], dtype=float)
                 else:
                     # The firmware runner used to skip an unknown step in
                     # silence while the generic one raised. Same closed set,
@@ -941,7 +1174,8 @@ class FirmwareExecutor:
         finally:
             self.end_run(plan)
         return RunReport(plan.primitive, plan.side, True, sent, settle,
-                         arrivals=tuple(arrivals), strokes=tuple(strokes))
+                         arrivals=tuple(arrivals), strokes=tuple(strokes),
+                         contacts=tuple(contacts))
 
     def _fault_now(self) -> Optional[str]:
         try:

@@ -500,6 +500,62 @@ class SurfaceView(ObjectView):
                 else f" +-{self.height_uncertainty_m * 1000:.0f}mm")
         return text + f", top height {how}{plus}"
 
+    @classmethod
+    def from_plane(cls, name: str, point, normal, *,
+                   footprint_m: Tuple[float, float] = (0.10, 0.10),
+                   thickness_m: float = 0.02, yaw_axis=None,
+                   plane_source: Optional[str] = "contact",
+                   height_uncertainty_m: Optional[float] = None,
+                   stamp: float = 0.0, colour: Optional[str] = None
+                   ) -> "SurfaceView":
+        """A surface whose TOP FACE is the plane through ``point`` with ``normal``.
+
+        How a MEASURED plane — a probe's contact, a fit over three of them —
+        becomes a thing in the world. The view is a thin slab: its own +z is
+        ``normal``, its top face passes through ``point`` (so for a level
+        plane :meth:`top_z` is the contact height, exactly), and it extends
+        ``footprint_m`` in the plane, centred on ``point``. ``yaw_axis``, when
+        given, is the in-plane direction the slab's own x lies along (keep an
+        existing surface's footprint orientation); otherwise the one nearest
+        base x.
+        """
+        n = np.asarray(normal, dtype=float).reshape(3)
+        length = float(np.linalg.norm(n))
+        if not math.isfinite(length) or length < 1e-9:
+            raise ValueError(f"{name}: a plane needs a non-zero normal, got "
+                             f"{n.tolist()}")
+        n = n / length
+        seed = np.asarray(yaw_axis if yaw_axis is not None else (1.0, 0.0, 0.0),
+                          dtype=float).reshape(3)
+        x = seed - n * float(np.dot(seed, n))
+        if float(np.linalg.norm(x)) < 1e-6:
+            x = np.array([0.0, 1.0, 0.0]) - n * float(n[1])
+        x = x / float(np.linalg.norm(x))
+        y = np.cross(n, x)
+        rot = R.from_matrix(np.column_stack([x, y, n]))
+        centre = (_vec3(point, f"{name}.point")
+                  - n * float(thickness_m) / 2.0)
+        return cls(name, p=centre,
+                   size=(float(footprint_m[0]), float(footprint_m[1]),
+                         float(thickness_m)),
+                   r=rot, stamp=float(stamp), colour=colour,
+                   plane_source=plane_source,
+                   height_uncertainty_m=height_uncertainty_m)
+
+    def top_normal(self, frames: FrameGraph) -> np.ndarray:
+        """The slab's own +z in the base frame — the face :meth:`from_plane`
+        put on the measured plane (for a wall, horizontal)."""
+        _p, r = self.pose_in_base(frames)
+        return np.asarray(r.as_matrix()[:, 2], dtype=float)
+
+    def plane_offset(self, point, frames: FrameGraph) -> float:
+        """Signed distance of ``point`` above the top face, along
+        :meth:`top_normal` [m]."""
+        p, r = self.pose_in_base(frames)
+        n = np.asarray(r.as_matrix()[:, 2], dtype=float)
+        face = np.asarray(p, dtype=float) + n * float(self.size[2]) / 2.0
+        return float(np.dot(np.asarray(point, dtype=float).reshape(3) - face, n))
+
     def supports_object(self, obj: "ObjectView", frames: FrameGraph, *,
                         pad_m: float = 0.0, tol_m: float = 0.005) -> bool:
         """Is ``obj`` standing ON this surface — its UNDERSIDE on the top face?
@@ -651,6 +707,65 @@ class GripperView:
 
 
 @dataclass(frozen=True)
+class ContactView:
+    """One contact leg's MEASURED outcome, carried by the world.
+
+    The evidence a contact verb's verifier reads. ``p`` is where the SURFACE
+    was met — the leading fingertip, not the tool point — and ``p_tool`` the
+    tool point (pad centre) the executor measured; both base frame.
+    ``normal`` is the executor's hint (minus the travel). ``surface`` is the
+    name the verb asked to publish the contact as, "" for none. A contact
+    that was NOT made (``made=False``) is evidence too: the leg ran its whole
+    ``travel_m`` and nothing resisted (``stopped_by="max_travel"``).
+    """
+
+    side: str
+    made: bool
+    p: np.ndarray
+    p_tool: np.ndarray
+    normal: np.ndarray
+    stopped_by: str
+    travel_m: float = float("nan")
+    torque_nm: float = float("nan")
+    surface: str = ""
+    verb: str = ""
+    stamp: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.side not in _SIDES:
+            raise ValueError(f"side must be one of {_SIDES}, got {self.side!r}")
+        object.__setattr__(self, "p", _vec3(self.p, "contact.p"))
+        object.__setattr__(self, "p_tool", _vec3(self.p_tool, "contact.p_tool"))
+        n = np.asarray(self.normal, dtype=float).reshape(3)
+        norm = float(np.linalg.norm(n))
+        object.__setattr__(self, "normal", n / norm if norm > 1e-9 else n)
+
+    def to_json(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "side": self.side, "made": bool(self.made),
+            "stopped_by": self.stopped_by, "p": _round(self.p, 4),
+            "normal": _round(self.normal, 3)}
+        if math.isfinite(self.travel_m):
+            out["travel_m"] = round(float(self.travel_m), 4)
+        if math.isfinite(self.torque_nm):
+            out["torque_nm"] = round(float(self.torque_nm), 3)
+        if self.surface:
+            out["surface"] = self.surface
+        if self.verb:
+            out["verb"] = self.verb
+        return out
+
+    def to_text(self) -> str:
+        if not self.made:
+            return (f"{self.side} {self.verb or 'contact'}: nothing resisted "
+                    f"over {self.travel_m * 1000:.0f} mm ({self.stopped_by})")
+        where = ", ".join(f"{v:.3f}" for v in self.p)
+        named = f" -> {self.surface}" if self.surface else ""
+        return (f"{self.side} {self.verb or 'contact'}: touched at ({where})"
+                f"{named}")
+
+
+@dataclass(frozen=True)
 class WorldView:
     """One observation: the frames, the things, and both arms — that is all.
 
@@ -676,9 +791,16 @@ class WorldView:
     #: (the executor's ``firmware_spec``: an OpenAPI sha256, ``"kinematic"``),
     #: "" when the producer does not say. Recorded in every plan's binding.
     firmware_spec: str = ""
+    #: contact legs' MEASURED outcomes, oldest first — the evidence a probe's
+    #: or a press's verifier reads (``primitives.contact.record_contacts``
+    #: folds a run's reports in). Not part of :meth:`observation_id`: a
+    #: contact is evidence about what happened, and the surface it measured
+    #: reaches the world as an object, which is.
+    contacts: Tuple[ContactView, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "objects", tuple(self.objects))
+        object.__setattr__(self, "contacts", tuple(self.contacts))
         names = [o.name for o in self.objects]
         duplicates = sorted({n for n in names if names.count(n) > 1})
         if duplicates:
@@ -771,10 +893,17 @@ class WorldView:
             arms=changes.get("arms", self.arms),
             grippers=changes.get("grippers", self.grippers),
             stamp=stamp, revision=int(revision),
-            firmware_spec=changes.get("firmware_spec", self.firmware_spec))
+            firmware_spec=changes.get("firmware_spec", self.firmware_spec),
+            contacts=tuple(changes.get("contacts", self.contacts)))
 
     # -- serialisation ----------------------------------------------------- #
     def to_json(self) -> Dict[str, Any]:
+        out = self._to_json()
+        if self.contacts:
+            out["contacts"] = [c.to_json() for c in self.contacts]
+        return out
+
+    def _to_json(self) -> Dict[str, Any]:
         return {
             "stamp": round(float(self.stamp), 3),
             "revision": int(self.revision),
@@ -814,6 +943,8 @@ class WorldView:
                 lines.append(f"  - {self.arms[side].to_text()}")
             if side in self.grippers:
                 lines.append(f"  - {self.grippers[side].to_text()}")
+        if self.contacts:
+            lines.append("last contact: " + self.contacts[-1].to_text())
         stale = [f.frame_id for f in self.frames.frames.values()
                  if not f.fresh(self.frames.now)]
         if stale:

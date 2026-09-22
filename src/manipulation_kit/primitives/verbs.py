@@ -1775,9 +1775,13 @@ class Pour(LearnedPrimitive):
                         math.radians(self.tilt_deg))
 
 
-#: the v1 verb set, in the order a pick-and-place uses them
+# The contact verbs live in .contact (they import this module's helpers, so
+# they are registered here, after everything they need is defined).
+from .contact import Press, Probe  # noqa: E402
+
+#: the verb set, in the order a pick-and-place uses them, then the contact verbs
 PRIMITIVES: Tuple[type, ...] = (Approach, Grasp, Lift, Carry, Place, Release,
-                                Nudge, Retreat, GoHome, Pour)
+                                Nudge, Retreat, GoHome, Pour, Probe, Press)
 
 BY_VERB = {cls.name(): cls for cls in PRIMITIVES}
 

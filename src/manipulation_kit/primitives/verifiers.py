@@ -810,6 +810,115 @@ class Tilted(Verifier):
             f"turn this into a verdict", **measured)
 
 
+#: How far a published contact surface's face may sit from the contact it
+#: was fitted to and still be that contact's surface [m]. A single probe's
+#: plane passes through its contact exactly; a fit over three leaves a
+#: residual, and 3 mm is the hardware gate's own accuracy target (decision 2).
+CONTACT_PLANE_TOL_M = 0.003
+
+
+def _new_contacts(world0: WorldView, world1: WorldView, side: str,
+                  verb: str = ""):
+    """The contacts ``world1`` carries that ``world0`` did not, for ``side``."""
+    base = len(getattr(world0, "contacts", ()))
+    fresh = tuple(getattr(world1, "contacts", ()))[base:]
+    return [c for c in fresh if c.side == side and (not verb or c.verb == verb)]
+
+
+class ContactMade(Verifier):
+    """The hand met resistance along its direction — MEASURED by the leg.
+
+    Reads the :class:`~manipulation_kit.world.ContactView` a run's
+    :class:`~manipulation_kit.executor.ContactReport` became
+    (``primitives.contact.record_contacts``). No new contact in the later
+    world is UNKNOWN — nobody folded the evidence in — never TRUE; a contact
+    leg that ran its whole travel is FALSE, with the travel.
+    """
+
+    describes = "the hand touched something, measured by the torque watch"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str, *,
+                 max_travel_m: float, verb: str = ""):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.max_travel_m = float(max_travel_m)
+        self.verb = verb or primitive
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        new = _new_contacts(self.world0, world1, self.side, self.verb)
+        if not new:
+            return _unknown(
+                f"no {self.verb} contact on the {self.side} hand reached this "
+                f"world; fold the run's report in "
+                f"(primitives.contact.record_contacts)")
+        c = new[-1]
+        measured = {"stopped_by": c.stopped_by,
+                    "p": [round(float(v), 4) for v in c.p],
+                    "normal": [round(float(v), 3) for v in c.normal],
+                    "travel_m": (None if not math.isfinite(c.travel_m)
+                                 else round(float(c.travel_m), 4)),
+                    "torque_nm": (None if not math.isfinite(c.torque_nm)
+                                  else round(float(c.torque_nm), 3))}
+        if not c.made:
+            travel = (f"{c.travel_m * 1000:.0f} mm" if math.isfinite(c.travel_m)
+                      else "its whole leg")
+            return _false(f"nothing resisted the {self.side} hand: the leg "
+                          f"stopped by {c.stopped_by} after {travel}",
+                          **measured)
+        if (math.isfinite(c.travel_m)
+                and not -0.005 <= c.travel_m <= self.max_travel_m + 0.005):
+            return _false(f"the {self.side} contact is {c.travel_m * 1000:.0f} "
+                          f"mm along a leg of {self.max_travel_m * 1000:.0f} "
+                          f"mm, which is not a point on it", **measured)
+        return _true(f"the {self.side} hand met resistance after "
+                     f"{c.travel_m * 1000:.0f} mm ({c.torque_nm:.2f} Nm rise)",
+                     **measured)
+
+
+class SurfaceMeasured(Verifier):
+    """A SURFACE named ``name`` now carries the plane the contact measured."""
+
+    describes = "the touched surface was published with its measured plane"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str, name: str,
+                 *, tol_m: float = CONTACT_PLANE_TOL_M, verb: str = ""):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.name = name
+        self.tol_m = float(tol_m)
+        self.verb = verb or primitive
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        new = _new_contacts(self.world0, world1, self.side, self.verb)
+        if not new:
+            return _unknown(f"no {self.verb} contact reached this world, so "
+                            f"no surface was measured")
+        c = new[-1]
+        if not c.made:
+            return _false(f"nothing was touched, so {self.name!r} was not "
+                          f"measured")
+        surface = world1.find(self.name)
+        if not isinstance(surface, SurfaceView):
+            return _false(f"no surface called {self.name!r} was published")
+        if surface.plane_source != "contact":
+            return _false(f"{self.name!r} is known from "
+                          f"{surface.plane_source or 'an unstated source'}, "
+                          f"not from contact")
+        try:
+            off = surface.plane_offset(c.p, world1.frames)
+            normal = surface.top_normal(world1.frames)
+        except FrameError as exc:
+            return _unknown(f"{self.name!r} does not resolve: {exc}")
+        measured = {"offset_m": round(off, 4),
+                    "normal": [round(float(v), 4) for v in normal],
+                    "height_uncertainty_m": surface.height_uncertainty_m}
+        if abs(off) > self.tol_m:
+            return _false(f"{self.name!r}'s face is {off * 1000:+.1f} mm from "
+                          f"the contact it should pass through", **measured)
+        return _true(f"{self.name!r} passes {abs(off) * 1000:.1f} mm from the "
+                     f"measured contact", **measured)
+
+
 class Never(Verifier):
     """For a primitive whose success is not measurable here at all."""
 

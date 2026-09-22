@@ -299,3 +299,35 @@ def test_the_generated_operations_are_reachable_from_the_adapter(client_factory)
             arm = client.api_module("arm.arm_state")
             response = arm.sync_detailed(side="a", client=client.api_client)
     assert response.status_code == 200
+
+
+def test_the_contact_leg_operations_go_through_the_generated_client(
+        client_factory):
+    """``trajectory_start`` / ``_status`` / ``_cancel``: generated bodies out,
+    generated ``TrajectoryStatus`` back — the contact leg's whole wire."""
+    from manipulation_kit.executors.firmware.client import _word
+
+    def status(phase, ms):
+        return ok({"id": 9, "phase": phase, "elapsed_ms": ms, "message": None})
+    with Daemon({"/v1/arm/trajectory/start": status("running", 0),
+                 "/v1/arm/trajectory/9/status": status("running", 120),
+                 "/v1/arm/trajectory/9/cancel": status("cancelled", 130)}
+                ) as daemon:
+        with client_factory(daemon) as client:
+            started = client.trajectory_start(
+                [(0.0, [0.0] * 7, [1.0] * 7), (0.5, [2.0] * 7, [1.0] * 7)],
+                holder="mkit-test")
+            polled = client.trajectory_status(9)
+            cancelled = client.trajectory_cancel(9)
+    for answer in (started, polled, cancelled):
+        assert type(answer).__name__ == "TrajectoryStatus"
+        assert type(answer).__module__.startswith(ensure.BUNDLED_MODULE)
+    assert started.id == 9 and polled.elapsed_ms == 120
+    assert _word(polled.phase) == "running" and _word(cancelled.phase) == "cancelled"
+    method, path, body = daemon.seen[0]
+    assert (method, path) == ("POST", "/v1/arm/trajectory/start")
+    assert body == {"waypoints": [{"a": [0.0] * 7, "b": [1.0] * 7, "t": 0.0},
+                                  {"a": [2.0] * 7, "b": [1.0] * 7, "t": 0.5}],
+                    "holder": "mkit-test"}
+    assert daemon.seen[1][:2] == ("GET", "/v1/arm/trajectory/9/status")
+    assert daemon.seen[2][:2] == ("POST", "/v1/arm/trajectory/9/cancel")
