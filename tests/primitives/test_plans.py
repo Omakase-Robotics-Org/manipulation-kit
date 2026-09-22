@@ -243,44 +243,53 @@ def test_every_verb_reports_a_reason_from_the_published_vocabulary(d1_arm, obser
 def test_a_top_down_grasp_keeps_the_pad_tips_off_the_table(d1_arm, observe):
     """MEASURED, 2026-09-19 (blocks-eval, ten attempts, ten failures).
 
-    The tool point is the pad CENTRE and the pads reach ``TIP_BELOW_TOOL_M``
+    The tool point is the pad CENTRE and the pads reach ``PAD.lead_m``
     = 29 mm past it. Descending to a 40 mm cube's CENTRE therefore asked for
     the finger tips 9 mm BELOW the wagon top. The fingers jammed on the table,
     the arm stopped 17 mm high and 19 mm to the side — still 2.5 deg from the
     commanded posture after two seconds of holding it, while the same arm
     tracks a free-air posture to 0.00 deg in 0.7 s — and the jaws closed
     beside the block every time.
+
+    The block here stands ON the fixture's table (top z = 0.01), so the
+    table's measured top is the descent floor (0.16.0 step 3, L5).
     """
+    from manipulation_kit.primitives import grasp_geometry as gg
     from manipulation_kit.primitives import orientation as ap
 
-    block = (0.38, 0.25, 0.05)                  # 50 x 40 x 50 mm, so it stands
-    world = observe(d1_arm, block_p=block)      # on a surface at z = 0.025
+    block = (0.38, 0.25, 0.035)                 # 50 x 40 x 50 mm, on the
+    world = observe(d1_arm, block_p=block)      # table whose top is z = 0.01
+    top_of_table = world.find("table").top_z(world.frames)
     plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
     assert plan.ok, str(plan)
     grasp = plan.waypoints[-1]
     assert grasp.label == "grasp"
-    bottom = block[2] - 0.05 / 2
     assert grasp.p[2] == pytest.approx(
-        bottom + ap.TIP_BELOW_TOOL_M + ap.SUPPORT_CLEARANCE_M)
+        top_of_table + gg.PAD.lead_m + ap.SUPPORT_CLEARANCE_M)
     # over the object, not beside it, and still inside its height
     assert np.allclose(grasp.p[:2], block[:2])
     assert grasp.p[2] < block[2] + 0.05 / 2
-    # the standoff is measured from the RAISED point, not the old one
-    assert plan.waypoints[0].p[2] == pytest.approx(grasp.p[2] + 0.08)
+    # the standoff keeps the TIPS standoff_m over the block's top face
+    top = block[2] + 0.05 / 2
+    assert plan.waypoints[0].p[2] == pytest.approx(
+        top + gg.DEFAULT_STANDOFF_M + gg.PAD.lead_m)
     assert any("above the object's centre" in note for note in plan.notes)
+    assert any("table's top" in note for note in plan.notes), plan.notes
 
 
 def test_an_object_tall_enough_is_grasped_at_its_centre_as_before(d1_arm, observe):
     """The clearance is a floor, not an offset: nothing that already cleared
     the table moves."""
-    from manipulation_kit.primitives import orientation as ap
+    from manipulation_kit.primitives import grasp_geometry as gg
 
     from manipulation_kit.world import FrameGraph, ObjectView
 
     frames = FrameGraph()
     tall = ObjectView("tall_block", p=(0.38, 0.25, 0.12), size=(0.05, 0.04, 0.16))
-    assert not ap.grasp_point(tall, DOWN, frames)[1]
-    assert np.allclose(ap.grasp_point(tall, DOWN, frames)[0], tall.p)
+    p, _r, notes = gg.grasp_pose(tall, frames, gg.GraspSpec(ALIASES["down"]),
+                                 side="left", support=None)
+    assert np.allclose(p, tall.p)
+    assert not any("above the object's centre" in n for n in notes)
 
 
 def test_a_flat_object_is_refused_rather_than_grasped_over(d1_arm, observe):
@@ -299,15 +308,20 @@ def test_a_flat_object_is_refused_rather_than_grasped_over(d1_arm, observe):
 
 
 def test_a_horizontal_approach_still_aims_at_the_object_centre(d1_arm, observe):
-    """The clamp is about what the object STANDS on, which only the top-down
-    descent drives into."""
-    from manipulation_kit.primitives import orientation as ap
+    """The clamp is about what the object STANDS on, which only a descent
+    drives into."""
+    from manipulation_kit.primitives import grasp_geometry as gg
 
     from manipulation_kit.world import FrameGraph, ObjectView
 
     frames = FrameGraph()
     low = ObjectView("low_block", p=(0.38, 0.25, 0.02), size=(0.05, 0.04, 0.04))
     for name in ("forward", "right", "left"):
-        point, raised = ap.grasp_point(low, ALIASES[name].vector(), frames)
-        assert not raised and np.allclose(point, low.p)
-    assert ap.grasp_point(low, DOWN, frames)[1]
+        p, _r, notes = gg.grasp_pose(low, frames, gg.GraspSpec(ALIASES[name]),
+                                     side="left", support=None)
+        assert np.allclose(p, low.p), name
+        assert not any("above the object's centre" in n for n in notes), name
+    p, _r, notes = gg.grasp_pose(low, frames, gg.GraspSpec(ALIASES["down"]),
+                                 side="left", support=None)
+    assert p[2] > low.p[2]
+    assert any("above the object's centre" in n for n in notes)
