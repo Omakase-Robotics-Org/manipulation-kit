@@ -48,14 +48,14 @@ from .verbs import BY_VERB, PRIMITIVES
 #: — because they are deployment configuration or planner choices rather than
 #: a choice about the task. ``policy`` names a learned checkpoint: which one is
 #: served is a property of the robot in front of you, and a free string
-#: invites a model to invent one (R, section 3). ``roll_rad`` is the planner's
-#: turn of the hand about the approach axis: shown to a model as
-#: ``jaw_turn_deg`` (d1-2 run8, 2026-09-22) it picked the IK-infeasible turn
-#: on its own and spent the run on refusals; the plan's notes say which roll
-#: the planner used. They keep their defaults and are still bindable from
-#: Python. THIS IS THE ONE ALLOWLIST: a consumer does not strip arguments on
-#: the way out or pop them on the way in.
-NOT_MODEL_BINDABLE: Tuple[str, ...] = ("policy", "roll_rad")
+#: invites a model to invent one (R, section 3). It keeps its default and is
+#: still bindable from Python. THIS IS THE ONE ALLOWLIST: a consumer does not
+#: strip arguments on the way out or pop them on the way in. (The planner's
+#: roll about the approach axis is not here because it is not a field at all
+#: since 0.16.0 step 3: ``grasp_geometry.roll_candidates`` is the one sweep
+#: and the plan's notes say which roll was used. Shown to a model as
+#: ``jaw_turn_deg``, d1-2 run8, it picked the IK-infeasible turn on its own.)
+NOT_MODEL_BINDABLE: Tuple[str, ...] = ("policy",)
 
 #: What a verb cannot promise, added to its description so the limitation
 #: reaches capability discovery rather than only a docstring.
@@ -211,7 +211,8 @@ def decode(name: str, arguments: Dict[str, Any],
 
     ``model_bindable_only`` (the default — this is the MODEL's door) refuses
     every field in :data:`NOT_MODEL_BINDABLE`: a model that sends ``policy``
-    or ``roll_rad`` gets a typed refusal, not a silently-honoured knob
+    gets a typed refusal, not a silently-honoured knob (and ``roll_rad``,
+    which no verb has, is an unknown argument)
     (Astra review 5). A direction arrives as an alias or ``{axis, frame}``
     (or a bare ``[x, y, z]``, base frame) and leaves as a ``Direction``.
     """

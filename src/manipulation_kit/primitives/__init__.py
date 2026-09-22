@@ -50,10 +50,13 @@ part that knows a model exists — prompts, authentication, request envelopes,
 ranking, menu capping, the scripted policy and the runnable loops.
 """
 
-from .orientation import (GRASPABLE_WIDTH_M, JAW_OPEN_M, TOOL_Z_M, align_tool,
+from .orientation import (TOOL_Z_M, align_tool,
                           choose_side, grasp_orientation, grasp_width,
                           jaw_axis, link7_from_tool, roll_tool,
                           tool_from_link7, tool_revision)
+from .grasp_geometry import (PAD, TIP, GraspReference, GraspSpec, fits,
+                             graspable_width_m, grasp_pose, roll_candidates,
+                             standoff_point, support_of)
 from .arguments import ARGUMENTS, Argument, check_arguments, names_for
 from .offer import (Offered, Refused, candidates_for, label_for, offer,
                     why_nothing)
@@ -93,9 +96,12 @@ __all__ = [
     "NUDGE_FRAMES", "NUDGE_GRID_M", "NUDGE_MAX_YAW_RAD", "PLAN_REASONS",
     "SIDES", "SIDE_CHOICES", "snap",
     # geometry helpers consumers legitimately need
-    "GRASPABLE_WIDTH_M", "JAW_OPEN_M", "TOOL_Z_M", "align_tool", "choose_side",
+    "TOOL_Z_M", "align_tool", "choose_side",
     "grasp_orientation", "roll_tool", "grasp_width", "jaw_axis",
     "link7_from_tool", "tool_from_link7", "tool_revision",
+    # where and how the hand meets an object
+    "GraspReference", "GraspSpec", "PAD", "TIP", "fits", "graspable_width_m",
+    "grasp_pose", "roll_candidates", "standoff_point", "support_of",
     # planning
     "Kin", "solve_path", "joint_ramp", "missing_arms",
     "ARRIVE_TOL_M", "PATH_TOL_M", "PATH_TOL_RAD",

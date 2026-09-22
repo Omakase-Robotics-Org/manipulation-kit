@@ -273,6 +273,16 @@ class SettleStep:
 Step = Union[JointStep, GripStep, SettleStep]
 
 
+def _revision_fields(revision: str) -> Dict[str, str]:
+    """``"a=1;b=2"`` -> ``{"a": "1", "b": "2"}``; a revision that is not in
+    that form is one opaque field."""
+    out: Dict[str, str] = {}
+    for part in str(revision).split(";"):
+        key, sep, value = part.partition("=")
+        out[key if sep else "revision"] = value if sep else part
+    return out
+
+
 @dataclass(frozen=True)
 class PlanBinding:
     """The posture and the observation a plan was CHECKED against.
@@ -320,7 +330,8 @@ class PlanBinding:
 
     @classmethod
     def of(cls, world, kin=None, *, joint_tol_rad: float = 0.05,
-           max_age_s: float = float("nan")) -> "PlanBinding":
+           max_age_s: float = float("nan"),
+           reference: Optional[str] = None) -> "PlanBinding":
         from .orientation import tool_revision  # noqa: PLC0415 - cycle at import
         q0 = {side: tuple(float(v) for v in arm.joints)
               for side, arm in world.arms.items()}
@@ -328,7 +339,7 @@ class PlanBinding:
         return cls(q0=q0, observation=world.observation_id(),
                    world_stamp=float(world.stamp),
                    frames_now=float(world.frames.now),
-                   tool_revision=tool_revision(),
+                   tool_revision=tool_revision(reference),
                    joint_tol_rad=float(joint_tol_rad),
                    max_age_s=float(max_age_s),
                    guarded=bool(getattr(gate, "installed", False)),
@@ -364,9 +375,19 @@ class PlanBinding:
         if world is not None and tuple(world.observation_id()) != tuple(self.observation):
             return ("the world has been re-observed since this plan was "
                     "checked — replan against the observation you are holding")
-        if tool_revision and self.tool_revision and tool_revision != self.tool_revision:
-            return (f"the tool configuration changed ({self.tool_revision} -> "
-                    f"{tool_revision}); every waypoint is a TOOL-POINT pose")
+        if tool_revision and self.tool_revision:
+            # Every field BOTH revisions state must agree. An executor states
+            # the hand; a grasp plan also states WHERE on it the contact is
+            # (``reference=pad|tip``), so a tip plan runs on the hand it was
+            # planned for and is refused where a pad plan is expected.
+            planned = _revision_fields(self.tool_revision)
+            now = _revision_fields(tool_revision)
+            changed = sorted(k for k in set(planned) & set(now)
+                             if planned[k] != now[k])
+            if changed or not set(planned) & set(now):
+                return (f"the tool configuration changed ({self.tool_revision} "
+                        f"-> {tool_revision}); every waypoint is a TOOL-POINT "
+                        f"pose")
         if math.isfinite(self.max_age_s) and math.isfinite(now):
             age = float(now) - self.world_stamp
             if age > self.max_age_s:

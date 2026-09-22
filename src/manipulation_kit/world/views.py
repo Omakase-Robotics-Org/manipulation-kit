@@ -81,19 +81,20 @@ def _tilt_rad(rot: R) -> float:
     """How far this pose is from having ONE body axis straight up.
 
     Zero for any yaw about z (a turned block is not a tilted one); the angle
-    to the nearest upright otherwise. The primitives refuse above
-    :data:`UPRIGHT_TOL_RAD` rather than computing a support height that
-    assumes a level box.
+    to the nearest upright otherwise. Above :data:`UPRIGHT_TOL_RAD` the
+    primitives plan in the object's own frame (or refuse, when nothing
+    measured is under it).
     """
     columns = rot.as_matrix()
     best = max(abs(float(columns[2, i])) for i in range(3))
     return float(math.acos(max(0.0, min(1.0, best))))
 
 
-#: How far from upright a box may sit and still be planned against. Above it
-#: the vertical extent, the support height and the jaw geometry all become
-#: statements about a shape this v1 does not model, and the honest answer is a
-#: refusal rather than a number (R9).
+#: How far from upright a box may sit and still be treated as upright. Above
+#: it a grasp descends along the object's OWN top-face normal and the plan's
+#: notes say so; it is refused only when no measured surface is under it to
+#: give the descent a floor (``primitives.verbs.support_geometry_known``,
+#: redesign step 3 — this used to be a blanket refusal, R9).
 UPRIGHT_TOL_RAD = math.radians(10.0)
 
 

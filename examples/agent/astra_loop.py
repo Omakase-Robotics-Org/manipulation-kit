@@ -66,7 +66,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 from dataclasses import dataclass
@@ -171,7 +170,8 @@ Call exactly one tool per turn."""
 # answered inside the loop and reported back correlated with the call.
 
 from manipulation_kit.hands.d1.parallel_gripper.description import DRIVEN_OPEN_GAP_M as _OPEN_M  # noqa: E402
-from manipulation_kit.primitives.orientation import GRASPABLE_WIDTH_M as _GRASP_M  # noqa: E402
+from manipulation_kit.primitives.grasp_geometry import graspable_width_m  # noqa: E402
+_GRASP_M = graspable_width_m()
 SYSTEM = SYSTEM.replace("{directions}", "\n".join(
     "  " + line for line in direction_doc().splitlines()))
 SYSTEM = SYSTEM.replace("{open_mm}", f"{_OPEN_M * 1000:.0f}").replace(
@@ -605,7 +605,9 @@ def plan_the_hand(world, kin, *, obj: str, destination: str):
     ``manipulation_kit.primitives.reach`` for what that cost on the
     blocks-eval wagon (2026-09-19, F10). Flat or awkward objects refuse a
     top-down grasp (``object_too_flat``), so the approach directions are tried
-    in order and the first reachable chain wins.
+    in order and the first reachable chain wins. The jaw roll is not swept
+    here: every Approach/Grasp tries the kit's one sweep
+    (``grasp_geometry.roll_candidates``) itself.
 
     ``None`` when the scene does not contain both names yet, which is now a
     normal state: with ``--perceive`` the model declares the things on turn 0
@@ -616,14 +618,10 @@ def plan_the_hand(world, kin, *, obj: str, destination: str):
         return None
     hand = None
     for direction in GRASP_DIRECTIONS:
-        for jaw_turn in (0.0, -90.0, 90.0):      # see Approach.roll_rad
-            candidate = choose_side(world, kin, obj=obj, destination=destination,
-                                    direction=direction,
-                                    roll_rad=math.radians(jaw_turn))
-            if hand is None or (candidate.reachable and not hand.reachable):
-                hand = candidate
-            if hand.reachable:
-                break
+        candidate = choose_side(world, kin, obj=obj, destination=destination,
+                                direction=direction)
+        if hand is None or (candidate.reachable and not hand.reachable):
+            hand = candidate
         if hand.reachable:
             break
     return hand
@@ -793,30 +791,8 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             _dump_messages(trace_path, messages)
             continue
         plan = check(primitive, world, kin)
-        # JAW-TURN FALLBACK. The kit squares the jaws across the object's long
-        # axis; when that wrist posture is refused by the guard or IK at the
-        # standoff, the same grasp a quarter turn round often stands (d1-2
-        # run6: a 45x55 mm charger). Try it once; the Grasp preconditions
-        # still refuse the turned grasp if the other side is too wide.
-        if (not getattr(plan, "ok", False)
-                and primitive.name() in ("approach", "grasp")
-                and getattr(plan, "reason", "") in ("guard_reject", "ik_fail")
-                and getattr(plan, "waypoint_label", "") == "standoff"):
-            import dataclasses as _dc  # noqa: PLC0415
-            turned, plan2 = primitive, plan
-            asked = float(getattr(primitive, "roll_rad", 0.0))
-            for turn in [x for x in (0.0, -math.pi / 2, math.pi / 2) if x != asked]:
-                turned = _dc.replace(primitive, roll_rad=turn)
-                plan2 = check(turned, world, kin)
-                if getattr(plan2, "ok", False):
-                    break
-            if getattr(plan2, "ok", False):
-                _say(messages, call_id,
-                     f"note: {label_for(primitive)} with the jaws across the long "
-                     f"side was refused ({plan.reason} at the standoff); the "
-                     f"hand is turned 90 deg so the jaws close across the other "
-                     f"side, which fits.")
-                primitive, plan = turned, plan2
+        # (The jaw-turn fallback that lived here is the kit's now: Approach
+        # and Grasp try grasp_geometry.roll_candidates themselves.)
         if not getattr(plan, "ok", False):
             record.refused = [plan.to_json()]
             _say(messages, call_id, f"{label_for(primitive)} was refused: {plan}")
