@@ -17,6 +17,74 @@ loud reason, not a legacy path kept alive beside the new one.
   a machine without the generator, fell back to a client that provably did
   not match. `tests/executors/test_firmware_client_snapshot.py` now pins the
   d1-2 hash.
+- **`RawState` is `arms: {side: JointState}` + `hands: {side: HandState}`**
+  (+ `stamp`, and `extra` for genuinely foreign data only). `JointState` is
+  `q, qd, torque_nm, mode, error_code, stationary`; `HandState` is
+  `closedness, commanded, holding, jaw_gap_m, torque_nm, stalled, fault,
+  open_gap_m`. A field a producer does not measure is `None`, never a
+  default number. **Transitional, removed in 0.17:** the flat
+  `joints`/`grippers`/`holding`/`commanded_grippers`/`stationary` read-only
+  accessors, and the same keywords at construction (`RawState(joints=...)`),
+  so `wire()` and d1-isaaclab's `agent_eval` executor keep working for one
+  release. Migrate to `arms=`/`hands=`.
+- **The firmware executor builds that state from the generated client's
+  models, field for field.** `client.py` no longer parses JSON keys: its reads
+  go through the generated operations (`arm.arm_state`, `gripper.gripper_state`,
+  `neck.neck_state`, `slider.slider_state`) and are decoded by the generated
+  models, then converted by `joint_state()`/`hand_state()`/`neck_state()`/
+  `lift_state()`. **Breaking:** the hand-written `ArmState`/`GripperState`
+  dataclasses are gone from `manipulation_kit.executors.firmware`;
+  `FirmwareClient.arm_state()`/`gripper_state()` return the generated
+  `ArmState`/`GripperReport` models. Velocity, torque, mode and error code are
+  now typed fields; the `{side}_mode`/`{side}_error_code` keys in `extra`
+  (74168de) are gone.
+- **Faults stop the run in the kit.** A latched arm controller
+  (`mode == "error"` or a non-zero `error_code`) stops `run`/`run_steps`/the
+  firmware `run_plan` before the first byte and between steps with the new
+  stop reason **`controller_fault`** (also a `RunRefusal` reason). A faulted
+  gripper (`fault_code`, or a `fault`/`overload` stroke outcome) is no longer
+  a settled one: `wait_gripper_settled` reads the daemon's `StrokeKind`
+  instead of accepting two identical jaw readings, and the run stops with
+  refusal reason **`gripper_fault`**. `StrokeReport` gains `kind` and `fault`.
+- **The firmware executor publishes `HandState.commanded`** — what it last
+  commanded and the daemon accepted (or the daemon's `target_closedness`). The
+  runner's refusal to move a holding hand with no known command
+  (`run_steps`, F9) no longer fires on hardware after every successful grasp.
+  `jaw_gap_m`/`stalled` reach `GripperView` through the typed state, so the
+  width-band half of the grasp verifier is live on hardware.
+- **`MKIT_DRIVEN_OPEN_GAP_M` is deleted.** `description.DRIVEN_OPEN_GAP_M` is
+  the nominal 51.96 mm again, for kinematics and sim. A robot's own opening is
+  a measurement: the firmware executor derives `HandState.open_gap_m` from the
+  daemon's `open_rad` through the description's new kinematic map
+  (`gap_from_motor_rad`, 44.8 mm/rad), it travels on the new
+  `GripperView.open_gap_m`, and `Grasp` judges fit against it
+  (`approach.graspable_width_m`). `tool_revision()` no longer depends on any
+  environment variable.
+- **Plans are bound to the firmware they were checked on.** `PlanBinding`
+  gains `firmware_spec` (from the new `WorldView.firmware_spec`), and
+  `check_binding` refuses a plan whose recorded spec differs from the
+  executor's `firmware_spec` (the sha256 of the OpenAPI document its client
+  was generated from; `"kinematic"` for `KinematicExecutor`).
+- **`run()` exposes `tool_tol_along_m` and `settle_timeout_s`**, and forwards
+  `hz` to a transport's `run_plan` (it was silently dropped, L13).
+- **The firmware executor sizes its own timing.** The blocking gripper stroke
+  is bounded by `stroke_timeout_s`, which defaults to the document's own
+  `x-timeout-seconds` for `POST /v1/gripper/{side}/set` (40 s on 0.3.0), else
+  `DEFAULT_STROKE_TIMEOUT_S` (20 s); the example no longer builds the client
+  with a blanket 20 s timeout (0b1a145). The trajectory schedule rate defaults
+  to `schedule_rate_deg_s(vel_ratio)` = 140 deg/s x the ratio the executor
+  installs (21ad024 moved into the executor); pass `max_joint_rate_deg_s` to
+  override.
+- **`neck_state()` / `lift_state()`** on the firmware executor, thin calls on
+  the generated `GET /v1/neck/state` / `GET /v1/slider/state`, returning the
+  kit's `NeckState(pitch_rad, yaw_rad, enabled, moving)` (daemon's logical
+  pitch sign, unflipped) and `LiftState(height_m, moving, alarm)`. An optional
+  capability (`read_neck`/`read_lift`); `KinematicExecutor` returns `None`.
+- Examples: `astra_loop`'s arm-fault gate is deleted (the kit stops the run;
+  the loop ends on a `controller_fault` report). The d1-2 scene carries the
+  robot's hand (`robot.hand.open_gap_m: 0.0605`), which the kinematic dry-run
+  uses, so `--dry-run --executor kinematic --scene d1-2_tape_cup.json` reaches
+  `goal_verified` with no environment variable.
 
 ## 0.15.0 — 2026-09-22
 

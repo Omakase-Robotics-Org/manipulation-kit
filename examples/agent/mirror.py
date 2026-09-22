@@ -28,9 +28,13 @@ class MirrorRobot:
 
     OBJECT = "red_block"
 
-    def __init__(self, kin, block_p=BLOCK_P):
+    def __init__(self, kin, block_p=BLOCK_P, *, open_gap_m=None):
         self.kin = kin
-        self.executor = KinematicExecutor(kin)
+        # ``open_gap_m``: the measured hand this mirror stands in for (a
+        # scene's ``robot.hand.open_gap_m``), published by the executor as
+        # ``HandState.open_gap_m`` exactly as the firmware one publishes the
+        # daemon's. ``None`` = the nominal hand description.
+        self.executor = KinematicExecutor(kin, open_gap_m=open_gap_m)
         for side in ("left", "right"):
             self.executor.next_object[side] = self.OBJECT
         self.block = np.array(block_p, dtype=float)
@@ -60,9 +64,18 @@ class MirrorRobot:
                 self.block = tool_from_link7(*self.kin.ee_pose(side))[0].copy()
 
     def world(self):
+        import dataclasses as _dc  # noqa: PLC0415
         held = {s: self.executor.held.get(s) for s in ("left", "right")}
-        return observe(self.kin, block_p=self.block,
+        base = observe(self.kin, block_p=self.block,
                        closed=dict(self.executor.grippers), held=held)
+        # The ROBOT half comes from the executor's typed state: the hand's
+        # opening, and which transport (``"kinematic"``) the plan is bound to.
+        hands = self.executor.state().hands
+        grippers = {side: _dc.replace(g, open_gap_m=hands[side].open_gap_m)
+                    if side in hands else g
+                    for side, g in base.grippers.items()}
+        return base.with_(grippers=grippers,
+                          firmware_spec=self.executor.firmware_spec)
 
 
 class SceneMirrorRobot(MirrorRobot):
@@ -77,12 +90,12 @@ class SceneMirrorRobot(MirrorRobot):
     up the first time it appears.
     """
 
-    def __init__(self, kin, world0, obj: str):
+    def __init__(self, kin, world0, obj: str, *, open_gap_m=None):
         self.OBJECT = obj
         self.world0 = world0
         target = [o for o in world0.objects if o.name == obj]
         super().__init__(kin, block_p=target[0].p if target
-                         else (0.0, 0.0, 0.0))
+                         else (0.0, 0.0, 0.0), open_gap_m=open_gap_m)
         self.tracking = bool(target)
 
     def declare(self, objects) -> None:

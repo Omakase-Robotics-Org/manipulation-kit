@@ -694,22 +694,6 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
     stop = Stop("max_turns", f"{max_turns} turns without a measured goal")
     for turn in range(max_turns):
         world = robot.world()
-        arms = list(world.arms.values()) if hasattr(world.arms, "values") else list(world.arms)
-        faulted = [a for a in arms if (getattr(a, "mode", "") or "position") != "position"
-                   or int(getattr(a, "error_code", 0) or 0)]
-        if faulted:
-            # A latched controller is not something the model can talk its
-            # way out of. Stop, say which arm, and leave recovery to the
-            # operator (console: Clear error -> Home). Astra review finding 2.
-            record = DecisionRecord(iteration=turn, world=world.to_json())
-            record.task = task
-            record.stop = "arm_error"
-            trace.write(record)
-            _dump_messages(trace_path, messages)
-            stop = Stop("arm_error", "; ".join(
-                f"{a.side} arm mode {a.mode!r} error_code {getattr(a, 'error_code', 0)}"
-                for a in faulted))
-            break
         frames = _snapshot(trace_path, turn)
         messages.append({"role": "user",
                          "content": _observation(world.to_text(), frames)})
@@ -884,6 +868,14 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             _dump_messages(trace_path, messages)
             raise
         record.run = report.to_json()
+        if report.stop_reason == "controller_fault":
+            # The KIT stopped the run on a latched controller. It is not
+            # something the model can talk its way out of: end the loop and
+            # leave recovery to the operator (console: Clear error -> Home).
+            trace.write(record)
+            _dump_messages(trace_path, messages)
+            stop = Stop("controller_fault", report.error)
+            break
         after = robot.world()
         verdict = primitive.verifier(world)(after)
         record.verdict = verdict.to_json()
@@ -911,34 +903,29 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
 
 def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
                 obj: str = "red_block"):
+    from live import hand_open_gap_m  # noqa: PLC0415
     if kind == "kinematic":
+        # The mirror has no hand to measure; the scene's measured one (its
+        # ``robot.hand.open_gap_m``) stands in for it, typed, not an env var.
+        gap = hand_open_gap_m(scene)
         if world0 is not None:
-            return SceneMirrorRobot(kin, world0, obj)
-        return MirrorRobot(kin)
+            return SceneMirrorRobot(kin, world0, obj, open_gap_m=gap)
+        return MirrorRobot(kin, open_gap_m=gap)
     from manipulation_kit.executors.firmware import FirmwareExecutor  # noqa: PLC0415
     from live import LiveRobot  # noqa: PLC0415
-    from manipulation_kit.executors.firmware.client import FirmwareClient  # noqa: PLC0415
-    # The daemon answers /v1/gripper/{side}/set only when the stroke is done;
-    # the client default of 2 s is too short for a real close (d1-2, 2026-09-22).
-    client = FirmwareClient(robot_url, timeout=20.0)
-    # The daemon runs the arm at vel_ratio x its full speed, but the kit's
-    # trajectory timestamps assume MAX_JOINT_RATE_DEG_S (140 deg/s). At the
-    # default 0.15 the arm crawls at ~20 deg/s behind a schedule seven times
-    # faster, so every large move "arrives late" and the arrival barrier
-    # fails while the arm is still moving (d1-2 run4, 2026-09-22: "still
-    # moving after 1.5 s, worst joint 18.2 deg/s", tool 190 mm off). Time the
-    # schedule at the speed the arm will actually have.
-    from manipulation_kit.executors.firmware.executor import MAX_JOINT_RATE_DEG_S  # noqa: PLC0415
+    # The executor sizes the blocking gripper stroke from the daemon's own
+    # document and times its schedule from the vel_ratio it installs; this
+    # only chooses the ratio.
     vel_ratio = float(os.environ.get("ASTRA_VEL_RATIO", "0.15"))  # Shu: the moves are not slow; keep the default speed
-    rate = MAX_JOINT_RATE_DEG_S * vel_ratio
     arrive_timeout = float(os.environ.get("ASTRA_ARRIVE_TIMEOUT_S", "4.0"))
+    executor = FirmwareExecutor(base_url=robot_url, vel_ratio=vel_ratio,
+                                acc_ratio=vel_ratio,
+                                arrive_timeout_s=arrive_timeout)
     print(f"[astra_loop] firmware executor: vel_ratio {vel_ratio}, schedule "
-          f"{rate:.0f} deg/s, arrive timeout {arrive_timeout}s", file=sys.stderr)
-    return LiveRobot(FirmwareExecutor(base_url=robot_url, client=client,
-                                      vel_ratio=vel_ratio, acc_ratio=vel_ratio,
-                                      max_joint_rate_deg_s=rate,
-                                      arrive_timeout_s=arrive_timeout),
-                     kin, scene)
+          f"{executor.max_rate:.0f} deg/s, stroke timeout "
+          f"{executor.stroke_timeout_s:.0f}s, arrive timeout {arrive_timeout}s",
+          file=sys.stderr)
+    return LiveRobot(executor, kin, scene)
 
 
 def perceived_scene(source: str, *, trace_path: Optional[Path],
@@ -1115,9 +1102,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if scene is not None:
         import dataclasses as _dc  # noqa: PLC0415
         import time as _time  # noqa: PLC0415
-        from live import frames_from, objects_from  # noqa: PLC0415
-        world0 = _dc.replace(_world, objects=tuple(objects_from(scene)),
-                             frames=frames_from(scene, now=_time.time()))
+        from live import frames_from, objects_from, with_declared_hand  # noqa: PLC0415
+        world0 = with_declared_hand(
+            _dc.replace(_world, objects=tuple(objects_from(scene)),
+                        frames=frames_from(scene, now=_time.time())), scene)
     camera = camera_from_scene(scene)
     robot = build_robot(args.executor, kin, args.robot, scene,
                         world0=world0, obj=args.object)
