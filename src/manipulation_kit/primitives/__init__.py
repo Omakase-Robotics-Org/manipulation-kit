@@ -80,6 +80,9 @@ from .verbs import (BY_VERB, PRIMITIVES, Approach, Carry, GoHome, Grasp, Lift,
                     Nudge, Place, Pour, Release, Retreat, by_verb, snap)
 from .contact import (ContactPlane, Press, Probe, fit_plane, record_contacts,
                       surface_from_contacts)
+from .clearance import (ClearancePolicy, ClearanceReport, Obstacle, SceneGate,
+                        obstacles_of, policy_of, set_policy)
+from . import clearance, contact, grasp_geometry  # noqa: F401 - the modules
 
 __all__ = [
     # the model-independent action boundary (offer / schema / reach)
@@ -110,6 +113,11 @@ __all__ = [
     # where and how the hand meets an object
     "GraspReference", "GraspSpec", "PAD", "TIP", "fits", "graspable_width_m",
     "grasp_pose", "roll_candidates", "standoff_point", "support_of",
+    # the scene as an obstacle set (and the arm's droop)
+    "ClearancePolicy", "ClearanceReport", "Obstacle", "SceneGate",
+    "obstacles_of", "policy_of", "set_policy",
+    # the modules themselves
+    "clearance", "contact", "grasp_geometry",
     # planning
     "Kin", "solve_path", "joint_ramp", "missing_arms",
     "ARRIVE_TOL_M", "PATH_TOL_M", "PATH_TOL_RAD",

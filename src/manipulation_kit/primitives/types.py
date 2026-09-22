@@ -801,6 +801,11 @@ class Primitive:
     #: the name a model says. Defaults to the class name lowercased, so the
     #: two cannot drift.
     VERB = ""
+    #: True when the verb's ``direction`` is the way the hand TRAVELS ONTO
+    #: something (approach, grasp, probe, press) rather than the way it
+    #: leaves (lift, retreat). An operator's ``allowed_directions``
+    #: (``manipulation_kit.agent.OperatorPolicy``) restricts exactly these.
+    DIRECTION_ARRIVES = False
 
     @classmethod
     def name(cls) -> str:

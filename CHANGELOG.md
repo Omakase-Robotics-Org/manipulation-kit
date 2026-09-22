@@ -395,12 +395,15 @@ probes) and it has not been run.
   rigid model; d1-2 measured **0.012**, the old 15 mm floor), attached to the
   kinematics with `clearance.set_policy(kin, ClearancePolicy(...))` and
   read by every plan (`policy_of(kin)`). It raises the top-down fingertip
-  floor (`orientation.lowest_top_down_tool_z(..., droop_margin_m=)`,
-  `grasp_point(..., droop_margin_m=)`) and every obstacle clearance. The
-  operator policy (step 7) sets it on a live robot.
-- What changes for existing plans (golden file, capture stack): 22 of 229
-  cases, all `direction: forward`, become `guard_reject` naming the table or
-  box their forearm/wrist passes 11-15 mm from (listed by number in
+  floor (`grasp_geometry.grasp_pose(..., droop_margin_m=)`, read by
+  `Grasp.plan`) and every obstacle clearance. The operator policy sets it on
+  a live robot (`OperatorPolicy.droop_margin_m`, see "Phase B integration").
+- What changes for existing plans (golden file, capture stack; re-derived
+  on the phase-B `plans.json`): 19 of 163 cases, all side-on approaches
+  (`forward`, and `left`/`right` at the shelf), become refusals naming the
+  table or shelf their forearm/wrist passes 12-15 mm from, or whose standoff
+  posture the body guard refuses with every route around it refused by the
+  table (listed by number in
   `tests/primitives/test_golden_plans.py::SCENE_REFUSED`); no top-down case
   changes. The d1-2 top-down pick-and-place still plans end to end, with and
   without the 12 mm droop. Planning cost on the d1-2 scene: +60-75 ms per
@@ -481,6 +484,54 @@ probes) and it has not been run.
   the verbatim `choice`), `look`, `error` and `contacts`; every turn is
   recorded however it ends; the message history is written atomically and
   earlier photos are not resent.
+
+### Phase B integration (steps 3, 4, 5, 7 together)
+
+- **Contact legs are scene-gated.** `Probe`/`Press` plan through
+  `SceneGate.for_contact(world, kin, p_standoff, direction, travel_m,
+  exclude=(target,))`: every declared thing gates the standoff transit and
+  the leg except the surface the leg is aimed at (the first obstacle its ray
+  meets) and a press's named target. The plan says which surface was left
+  out. Known limitation: the ray is widened by the hand and the clearance, so
+  a press on a small object standing on a table leaves the table out too.
+- **`OperatorPolicy.droop_margin_m`** (default 0.0; **d1-2 measured 0.012**)
+  — `--droop-margin-m`, and in a policy file. `agent.run()` applies it to the
+  robot's kinematics as `ClearancePolicy(droop_margin_m=...)`
+  (`OperatorPolicy.apply_to(kin)`), so a live d1-2 grasp keeps the pad tips
+  ~15 mm over the wagon, as `MKIT_SUPPORT_CLEARANCE_M=0.015` did. It reaches
+  the floor through `grasp_geometry.grasp_pose(..., droop_margin_m=)`.
+- **`allowed_directions` covers every verb that ARRIVES along a direction**:
+  `agent.policy.DIRECTED_VERBS` (was `APPROACH_VERBS = ("approach",
+  "grasp")`) is derived from the verb registry via the new class attribute
+  `Primitive.DIRECTION_ARRIVES` — approach, grasp, probe, press. A Lift's
+  "up" and a Retreat are not arrivals and stay unrestricted.
+- **Measured contacts persist across turns.** `SceneSource.remember_contacts`
+  / `forget_contacts` (and the same on `LiveRobot`): the loop hands every
+  folded contact to the world source, later observations carry them in
+  `WorldView.contacts`, and a `declare_scene` clears them. A surface they
+  fitted stays a `SurfaceView` with `plane_source="contact"`.
+- **d1-2 scene: `robot.wrist_camera` placeholder, `"measured": false`.** The
+  d1-2 wrist fisheye has never been calibrated; the placeholder lets the
+  kinematic mirror dry-run the default look policy. The firmware robot
+  ignores an unmeasured block (`wrist_camera_from_scene(..., measured_only=
+  True)`) and stops with `look_unavailable`, whose message now says a live
+  run needs the lens's MEASURED intrinsics.
+- The chain chooser in `agent/loop.py` has no roll logic: every
+  Approach/Grasp in the chain sweeps `grasp_geometry`'s candidate rolls.
+  When every roll fails, the refusal also lists the obstacles that refused
+  the OTHER rolls in `attempted` (and keeps the gate's own
+  `obstacle:<name>`).
+- `manipulation_kit.primitives` re-exports `SceneGate`, `ClearancePolicy`,
+  `ClearanceReport`, `Obstacle`, `obstacles_of`, `policy_of`, `set_policy`
+  and the `clearance`, `contact`, `grasp_geometry` modules.
+- **Golden (`tests/data/golden_plans/plans.json`) regenerated once**, gate
+  off, on the merged tree: 5 of 163 cases change, all top-down chains whose
+  Place link moved (<= 1.1 mm waypoints) because a held object now turns with
+  the wrist (step 7's `world.attach`). `SCENE_REFUSED` re-derived (above).
+- Still open: the demo/tabletop `forward` chains stop at `Lift` with
+  `guard_reject` (gate off) — step 3's deeper standoff reaches the grasp on
+  another elbow branch and the straight lift from there is refused; step 5's
+  up-and-over applies to `allow_via` transits only, not to a Lift.
 
 ## 0.15.0 — 2026-09-22
 

@@ -60,6 +60,7 @@ from ..executor import CONTROLLER_FAULT, run as run_plan
 from ..primitives import Place
 from ..primitives.offer import arguments as bound_arguments
 from ..primitives.offer import check, label_for
+from ..primitives.contact import record_contacts
 from ..primitives.reach import choose_side
 from ..primitives.schema import decode, direction_doc, tool_schemas
 from ..primitives.types import (NUDGE_GRID_M, NUDGE_MAX_YAW_RAD,
@@ -182,6 +183,9 @@ class _Loop:
         self.state = PolicyState()
         #: resolved ONCE (L13): the same numbers the executor was built with
         self.settings = policy.settings(robot.executor)
+        # the arm's droop reaches every plan's fingertip floor through the
+        # kinematics (primitives.clearance.ClearancePolicy)
+        policy.apply_to(robot.kin)
         self.messages: List[Dict[str, Any]] = []
         self.hand = None
         self.goal_ready = False
@@ -191,9 +195,10 @@ class _Loop:
         names = set(world.names())
         if self.obj not in names or self.destination not in names:
             return
-        # TODO(step3): one roll x direction sweep, reach.roll_candidates(),
-        # replaces this single top-down / roll-0 chain. The example's two
-        # sweeps are deleted, not moved (design D.1 row 3).
+        # The whole chain, per arm; there is no roll here — every Approach /
+        # Grasp in the chain sweeps the candidate rolls of grasp_geometry itself
+        # (the ONE sweep, design D.1 row 3), and a Grasp continues the roll
+        # its Approach stood at.
         self.hand = choose_side(world, self.robot.kin, obj=self.obj,
                                 destination=self.destination)
         if self.goal.side in ("", "auto"):
@@ -246,7 +251,10 @@ class _Loop:
                 "stroke and this robot has no wrist camera model (no "
                 "intrinsics). Give the scene robot.wrist_camera {fx, fy, cx, "
                 "cy, width, height}, or run with look_before_stroke=False "
-                "(--no-look-before-stroke) and own the blind grasp")
+                "(--no-look-before-stroke) and own the blind grasp. A LIVE "
+                "run needs the lens's MEASURED intrinsics: a placeholder "
+                "marked \"measured\": false is used by the kinematic mirror "
+                "only, never on hardware")
         self.plan_the_hand(world0)
         if self.hand is None:
             # NOT AN ERROR: the model declares the things from the photos.
@@ -424,14 +432,15 @@ class _Loop:
         verdict is UNKNOWN, never TRUE), and hand a surface it fitted to the
         world source so later turns plan against it.
 
-        TODO(step4-integration): ``primitives.contact`` lands with step 4
-        (redesign/4-contact); until then no ``RunReport`` carries contacts
-        and this is never reached. The contact history itself
-        (``WorldView.contacts``) is per-verdict here; a source that should
-        remember it across turns is the integrator's call.
+        The contacts are MEASUREMENTS, so the world source keeps them
+        across turns (``remember_contacts``) until the next ``declare_scene``
+        restates the scene: three probes over three turns under one
+        ``declare_as`` fit one plane.
         """
-        from ..primitives.contact import record_contacts  # noqa: PLC0415
         folded = record_contacts(after, report, verb)
+        remember = getattr(self.robot, "remember_contacts", None)
+        if callable(remember):
+            remember(folded.contacts)
         name = str(getattr(verb, "declare_as", "") or "")
         surface = folded.find(name) if name else None
         if surface is not None and getattr(self.robot, "can_declare", False):

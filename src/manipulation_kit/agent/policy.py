@@ -50,9 +50,20 @@ NUDGE_LIMIT = "nudge_limit"
 POLICY_CODES: Tuple[str, ...] = (DIRECTION_NOT_ALLOWED, LOOK_REQUIRED,
                                  LOOK_UNAVAILABLE, NUDGE_LIMIT)
 
-#: the verbs whose ``direction`` is how the hand arrives at an object — the
-#: ones ``allowed_directions`` restricts (a Lift's "up" is not an approach)
-APPROACH_VERBS: Tuple[str, ...] = ("approach", "grasp")
+def directed_verbs() -> Tuple[str, ...]:
+    """The registered verbs whose ``direction`` is how the hand ARRIVES — the
+    ones ``allowed_directions`` restricts. Derived from the verb registry
+    (``Primitive.DIRECTION_ARRIVES``), so a new contact verb cannot slip past
+    the operator's restriction; a Lift's "up" or a Retreat is not an arrival.
+    """
+    from ..primitives.verbs import BY_VERB  # noqa: PLC0415
+    return tuple(name for name, cls in BY_VERB.items()
+                 if "direction" in cls.arguments()
+                 and getattr(cls, "DIRECTION_ARRIVES", False))
+
+
+#: :func:`directed_verbs`, at import (approach, grasp, probe, press)
+DIRECTED_VERBS: Tuple[str, ...] = directed_verbs()
 #: the verbs that close the jaws on something
 STROKE_VERBS: Tuple[str, ...] = ("grasp",)
 
@@ -111,7 +122,8 @@ class OperatorPolicy:
     #: request is lowered to it (d1-2 2026-09-22: a ``firm`` preload on a
     #: rigid body wound the hold up to -4.2 Nm and faulted the motor).
     max_grip: str = "strong"
-    #: the approach directions (aliases) a Approach/Grasp may use; ``None`` =
+    #: the directions (aliases) a hand may ARRIVE along — every verb in
+    #: :data:`DIRECTED_VERBS` (approach, grasp, probe, press); ``None`` =
     #: whatever plans. Anything else — another alias or a free
     #: ``{axis, frame}`` — is refused with :data:`DIRECTION_NOT_ALLOWED`.
     allowed_directions: Optional[Tuple[str, ...]] = None
@@ -135,6 +147,15 @@ class OperatorPolicy:
     max_contact_nm: float = 4.0
     #: the firmest ``press`` [Nm of joint torque rise] (the schema allows 2..8)
     max_force_nm: float = 6.0
+    #: how far THIS arm sags below the commanded pose at a long reach [m]
+    #: (F16). It raises the fingertip floor of every descent — the typed
+    #: replacement of ``MKIT_SUPPORT_CLEARANCE_M``, applied to the kinematics
+    #: as :class:`~manipulation_kit.primitives.clearance.ClearancePolicy`
+    #: ``droop_margin_m`` when a loop starts. 0 = the rigid model (the
+    #: default, and right for the kinematic mirror); **d1-2 measured 0.012**
+    #: (2026-09-22 run 7: 3 mm left the pad tips on the wagon and the
+    #: controller raised error 15; 15 mm cleared it).
+    droop_margin_m: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_grip not in GRIPS:
@@ -171,6 +192,11 @@ class OperatorPolicy:
                            bool(self.look_before_stroke))
         for name in ("max_contact_nm", "max_force_nm"):
             object.__setattr__(self, name, _positive(name, getattr(self, name)))
+        droop = float(self.droop_margin_m)
+        if not math.isfinite(droop) or droop < 0.0:
+            raise ValueError(f"OperatorPolicy.droop_margin_m must be a finite "
+                             f"non-negative length, got {self.droop_margin_m!r}")
+        object.__setattr__(self, "droop_margin_m", droop)
 
     # -- the one gate --------------------------------------------------------- #
     def clamp(self, call: Primitive, state: Optional[PolicyState] = None, *,
@@ -203,7 +229,7 @@ class OperatorPolicy:
                     and float(value) > cap:
                 call = dataclasses.replace(call, **{attr: cap})
         direction = getattr(call, "direction", None)
-        if (self.allowed_directions is not None and verb in APPROACH_VERBS
+        if (self.allowed_directions is not None and verb in DIRECTED_VERBS
                 and isinstance(direction, Direction)):
             name = direction.alias()
             if name not in self.allowed_directions:
@@ -258,7 +284,7 @@ class OperatorPolicy:
                  f"{self.max_contact_nm:.1f} Nm, press at most "
                  f"{self.max_force_nm:.1f} Nm"]
         if self.allowed_directions is not None:
-            lines.append("approach/grasp directions allowed: "
+            lines.append(f"{'/'.join(DIRECTED_VERBS)} directions allowed: "
                          + ", ".join(self.allowed_directions))
         if self.look_before_stroke:
             lines.append("every grasp stroke is preceded by one wrist look "
@@ -266,6 +292,14 @@ class OperatorPolicy:
         lines.append(f"at most {self.max_nudges_per_target} corrections per "
                      f"hand per object; at most {self.max_turns} turns")
         return "; ".join(lines) + "."
+
+    def apply_to(self, kin: Any) -> None:
+        """Attach this policy's planning half to the arm model: the droop
+        margin becomes the kinematics' ``ClearancePolicy`` (every verb's
+        ``plan(world, kin)`` reads it there), other clearance fields kept."""
+        from ..primitives.clearance import policy_of, set_policy  # noqa: PLC0415
+        set_policy(kin, dataclasses.replace(
+            policy_of(kin), droop_margin_m=self.droop_margin_m))
 
     # -- L13: resolved once ------------------------------------------------- #
     def settings(self, executor: Any = None) -> Dict[str, float]:
@@ -347,7 +381,7 @@ class OperatorPolicy:
                                if v.strip()))
             elif f.name in ("vel_ratio", "arrive_timeout_s",
                             "stroke_timeout_s", "max_contact_nm",
-                            "max_force_nm"):
+                            "max_force_nm", "droop_margin_m"):
                 value = float(value)
             elif f.name in ("max_nudges_per_target", "max_turns"):
                 value = int(value)
@@ -355,6 +389,6 @@ class OperatorPolicy:
         return dataclasses.replace(base, **changes)
 
 
-__all__ = ["APPROACH_VERBS", "DIRECTION_NOT_ALLOWED", "LOOK_REQUIRED",
+__all__ = ["DIRECTED_VERBS", "directed_verbs", "DIRECTION_NOT_ALLOWED", "LOOK_REQUIRED",
            "LOOK_UNAVAILABLE", "NUDGE_LIMIT", "OperatorPolicy",
            "POLICY_CODES", "PolicyState", "STROKE_VERBS"]

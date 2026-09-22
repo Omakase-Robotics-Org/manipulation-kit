@@ -55,7 +55,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from ..primitives.orientation import tool_from_link7
-from ..world import (ArmView, ContainerView, Frame, FrameGraph, GripperView,
+from ..world import (ArmView, ContactView, ContainerView, Frame, FrameGraph, GripperView,
                      ObjectView, SurfaceView, WorldView)
 from ..world.attach import (GraspTransform, grasp_transform, with_attached)
 from .policy import OperatorPolicy
@@ -177,7 +177,8 @@ def with_declared_hand(world: WorldView,
 WRIST_INTRINSICS = ("fx", "fy", "cx", "cy", "width", "height")
 
 
-def wrist_camera_from_scene(scene: Optional[Dict[str, Any]]
+def wrist_camera_from_scene(scene: Optional[Dict[str, Any]], *,
+                            measured_only: bool = False
                             ) -> Optional[Dict[str, float]]:
     """The wrist lens intrinsics a scene records, ``robot.wrist_camera``.
 
@@ -185,9 +186,17 @@ def wrist_camera_from_scene(scene: Optional[Dict[str, Any]]
     focal length is the stream's and is NOT defaulted anywhere — without it
     there is no wrist camera model, and a policy that requires a look before a
     stroke refuses to start rather than grasping blind.
+
+    A block marked ``"measured": false`` is a PLACEHOLDER (the d1-2 scene's:
+    nobody has calibrated that fisheye). It lets the kinematic mirror dry-run
+    the look policy; with ``measured_only`` (hardware) it is no camera model
+    at all, so a live run stops with ``look_unavailable`` instead of
+    projecting through invented numbers.
     """
     block = ((scene or {}).get("robot") or {}).get("wrist_camera")
     if not block:
+        return None
+    if measured_only and block.get("measured", True) is False:
         return None
     missing = [k for k in WRIST_INTRINSICS if k not in block]
     if missing:
@@ -294,6 +303,9 @@ class SceneSource:
         self.released_provenance = released_provenance
         self.identity = identity
         self.grasps: Dict[str, GraspTransform] = {}
+        #: contacts MEASURED by probe/press runs, kept across turns until the
+        #: scene is restated (:meth:`forget_contacts`, ``declare_scene``)
+        self.contacts: Tuple[ContactView, ...] = ()
         self.revision = 0
         self._last: Optional[WorldView] = None
 
@@ -325,6 +337,18 @@ class SceneSource:
                                                         name=view.name)
                 except LookupError:
                     pass
+
+    def remember_contacts(self, contacts: Iterable[ContactView]) -> None:
+        """Keep the contacts a run measured (the WHOLE history the loop folded,
+        not only the new ones): they are measurements, and every later
+        observation carries them in ``WorldView.contacts``."""
+        self.contacts = tuple(contacts)
+
+    def forget_contacts(self) -> None:
+        """The scene was restated (``declare_scene``): its contacts go with
+        it. A surface they fitted stays, as the SurfaceView with
+        ``plane_source="contact"`` it was published as."""
+        self.contacts = ()
 
     # -- what it measures --------------------------------------------------- #
     def _frames(self, now: float) -> FrameGraph:
@@ -369,6 +393,8 @@ class SceneSource:
             arms=arms, grippers=grippers, stamp=state.stamp,
             revision=self.revision,
             firmware_spec=getattr(self.executor, "firmware_spec", None) or "")
+        if self.contacts:
+            world = world.with_(contacts=self.contacts)
         # LET GO: the object stays where the hand has it now.
         for side in list(self.grasps):
             gripper = world.gripper(side)
@@ -465,6 +491,17 @@ class LiveRobot:
                             f"({type(self.source).__name__}) does not take a "
                             f"declared scene")
         self.source.declare(objects)
+
+    def remember_contacts(self, contacts: Sequence[ContactView]) -> None:
+        """Hand measured contacts to the world source, when it keeps them."""
+        remember = getattr(self.source, "remember_contacts", None)
+        if callable(remember):
+            remember(contacts)
+
+    def forget_contacts(self) -> None:
+        forget = getattr(self.source, "forget_contacts", None)
+        if callable(forget):
+            forget()
 
     def has_wrist_camera(self) -> bool:
         return bool(self.wrist_intrinsics)
@@ -712,7 +749,8 @@ def _firmware(*, kin: Any, policy: OperatorPolicy,
                                 **options)
     return LiveRobot(executor, SceneSource.from_scene(executor, kin, scene),
                      kin, head_camera=head_camera_from_scene(scene),
-                     wrist_intrinsics=wrist_camera_from_scene(scene),
+                     wrist_intrinsics=wrist_camera_from_scene(
+                         scene, measured_only=True),
                      name="firmware")
 
 

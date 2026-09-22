@@ -22,6 +22,12 @@
     "Wagon plane fit: far corners px (96,217)/(543,203); cup base ctr px (458,424); cube base ctr px (568,436)."
   ],
   "robot": {
+    "wrist_camera": {
+      "fx": 320.0, "fy": 320.0, "cx": 320.0, "cy": 240.0,
+      "width": 640, "height": 480,
+      "measured": false,
+      "_source": "NOT MEASURED - a placeholder. d1-2's wrist fisheye has no nameplate and has not been calibrated; these numbers only let the kinematic mirror dry-run the look-before-stroke policy. A live (firmware) run ignores a block marked measured:false and stops with look_unavailable: calibrate the lens and put its intrinsics here before a live look."
+    },
     "hand": {
       "open_gap_m": 0.0605,
       "_source": "d1-2's gripper driven-open gap: d1-firmwared 0.3.0 reports open_rad 1.35 on d1-2 (2026-09-22) = 60.5 mm through the hand description's 44.8 mm/rad map. Used by --executor kinematic, which has no hand to read; on hardware the executor reads open_rad from the daemon and that wins."

@@ -45,13 +45,14 @@ from . import grasp_geometry as gg
 from . import orientation as ap
 from . import verifiers as V
 from .arguments import ROLE_ANY, check_arguments
+from .clearance import SceneGate
 from .planning import IncompleteObservation, Kin, solve_path
 from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN,
                     ContactCriterion, ContactStep, GripStep, JointStep, Plan,
                     PlanBinding, PlanError, Primitive, SIDES, SettleStep,
                     Unmet, Verifier, Waypoint)
 from .verbs import (SETTLE_S, _coerce_direction, _incomplete, _locate,
-                    _must_be_free, _resolve, _resolved_side)
+                    _must_be_free, _resolve, _resolved_side, _unchecked_note)
 
 # --------------------------------------------------------------------------- #
 # numbers
@@ -284,8 +285,14 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
                  arrive=standoff_arrive),
         Waypoint("contact_limit", p_standoff + d * float(travel_m), r_tool,
                  allow_via=False)]
+    # The scene gates the standoff transit and the leg — except the surface
+    # the leg is MEANT to reach: the first obstacle its ray meets (and a
+    # press's named target), which a probe ends past by construction.
+    target = str(getattr(verb, "target", "") or "")
+    scene = SceneGate.for_contact(world, kin, p_standoff, d, travel_m,
+                                  exclude=(target,) if target else ())
     try:
-        with Kin(kin, world) as borrowed:
+        with Kin(kin, world, scene=scene) as borrowed:
             q_now = borrowed.joints(side)
             steps, error, detours = solve_path(borrowed, side, waypoints,
                                                primitive=verb.name())
@@ -313,8 +320,12 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
                           hold_s=float(hold_s), retract=bool(retract))
     all_steps = ((GripStep(side, _closedness(verb.hand), "soft", 0),)
                  + tuple(standoff) + (contact, SettleStep(SETTLE_S)))
+    measured = ((f"the {scene.contact_target!r} it is aimed at is left out "
+                 f"of the scene check (the leg is meant to reach it)",)
+                if scene.contact_target else ())
     return Plan(verb.name(), side, tuple(waypoints), all_steps,
-                tuple(notes) + tuple(detours),
+                tuple(notes) + tuple(detours) + measured
+                + tuple(_unchecked_note(scene)),
                 binding=PlanBinding.of(world, kin))
 
 
@@ -334,6 +345,7 @@ class Probe(Primitive):
     """
 
     VERB = "probe"
+    DIRECTION_ARRIVES = True
     side: str = AUTO
     direction: Direction = ALIASES["down"]
     max_travel_m: float = 0.15
@@ -427,6 +439,7 @@ class Press(Primitive):
     """
 
     VERB = "press"
+    DIRECTION_ARRIVES = True
     side: str = AUTO
     target: str = ""
     direction: Direction = ALIASES["forward"]

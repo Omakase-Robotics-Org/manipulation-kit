@@ -181,6 +181,10 @@ def apply_declare_scene(robot: Any, arguments: Dict[str, Any], *,
         pass
     views, lifted = lift_onto_support(views, surfaces, frames)
     robot.declare(list(views))
+    # a restated scene: the contacts measured against the old one go with it
+    forget = getattr(robot, "forget_contacts", None)
+    if callable(forget):
+        forget()
     lines = [f"{v.name!r} ({v.kind}) at ({v.p[0]:.3f}, {v.p[1]:.3f}, "
              f"{v.p[2]:.3f}) m, {v.size[0]*1000:.0f}x{v.size[1]*1000:.0f}x"
              f"{v.size[2]*1000:.0f} mm" for v in views]

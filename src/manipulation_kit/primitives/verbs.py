@@ -718,6 +718,7 @@ def _first_roll_that_plans(primitive: Primitive, world: WorldView, kin,
     with the rolls tried in ``attempted``."""
     import dataclasses  # noqa: PLC0415
     first_error = None
+    others: List[str] = []
     for roll in _rolls_in_order(meet, world):
         waypoints = waypoints_for(meet.r_tcp(roll))
         steps, error, detours = _solve(primitive, world, kin, meet.side,
@@ -729,12 +730,19 @@ def _first_roll_that_plans(primitive: Primitive, world: WorldView, kin,
             return roll, waypoints, steps, detours, extra
         if first_error is None:
             first_error = error
+        else:
+            others += [a for a in (error.attempted or ())
+                       if str(a).startswith("obstacle:")]
     if len(meet.rolls) > 1:
         # keep what the failure itself attempted (the scene gate names the
-        # obstacle there) and add the rolls that were tried
+        # obstacle there), add the rolls that were tried, and any obstacle
+        # that refused ANOTHER roll — an ik_fail on the squared roll must not
+        # hide that the quarter turn was refused by the shelf
+        own = tuple(first_error.attempted or ())
         first_error = dataclasses.replace(
-            first_error, attempted=tuple(first_error.attempted or ())
-            + tuple(f"roll {math.degrees(r):+.0f} deg" for r in meet.rolls))
+            first_error, attempted=own
+            + tuple(f"roll {math.degrees(r):+.0f} deg" for r in meet.rolls)
+            + tuple(dict.fromkeys(o for o in others if o not in own)))
     return None, first_error
 
 
@@ -762,6 +770,7 @@ class Approach(Primitive):
     """
 
     VERB = "approach"
+    DIRECTION_ARRIVES = True
     object: str = ""
     side: str = AUTO
     #: which way the hand will TRAVEL onto the object (default: down onto it)
@@ -859,6 +868,7 @@ class Grasp(Primitive):
     """
 
     VERB = "grasp"
+    DIRECTION_ARRIVES = True
     object: str = ""
     side: str = AUTO
     direction: Direction = DOWN
