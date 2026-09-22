@@ -75,6 +75,18 @@ TOL = 1e-9
 PORTABLE_TOL = 1e-3
 #: ... and the solver's final posture (rad)
 PORTABLE_Q_TOL = 1e-2
+#: ... and, for the links of a chain that CARRY the object (lift, carry,
+#: place), their waypoints (m, quaternion components). Since 0.16.0 a held
+#: object rides the tool with the grasp transform recorded at the solved grasp
+#: posture (``world.attach``), rotation included, so the solver's last bits
+#: in that posture reach these waypoints through the object's lever arm:
+#: measured 1.25 mm / 1.5e-3 on case 16 with numpy 2.0.2 / scipy 1.13.1. A
+#: vocabulary mistake is still centimetres and quarter turns.
+PORTABLE_HELD_TOL = 5e-3
+#: ... and their final posture (rad): the same millimetre moves a 7-DoF
+#: solution along its null space (0.019 rad on case 16's carry/place)
+PORTABLE_HELD_Q_TOL = 5e-2
+HELD_LINK_VERBS = ("lift", "carry", "place")
 #: fields that are the IK solver's path rather than the plan's geometry
 SOLVER_PATH_KEYS = ("n", "q_sum", "residual_m")
 
@@ -224,7 +236,8 @@ def numeric_stack():
             "cpu": cpu}
 
 
-def _close(a, b, path, errors, tol=TOL, portable=False):
+def _close(a, b, path, errors, tol=TOL, portable=False,
+           portable_tol=PORTABLE_TOL):
     if isinstance(a, dict) and isinstance(b, dict):
         if sorted(a) != sorted(b):
             errors.append(f"{path}: keys {sorted(a)} != {sorted(b)}")
@@ -235,16 +248,26 @@ def _close(a, b, path, errors, tol=TOL, portable=False):
             scale = max(1, int(a.get("n", 1))) if key == "q_sum" else 1
             key_tol = tol
             if portable:
-                key_tol = PORTABLE_Q_TOL if key == "q_last" else PORTABLE_TOL
+                held = portable_tol == PORTABLE_HELD_TOL
+                key_tol = ((PORTABLE_HELD_Q_TOL if held else PORTABLE_Q_TOL)
+                           if key == "q_last" else portable_tol)
+            if (portable and key == "links" and isinstance(a[key], list)
+                    and isinstance(b[key], list) and len(a[key]) == len(b[key])):
+                for i, (x, y) in enumerate(zip(a[key], b[key])):
+                    held = (isinstance(x, dict)
+                            and x.get("verb") in HELD_LINK_VERBS)
+                    _close(x, y, f"{path}.links[{i}]", errors, key_tol,
+                           portable, PORTABLE_HELD_TOL if held else portable_tol)
+                continue
             _close(a[key], b[key], f"{path}.{key}", errors, key_tol * scale,
-                   portable)
+                   portable, portable_tol)
         return
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             errors.append(f"{path}: {len(a)} items != {len(b)}")
             return
         for i, (x, y) in enumerate(zip(a, b)):
-            _close(x, y, f"{path}[{i}]", errors, tol, portable)
+            _close(x, y, f"{path}[{i}]", errors, tol, portable, portable_tol)
         return
     if isinstance(a, float) or isinstance(b, float):
         if a is None or b is None or not math.isclose(float(a), float(b),
