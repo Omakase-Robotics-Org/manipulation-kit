@@ -63,3 +63,23 @@ class MirrorRobot:
         held = {s: self.executor.held.get(s) for s in ("left", "right")}
         return observe(self.kin, block_p=self.block,
                        closed=dict(self.executor.grippers), held=held)
+
+
+class SceneMirrorRobot(MirrorRobot):
+    """``MirrorRobot`` over a MEASURED scene (``--scene``): the observed world is
+    the scene's objects, with the named object following a closed hand."""
+
+    def __init__(self, kin, world0, obj: str):
+        self.OBJECT = obj
+        self.world0 = world0
+        target = [o for o in world0.objects if o.name == obj]
+        if not target:
+            raise ValueError(f"{obj!r} is not in the scene")
+        super().__init__(kin, block_p=target[0].p)
+
+    def world(self):
+        import dataclasses as _dc  # noqa: PLC0415
+        base = super().world()
+        objects = tuple(_dc.replace(o, p=self.block.copy()) if o.name == self.OBJECT else o
+                        for o in self.world0.objects)
+        return _dc.replace(base, objects=objects, frames=self.world0.frames)

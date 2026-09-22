@@ -55,7 +55,7 @@ from manipulation_kit.primitives import Place  # noqa: E402
 from manipulation_kit.primitives.offer import check, label_for  # noqa: E402
 from manipulation_kit.primitives.reach import choose_side  # noqa: E402
 from manipulation_kit.primitives.schema import decode, tool_schemas  # noqa: E402
-from mirror import MirrorRobot  # noqa: E402
+from mirror import MirrorRobot, SceneMirrorRobot  # noqa: E402
 from scene import demo_scene  # noqa: E402
 from trace import DecisionRecord, DecisionTrace  # noqa: E402
 
@@ -156,13 +156,13 @@ class OpenAIModel:
                 "claimed": ""}
 
 
-def build_model(dry_run: bool):
+def build_model(dry_run: bool, obj: str = "red_block", to: str = "box"):
     key = os.environ.get("OPENAI_API_KEY")
     if dry_run or not key:
         if not dry_run:
             print("[astra_loop] no OPENAI_API_KEY; running the scripted stub",
                   file=sys.stderr)
-        return ScriptedModel()
+        return ScriptedModel(obj, to)
     return OpenAIModel(os.environ.get("OPENAI_MODEL", "gpt-5"), key)
 
 
@@ -178,17 +178,30 @@ def _say(messages: List[Dict[str, Any]], call_id: str, text: str) -> None:
 
 
 def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
-         trace_path: Optional[Path] = None, goal=None) -> DecisionTrace:
-    world0, kin = demo_scene()
+         trace_path: Optional[Path] = None, goal=None, world0=None, kin=None,
+         obj: str = "red_block", destination: str = "box") -> DecisionTrace:
+    if world0 is None or kin is None:
+        demo_world, demo_kin = demo_scene()
+        world0 = demo_world if world0 is None else world0
+        kin = demo_kin if kin is None else kin
     robot = robot if robot is not None else MirrorRobot(kin)
     # WHICH HAND — decided before anything moves, by planning the whole chain
     # (Approach, Grasp, Lift, Carry, Place) for BOTH arms and taking the one
     # that can DELIVER. The near hand is only the tie-break; see
     # manipulation_kit.primitives.reach for what that cost on the blocks-eval
     # wagon (2026-09-19, F10).
-    hand = choose_side(world0, kin, obj="red_block", destination="box")
+    # Flat or awkward objects refuse a top-down grasp (object_too_flat); try
+    # the approach directions in order and keep the first reachable chain.
+    hand = None
+    for approach in ("top_down", "front", "side_right", "side_left"):
+        candidate = choose_side(world0, kin, obj=obj, destination=destination,
+                                approach=approach)
+        if hand is None or (candidate.reachable and not hand.reachable):
+            hand = candidate
+        if hand.reachable:
+            break
     if goal is None:
-        goal = Place(object="red_block", to="box", side=hand.side)
+        goal = Place(object=obj, to=destination, side=hand.side)
     trace = DecisionTrace(trace_path)
     trace.task = task
     messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM},
@@ -278,12 +291,15 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
     return trace
 
 
-def build_robot(kind: str, kin, robot_url: str):
+def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
+                obj: str = "red_block"):
     if kind == "kinematic":
+        if world0 is not None:
+            return SceneMirrorRobot(kin, world0, obj)
         return MirrorRobot(kin)
     from manipulation_kit.executors.firmware import FirmwareExecutor  # noqa: PLC0415
     from live import LiveRobot  # noqa: PLC0415
-    return LiveRobot(FirmwareExecutor(base_url=robot_url), kin)
+    return LiveRobot(FirmwareExecutor(base_url=robot_url), kin, scene)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -296,12 +312,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--robot", default="http://127.0.0.1:4750")
     parser.add_argument("--max-turns", type=int, default=8)
     parser.add_argument("--trace", type=Path, default=None)
+    parser.add_argument("--scene", type=Path, default=None,
+                        help="a MEASURED scene file (examples/agent/scenes/*.json); "
+                             "default: the built-in demo scene")
+    parser.add_argument("--object", default="red_block",
+                        help="the scene object to move (default red_block)")
+    parser.add_argument("--destination", default="box",
+                        help="the scene container to place it in (default box)")
     args = parser.parse_args(argv)
 
     _world, kin = demo_scene()
-    robot = build_robot(args.executor, kin, args.robot)
-    trace = loop(build_model(args.dry_run), robot, task=args.task,
-                 max_turns=args.max_turns, trace_path=args.trace)
+    scene = None
+    world0 = None
+    if args.scene is not None:
+        import time as _time  # noqa: PLC0415
+        from live import frames_from, load_scene, objects_from  # noqa: PLC0415
+        scene = load_scene(args.scene)
+        import dataclasses as _dc  # noqa: PLC0415
+        world0 = _dc.replace(_world, objects=tuple(objects_from(scene)),
+                                frames=frames_from(scene, now=_time.time()))
+    robot = build_robot(args.executor, kin, args.robot, scene,
+                        world0=world0, obj=args.object)
+    trace = loop(build_model(args.dry_run, args.object, args.destination), robot, task=args.task,
+                 max_turns=args.max_turns, trace_path=args.trace,
+                 world0=world0, kin=kin, obj=args.object,
+                 destination=args.destination)
     for record in trace.records:
         name = (record.choice or {}).get("name") or "(no call)"
         verdict = (record.verdict or {}).get("verdict", "-")
