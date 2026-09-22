@@ -168,6 +168,11 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
              role=ROLE_VESSEL),
     _enum("side", SIDE_CHOICES,
           "which hand; 'auto' lets the robot pick, and the plan says which"),
+    _enum("from_side", SIDE_CHOICES,
+          "handover: the hand that holds the object now; 'auto' = whichever "
+          "one does"),
+    _enum("to_side", SIDE_CHOICES,
+          "handover: the hand that takes it; 'auto' = the other one"),
     Argument("direction", "direction",
              "which way the hand TRAVELS: a named direction ("
              + ", ".join(ALIASES) + ") or {axis: [x, y, z], frame: "
@@ -191,7 +196,8 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
     _number("height_m", 0.01, 0.40, "m", "how far to lift, along its direction"),
     _number("clearance_m", 0.0, 0.40, "m",
             "how far above the destination (carry: transit height above the "
-            "rim; place: how far above its floor the object is let go)"),
+            "rim; place: how far above its floor the object is let go); "
+            "handover: how far the giving hand backs out after letting go"),
     _number("distance_m", 0.01, 0.40, "m",
             "how far to back out, along its direction"),
     _number("tilt_deg", 15.0, 120.0, "deg", "how far to tip the source"),

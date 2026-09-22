@@ -176,7 +176,8 @@ def test_run_applies_the_policy_droop_to_the_robot_kinematics(
 # --------------------------------------------------------------------------- #
 
 def test_allowed_directions_restricts_every_verb_that_arrives_along_one():
-    assert set(DIRECTED_VERBS) == {"approach", "grasp", "probe", "press"}
+    assert set(DIRECTED_VERBS) == {"approach", "grasp", "probe", "press",
+                                   "handover"}   # the receiver arrives
     policy = OperatorPolicy(allowed_directions=("down",))
     for call in (Probe(direction="forward"),
                  Press(target="cup", direction="forward"),

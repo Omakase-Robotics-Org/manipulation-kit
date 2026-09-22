@@ -32,7 +32,9 @@ The verbs: ``Approach Grasp Lift Carry Place Release Nudge Retreat GoHome``,
 the ``Pour`` CONTRACT whose body is a learned policy
 (:class:`~.types.LearnedPrimitive`), and the two contact verbs ``Probe`` and
 ``Press`` (:mod:`.contact`), which travel along a direction until something
-resists and report where.
+resists and report where, and ``Handover``, the one verb that plans BOTH arms
+(:func:`.reach.plan_handover`: the giver meets, the receiver approaches and
+grasps, the giver opens and backs out).
 
 Beside them, three modules that are about CAPABILITY rather than about any
 model, and are therefore here rather than in ``examples/agent/``:
@@ -64,7 +66,8 @@ from .offer import (Offered, Refused, candidates_for, label_for, offer,
                     why_nothing)
 from .planning import (ARRIVE_TOL_M, PATH_TOL_M, PATH_TOL_RAD, Kin,
                        joint_ramp, missing_arms, solve_path)
-from .reach import ChainLink, ChainPlan, SideChoice, plan_chain
+from .reach import (HANDOVER_MEETING_POINTS_M, ChainLink, ChainPlan,
+                    HandoverChain, SideChoice, plan_chain, plan_handover)
 from .reach import choose_side as choose_side_for_task
 from .schema import (NOT_MODEL_BINDABLE, decode, direction_doc, domains,
                      domains_in, tool_schemas, verbs_in)
@@ -76,8 +79,9 @@ from .types import (AUTO, BOTH, ContactCriterion, ContactStep,
                     LearnedPrimitive, Plan, PlanBinding,
                     PlanError, Primitive, SettleStep, Step, Unmet, Verdict,
                     VerdictReport, Verifier, Waypoint)
-from .verbs import (BY_VERB, PRIMITIVES, Approach, Carry, GoHome, Grasp, Lift,
-                    Nudge, Place, Pour, Release, Retreat, by_verb, snap)
+from .verbs import (BY_VERB, PRIMITIVES, Approach, Carry, GoHome, Grasp,
+                    Handover, Lift, Nudge, Place, Pour, Release, Retreat,
+                    by_verb, snap)
 from .contact import (ContactPlane, Press, Probe, fit_plane, record_contacts,
                       surface_from_contacts)
 from .clearance import (ClearancePolicy, ClearanceReport, Obstacle, SceneGate,
@@ -91,9 +95,11 @@ __all__ = [
     "NOT_MODEL_BINDABLE", "direction_doc",
     "ARGUMENTS", "Argument", "check_arguments", "names_for",
     "plan_chain", "choose_side_for_task", "ChainPlan", "ChainLink", "SideChoice",
+    "plan_handover", "HandoverChain", "HANDOVER_MEETING_POINTS_M",
     # verbs
     "Approach", "Grasp", "Lift", "Carry", "Place", "Release", "Nudge",
-    "Retreat", "GoHome", "Pour", "Probe", "Press", "PRIMITIVES", "BY_VERB",
+    "Retreat", "GoHome", "Pour", "Probe", "Press", "Handover", "PRIMITIVES",
+    "BY_VERB",
     "by_verb",
     # contact: measured contacts into the world
     "record_contacts", "fit_plane", "ContactPlane", "surface_from_contacts",

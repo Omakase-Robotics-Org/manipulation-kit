@@ -58,6 +58,7 @@ from ..primitives.orientation import tool_from_link7
 from ..world import (ArmView, ContactView, ContainerView, Frame, FrameGraph, GripperView,
                      ObjectView, SurfaceView, WorldView)
 from ..world.attach import (GraspTransform, grasp_transform, with_attached)
+from ..world.frames import BASE
 from .policy import OperatorPolicy
 
 SIDES: Tuple[str, ...] = ("left", "right")
@@ -396,11 +397,13 @@ class SceneSource:
         if self.contacts:
             world = world.with_(contacts=self.contacts)
         # LET GO: the object stays where the hand has it now.
+        let_go: Dict[str, str] = {}
         for side in list(self.grasps):
             gripper = world.gripper(side)
             if gripper is not None and gripper.holding:
                 continue
             grasp = self.grasps.pop(side)
+            let_go[grasp.name] = side
             try:
                 at = with_attached(world, side=side, name=grasp.name,
                                    grasp=grasp).find(grasp.name)
@@ -418,6 +421,17 @@ class SceneSource:
                 continue
             name = (self.identity(side) if self.identity is not None
                     else associate(world, side))
+            passed = [n for n, giver in let_go.items() if giver != side]
+            if (name is None or name in let_go) and len(passed) == 1:
+                # HAND TO HAND, in one observation (``handover``): the other
+                # hand let go of it and this one took hold. Where the giver
+                # let go is not where the giver IS — it backed out after
+                # opening — so the object is put at THIS hand's pad centre,
+                # which is where the receiving grasp planned it (a horizontal
+                # pad grasp centres the pads on the object), orientation as
+                # released. An inference, published as ``attached``.
+                name = passed[0]
+                world = self._transferred(world, side, name)
             if name is None or world.find(name) is None:
                 continue
             try:
@@ -432,6 +446,22 @@ class SceneSource:
                 continue
         self._last = world
         return world
+
+    def _transferred(self, world: WorldView, side: str, name: str
+                     ) -> WorldView:
+        item = world.find(name)
+        arm = world.arm(side)
+        if item is None or arm is None or arm.tool_p is None:
+            return world
+        try:
+            _p, r = item.pose_in_base(world.frames)
+        except LookupError:
+            return world
+        moved = dataclasses.replace(item, p=np.asarray(arm.tool_p, dtype=float),
+                                    r=r, frame_id=BASE, provenance="attached")
+        self.objects[name] = moved
+        return world.with_(objects=tuple(moved if o.name == name else o
+                                         for o in world.objects))
 
     def nearest(self, side: str) -> Optional[str]:
         """:func:`associate` against the current objects, for a transport that

@@ -13,7 +13,8 @@ Reading order, because they compose: ``Approach`` stands off, ``Grasp``
 descends and closes, ``Lift`` raises the object, ``Carry`` takes it over the
 destination, ``Place`` lowers it in, ``Release`` opens. ``Nudge`` is the
 correction, ``Retreat`` backs out, ``GoHome`` resets. ``Pour`` is the one whose
-body is a policy.
+body is a policy. ``Handover`` passes a held object to the other hand — the
+chain of the others over two sides.
 """
 
 from __future__ import annotations
@@ -40,7 +41,8 @@ from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     NOT_HOLDING, NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, OBJECT_TILTED,
                     OBJECT_TOO_FLAT, OBJECT_TOO_WIDE, PlanBinding, PlanError,
                     Plan, Primitive, SIDES, BAD_ARGUMENT,
-                    UNREACHABLE_DESTINATION, UNKNOWN_FRAME,
+                    UNREACHABLE_DESTINATION, UNREACHABLE_HANDOVER,
+                    UNKNOWN_FRAME, SIDE_CHOICES,
                     UNSUPPORTED_GEOMETRY, Unmet,
                     Verifier, GripStep, SettleStep, Waypoint)
 
@@ -355,6 +357,22 @@ def _supported_by(world: WorldView, name: str) -> Optional[str]:
                     return item.name
         except FrameError:
             continue
+    return None
+
+
+def _other_hand_holds(world: WorldView, side: str, name: str) -> Optional[str]:
+    """The OTHER hand, when it reports holding ``name`` by name, else ``None``.
+
+    An unidentified hold ("something") never counts: whether the other hand
+    has THIS object is exactly the question, and a torque stall cannot say.
+    """
+    for other in SIDES:
+        if other == side:
+            continue
+        gripper = world.gripper(other)
+        if (gripper is not None and gripper.holding and name
+                and gripper.held_object == name):
+            return other
     return None
 
 
@@ -1414,6 +1432,10 @@ class Release(Primitive):
         held = _holding(world, side)
         if held is None:
             return unmet
+        if _other_hand_holds(world, side, held):
+            # A HANDOVER, not a drop: the other hand measurably holds the
+            # same named object, so that hand is what supports it.
+            return unmet
         support = _supported_by(world, held)
         if support is None:
             unmet.append(Unmet(
@@ -1821,13 +1843,239 @@ class Pour(LearnedPrimitive):
                         math.radians(self.tilt_deg))
 
 
+# --------------------------------------------------------------------------- #
+# Handover
+# --------------------------------------------------------------------------- #
+
+#: the least a giving hand may back away after letting go [m]: its finger
+#: tips lead the pad centre by ``grasp_geometry.PAD.lead_m`` (29 mm), and a
+#: retreat shorter than that plus the tool tolerance leaves them around the
+#: object
+HANDOVER_MIN_RETREAT_M = 0.05
+
+
+def _other(side: str) -> str:
+    return "right" if side == "left" else "left"
+
+
+@dataclass(frozen=True)
+class Handover(Primitive):
+    """Pass the held object from one hand to the other, in free air.
+
+    One plan over BOTH arms (:func:`.reach.plan_handover`): the giving hand
+    takes the object to a meeting point both arms reach
+    (:data:`.reach.HANDOVER_MEETING_POINTS_M`, first that plans), the
+    receiving hand approaches and grasps it travelling ``direction``, the
+    giving hand opens and backs out ``clearance_m`` along its own approach
+    axis. The receiving close must end MEASURABLY holding before the giving
+    hand opens (``GripStep.expect_hold``); otherwise the run stops with both
+    hands as they are.
+    """
+
+    VERB = "handover"
+    #: the receiving hand TRAVELS onto the object along ``direction``
+    DIRECTION_ARRIVES = True
+    object: str = ""
+    #: the hand that holds it now ("auto": whichever one does)
+    from_side: str = AUTO
+    #: the hand that takes it ("auto": the other one)
+    to_side: str = AUTO
+    #: which way the RECEIVING hand travels onto the object. The default,
+    #: ``left`` (+y), is the right hand reaching across toward a left-hand
+    #: giver; from the left hand it is ``right``. A direction that travels
+    #: away from the giver is refused rather than planned the long way round.
+    direction: Direction = ALIASES["left"]
+    #: how far the giving hand backs out after letting go [m]
+    clearance_m: float = DEFAULT_CLEARANCE_M
+
+    def __post_init__(self) -> None:
+        _coerce_direction(self)
+
+    @classmethod
+    def applicable(cls, world: WorldView) -> bool:
+        """Only when exactly one hand holds a NAMED object and the other is
+        measurably free — the one state in which a handover means anything."""
+        holders = [s for s in SIDES if _occupancy(world, s) == "holding"]
+        if len(holders) != 1:
+            return False
+        giver = holders[0]
+        return (bool(world.gripper(giver).held_object)
+                and _occupancy(world, _other(giver)) == "free")
+
+    @classmethod
+    def arg_enums(cls):
+        return {"from_side": SIDE_CHOICES, "to_side": SIDE_CHOICES}
+
+    def sides(self, world: WorldView) -> Tuple[Optional[str], Optional[str]]:
+        """``(giver, receiver)``, resolved ONCE; ``None`` where it cannot be."""
+        giver = (self.from_side if self.from_side in SIDES
+                 else _holder_of(world, self.object, AUTO)[0])
+        if self.to_side in SIDES:
+            receiver: Optional[str] = self.to_side
+        else:
+            receiver = None if giver is None else _other(giver)
+        return giver, receiver
+
+    def resolve_side(self, world: WorldView) -> Optional[str]:
+        """The hand this verb CLOSES — the receiver."""
+        return self.sides(world)[1]
+
+    def preconditions(self, world: WorldView) -> List[Unmet]:
+        unmet = check_arguments(self)
+        if unmet:
+            return unmet
+        _item, _p, _r, found = _locate(world, self.object)
+        unmet += found
+        if unmet:
+            return unmet
+        if self.clearance_m < HANDOVER_MIN_RETREAT_M - 1e-12:
+            unmet.append(Unmet(
+                BAD_ARGUMENT,
+                f"clearance_m {self.clearance_m} is how far the giving hand "
+                f"backs out after letting go, and under "
+                f"{HANDOVER_MIN_RETREAT_M} m its finger tips are still around "
+                f"the object", "use 0.05 m or more",
+                {"argument": "clearance_m"}))
+        giver, held = _holder_of(world, self.object, self.from_side)
+        unmet += held
+        if giver is None or held:
+            return unmet
+        receiver = self.to_side if self.to_side in SIDES else _other(giver)
+        if receiver == giver:
+            unmet.append(Unmet(BAD_SIDE,
+                               f"the {giver} hand cannot hand over to itself",
+                               "name the other hand as to_side"))
+            return unmet
+        unmet += _must_be_free(world, receiver)
+        d, bad = _resolve(self.direction, world, receiver)
+        unmet += bad
+        if d is None:
+            return unmet
+        unmet += _approach_unmet(self.direction, world, receiver)
+        toward = np.array([0.0, 1.0 if giver == "left" else -1.0, 0.0])
+        g_arm, r_arm = world.arm(giver), world.arm(receiver)
+        if (g_arm is not None and r_arm is not None
+                and g_arm.tool_p is not None and r_arm.tool_p is not None):
+            gap = np.asarray(g_arm.tool_p, float) - np.asarray(r_arm.tool_p, float)
+            gap[2] = 0.0
+            if np.linalg.norm(gap) > 1e-6:
+                toward = gap / np.linalg.norm(gap)
+        if float(np.dot(d, toward)) < -1e-6:
+            unmet.append(Unmet(
+                BAD_ARGUMENT,
+                f"direction {self.direction.label()!r} takes the {receiver} "
+                f"hand AWAY from the {giver} hand that holds {self.object}",
+                f"use {'left' if giver == 'left' else 'right'}: the {receiver} "
+                f"hand travels toward the giver",
+                {"argument": "direction",
+                 "axis_base": [round(float(c), 3) for c in d]}))
+        return unmet
+
+    def plan(self, world: WorldView, kin) -> Any:
+        from . import reach  # noqa: PLC0415 - reach imports this module
+        unmet = self.preconditions(world)
+        giver, receiver = self.sides(world)
+        if unmet:
+            return self._unmet_error(unmet, receiver or "")
+        was = world.gripper(giver)
+        grip = was.grip if was is not None and was.grip else "soft"
+        chain, tried = reach.plan_handover(
+            self, world, kin, obj=self.object, giver=giver, receiver=receiver,
+            direction=self.direction, retreat_m=float(self.clearance_m),
+            grip=grip)
+        if chain is None:
+            return _unreachable_handover(self, receiver, tried)
+        return _compose_handover(self, world, kin, giver, receiver, chain)
+
+    def verifier(self, world0: WorldView) -> Verifier:
+        giver, receiver = self.sides(world0)
+        item = world0.find(self.object)
+        if giver is None or receiver is None or item is None:
+            return V.Never(self.name(), world0,
+                           "a handover needs one hand holding the object and "
+                           "the other to take it")
+        return V.All(self.name(), world0, [
+            V.Holding(self.name(), world0, receiver, item),
+            V.NotHolding(self.name(), world0, giver),
+            V.ToolClearOf(self.name(), world0, giver, self.object,
+                          HANDOVER_MIN_RETREAT_M)])
+
+
+def _reindexed(step, offset: int):
+    """A sub-plan's step with its waypoint index moved into the whole plan."""
+    import dataclasses  # noqa: PLC0415
+    index = getattr(step, "waypoint", -1)
+    if index is None or index < 0:
+        return step
+    return dataclasses.replace(step, waypoint=int(index) + offset)
+
+
+def _compose_handover(primitive: "Handover", world: WorldView, kin,
+                      giver: str, receiver: str, chain) -> Plan:
+    """The five links as ONE plan: waypoints concatenated, each step's
+    waypoint index moved with them, and the receiver's close marked
+    ``expect_hold`` so the giver never opens on a receiver holding nothing."""
+    import dataclasses  # noqa: PLC0415
+    waypoints: List[Waypoint] = []
+    steps: List[Any] = []
+    notes: List[str] = [
+        "meeting at ({:.2f}, {:+.2f}, {:.2f}) m (held object centre, base)"
+        .format(*chain.meeting),
+        f"{giver} hand gives, {receiver} hand takes"]
+    for label, link in zip(chain.labels, chain.links):
+        plan = link.result
+        offset = len(waypoints)
+        waypoints += list(plan.waypoints)
+        for step in plan.steps:
+            step = _reindexed(step, offset)
+            if (label == "grasp" and isinstance(step, GripStep)
+                    and step.closedness >= 0.5):
+                step = dataclasses.replace(step, expect_hold=True)
+            steps.append(step)
+        notes += [f"{label}: {n}" for n in plan.notes]
+    notes.append(f"the {receiver} hand must report holding before the "
+                 f"{giver} hand opens; otherwise the run stops there")
+    return Plan(primitive.name(), receiver, tuple(waypoints), tuple(steps),
+                tuple(notes), binding=PlanBinding.of(world, kin,
+                                                     reference=gg.PAD.name))
+
+
+def _unreachable_handover(primitive: "Handover", side: str, tried) -> PlanError:
+    """Every meeting point was refused — ONE reason, every rung named."""
+    best = None
+    for chain in tried:
+        if chain.skipped or not chain.links:
+            continue
+        key = (len([l for l in chain.links if l.ok]),
+               -(chain.links[-1].result.residual_m
+                 if math.isfinite(chain.links[-1].result.residual_m)
+                 else float("inf")))
+        if best is None or key > best[0]:
+            best = (key, chain)
+    error = None if best is None else best[1].links[-1].result
+    stage = "meeting_ladder"
+    return PlanError(
+        UNREACHABLE_HANDOVER,
+        f"no meeting point plans for both hands under this search: "
+        f"{len(tried)} were tried and each was refused — "
+        + "; ".join(c.sentence() for c in tried)
+        + ". That is a statement about this search: move the object nearer "
+          "the middle of the robot, or put it down and pick it up with the "
+          "other hand",
+        waypoint_label=("" if best is None else best[1].broke_at or ""),
+        residual_m=(float("nan") if error is None else error.residual_m),
+        primitive=primitive.name(), side=side, stage=stage,
+        attempted=tuple(c.sentence() for c in tried))
+
+
 # The contact verbs live in .contact (they import this module's helpers, so
 # they are registered here, after everything they need is defined).
 from .contact import Press, Probe  # noqa: E402
 
 #: the verb set, in the order a pick-and-place uses them, then the contact verbs
 PRIMITIVES: Tuple[type, ...] = (Approach, Grasp, Lift, Carry, Place, Release,
-                                Nudge, Retreat, GoHome, Pour, Probe, Press)
+                                Nudge, Retreat, GoHome, Pour, Probe, Press,
+                                Handover)
 
 BY_VERB = {cls.name(): cls for cls in PRIMITIVES}
 

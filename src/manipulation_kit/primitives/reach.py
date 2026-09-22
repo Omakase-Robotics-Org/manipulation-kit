@@ -316,3 +316,192 @@ def choose_side(world: WorldView, kin, *, obj: str, destination: str,
     reason = ("no arm plans the whole chain; took the one that gets furthest — "
               + "; ".join(chains[s].sentence() for s in sorted(chains)))
     return SideChoice(best.side, reason, False, chains)
+
+
+# --------------------------------------------------------------------------- #
+# handover: the same chain, over two sides
+# --------------------------------------------------------------------------- #
+
+#: Where a handover may MEET, tried in order, largest margin first: the HELD
+#: OBJECT's centre in the base frame, with ``y`` stated for a LEFT-hand giver
+#: (mirrored for a right-hand one — the meeting leans to the giver's side of
+#: the midline, where the giving arm has its reach and the receiving arm
+#: still has its own). The same idiom as ``verbs.CARRY_CLEARANCE_LADDER_M``: a
+#: fixed ordered list, the first rung whose WHOLE two-arm chain plans wins, so
+#: the choice is a function of the world alone. The rungs are where both
+#: arms' reachable sets overlap on this URDF (surveyed 2026-09-22 with a 40 mm
+#: cube held top-down by the left hand and the right hand travelling ``left``
+#: onto it: x 0.35-0.45, y 0-0.10, z 0.20-0.35 plan; x 0.30 and z 0.15 mostly
+#: do not). A point is a candidate, never a promise; a world no rung reaches
+#: is refused as ``unreachable_handover``.
+HANDOVER_MEETING_POINTS_M: Tuple[Tuple[float, float, float], ...] = (
+    (0.40, 0.05, 0.25), (0.40, 0.00, 0.25), (0.45, 0.05, 0.30),
+    (0.35, 0.10, 0.20), (0.40, 0.05, 0.35))
+#: the held object's underside must be this far above anything under the
+#: meeting point [m] — two hands meet in free air, not over a table edge
+HANDOVER_FLOOR_M = 0.10
+
+
+@dataclass(frozen=True)
+class HandoverChain:
+    """One meeting point, and every link planned for it, in order."""
+
+    meeting: Tuple[float, float, float]
+    links: Tuple[ChainLink, ...]
+    #: the link each plan belongs to: ``meet`` (giver), ``approach``,
+    #: ``grasp`` (receiver), ``release``, ``retreat`` (giver)
+    labels: Tuple[str, ...]
+    #: the rung was not tried because something is under it (a sentence)
+    skipped: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return (not self.skipped and len(self.links) == 5
+                and all(link.ok for link in self.links))
+
+    @property
+    def broke_at(self) -> Optional[str]:
+        for label, link in zip(self.labels, self.links):
+            if not link.ok:
+                return label
+        return None
+
+    def sentence(self) -> str:
+        where = "({:.2f}, {:+.2f}, {:.2f}) m".format(*self.meeting)
+        if self.skipped:
+            return f"{where}: {self.skipped}"
+        broke = self.broke_at
+        if broke is None:
+            return f"{where}: plans"
+        link = self.links[self.labels.index(broke)]
+        return f"{where}: {broke} refused ({link.result.reason})"
+
+
+def _meeting_for(point: Tuple[float, float, float], giver: str) -> np.ndarray:
+    x, y, z = (float(c) for c in point)
+    return np.array([x, y if giver == "left" else -y, z])
+
+
+def _top_under(world: WorldView, p, exclude: str) -> Optional[float]:
+    """The highest top of anything whose footprint is under ``p`` (base)."""
+    best = None
+    for item in world.objects:
+        if item.name == exclude:
+            continue
+        try:
+            c, r = item.pose_in_base(world.frames)
+            local = r.inv().apply(np.asarray(p, dtype=float) - c)
+            half = np.asarray(item.size, dtype=float).reshape(3) / 2.0
+            if abs(local[0]) > half[0] or abs(local[1]) > half[1]:
+                continue
+            top = item.top_face_z(world.frames)
+        except LookupError:
+            continue
+        best = top if best is None else max(best, top)
+    return best
+
+
+def _opened(world: WorldView, side: str) -> WorldView:
+    """The same world with ``side``'s jaws open and empty — the COMMAND, like
+    :func:`_grasped`'s closedness, not a measurement."""
+    grippers = dict(world.grippers)
+    was = grippers.get(side)
+    grippers[side] = GripperView(
+        side, 0.0, holding=False, held_object=None, jaw_gap_m=None,
+        grip=was.grip if was is not None else "soft", jaw_stalled=False,
+        open_gap_m=getattr(was, "open_gap_m", None))
+    return world.with_(grippers=grippers, revision=int(world.revision) + 1)
+
+
+def handover_chain(primitive: Primitive, world: WorldView, kin, *, obj: str,
+                   giver: str, receiver: str, direction: Direction,
+                   retreat_m: float, grip: str,
+                   meeting: Tuple[float, float, float]) -> HandoverChain:
+    """Meet -> receiver Approach -> receiver Grasp -> giver Release -> giver
+    Retreat, at ONE meeting point. Nothing moves.
+
+    ``plan_chain`` over two sides: every link is the kit's own verb planned
+    against the world rolled forward by the previous one (the giver posed at
+    the meeting with the object riding its tool, then the receiver posed and
+    holding with the object re-attached to IT, then the giver open). The
+    first link is the giver's transit, planned with ``primitive`` (the
+    ``Handover``) so its scene gate leaves out the object the hands share.
+    """
+    from .verbs import Approach, Grasp, Release, Retreat, _plan_for  # noqa: PLC0415
+    from .types import Waypoint  # noqa: PLC0415
+    item = world.find(obj)
+    arm = world.arm(giver)
+    p_obj = item.pose_in_base(world.frames)[0]
+    target = _meeting_for(meeting, giver)
+    under = _top_under(world, target, obj)
+    if under is not None:
+        underside = float(target[2]) - item.vertical_extent(world.frames) / 2.0
+        if underside - under < HANDOVER_FLOOR_M - 1e-9:
+            return HandoverChain(tuple(float(c) for c in target), (), (),
+                                 skipped=(f"only {(underside - under) * 1000:.0f}"
+                                          f" mm above what is under it"))
+    offset = np.asarray(arm.tool_p, dtype=float) - np.asarray(p_obj)
+    links: List[ChainLink] = []
+    labels: List[str] = []
+    state = world
+    grasp: Optional[GraspTransform]
+    try:
+        grasp = grasp_transform(world, side=giver, name=obj)
+    except LookupError:
+        grasp = None
+
+    def record(label: str, prim: Primitive, result) -> bool:
+        links.append(ChainLink(prim, result))
+        labels.append(label)
+        return bool(getattr(result, "ok", False))
+
+    meet = _plan_for(primitive, state, kin, giver,
+                     [Waypoint("meeting", target + offset, arm.tool_r,
+                               allow_via=True, arrive=True)])
+    if record("meet", primitive, meet):
+        state = _posed(state, kin, giver,
+                       _last_q(meet, giver, arm.joints))
+        if grasp is not None:
+            state = _moved(state, grasp)
+        for label, prim in (
+                ("approach", Approach(object=obj, side=receiver,
+                                      direction=direction)),
+                ("grasp", Grasp(object=obj, side=receiver,
+                                direction=direction, grip=grip))):
+            result = prim.plan(state, kin)
+            if not record(label, prim, result):
+                break
+            q0 = state.arm(receiver).joints
+            state = _posed(state, kin, receiver,
+                           _last_q(result, receiver, q0))
+            if label == "grasp":
+                # the object now rides the RECEIVER: its transform is taken
+                # at this instant, with the giver still closed on it
+                state, grasp = _grasped(state, receiver, obj)
+        else:
+            release = Release(side=giver)
+            if record("release", release, release.plan(state, kin)):
+                state = _opened(state, giver)
+                retreat = Retreat(side=giver, distance_m=retreat_m)
+                record("retreat", retreat, retreat.plan(state, kin))
+    return HandoverChain(tuple(float(c) for c in target), tuple(links),
+                         tuple(labels))
+
+
+def plan_handover(primitive: Primitive, world: WorldView, kin, *, obj: str,
+                  giver: str, receiver: str, direction: Direction,
+                  retreat_m: float, grip: str,
+                  meetings: Sequence[Tuple[float, float, float]] = ()
+                  ) -> Tuple[Optional[HandoverChain], List[HandoverChain]]:
+    """The first meeting point of the ladder whose whole chain plans, and
+    every chain that was tried (for the refusal). ``meetings`` defaults to
+    :data:`HANDOVER_MEETING_POINTS_M`, read at call time."""
+    tried: List[HandoverChain] = []
+    for meeting in (tuple(meetings) or HANDOVER_MEETING_POINTS_M):
+        chain = handover_chain(primitive, world, kin, obj=obj, giver=giver,
+                               receiver=receiver, direction=direction,
+                               retreat_m=retreat_m, grip=grip, meeting=meeting)
+        tried.append(chain)
+        if chain.ok:
+            return chain, tried
+    return None, tried

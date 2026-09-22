@@ -46,9 +46,14 @@ LOOK_REQUIRED = "look_required"
 LOOK_UNAVAILABLE = "look_unavailable"
 #: the correction budget for this target is spent
 NUDGE_LIMIT = "nudge_limit"
+#: a look is required and the verb closes a hand at a posture no look can
+#: precede (``handover``: the receiver reaches its closing posture inside the
+#: same plan)
+LOOK_NOT_POSSIBLE = "look_not_possible"
 
 POLICY_CODES: Tuple[str, ...] = (DIRECTION_NOT_ALLOWED, LOOK_REQUIRED,
-                                 LOOK_UNAVAILABLE, NUDGE_LIMIT)
+                                 LOOK_UNAVAILABLE, NUDGE_LIMIT,
+                                 LOOK_NOT_POSSIBLE)
 
 def directed_verbs() -> Tuple[str, ...]:
     """The registered verbs whose ``direction`` is how the hand ARRIVES — the
@@ -62,10 +67,13 @@ def directed_verbs() -> Tuple[str, ...]:
                  and getattr(cls, "DIRECTION_ARRIVES", False))
 
 
-#: :func:`directed_verbs`, at import (approach, grasp, probe, press)
+#: :func:`directed_verbs`, at import (approach, grasp, probe, press, handover)
 DIRECTED_VERBS: Tuple[str, ...] = directed_verbs()
 #: the verbs that close the jaws on something
 STROKE_VERBS: Tuple[str, ...] = ("grasp",)
+#: the verbs that close the jaws at a posture they reach INSIDE their own
+#: plan, so no look can be taken from it first
+UNLOOKABLE_STROKE_VERBS: Tuple[str, ...] = ("handover",)
 
 
 @dataclass
@@ -240,6 +248,15 @@ class OperatorPolicy:
                     f"use one of: {', '.join(self.allowed_directions)}",
                     {"asked": direction.as_argument(),
                      "allowed": list(self.allowed_directions)}))
+        if self.look_before_stroke and verb in UNLOOKABLE_STROKE_VERBS:
+            unmet.append(Unmet(
+                LOOK_NOT_POSSIBLE,
+                f"a {verb} closes the receiving hand at a posture it only "
+                f"reaches inside its own plan, so no wrist look can precede "
+                f"that stroke, and this policy requires one",
+                "compose it: approach the held object with the receiving "
+                "hand, grasp it (the look happens there), release the giving "
+                "hand, retreat it — or run with --no-look-before-stroke"))
         if state is None or side is None:
             return call, unmet
         name = getattr(call, "object", "") or state.target.get(side) or ""
@@ -390,5 +407,6 @@ class OperatorPolicy:
 
 
 __all__ = ["DIRECTED_VERBS", "directed_verbs", "DIRECTION_NOT_ALLOWED", "LOOK_REQUIRED",
+           "LOOK_NOT_POSSIBLE", "UNLOOKABLE_STROKE_VERBS",
            "LOOK_UNAVAILABLE", "NUDGE_LIMIT", "OperatorPolicy",
            "POLICY_CODES", "PolicyState", "STROKE_VERBS"]
