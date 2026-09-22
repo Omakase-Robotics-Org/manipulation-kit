@@ -36,8 +36,8 @@ from .measure import (ConfidenceLadder, Detection, FrameResult, build_scene,
 from .plane import (HEIGHT_SOURCES, PlaneFitError, TableInBase, TablePlane,
                     fit_table_plane, project_corners, table_in_base,
                     table_z_from_known_length)
-from .protocol import (CameraModel, LiftStateLike, NeckStateLike, NoSupport,
-                       Perceiver, ScenePerceiver, lift_onto_support,
+from .protocol import (CameraModel, NoSupport, Perceiver,
+                       ScenePerceiver, lift_onto_support,
                        support_plane)
 from .wrist import InFrame, WristCamera
 
@@ -46,7 +46,7 @@ __all__ = [
     "LENS_UNCERTAINTY_M", "LOCATED_KINDS", "PROVISIONAL_UNCERTAINTY_M",
     "CameraModel", "CameraPose", "ConfidenceLadder", "Detection",
     "FrameResult", "HeadCamera", "HeadCameraConfig", "HeadPoseUnknown",
-    "InFrame", "LiftStateLike", "Located", "MountSpread", "NeckStateLike",
+    "InFrame", "Located", "MountSpread",
     "NoSupport", "NotOnThePlane", "Perceiver", "PinholeCamera",
     "PlaneFitError", "ScenePerceiver", "TableInBase", "TablePlane",
     "WristCamera", "build_scene", "contact_to_centre", "detect_objects_mask",

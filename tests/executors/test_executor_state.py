@@ -21,7 +21,7 @@ from manipulation_kit.executor import (ARM_DOF, SIDES, HandState, JointState,
                                        RecordingExecutor, check_binding,
                                        read_lift, read_neck, run)
 from manipulation_kit.primitives import Grasp
-from manipulation_kit.primitives.approach import tool_revision
+from manipulation_kit.primitives.orientation import tool_revision
 
 REACHABLE = (0.38, 0.25, 0.05)
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -143,7 +143,7 @@ def test_no_env_var_feeds_tool_revision():
                PYTHONPATH=str(SRC) + os.pathsep + os.environ.get("PYTHONPATH", ""))
     out = subprocess.run(
         [sys.executable, "-c",
-         "from manipulation_kit.primitives.approach import tool_revision;"
+         "from manipulation_kit.primitives.orientation import tool_revision;"
          "from manipulation_kit.hands.d1.parallel_gripper import description;"
          "print(tool_revision()); print(description.DRIVEN_OPEN_GAP_M)"],
         env=env, capture_output=True, text=True, check=True)

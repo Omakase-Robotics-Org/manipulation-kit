@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pytest
@@ -204,27 +202,21 @@ def test_no_raw_http_neck_or_slider_read_in_the_examples():
 # review 9: a typed head-camera config that fails closed
 # --------------------------------------------------------------------------- #
 
-@dataclass
-class _Neck:                     # the step-1 NeckState contract, as a fake
-    pitch_rad: float
-    yaw_rad: float
-    enabled: Optional[bool] = True
-    moving: Optional[bool] = False
+def _Neck(pitch_rad, yaw_rad, enabled=True, moving=False):
+    """The executor's typed neck state (step 1), not a look-alike."""
+    from manipulation_kit.executor import NeckState
+    return NeckState(pitch_rad=pitch_rad, yaw_rad=yaw_rad, enabled=enabled,
+                     moving=moving)
 
 
-@dataclass
-class _Lift:
-    height_m: float
-    moving: Optional[bool] = False
-    alarm: Optional[str] = None
+def _Lift(height_m, moving=False, alarm=None):
+    from manipulation_kit.executor import LiftState
+    return LiftState(height_m=height_m, moving=moving, alarm=alarm)
 
 
 def test_the_head_camera_takes_a_typed_config_and_fails_closed():
     from manipulation_kit.perception import (HeadCamera, HeadCameraConfig,
-                                             HeadPoseUnknown, LiftStateLike,
-                                             NeckStateLike, read_head_state)
-    assert isinstance(_Neck(0.0, 0.0), NeckStateLike)
-    assert isinstance(_Lift(0.2), LiftStateLike)
+                                             HeadPoseUnknown, read_head_state)
     config = HeadCameraConfig(fx=606.0, fy=604.0, cx=321.0, cy=239.0,
                               width=640, height=480,
                               neck=_Neck(-0.512, 0.0), lift=_Lift(0.205))

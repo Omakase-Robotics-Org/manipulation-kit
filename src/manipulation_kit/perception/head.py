@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation as R
 
 from .camera import (AIM_UNCERTAINTY_DEG, DEFAULT_FX, LENS_UNCERTAINTY_M,
                      PinholeCamera)
-from .protocol import LiftStateLike, NeckStateLike
+from ..executor import LiftState, NeckState, read_lift, read_neck
 
 
 class HeadPoseUnknown(ValueError):
@@ -53,8 +53,8 @@ class HeadCameraConfig:
     """Everything a head camera is, typed: the stream and the robot's joints.
 
     ``neck`` / ``lift`` are the firmware executor's ``neck_state()`` /
-    ``lift_state()`` (any object with those attributes — see
-    :class:`~.protocol.NeckStateLike`); ``neck.pitch_rad`` is the daemon's
+    ``lift_state()`` (:class:`manipulation_kit.executor.NeckState` /
+    :class:`~manipulation_kit.executor.LiftState`); ``neck.pitch_rad`` is the daemon's
     LOGICAL pitch and is passed through UNFLIPPED.
     """
 
@@ -64,8 +64,8 @@ class HeadCameraConfig:
     cy: float
     width: int
     height: int
-    neck: Optional[NeckStateLike] = None
-    lift: Optional[LiftStateLike] = None
+    neck: Optional[NeckState] = None
+    lift: Optional[LiftState] = None
 
     def __post_init__(self) -> None:
         for name in ("fx", "fy", "cx", "cy"):
@@ -77,8 +77,8 @@ class HeadCameraConfig:
 
     @classmethod
     def from_intrinsics(cls, intrinsics: Mapping[str, Any], *, width: int,
-                        height: int, neck: Optional[NeckStateLike] = None,
-                        lift: Optional[LiftStateLike] = None
+                        height: int, neck: Optional[NeckState] = None,
+                        lift: Optional[LiftState] = None
                         ) -> "HeadCameraConfig":
         """From a ``read_intrinsics`` dict; a missing principal point is the
         image centre, a missing ``fy`` is ``fx`` (square pixels)."""
@@ -91,7 +91,7 @@ class HeadCameraConfig:
                    width=int(width), height=int(height), neck=neck, lift=lift)
 
 
-def read_head_state(executor) -> Tuple[NeckStateLike, Optional[LiftStateLike]]:
+def read_head_state(executor) -> Tuple[NeckState, Optional[LiftState]]:
     """The neck and lift states from an executor, or a refusal.
 
     Uses the executor's typed ``neck_state()`` / ``lift_state()`` capability —
@@ -101,19 +101,16 @@ def read_head_state(executor) -> Tuple[NeckStateLike, Optional[LiftStateLike]]:
     a level head: a default here is a camera aimed somewhere it is not.
     The lift is optional (it does not move the camera in ``base``).
     """
-    reader = getattr(executor, "neck_state", None)
-    if reader is None:
+    if getattr(executor, "neck_state", None) is None:
         raise HeadPoseUnknown(
             f"{type(executor).__name__} has no neck_state(): the head camera's "
             f"pose cannot be read from it (d1-firmwared's GET /v1/neck/state "
             f"through the generated client is the source)")
-    neck = reader()
+    neck = read_neck(executor)
     if neck is None:
         raise HeadPoseUnknown(f"{type(executor).__name__}.neck_state() "
                               f"reported nothing; there is no neck to aim by")
-    lift_reader = getattr(executor, "lift_state", None)
-    lift = lift_reader() if lift_reader is not None else None
-    return neck, lift
+    return neck, read_lift(executor)
 
 
 @dataclass

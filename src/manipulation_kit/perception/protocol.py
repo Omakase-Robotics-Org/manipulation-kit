@@ -42,35 +42,10 @@ from ..world.views import ObjectView, SurfaceView, WorldView
 if TYPE_CHECKING:                       # pragma: no cover
     from .camera import Located
 
-# TODO(step1-integration): the concrete types are
-#   from manipulation_kit.executor import NeckState, LiftState
-# (step 1 adds them with exactly these attribute names). Until the branches
-# are integrated the perception package types against these Protocols and is
-# tested with fakes.
-
-
-@runtime_checkable
-class NeckStateLike(Protocol):
-    """``NeckState`` as the firmware executor reports it.
-
-    ``pitch_rad`` is the daemon's LOGICAL pitch, UNFLIPPED (negative looks
-    down on a D1). Only :func:`manipulation_kit.description.head_camera.
-    neck_joints_from_state` turns it into the URDF joint.
-    """
-
-    pitch_rad: float
-    yaw_rad: float
-    enabled: Optional[bool]
-    moving: Optional[bool]
-
-
-@runtime_checkable
-class LiftStateLike(Protocol):
-    """``LiftState`` as the firmware executor reports it."""
-
-    height_m: float
-    moving: Optional[bool]
-    alarm: Optional[str]
+# The neck and lift a head camera is posed by are the executor's own typed
+# state, ``manipulation_kit.executor.NeckState`` / ``LiftState`` (read through
+# the d1-firmwared OpenAPI client by ``FirmwareExecutor``); perception has no
+# parallel description of them.
 
 
 @runtime_checkable
@@ -289,6 +264,6 @@ def plane_source_of(surface: SurfaceView) -> str:
             f"{surface.confidence:.1f}")
 
 
-__all__ = ["CameraModel", "LiftStateLike", "NeckStateLike", "NoSupport",
+__all__ = ["CameraModel", "NoSupport",
            "Perceiver", "ScenePerceiver", "lift_onto_support",
            "plane_source_of", "replace_by_name", "support_plane"]
