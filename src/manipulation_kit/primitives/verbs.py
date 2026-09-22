@@ -28,6 +28,7 @@ from ..world.direction import ALIASES, Direction, frame_rotation, parse_directio
 from . import orientation as ap
 from . import verifiers as V
 from .arguments import check_arguments
+from .clearance import SceneGate, policy_of
 from .planning import IncompleteObservation, Kin, joint_ramp, solve_path
 from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, INCOMPLETE_OBSERVATION, LearnedPrimitive,
@@ -218,12 +219,34 @@ def _incomplete(primitive: Primitive, side: str, exc) -> PlanError:
                                   "publish both arms in the observation"),))
 
 
+#: The fields that name what a verb acts ON. Those are not obstacles to it —
+#: a grasp must reach its object, a place its destination — so the scene gate
+#: leaves them out (and whatever a hand holds, which rides the tool).
+SCENE_TARGET_FIELDS: Tuple[str, ...] = ("object", "to", "source", "target")
+
+
+def _scene_for(primitive: Primitive, world: WorldView, kin
+               ) -> SceneGate:
+    """The scene gate this verb's plan is checked against."""
+    names = [getattr(primitive, f, "") for f in SCENE_TARGET_FIELDS]
+    return SceneGate.of(world, kin, exclude=[n for n in names if n])
+
+
+def _unchecked_note(scene) -> Tuple[str, ...]:
+    if not scene.unresolved:
+        return ()
+    return (f"not checked for clearance (frame does not resolve): "
+            f"{', '.join(scene.unresolved)}",)
+
+
 def _solve(primitive: Primitive, world: WorldView, kin, side: str, waypoints):
     """``(steps, error, notes)`` with the model restored and the lock held."""
+    scene = _scene_for(primitive, world, kin)
     try:
-        with Kin(kin, world) as borrowed:
-            return solve_path(borrowed, side, waypoints,
-                              primitive=primitive.name())
+        with Kin(kin, world, scene=scene) as borrowed:
+            steps, error, notes = solve_path(borrowed, side, waypoints,
+                                             primitive=primitive.name())
+            return steps, error, list(notes) + list(_unchecked_note(scene))
     except IncompleteObservation as exc:
         return [], _incomplete(primitive, side, exc), []
 
@@ -695,7 +718,7 @@ class Grasp(Primitive):
                  "graspable_width_m": round(graspable, 4)}))
         return unmet
 
-    def _geometry(self, world: WorldView):
+    def _geometry(self, world: WorldView, *, droop_margin_m: float = 0.0):
         item, p, _r, unmet = _locate(world, self.object)
         if unmet:
             return None, None, None, None, unmet
@@ -710,7 +733,8 @@ class Grasp(Primitive):
         # under the table. ``grasp_point`` lifts it just clear — from the
         # RESOLVED pose, which is the whole of R1: it used to read ``item.p``
         # and hand a table-frame coordinate to an IK that reads base frame.
-        p_grasp, _raised = ap.grasp_point(item, d, world.frames)
+        p_grasp, _raised = ap.grasp_point(item, d, world.frames,
+                                          droop_margin_m=droop_margin_m)
         return (side, ap.standoff_pose(p_grasp, d, self.standoff_m),
                 p_grasp, r_tcp, [])
 
@@ -723,7 +747,11 @@ class Grasp(Primitive):
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
-        side, p_stand, p_grasp, r_tcp, _ = self._geometry(world)
+        # the real arm's sag raises the fingertip floor (F16; the typed
+        # replacement of MKIT_SUPPORT_CLEARANCE_M, see primitives.clearance)
+        droop = policy_of(kin).droop_margin_m
+        side, p_stand, p_grasp, r_tcp, _ = self._geometry(
+            world, droop_margin_m=droop)
         d = self.direction.resolve(world, side=side)
         waypoints = [
             # getting to the standoff is free-space transit: a detour is a
@@ -738,7 +766,8 @@ class Grasp(Primitive):
             # checked here too — this is the pose the jaws close on.
             Waypoint("grasp", p_grasp, r_tcp, allow_via=False, arrive=True)]
         item = world.find(self.object)
-        raised = ap.grasp_point(item, d, world.frames)[1]
+        raised = ap.grasp_point(item, d, world.frames,
+                                droop_margin_m=droop)[1]
         p_obj = item.pose_in_base(world.frames)[0]
         # The jaws open BEFORE the arm moves and close only once the tool is on
         # the object: an open-on-arrival stroke sweeps the pads through whatever
@@ -763,7 +792,8 @@ class Grasp(Primitive):
                         f"stands on, under the "
                         f"{ap.MIN_ACHIEVED_CLEARANCE_M * 1000:.0f} mm this "
                         f"plan has to keep. The waypoint asked for "
-                        f"{ap.SUPPORT_CLEARANCE_M * 1000:.0f} mm; the IK did "
+                        f"{(ap.SUPPORT_CLEARANCE_M + droop) * 1000:.0f} mm; "
+                        f"the IK did "
                         f"not get there, and the fingers would jam on the "
                         f"surface before the jaws close",
                         waypoint_index=1, waypoint_label="grasp",
@@ -1526,7 +1556,8 @@ class GoHome(Primitive):
             return self._unmet_error(unmet, self.side)
         steps = []
         try:
-            with Kin(kin, world) as borrowed:
+            with Kin(kin, world,
+                     scene=_scene_for(self, world, kin)) as borrowed:
                 for side in self._sides():
                     part, error = joint_ramp(borrowed, side, kin.home(side),
                                              primitive=self.name(), label="HOME")

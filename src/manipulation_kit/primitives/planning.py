@@ -24,7 +24,7 @@ place the three guarantees are made:
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -34,6 +34,9 @@ from ..arms.ik import clamp_joint_step
 from ..world import ArmView, WorldView
 from . import orientation as ap
 from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanError, UNREACHABLE_OBJECT, Waypoint)
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .clearance import SceneGate
 
 #: How many clamped ``solve_ee`` calls ONE INTERPOLATION KNOT may take before
 #: the path is declared not to be converging. A knot is at most one
@@ -46,6 +49,10 @@ MAX_SOLVES_PER_KNOT = 8
 #: so hitting it is a bug, not a long move.
 MAX_KNOTS_PER_WAYPOINT = 200
 
+#: THE FALLBACK, not the default. With a scene in :class:`Kin` a free-space
+#: leg is planned up-and-over by construction (:func:`_over_the_top`); these
+#: are what is tried after that, and after the straight line, has failed.
+#:
 #: Clearance points a rejected waypoint is retried through, as ``(up, out)``
 #: metres from the tool point the leg STARTS at, keeping the orientation it
 #: starts with: lift the hand and swing it away from the body, then travel.
@@ -100,6 +107,21 @@ ARRIVE_TOL_RAD = 0.06
 PATH_TOL_M = 0.012
 PATH_TOL_RAD = 0.12
 
+#: How far the HAND reaches sideways from the tool point, for deciding what a
+#: transit passes over [m]: half the 67 mm palm plus a little. The scene gate
+#: checks the arm's links; the hand is kept clear in transit by rising over
+#: what is in its way, and this is the corridor it rises over.
+TRANSIT_HALF_WIDTH_M = 0.04
+
+#: The hand as a box around the tool point, in the TCP frame [m]: across the
+#: jaws (x) the open fingers, 60.5 mm apart on d1-2, plus their thickness;
+#: across the palm (y) half its 67 mm; along the approach axis (z) from the
+#: flange (100 mm behind the pad centre) to the pad tips (29 mm past it). Used
+#: only to say how far the hand HANGS below the tool point for a given
+#: orientation — the rise height of an up-and-over transit.
+HAND_BOX_TCP_M = ((-0.045, 0.045), (-0.034, 0.034),
+                  (-ap.TOOL_Z_M, ap.TIP_BELOW_TOOL_M))
+
 
 class IncompleteObservation(LookupError):
     """The world does not describe an arm the guard has to reason about."""
@@ -129,12 +151,26 @@ class Kin:
     It also REFUSES an observation that does not carry every arm the model
     has. Silently keeping the model's own joints for a missing arm made the
     plan depend on whoever posed the mirror last.
+
+    ``scene`` is the optional :class:`~.clearance.SceneGate` of the world the
+    plan is made in: the arm's links against the tables, containers and
+    objects, swept between consecutive steps.
     """
 
-    def __init__(self, kin, world: WorldView, *, require_all_arms: bool = True):
+    def __init__(self, kin, world: WorldView, *, require_all_arms: bool = True,
+                 scene: Optional["SceneGate"] = None):
         self.kin = kin
         self.world = world
         self.require_all_arms = bool(require_all_arms)
+        #: the scene half of the collision check (``primitives.clearance``):
+        #: when set, every accepted joint step is swept against it and free
+        #: transit rises over what is in its way. ``None`` = the body guard
+        #: only, which is what a plan made without a world scene gets.
+        self.scene = scene
+        #: scene refusals met while searching one waypoint's routes, so a
+        #: dead end whose STRAIGHT line died on the body guard still says
+        #: which obstacle closed the ways around it
+        self.scene_refusals: List[PlanError] = []
         self._saved = {}
         self._lock = getattr(kin, "lock", None)
         self._held = False
@@ -261,7 +297,15 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                 converged = True
                 break
             p7, r7 = ap.link7_from_tool(p_knot, r_knot)
+            q_before = kin.joints(side)
             result = kin.kin.solve_ee(side, p7, r7)
+            if result.ok and kin.scene is not None:
+                error = _scene_check(kin, side, q_before, kin.joints(side), wp,
+                                     primitive=primitive, index=index)
+                if error is not None:
+                    # leave the model where the last ACCEPTED step put it
+                    kin.kin.set_joints(side, q_before)
+                    return steps, error
             if not result.ok:
                 residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
                 return steps, PlanError(
@@ -305,6 +349,133 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
             residual_m=residual, residual_rad=rot_residual, stage="arrival",
             primitive=primitive, side=side)
     return steps, None
+
+
+def _scene_check(kin: Kin, side: str, q_from, q_to, wp: Waypoint, *,
+                 primitive: str, index: int) -> Optional[PlanError]:
+    """Sweep one accepted joint step against the scene; the refusal, or None.
+
+    The refusal is the body guard's own reason, ``guard_reject``, so every
+    caller that already routes around a guard rejection (the via search) and
+    every model that already reads one keeps working — with the obstacle
+    NAMED and ``residual_m`` = how far the link is inside the clearance that
+    obstacle requires (Shu decision 4: refuse, and say by how much).
+    """
+    report = kin.scene.swept_ok(kin, side, q_from, q_to)
+    if report.ok:
+        return None
+    error = PlanError(
+        GUARD_REJECT,
+        f"on the way to {wp.label!r}, {report.describe(side)}. The scene "
+        f"guard checks the arm's links against every declared table, "
+        f"container and object; correct the declaration if {report.obstacle!r}"
+        f" is not where the world says, or approach from another direction",
+        waypoint_index=index, waypoint_label=wp.label,
+        residual_m=report.depth_m, stage="scene", primitive=primitive,
+        side=side, attempted=(f"obstacle:{report.obstacle}",
+                              f"link:{report.link}"))
+    kin.scene_refusals.append(error)
+    return error
+
+
+def _with_scene_refusals(kin: Kin, error: PlanError) -> PlanError:
+    """A refusal that is NOT the scene's own, told what the scene refused.
+
+    The via search re-walks the straight line to report a dead end, so a
+    straight line that died on the body guard is what comes back — even when
+    every route around it was closed by a table. The model needs the table's
+    name to correct anything; this appends it.
+    """
+    if error.stage == "scene" or not kin.scene_refusals:
+        return error
+    import dataclasses  # noqa: PLC0415
+    first = kin.scene_refusals[0]
+    return dataclasses.replace(
+        error,
+        detail=(f"{error.detail}; the routes around it were refused by the "
+                f"scene guard: {first.detail}"),
+        attempted=tuple(error.attempted) + tuple(
+            a for a in first.attempted if a not in error.attempted))
+
+
+def _hand_hang(kin: Kin, side: str, p_tool, r_tool: R) -> float:
+    """How far below the tool point the hand — and what it holds — reaches."""
+    corners = np.array([[x, y, z] for x in HAND_BOX_TCP_M[0]
+                        for y in HAND_BOX_TCP_M[1] for z in HAND_BOX_TCP_M[2]])
+    hang = float(max(0.0, -np.min(r_tool.apply(corners)[:, 2])))
+    gripper = kin.world.gripper(side)
+    held = None if gripper is None else gripper.held_object
+    item = kin.world.find(held) if held else None
+    if item is not None:
+        try:
+            hang = max(hang, float(p_tool[2]) - item.bottom_z(kin.world.frames))
+        except Exception:  # noqa: BLE001 - an unresolved frame: keep the hand
+            pass
+    return hang
+
+
+def _transit_ceiling(kin: Kin, side: str, p_from, p_to, r_from: R, r_to: R
+                     ) -> Tuple[float, Tuple[str, ...]]:
+    """What the hand would pass over, low, on the tool segment ``p_from -> p_to``
+    (the hand's hang taken at whichever end orientation hangs it lower)."""
+    hang = max(_hand_hang(kin, side, p_from, r_from),
+               _hand_hang(kin, side, p_from, r_to))
+    return kin.scene.in_the_way(p_from, p_to, hang_m=hang,
+                                width_m=TRANSIT_HALF_WIDTH_M)
+
+
+def _over_the_top(kin: Kin, side: str, wp: Waypoint
+                  ) -> Optional[Tuple[float, Tuple[str, ...],
+                                      List[Tuple[str, List[Waypoint]]]]]:
+    """Up-and-over routes for a free transit, or None if nothing is in the way.
+
+    THE DEFAULT SHAPE OF A FREE TRANSIT with a scene: rise to the height that
+    clears everything the hand would otherwise pass over low (its top + that
+    obstacle's required clearance + how far the hand hangs below the tool
+    point), traverse at that height, descend straight onto the waypoint. By
+    construction, not as a recovery — the old planner flew the straight line
+    and detoured only when the body guard said no, which it never did for a
+    table, because it cannot see one.
+
+    Where the arm rises TO is the one choice: straight up first, then the
+    fixed clearance points of :data:`VIA_OFFSETS_M` (up and away from the
+    torso, measured to be where this arm can reorient from HOME), each raised
+    to at least the clearance height. A route one of whose legs would itself
+    pass low over something is not offered.
+
+    Returns ``(height, names in the way, [(how, waypoints)])``.
+    """
+    scene = kin.scene
+    if scene is None or not scene.obstacles:
+        return None
+    p0, r0 = kin.tool_pose(side)
+    height, names = _transit_ceiling(kin, side, p0, wp.p, r0, wp.r)
+    if not names:
+        return None
+    tail: List[Waypoint] = []
+    if wp.p[2] < height:
+        tail.append(Waypoint(f"over:{wp.label}", [wp.p[0], wp.p[1], height],
+                             wp.r))
+    tail.append(wp)
+    rises: List[Tuple[str, Optional[np.ndarray]]] = [
+        ("straight up", None if p0[2] >= height
+         else np.array([p0[0], p0[1], height]))]
+    out_sign = _outward(side)
+    for up, out in VIA_OFFSETS_M:
+        rises.append((f"{max(up, height - p0[2]) * 100:.0f} cm up and "
+                      f"{out * 100:.0f} cm out",
+                      p0 + np.array([0.0, out_sign * out,
+                                     max(up, float(height - p0[2]))])))
+    routes: List[Tuple[str, List[Waypoint]]] = []
+    for how, rise in rises:
+        legs = ([] if rise is None
+                else [Waypoint(f"rise:{wp.label}", rise, r0)]) + tail
+        points = [(p0, r0)] + [(leg.p, leg.r) for leg in legs]
+        if any(_transit_ceiling(kin, side, a[0], b[0], a[1], b[1])[1]
+               for a, b in zip(points[:-1], points[1:])):
+            continue
+        routes.append((how, legs))
+    return height, names, routes
 
 
 def _too_far(p0, r0, p1, r1: R) -> bool:
@@ -374,6 +545,37 @@ def _detour(kin: Kin, side: str, wp: Waypoint, *, primitive: str, index: int,
     return None, ""
 
 
+def _fly_over(kin: Kin, side: str, wp: Waypoint, over, q_start, *,
+              primitive: str, index: int
+              ) -> Tuple[Optional[List[JointStep]], str]:
+    """Walk the up-and-over routes in order; the first that plans wins.
+
+    Returns ``(steps, note)``, or ``(None, note)`` when no route plans — the
+    caller then falls back to the straight line and the fixed vias, and the
+    note says the hand's clearance over ``names`` was not constructed.
+    """
+    height, names, routes = over
+    what = ", ".join(repr(n) for n in names)
+    for how, legs in routes:
+        kin.kin.set_joints(side, q_start)
+        route: List[JointStep] = []
+        error = None
+        for leg in legs:
+            part, error = _straight(kin, side, leg, primitive=primitive,
+                                    index=index)
+            route += part
+            if error is not None:
+                break
+        if error is None:
+            return route, (f"transit to {wp.label!r} rose {how} to "
+                           f"z={height:.3f} m to clear {what}")
+    kin.kin.set_joints(side, q_start)
+    return None, (f"no route over {what} planned (the hand would pass under "
+                  f"z={height:.3f} m); the transit to {wp.label!r} fell back "
+                  f"to the direct path, with the arm's links still checked "
+                  f"against the scene")
+
+
 def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
                primitive: str, start_index: int = 0, allow_via: bool = True,
                ) -> Tuple[List[JointStep], Optional[PlanError], List[str]]:
@@ -403,6 +605,14 @@ def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
     promise and a 25 cm clearance hop that lands on the endpoint has not kept
     it (R10).
 
+    WITH A SCENE (``kin.scene``) A FREE LEG IS UP-AND-OVER BY CONSTRUCTION.
+    When the hand would pass low over a table, container or object on the
+    straight line, the leg rises over it, traverses and descends
+    (:func:`_over_the_top`); the fixed clearance points are where it rises
+    through when straight up does not plan. Only when no route over plans is
+    the straight line / via search above tried — every step of it still swept
+    against the scene for the arm's links — and the note says so.
+
     Returns ``(steps, error, notes)``; ``notes`` names any detour taken, so a
     plan that went around something says so in its own record.
     """
@@ -411,9 +621,31 @@ def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
     for index, wp in enumerate(waypoints):
         at = start_index + index
         q_start = kin.joints(side)
+        kin.scene_refusals = []
+        if allow_via and wp.allow_via:
+            over = _over_the_top(kin, side, wp)
+            if over is not None:
+                route, note = _fly_over(kin, side, wp, over, q_start,
+                                        primitive=primitive, index=at)
+                if route is not None:
+                    steps += route
+                    notes.append(note)
+                    continue
+                # No route over plans. The FALLBACK is the pre-scene transit
+                # (straight line, then the fixed vias) — with every step
+                # still swept against the scene for the arm's links. Refusing
+                # here would refuse legs the arm demonstrably flies; the note
+                # says the hand's clearance was not constructed.
+                pending_note = note
+            else:
+                pending_note = ""
+        else:
+            pending_note = ""
         leg, error = _straight(kin, side, wp, primitive=primitive, index=at)
         if error is None:
             steps += leg
+            if pending_note:
+                notes.append(pending_note)
             continue
         if not (allow_via and wp.allow_via) or error.reason not in VIA_REASONS:
             return steps + leg, error, notes
@@ -425,8 +657,10 @@ def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
             # rather than the last candidate that happened to be tried.
             kin.kin.set_joints(side, q_start)
             leg, error = _straight(kin, side, wp, primitive=primitive, index=at)
-            return steps + leg, error, notes
+            return steps + leg, _with_scene_refusals(kin, error), notes
         steps += detour
+        if pending_note:
+            notes.append(pending_note)
         notes.append(note)
     return steps, None, notes
 
@@ -476,6 +710,12 @@ def joint_ramp(kin: Kin, side: str, q_goal, *, primitive: str,
                 # RADIANS go in residual_rad. They used to go in residual_m
                 # and be printed as millimetres.
                 residual_rad=float(np.max(np.abs(q_goal - q_now))))
+        if kin.scene is not None:
+            error = _scene_check(kin, side, q_now, q_next,
+                                 Waypoint(label, *kin.tool_pose(side)),
+                                 primitive=primitive, index=-1)
+            if error is not None:
+                return steps, error
         kin.kin.set_joints(side, q_next)
         steps.append(JointStep(side, q_next, 0))
     return steps, PlanError(

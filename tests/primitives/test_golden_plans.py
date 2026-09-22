@@ -35,6 +35,15 @@ the file records the stack it was captured on (``numeric_stack``) and
   the solver's, not the plan's). A vocabulary mistake — a mirrored axis, a
   90 deg roll — moves these by centimetres and quarter turns.
 
+THE SCENE GATE (0.16.0, step 5) is switched off for that proof: it is a
+proof about the VOCABULARY, and the gate is a new check that refuses some of
+these plans on purpose. A second test replays every case with the gate on and
+requires every case to be unchanged EXCEPT the ones listed, by number, in
+:data:`SCENE_REFUSED` — each a horizontal approach whose arm comes within
+11-15 mm of a declared table or box, inside the 15 mm a declared obstacle
+requires (10 mm margin + 5 mm sampling allowance). Those become
+``guard_reject`` refusals naming the obstacle. No top-down case changes.
+
 Deliberately updating it (a later step that changes grasp geometry on
 purpose): ``python tests/primitives/test_golden_plans.py --regenerate`` writes
 the current plans into the file; review the diff and say why in the commit.
@@ -66,6 +75,26 @@ SOLVER_PATH_KEYS = ("n", "q_sum", "residual_m")
 #: notes the new API adds that the old one did not (the planner reporting the
 #: roll it used, since a model no longer sets one)
 NEW_NOTE_PREFIXES = ("jaws rolled ",)
+
+#: The cases the scene gate (0.16.0, step 5) changes, BY NUMBER, and the
+#: obstacle each refusal must name. Measured on the capture stack: all are
+#: ``direction: forward`` (for a chain, its approach link), all were plans
+#: at e1dce97, and in every one the arm's closest link (Link4 = forearm,
+#: Link7 = wrist) comes 11-15 mm from the named obstacle — inside the 15 mm
+#: a declared, uncertainty-free obstacle requires. The body guard cannot see
+#: a table; this is run 5's horizontal approach, refused with a number.
+SCENE_REFUSED = {
+    # demo: table top z 0.01, block at z 0.05; box (container) beside it
+    2: "box", 3: "table", 4: "table", 6: "box", 10: "box", 32: "box",
+    36: "box",
+    # tabletop: the same table, forearm 11-13 mm above it
+    53: "table", 54: "table", 55: "table", 57: "table", 61: "table",
+    83: "table", 87: "table",
+    # d1-2_tape_cup: wrist 13 mm from the wagon top's edge
+    103: "table", 104: "table", 105: "table", 134: "table",
+    # yawed: forearm 13-15 mm above the table
+    151: "table", 152: "table", 154: "table", 184: "table",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -219,7 +248,15 @@ def _load():
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
-def test_alias_directions_reproduce_the_pre_direction_plans(d1_arm):
+def _without_the_scene_gate(monkeypatch):
+    from manipulation_kit.primitives import clearance, verbs
+    monkeypatch.setattr(verbs, "_scene_for",
+                        lambda primitive, world, kin: clearance.SceneGate(()))
+
+
+def test_alias_directions_reproduce_the_pre_direction_plans(d1_arm,
+                                                            monkeypatch):
+    _without_the_scene_gate(monkeypatch)
     golden = _load()
     worlds = {name: _world(d1_arm, items)
               for name, items in golden["scenes"].items()}
@@ -232,6 +269,55 @@ def test_alias_directions_reproduce_the_pre_direction_plans(d1_arm):
     for index, case in enumerate(golden["cases"]):
         errors = []
         _close(case["result"], replay(case, d1_arm, worlds[case["scene"]]),
+               f"case {index} {case['scene']}/{case['verb']} {case['args']}",
+               errors, portable=portable)
+        failures += errors[:3]
+    assert not failures, "\n".join(failures[:30])
+
+
+def _scene_refusal(case, kin, world):
+    """The PlanError a listed case now ends in (a chain: its first link)."""
+    from manipulation_kit.primitives import reach
+    from manipulation_kit.primitives.verbs import BY_VERB
+    args = dict(case["args"])
+    if case["verb"] == "chain":
+        links = reach.plan_chain(world, kin, **args).links
+        assert len(links) == 1, [link.verb for link in links]
+        return links[0].result
+    return BY_VERB[case["verb"]](**args).plan(world, kin)
+
+
+def test_the_scene_gate_changes_only_the_listed_cases(d1_arm):
+    """With the gate ON: every case as captured, except :data:`SCENE_REFUSED`,
+    each of which is now a ``guard_reject`` naming its obstacle with a
+    positive penetration depth."""
+    from manipulation_kit.primitives.types import GUARD_REJECT
+    golden = _load()
+    worlds = {name: _world(d1_arm, items)
+              for name, items in golden["scenes"].items()}
+    portable = golden.get("numeric_stack") != numeric_stack()
+    failures = []
+    for index, case in enumerate(golden["cases"]):
+        world = worlds[case["scene"]]
+        if index in SCENE_REFUSED:
+            error = _scene_refusal(case, d1_arm, world)
+            name = SCENE_REFUSED[index]
+            if (getattr(error, "ok", True) or error.reason != GUARD_REJECT
+                    or f"obstacle:{name}" not in error.attempted
+                    or f"{name!r}" not in error.detail):
+                # Off the capture stack a knife-edge case (151/154/184 are
+                # 0.09 mm inside the envelope here) may plan on the solver's
+                # other path; then it must be the captured plan.
+                errors = []
+                if portable:
+                    _close(case["result"], replay(case, d1_arm, world),
+                           f"case {index}", errors, portable=True)
+                if not portable or errors:
+                    failures.append(f"case {index}: expected a guard_reject "
+                                    f"naming {name!r}, got {error}")
+            continue
+        errors = []
+        _close(case["result"], replay(case, d1_arm, world),
                f"case {index} {case['scene']}/{case['verb']} {case['args']}",
                errors, portable=portable)
         failures += errors[:3]
@@ -265,6 +351,9 @@ def _regenerate() -> None:  # pragma: no cover - maintenance entry point
             return {k: rounded(v) for k, v in x.items()}
         return x
 
+    # the file is the PRE-scene evidence: capture with the scene gate off
+    from manipulation_kit.primitives import clearance, verbs
+    verbs._scene_for = lambda primitive, world, kin: clearance.SceneGate(())
     golden = _load()
     kin = get_arm_kinematics("d1/arm", quiet=True)
     for side in ("left", "right"):

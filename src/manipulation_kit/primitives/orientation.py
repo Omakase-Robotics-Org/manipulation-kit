@@ -34,7 +34,6 @@ is also why it is 100 mm here and 108.5 mm in older CAD-derived code.
 from __future__ import annotations
 
 import math
-import os
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -73,12 +72,15 @@ TIP_BELOW_TOOL_M = PAD_TIP_Z_M - PAD_CENTRE_Z_M
 #: to the side (still 2.5 deg from the commanded posture after two seconds of
 #: holding it, while the same arm tracks a free-air posture to 0.00 deg in
 #: 0.7 s), and the jaws closed beside the block. Ten attempts, ten failures.
-SUPPORT_CLEARANCE_M = float(os.environ.get("MKIT_SUPPORT_CLEARANCE_M", "0.003"))
-# ^ Operator override. 3 mm is right for a rigid arm; the real D1 arm sags
-# ~1 cm at a long reach (F16 droop, no along-axis compensation in ToolGate
-# yet), so on d1-2 (2026-09-22 run7, x 0.48) the pad tips met the table and
-# the controller raised error 15 during the descent. Set e.g. 0.015 on the
-# robot until the gate compensates droop.
+SUPPORT_CLEARANCE_M = 0.003
+# ^ For a RIGID arm. The real D1 arm sags ~1 cm at a long reach (F16 droop):
+# on d1-2 (2026-09-22 run 7, x 0.48) the pad tips met the table at this floor
+# and the controller raised error 15 during the descent. That used to be
+# patched with an environment variable (``MKIT_SUPPORT_CLEARANCE_M``, deleted
+# in 0.16.0); it is now the typed ``droop_margin_m`` of
+# :class:`~manipulation_kit.primitives.clearance.ClearancePolicy`, which the
+# operator policy sets and which reaches this floor as the ``droop_margin_m``
+# argument of :func:`lowest_top_down_tool_z` / :func:`grasp_point`.
 
 #: ...and the least the SOLVED descent may actually keep, as opposed to what
 #: the waypoint asked for. The IK converges to about 2 mm and the path window
@@ -319,7 +321,8 @@ def grasp_orientation(side: str, d_base, obj: Optional[ObjectView] = None,
     return align_tool(side, d, roll_to=gap, roll_rad=roll_rad)
 
 
-def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph) -> float:
+def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph, *,
+                           droop_margin_m: float = 0.0) -> float:
     """The lowest tool-point z a top-down grasp of ``obj`` may command.
 
     A parallel gripper cannot put its finger tips through the table. The
@@ -331,12 +334,16 @@ def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph) -> float:
     the vertical extent from the base-frame orientation: an object measured in
     a table frame that sits 30 mm above the base has its underside 30 mm
     higher, and a yawed box is not taller (R1/R9).
+
+    ``droop_margin_m`` is how far the real arm sags below the commanded pose
+    (``clearance.ClearancePolicy.droop_margin_m``; 0 for the rigid model).
     """
-    return obj.bottom_z(frames) + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
+    return (obj.bottom_z(frames) + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
+            + float(droop_margin_m))
 
 
-def grasp_point(obj: ObjectView, d_base, frames: FrameGraph
-                ) -> Tuple[np.ndarray, bool]:
+def grasp_point(obj: ObjectView, d_base, frames: FrameGraph, *,
+                droop_margin_m: float = 0.0) -> Tuple[np.ndarray, bool]:
     """Where the TOOL POINT goes to grasp ``obj``, and whether it was raised.
 
     The object's RESOLVED base-frame centre, except for a descent
@@ -355,7 +362,7 @@ def grasp_point(obj: ObjectView, d_base, frames: FrameGraph
     p = np.asarray(obj.pose_in_base(frames)[0], dtype=float).reshape(3).copy()
     if not is_descent(d_base):
         return p, False
-    floor = lowest_top_down_tool_z(obj, frames)
+    floor = lowest_top_down_tool_z(obj, frames, droop_margin_m=droop_margin_m)
     if floor <= p[2]:
         return p, False
     p[2] = floor
