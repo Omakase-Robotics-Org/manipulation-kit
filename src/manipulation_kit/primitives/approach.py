@@ -320,7 +320,18 @@ def grasps_above_its_top(obj: ObjectView, frames: FrameGraph) -> bool:
 
 
 def standoff_pose(grasp_p, approach: str, standoff_m: float) -> np.ndarray:
-    """Where the tool point waits before travelling along the approach axis."""
+    """Where the tool point waits before travelling along the approach axis.
+
+    MEASURED FROM THE GRASP POINT — the point the descent starts from, not the
+    object's centre. The two differ for exactly the case that matters:
+    :func:`grasp_point` raises a ``top_down`` tool point until the pad tips
+    clear what the object stands on, so a standoff taken from the centre puts
+    the hand closer to the object than the number in the call says, and
+    ``approach`` and ``grasp`` disagree about where the corridor begins. Shu,
+    2026-09-22: the jaws stood 1-2 cm over a 5 cm charger after ``approach
+    standoff 0.08``. Both verbs now pass the same ``grasp_point`` in, so
+    ``standoff_m`` is the millimetres of straight descent that follow.
+    """
     return np.asarray(grasp_p, dtype=float) - direction(approach) * float(standoff_m)
 
 

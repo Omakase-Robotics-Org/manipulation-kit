@@ -527,6 +527,48 @@ second, independent guard pass over the whole path. Streaming
 `move_joints_both` at 50 Hz stays available for the case that genuinely is a
 stream.
 
+### Contact, force and what the model is told about them
+
+Two half-finished threads meet here, and the state of each is written down
+rather than implied.
+
+**The robot has force evidence and the kit now publishes it.** Every
+`/v1/arm/{side}/state` frame carries a seven-vector of joint torque [Nm] and
+one of joint velocity [deg/s]. `FirmwareExecutor.state()` parsed both and
+published neither, so nothing above the transport could tell a hand resting on
+a surface from a hand in free air. They are now in `RawState.extra` as
+`{side}_torque_nm` and `{side}_velocity`, beside `{side}_mode` and
+`{side}_error_code`. `RawState.extra` is the transport's own channel and
+nothing in `primitives/` reads it yet — this is groundwork, deliberately
+placed where a probe, a compliance check and a stall detector can all reach
+it.
+
+**There is no `touch_down` verb, and that is a decision.** Shu asked for a
+descent that feels for the table (「トルクセンサー・電流情報を取れば」) after
+d1-2's run7, where the arm's ~1 cm droop at x ≈ 0.48 put the pad tips into the
+wagon during a grasp descent. A `touch_down` would answer exactly that case
+and nothing else. The same motion — go until something pushes back, then stop
+— is also how you find a wall, a shelf edge, a lift button, and how a
+handover ends; and a verb whose direction is baked in cannot be any of those.
+So the probe is being designed as a direction-agnostic press (a unit vector in
+`base`, a speed, a torque threshold) and is **not** in this release. What IS
+here is everything that abstraction will need and that does not depend on its
+shape: the force vectors above, and `SUPPORT_CLEARANCE_M`'s
+`MKIT_SUPPORT_CLEARANCE_M` override, which is the stopgap a drooping arm needs
+until a probe can measure the surface instead.
+
+**What a model sees, today.** Nothing new. The torque and velocity vectors go
+into `RawState.extra`, which `examples/agent/live.py` reads to build a
+`WorldView`; it publishes the arm's mode and error code from that dict and
+does not publish force. Until a probe verb exists there is nothing for a model
+to *do* with a torque reading — a number with no verb behind it is a number a
+model will hallucinate a plan around — so the dataflow into the prompt is
+unchanged and the evidence stops at the executor boundary. The one place a
+model's picture of the robot DID change in this release is the gripper: a
+stroke that ends in a fault now comes back as a refusal with
+`reason="gripper_fault"` instead of a silent success, so "the hand is broken,
+stop" is finally a thing the loop can be told.
+
 ### Where the line between the kit and a model runs
 
 Shu, 2026-09-19: 「approach とか少し高次のスキルも manip kit に実装するわけで、

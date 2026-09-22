@@ -74,8 +74,9 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         JOINT_SLICE, SIDES, STROKE_TIMEOUT_S,
                         TRANSPORT_ERROR, ArrivalReport, RawState, RunReport,
                         SettleReport, StrokeReport, ToolGate, WIRE_DIM,
-                        arrive_labels, barrier_refusal)
+                        arrive_labels, barrier_refusal, stroke_refusal)
 from ...primitives.types import GripStep, JointStep, Plan, SettleStep
+from .client import FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS
 from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
                      RateRefused)
 
@@ -435,6 +436,17 @@ class FirmwareExecutor:
             # and the loop kept planning on it (d1-2 run5, 2026-09-22).
             extra[f"{side}_mode"] = str(getattr(arm, "mode", "") or "")
             extra[f"{side}_error_code"] = int(getattr(arm, "error_code", 0) or 0)
+            # THE FORCE EVIDENCE, published rather than dropped. The daemon
+            # reports a seven-vector of joint torque [Nm] and one of joint
+            # velocity [deg/s] in every state frame, and this executor parsed
+            # both and kept neither — so nothing downstream could tell a hand
+            # resting on a surface from a hand in free air, and "did that
+            # descent touch anything?" had no data behind it at all. Tuples,
+            # because ``RawState`` is frozen and hands ``extra`` straight out.
+            extra[f"{side}_torque_nm"] = tuple(
+                float(v) for v in getattr(arm, "feedback_torque", ()) or ())
+            extra[f"{side}_velocity"] = tuple(
+                float(v) for v in getattr(arm, "feedback_velocity", ()) or ())
             try:
                 report = self.client.gripper_state(wire)
             except Exception:  # noqa: BLE001 - a gripper that cannot be read is
@@ -612,11 +624,29 @@ class FirmwareExecutor:
                              ) -> StrokeReport:
         """Poll the gripper until the stroke reaches a TERMINAL state.
 
-        Terminal is one of: the jaws stopped moving (two consecutive identical
-        readings), or the producer reports ``holding``. ``gripper_set`` posted
-        the command and threw the reply away, and the in-repo fake establishes
-        nothing about whether the pinned client blocks — so this does not
-        assume it does. F13 is what reading the evidence too early costs.
+        THE DAEMON'S OWN OUTCOME IS READ FIRST. ``GripperReport.kind`` is the
+        producer's name for what the stroke did — ``grasp``, ``open``,
+        ``empty``, ``contact``, ``lost``, ``timeout``, ``fault``,
+        ``overload`` — and it is the only thing that separates "the jaws
+        stopped because they are holding something" from "the jaws stopped
+        because the motor is disabled". This barrier used to look only at jaw
+        MOTION, so a faulted gripper — whose jaws are the most stationary
+        object in the room — passed it as a completed stroke (Astra review,
+        finding 13; d1-2 2026-09-22, where every stroke after the -4.17 Nm
+        motor fault ended ``Fault`` at once and the loop carried on planning).
+
+        So, in order: a fault kind or a non-zero ``fault_code`` is a FAILED
+        barrier carrying :data:`~manipulation_kit.executor.GRIPPER_FAULT`; a
+        successful terminal kind settles immediately; ``timeout`` is a failed
+        barrier; and only a kind that says nothing useful (``blind``, or a
+        daemon too old to publish one) falls through to the jaw-motion
+        heuristic this method had before — two consecutive identical readings,
+        or the producer reporting a hold.
+
+        ``gripper_set`` posts the command and its reply carries no outcome,
+        and the in-repo fake establishes nothing about whether the pinned
+        client blocks — so this does not assume it does. F13 is what reading
+        the evidence too early costs.
         """
         deadline_s = (self.stroke_timeout_s if timeout_s is None
                       else float(timeout_s))
@@ -635,21 +665,50 @@ class FirmwareExecutor:
             closedness = (float("nan") if open_rad <= 0.0
                           else max(0.0, min(1.0, 1.0 - jaw / open_rad)))
             holding = bool(getattr(report, "holding", False))
+            kind = str(getattr(report, "kind", "") or "")
+            fault_code = getattr(report, "fault_code", None)
+            waited = self._clock() - started
+            if kind in FAULT_KINDS or fault_code:
+                torque = float(getattr(report, "torque_nm", float("nan")))
+                return StrokeReport(
+                    False, closedness, holding, None, waited,
+                    f"the stroke ended {kind or 'in a fault'} at "
+                    f"{torque:.2f} Nm with the jaws at {jaw:.3f} rad",
+                    kind=kind, faulted=True,
+                    fault_code=None if fault_code is None else int(fault_code))
+            if kind in SETTLED_KINDS:
+                return StrokeReport(True, closedness, holding,
+                                    stalled=holding or None, waited_s=waited,
+                                    detail=f"the stroke ended {kind}",
+                                    kind=kind)
+            if kind in UNFINISHED_KINDS:
+                return StrokeReport(
+                    False, closedness, holding, None, waited,
+                    f"the stroke ended {kind}: it ran out of time inside the "
+                    f"daemon and says nothing about where the jaws are",
+                    kind=kind)
             stopped = previous is not None and abs(jaw - previous) <= 1e-6
             if holding or stopped:
-                return StrokeReport(True, closedness, holding,
-                                    stalled=holding or None,
-                                    waited_s=self._clock() - started,
-                                    detail=("the producer reports a hold"
-                                            if holding else
-                                            "the jaws stopped moving"))
+                # No usable outcome from the producer (``blind``, or a daemon
+                # too old to publish one): the jaw-motion heuristic is all
+                # there is, and the detail says so rather than implying the
+                # daemon agreed.
+                return StrokeReport(
+                    True, closedness, holding, stalled=holding or None,
+                    waited_s=waited,
+                    detail=("the producer reports a hold" if holding
+                            else "the jaws stopped moving")
+                    + (f" (stroke kind {kind!r}, which this client does not "
+                       f"recognise)" if kind else
+                       " (the producer named no stroke outcome)"),
+                    kind=kind)
             previous = jaw
-            waited = self._clock() - started
             if waited >= deadline_s:
                 return StrokeReport(
                     False, closedness, holding, None, waited,
                     f"the stroke had not reached a terminal state after "
-                    f"{waited:.1f}s (jaw {jaw:.3f} rad, still moving)")
+                    f"{waited:.1f}s (jaw {jaw:.3f} rad, still moving)",
+                    kind=kind)
             self._sleep(min(self.period, max(0.0, deadline_s - waited)))
 
     def settle(self, timeout_s: float) -> SettleReport:
@@ -792,7 +851,9 @@ class FirmwareExecutor:
                                                        timeout_s=stroke_s)
                     strokes.append(stroke)
                     if not stroke.settled:
-                        return report(index, BARRIER_FAILED, stroke.detail)
+                        refusal = stroke_refusal(plan, step.side, stroke)
+                        return report(index, BARRIER_FAILED, refusal.detail,
+                                      refusal)
                     sent += 1
                 elif isinstance(step, SettleStep):
                     settle = self.settle(step.timeout_s)

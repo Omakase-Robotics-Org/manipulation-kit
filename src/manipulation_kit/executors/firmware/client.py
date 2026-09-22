@@ -44,6 +44,36 @@ from .errors import DeviceUnavailable, FirmwareError, ProtocolError
 #: The wire spelling of a side, as the daemon names them.
 SIDES: Tuple[str, str] = ("a", "b")
 GRIPS: Tuple[str, str, str] = ("soft", "firm", "strong")
+
+#: The daemon's ``StrokeKind`` — the OUTCOME of the last gripper stroke, and
+#: the only thing that distinguishes "the jaws stopped because they are
+#: holding something" from "the jaws stopped because the motor is disabled".
+#: Taken from the generated model (``models/stroke_kind.py``) plus the two
+#: d1-firmware PR #91 adds; an unknown value is carried through verbatim
+#: rather than rejected, because a newer daemon inventing an outcome must not
+#: break a client that would otherwise read the state fine.
+STROKE_KINDS: Tuple[str, ...] = ("blind", "contact", "empty", "fault", "grasp",
+                                 "lost", "open", "overload", "timeout")
+
+#: Outcomes that mean the GRIPPER IS FAULTED: the motor has latched an error
+#: (Damiao ``is_fault``) or refused the stroke, and every stroke after it ends
+#: the same way until something clears it. d1-2, 2026-09-22: a firm hold on a
+#: rigid charger wound its own torque to -4.17 Nm with nothing commanded, the
+#: motor raised its fault flag, and from then on the jaws sat perfectly
+#: stationary — which the settle barrier read as "terminal state reached" and
+#: passed. A disabled gripper is not a settled one (Astra review, finding 13).
+FAULT_KINDS: Tuple[str, ...] = ("fault", "overload")
+
+#: Outcomes that are terminal and SUCCESSFUL — the stroke finished and the
+#: report describes what it found. ``empty`` is in here: closing on nothing is
+#: a true answer about the world, and it is the verifier's job, not the
+#: barrier's, to decide the task failed.
+SETTLED_KINDS: Tuple[str, ...] = ("grasp", "open", "empty", "contact", "lost")
+
+#: Outcomes that are neither: the stroke ran out of time. Terminal on the
+#: wire, but it establishes nothing about where the jaws are, so it is a
+#: failed barrier rather than a fault.
+UNFINISHED_KINDS: Tuple[str, ...] = ("timeout",)
 #: Routes this adapter spells out by hand. A test asserts every one of them is
 #: in the bundled OpenAPI document, so a spec that moves a route breaks the
 #: build rather than the robot.
@@ -115,7 +145,13 @@ class ArmState:
 
 @dataclass(frozen=True)
 class GripperState:
-    """One sample of the parallel gripper."""
+    """One sample of the parallel gripper.
+
+    ``kind`` is the last stroke's OUTCOME (:data:`STROKE_KINDS`) and it is the
+    field that says whether the jaws are stationary because they hold
+    something or because the motor is disabled. It was parsed and then thrown
+    away by every consumer; :attr:`faulted` is what reads it.
+    """
 
     kind: str
     jaw_rad: float
@@ -125,8 +161,23 @@ class GripperState:
     live: bool
     open_rad: Optional[float] = None
     coil_c: Optional[int] = None
+    #: the daemon's own fault code, when it publishes one (d1-firmware #91
+    #: adds it; older daemons do not carry the key at all). ``None`` means
+    #: "not published", which is NOT the same as zero.
+    fault_code: Optional[int] = None
 
     endpoint = "/v1/gripper/{side}/state"
+
+    @property
+    def faulted(self) -> bool:
+        """Is this gripper in a state no further stroke will leave?
+
+        Either the outcome is one of :data:`FAULT_KINDS`, or the daemon
+        published a non-zero ``fault_code``. Both, because they arrived in
+        different firmware versions and the older one only has the kind.
+        """
+        return (self.kind in FAULT_KINDS
+                or bool(self.fault_code))
 
     @classmethod
     def parse(cls, value: Any) -> "GripperState":
@@ -143,10 +194,13 @@ class GripperState:
             for key in ("open_rad", "coil_c"):
                 if value.get(key) is not None and not math.isfinite(value[key]):
                     raise ValueError(f"{key} must be finite when available")
+            fault_code = value.get("fault_code")
+            if fault_code is not None and type(fault_code) is not int:
+                raise ValueError("fault_code must be an integer when present")
             return cls(kind=value["kind"], holding=value["holding"],
                        live=value.get("live", False),
                        open_rad=value.get("open_rad"), coil_c=value.get("coil_c"),
-                       **fields)
+                       fault_code=fault_code, **fields)
         except (KeyError, TypeError, ValueError) as exc:
             raise ProtocolError(f"invalid gripper state: {exc}") from exc
 

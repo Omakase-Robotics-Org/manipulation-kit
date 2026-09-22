@@ -53,6 +53,36 @@ from .verbs import Approach, Carry, Grasp, Lift, Place
 
 SIDES: Tuple[str, ...] = ("left", "right")
 
+#: The wrist quarter-turns a caller may fall back through, in order.
+#:
+#: The kit squares the jaws across the object's LONG axis, which is the right
+#: default and is sometimes the one posture the arm cannot hold: on d1-2
+#: (run6, 2026-09-22) a 45x55 mm charger put the jaws across x, and that wrist
+#: was ``guard_reject``ed at every standoff from 20 to 200 mm while the same
+#: grasp a quarter turn round planned cleanly. ``-90`` before ``+90`` because
+#: ``+90`` is the IK-infeasible wrist on this arm, and trying it first costs a
+#: whole plan to find that out.
+JAW_TURNS_DEG: Tuple[float, ...] = (0.0, -90.0, 90.0)
+
+
+def jaw_turn_candidates(asked_deg: float = 0.0) -> Tuple[float, ...]:
+    """The turns to try for ``asked_deg``, the asked-for one FIRST.
+
+    ONE generator, because the tuple had been written out three times — here,
+    in the chooser's caller and in the live fallback — and the copies did not
+    agree about the order or about whether the asked-for turn was in the list
+    at all. Astra review, finding 6: "``choose_side()`` evaluates only the
+    supplied turn; the outer ``plan_the_hand()`` tries every turn ... chain
+    planning can therefore recommend a strategy the live gate will refuse."
+    Chain planning, the live fallback and any other consumer now walk the same
+    ladder.
+
+    The asked-for turn always leads, so a caller that has already decided is
+    never quietly re-planned into a different wrist first.
+    """
+    asked = float(asked_deg)
+    return (asked,) + tuple(t for t in JAW_TURNS_DEG if abs(t - asked) > 1e-9)
+
 
 # --------------------------------------------------------------------------- #
 # the result
@@ -89,6 +119,12 @@ class ChainPlan:
     #: PREDICTED, not one anybody observed. Published so a caller cannot
     #: mistake a planned chain for a measured outcome.
     hypothetical: bool = True
+    #: the wrist quarter-turn and the approach this chain was planned at.
+    #: Published because a chooser that tries several and reports only the
+    #: side has told the caller which HAND can do the task and not WHAT it
+    #: has to do — and the caller then asks for the default and is refused.
+    jaw_turn_deg: float = 0.0
+    approach: str = "top_down"
 
     @property
     def ok(self) -> bool:
@@ -110,15 +146,19 @@ class ChainPlan:
         return None
 
     def sentence(self) -> str:
+        turned = ("" if not self.jaw_turn_deg
+                  else f" (wrist turned {self.jaw_turn_deg:+.0f} deg)")
         broke = self.broke_at
         if broke is None:
-            return f"the {self.side} arm can plan the whole chain"
-        return (f"the {self.side} arm plans {self.planned} of "
+            return f"the {self.side} arm can plan the whole chain{turned}"
+        return (f"the {self.side} arm{turned} plans {self.planned} of "
                 f"{len(self.links)} verbs and then {broke.result}")
 
     def to_json(self) -> Dict[str, Any]:
         return {"side": self.side, "ok": self.ok, "planned": self.planned,
                 "hypothetical": bool(self.hypothetical),
+                "jaw_turn_deg": float(self.jaw_turn_deg),
+                "approach": self.approach,
                 "note": ("reach only: every link after the first was planned "
                          "against a predicted world, and a chain that plans "
                          "is not evidence that a trial succeeded"),
@@ -133,10 +173,20 @@ class SideChoice:
     reason: str
     reachable: bool
     chains: Dict[str, ChainPlan]
+    #: WHICH wrist turn made the chosen chain feasible. A caller that acts on
+    #: ``side`` alone and then asks for the default turn gets the refusal the
+    #: chooser had already planned its way around.
+    jaw_turn_deg: float = 0.0
+
+    @property
+    def chain(self) -> Optional[ChainPlan]:
+        """The chain that was chosen — the one ``side`` and the turn name."""
+        return self.chains.get(self.side)
 
     def to_json(self) -> Dict[str, Any]:
         return {"side": self.side, "reason": self.reason,
                 "reachable": self.reachable,
+                "jaw_turn_deg": float(self.jaw_turn_deg),
                 "chains": {s: c.to_json() for s, c in self.chains.items()}}
 
 
@@ -258,7 +308,8 @@ def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
         state = _posed(state, kin, side, q_after)
         if primitive.name() == "grasp":
             state = _grasped(state, side, obj)
-    return ChainPlan(side, tuple(links))
+    return ChainPlan(side, tuple(links), jaw_turn_deg=float(jaw_turn_deg),
+                     approach=approach)
 
 
 def _near_hand(world: WorldView, obj: str) -> str:
@@ -279,7 +330,8 @@ def _near_hand(world: WorldView, obj: str) -> str:
 
 def choose_side(world: WorldView, kin, *, obj: str, destination: str,
                 approach: str = "top_down", lift_m: float = 0.12,
-               jaw_turn_deg: float = 0.0,
+                jaw_turn_deg: float = 0.0,
+                jaw_turns: Optional[Sequence[float]] = None,
                 sides: Sequence[str] = SIDES) -> SideChoice:
     """The hand that can plan the WHOLE task, not the hand nearest the block.
 
@@ -290,24 +342,48 @@ def choose_side(world: WorldView, kin, *, obj: str, destination: str,
     2. otherwise the arm that plans the most links, near hand on a tie;
     3. and the caller is told which case it got (``reachable``), because
        "no arm can deliver this" is a finding, not a default.
+
+    EACH ARM IS TRIED AT EVERY WRIST TURN, not only at the one it was handed.
+    The ladder is :func:`jaw_turn_candidates` — the same one a live fallback
+    walks — so a chain this function calls reachable is one the live gate will
+    also accept. The two used to disagree, and a chooser that recommends a
+    strategy the executor refuses is worse than no chooser (Astra review,
+    finding 6). The turn that won travels on the result rather than being
+    thrown away. ``jaw_turns`` pins the ladder for a caller with a reason to;
+    pass ``(jaw_turn_deg,)`` for the old single-turn behaviour.
     """
-    chains = {side: plan_chain(world, kin, obj=obj, destination=destination,
+    ladder = (tuple(float(t) for t in jaw_turns) if jaw_turns is not None
+              else jaw_turn_candidates(jaw_turn_deg))
+    chains: Dict[str, ChainPlan] = {}
+    for side in sides:
+        best: Optional[ChainPlan] = None
+        for turn in ladder:
+            chain = plan_chain(world, kin, obj=obj, destination=destination,
                                side=side, approach=approach, lift_m=lift_m,
-                               jaw_turn_deg=jaw_turn_deg)
-              for side in sides}
+                               jaw_turn_deg=turn)
+            if best is None or chain.planned > best.planned:
+                best = chain
+            if chain.ok:
+                best = chain
+                break
+        assert best is not None       # the ladder is never empty
+        chains[side] = best
     near = _near_hand(world, obj)
     ordered = sorted(chains.values(),
                      key=lambda c: (not c.ok, -c.planned, c.side != near))
     best = ordered[0]
     other = chains.get("left" if best.side == "right" else "right")
+    turned = ("" if not best.jaw_turn_deg else
+              f", with the wrist turned {best.jaw_turn_deg:+.0f} deg so the "
+              f"jaws close across the object's other side")
     if best.ok:
         if other is not None and other.ok:
             reason = (f"both arms plan the whole chain; took the near hand "
-                      f"({near}) by the block's own y")
+                      f"({near}) by the block's own y{turned}")
         else:
-            reason = (f"only the {best.side} arm plans the whole chain — "
+            reason = (f"only the {best.side} arm plans the whole chain{turned} — "
                       + (other.sentence() if other is not None else "no other arm"))
-        return SideChoice(best.side, reason, True, chains)
+        return SideChoice(best.side, reason, True, chains, best.jaw_turn_deg)
     reason = ("no arm plans the whole chain; took the one that gets furthest — "
               + "; ".join(chains[s].sentence() for s in sorted(chains)))
-    return SideChoice(best.side, reason, False, chains)
+    return SideChoice(best.side, reason, False, chains, best.jaw_turn_deg)

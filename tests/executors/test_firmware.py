@@ -16,12 +16,19 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pytest
 
+from manipulation_kit.executor import (GRIPPER_FAULT, RUN_REASONS,
+                                       STROKE_UNFINISHED, StrokeReport,
+                                       stroke_refusal)
 from manipulation_kit.executors.firmware import (ANCHOR_GAP_DEG,
                                                  INTERPOLATION_S,
                                                  MAX_JOINT_RATE_DEG_S,
                                                  FirmwareExecutor,
                                                  FirmwareUnavailable, Lease)
+from manipulation_kit.executors.firmware.client import (FAULT_KINDS,
+                                                        SETTLED_KINDS,
+                                                        GripperState)
 from manipulation_kit.primitives import GoHome, Grasp
+from manipulation_kit.primitives.types import Plan
 
 REACHABLE = (0.38, 0.25, 0.05)
 
@@ -49,6 +56,9 @@ class FakeGripperState:
     live: bool = True
     open_rad: float = 1.16
     coil_c: int = 30
+    #: d1-firmware #91 adds this to the state; ``None`` is a daemon that does
+    #: not publish one, which is NOT the same claim as a zero.
+    fault_code: int = None
 
 
 @dataclass
@@ -71,6 +81,12 @@ class FakeClient:
     stroke_polls: int = 1
     #: the arm never gets where it was sent — the "stopped short" case
     arrival_offset_deg: float = 0.0
+    #: wire side -> the stroke outcome a LATCHED gripper reports. Once the
+    #: Damiao motor raises its own fault flag every subsequent stroke is
+    #: accepted and ends the same way (d1-2, 2026-09-22), so a fake whose
+    #: fault is cleared by the next ``gripper_set`` cannot reproduce the
+    #: barrier bug at all.
+    faults: Dict[str, str] = field(default_factory=dict)
     _pending: Dict[str, Any] = field(default_factory=dict)
     _stroke: Dict[str, Any] = field(default_factory=dict)
     cancelled: List[int] = field(default_factory=list)
@@ -132,6 +148,10 @@ class FakeClient:
 
     def gripper_state(self, side: str) -> FakeGripperState:
         self.calls.append(("GET", f"/v1/gripper/{side}/state", None))
+        if side in self.faults:
+            self._stroke.pop(side, None)
+            return FakeGripperState(kind=self.faults[side], jaw_rad=1.5085,
+                                    torque_nm=-4.17, holding=False)
         stroke = self._stroke.get(side)
         if stroke is not None:
             if stroke["polls"] > 0:
@@ -748,3 +768,187 @@ def test_a_nonsense_construction_argument_is_refused(kwargs):
     deadline unreachable, and nothing downstream would have said so."""
     with pytest.raises(ValueError):
         FirmwareExecutor(FakeClient(), **kwargs)
+
+
+# --------------------------------------------------------------------------- #
+# a faulted gripper is not a settled one (Astra review, finding 13)
+# --------------------------------------------------------------------------- #
+#
+# "``executors/firmware/executor.py:561-564`` discards the stroke response;
+# ``605-639`` treats holding or two unchanged jaw readings as settled without
+# checking fault/overload terminal states. A disabled, stationary gripper can
+# pass this barrier."
+#
+# It did, on d1-2 (2026-09-22). A firm hold on a rigid charger wound its own
+# torque from -2.24 to -4.17 Nm with nothing commanded; the Damiao motor
+# raised its fault flag; every stroke after that ended ``Fault`` immediately —
+# and the jaws, being disabled, were the most stationary thing on the robot.
+# The barrier whose whole job is "did the stroke finish?" answered yes.
+
+
+def _faulted(robot, side: str = "b", **kwargs) -> None:
+    """The fake's gripper in the state d1-2's was in after 02:30:31Z:
+    stationary jaws, a fault outcome, and a torque nobody commanded — and
+    LATCHED, because that is the part that matters: the motor keeps its own
+    fault flag and every stroke after it ends the same way."""
+    kind = kwargs.pop("kind", "fault")
+    robot.client.faults[side] = kind
+    robot.client.grippers[side] = FakeGripperState(
+        kind=kind, jaw_rad=1.5085, torque_nm=-4.17, holding=False, **kwargs)
+
+
+def test_a_faulted_gripper_does_not_settle(executor):
+    _faulted(executor)
+    stroke = executor.wait_gripper_settled("right", timeout_s=0.5)
+    assert not stroke.settled
+    assert stroke.faulted and stroke.kind == "fault"
+    assert "-4.17" in stroke.detail
+
+
+@pytest.mark.parametrize("kind", FAULT_KINDS)
+def test_every_fault_kind_fails_the_barrier(executor, kind):
+    _faulted(executor, kind=kind)
+    assert not executor.wait_gripper_settled("right", timeout_s=0.5).settled
+
+
+def test_a_fault_code_faults_it_even_when_the_kind_looks_innocent(executor):
+    """d1-firmware #91 adds ``fault_code``. A daemon that reports a code
+    beside an innocuous kind is still a faulted gripper, and reading the kind
+    alone would have passed it."""
+    executor.client.grippers["b"] = FakeGripperState(
+        kind="open", jaw_rad=1.5085, fault_code=7)
+    executor.client.faults.pop("b", None)
+    stroke = executor.wait_gripper_settled("right", timeout_s=0.5)
+    assert not stroke.settled and stroke.faulted
+    assert stroke.fault_code == 7
+
+
+@pytest.mark.parametrize("kind", SETTLED_KINDS)
+def test_a_successful_outcome_settles_at_once(executor, kind):
+    """Including ``empty``: closing on nothing is a TRUE answer about the
+    world and the verifier's problem, not the barrier's."""
+    executor.client.grippers["b"] = FakeGripperState(
+        kind=kind, jaw_rad=0.4, holding=(kind == "grasp"))
+    stroke = executor.wait_gripper_settled("right", timeout_s=0.5)
+    assert stroke.settled and stroke.kind == kind
+
+
+def test_a_stroke_that_timed_out_inside_the_daemon_is_not_settled(executor):
+    executor.client.grippers["b"] = FakeGripperState(kind="timeout", jaw_rad=0.9)
+    stroke = executor.wait_gripper_settled("right", timeout_s=0.5)
+    assert not stroke.settled and not stroke.faulted
+    assert stroke.kind == "timeout"
+
+
+def test_an_unrecognised_outcome_falls_back_and_says_so(executor):
+    """A daemon older or newer than this client must not become unusable: the
+    jaw-motion heuristic still answers, and the detail states that the
+    producer's own outcome was not understood rather than implying it agreed.
+    """
+    executor.client.grippers["b"] = FakeGripperState(kind="something_new",
+                                                     jaw_rad=0.4, holding=True)
+    stroke = executor.wait_gripper_settled("right", timeout_s=0.5)
+    assert stroke.settled
+    assert "something_new" in stroke.detail
+
+
+def test_the_fault_stops_the_run_with_its_own_typed_reason(executor, d1_arm,
+                                                           observe):
+    """The consequence. Before this the run carried on to the next step and,
+    three steps later, reported a jaw stall instead of the fault that caused
+    it."""
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    assert plan.ok
+    with executor as robot:
+        _faulted(robot, "a")
+        report = robot.run_plan(plan)
+    assert not report.completed
+    assert report.stop_reason == "barrier_failed"
+    assert report.refusal is not None
+    assert report.refusal.reason == GRIPPER_FAULT
+    assert "FAULTED" in report.refusal.detail
+    # the evidence travels as data, not only in the sentence
+    assert report.strokes and report.strokes[-1].faulted
+    assert report.strokes[-1].to_json()["faulted"] is True
+
+
+def test_gripper_fault_is_in_the_published_vocabulary():
+    """A reason a consumer cannot switch on is prose. ``RunRefusal`` refuses
+    to be built with one outside the list, which is what makes the list the
+    contract."""
+    assert GRIPPER_FAULT in RUN_REASONS
+
+
+def test_an_unfinished_stroke_keeps_its_own_reason():
+    """The two are not the same finding and must not share a code: an
+    unfinished stroke can be waited for or retried; a faulted gripper cannot
+    — d1-firmwared 0.3.0 has no clear-fault route at all, so on that build the
+    answer is a power cycle."""
+    plan = Plan("grasp", "right")
+    slow = stroke_refusal(plan, "right",
+                          StrokeReport(False, detail="still moving"))
+    assert slow.reason == STROKE_UNFINISHED
+    bad = stroke_refusal(plan, "right",
+                         StrokeReport(False, kind="fault", faulted=True,
+                                      fault_code=3, detail="motor disabled"))
+    assert bad.reason == GRIPPER_FAULT
+    assert "fault_code 3" in bad.detail
+
+
+def test_the_client_reads_the_stroke_outcome_and_the_fault_code():
+    state = GripperState.parse({
+        "kind": "fault", "jaw_rad": 1.5085, "torque_nm": -4.17,
+        "holding": False, "grip_preload_rad": 0.045, "live": True,
+        "open_rad": 1.35, "coil_c": 34, "fault_code": 12})
+    assert state.kind == "fault" and state.fault_code == 12
+    assert state.faulted
+
+
+def test_a_daemon_that_publishes_no_fault_code_is_not_a_zero():
+    """``None`` is "not said" and 0 is "said, and fine". A client that
+    defaulted the key to 0 would report every older daemon as healthy on
+    evidence it never received."""
+    state = GripperState.parse({
+        "kind": "grasp", "jaw_rad": 0.4, "torque_nm": -0.6, "holding": True,
+        "grip_preload_rad": 0.045, "live": True, "open_rad": 1.35})
+    assert state.fault_code is None
+    assert not state.faulted
+
+
+# --------------------------------------------------------------------------- #
+# the force evidence reaches RawState.extra
+# --------------------------------------------------------------------------- #
+
+def test_joint_torque_and_velocity_reach_the_raw_state(executor):
+    """The groundwork every contact question needs. Both seven-vectors are in
+    every frame the daemon sends, and this executor used to parse both and
+    publish neither — so nothing downstream could tell a hand resting on a
+    surface from a hand in free air.
+    """
+    executor.client.arms["b"].feedback_torque = (0.1, -2.4, 0.0, 0.3, 0.0,
+                                                 0.0, 0.0)
+    executor.client.arms["b"].feedback_velocity = (0.0, 1.5, 0.0, 0.0, 0.0,
+                                                   0.0, 0.0)
+    extra = executor.state().extra
+
+    assert extra["right_torque_nm"] == pytest.approx(
+        (0.1, -2.4, 0.0, 0.3, 0.0, 0.0, 0.0))
+    assert extra["right_velocity"] == pytest.approx(
+        (0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0))
+    assert len(extra["left_torque_nm"]) == 7
+    assert len(extra["left_velocity"]) == 7
+    # tuples rather than the client's own containers: ``RawState`` is frozen
+    # and hands ``extra`` straight out to whoever asked
+    assert isinstance(extra["right_torque_nm"], tuple)
+    assert float(np.max(np.abs(extra["left_torque_nm"]))) == 0.0
+
+
+def test_the_mode_and_error_code_still_travel_beside_them(executor):
+    """A regression guard: the arm-fault publication (Astra finding 2, fixed
+    the same night) and this share one dict."""
+    executor.client.arms["b"].mode = "error"
+    executor.client.arms["b"].error_code = 15
+    extra = executor.state().extra
+    assert extra["right_mode"] == "error" and extra["right_error_code"] == 15
+    assert "right_torque_nm" in extra

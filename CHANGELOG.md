@@ -6,6 +6,87 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.16.0 — 2026-09-22
+
+Three corrections from the Astra review of `feat/perceive-head` and from
+tonight's live runs on d1-2, plus the one piece of executor groundwork every
+contact-sensing question needs. No new verb: the contact probe Shu asked for
+(「トルクセンサー・電流情報を取れば」) is deliberately **not** here, because it
+should be a direction-agnostic `press`/`probe` — a table, a wall, a lift
+button — and that abstraction is being designed rather than guessed at from
+the one case that came up first.
+
+### A faulted gripper is not a settled one — BREAKING for anyone switching on `RunRefusal.reason`
+
+Astra review, finding 13: `wait_gripper_settled` decided a stroke had reached
+a terminal state from jaw MOTION alone — two identical readings, or the
+producer reporting a hold. A faulted gripper's jaws are the most stationary
+object in the room, so a disabled hand passed the barrier whose entire job is
+"did the stroke finish?". On d1-2 (2026-09-22) a firm hold on a rigid charger
+wound its own torque from −2.24 to −4.17 Nm with nothing commanded, the Damiao
+motor raised its fault flag, and every stroke after that ended `Fault`
+immediately while the loop carried on planning.
+
+The daemon has always said so, in `GripperReport.kind`. It is now read:
+
+* `FAULT_KINDS` (`fault`, `overload`) or a non-zero `fault_code` → **the
+  barrier fails**, with the new run reason `GRIPPER_FAULT`
+  (`"gripper_fault"`). Its own code rather than `stroke_unfinished`, because
+  the two have different answers: an unfinished stroke can be waited for, and
+  a faulted gripper cannot — d1-firmwared 0.3.0 has no clear-fault route at
+  all, so on that build the answer is a power cycle.
+* `SETTLED_KINDS` (`grasp`, `open`, `empty`, `contact`, `lost`) → settled at
+  once. `empty` included: closing on nothing is a true answer about the world
+  and the verifier's problem, not the barrier's.
+* `timeout` → a failed barrier, not a fault.
+* anything else (`blind`, or a daemon too old to name an outcome) → the old
+  jaw-motion heuristic, and the `StrokeReport.detail` says that is what
+  happened rather than implying the daemon agreed.
+
+`StrokeReport` gains `kind`, `faulted` and `fault_code`; `GripperState` gains
+`fault_code` (`None` is "not published", which is **not** a zero) and a
+`faulted` property; `RUN_REASONS` gains `gripper_fault`. Both runners now stop
+a failed stroke through one shared `executor.stroke_refusal()`, so the stop
+carries a typed `RunReport.refusal` — it used to carry a bare sentence and no
+refusal object at all, which is invisible to exactly the consumers the typed
+vocabulary was added for.
+
+### The top-down standoff is measured from the grasp point
+
+`Grasp` travels to `approach.grasp_point`, which for `top_down` is **not** the
+object's centre — it is raised until the pad tips clear what the object is
+standing on. `Approach` stood off the CENTRE, so the two verbs disagreed about
+where the descent corridor begins and the hand waited nearer the object than
+the number in the call said. Shu, 2026-09-22: the jaws sat 1–2 cm over a 5 cm
+charger after `approach standoff 0.08`. Both verbs now derive the standoff
+from the same point, so `standoff_m` is the millimetres of straight descent
+that follow. A tall object, whose grasp point is its centre, plans exactly as
+before.
+
+### One jaw-turn ladder, shared
+
+Astra review, finding 6: `choose_side()` evaluated only the turn it was
+handed while its own caller tried all three, so chain planning could call a
+task unreachable that the live fallback then solved a quarter turn round — one
+verb at a time, at the standoff, on the robot. `reach.jaw_turn_candidates()`
+is now the single generator (asked-for turn first, then `-90`, then `+90`;
+`+90` last because it is the IK-infeasible wrist on this arm), `choose_side`
+walks it per arm, and the turn that won travels back on
+`SideChoice.jaw_turn_deg` / `ChainPlan.jaw_turn_deg` — a chooser that reports
+only the side has told the caller which HAND can do the task and not WHAT it
+has to do. `choose_side(..., jaw_turns=(x,))` pins the old single-turn
+behaviour.
+
+### Joint torque and velocity reach `RawState.extra`
+
+`FirmwareExecutor.state()` parsed `feedback_torque` and `feedback_velocity`
+out of every frame the daemon sends and published neither, so nothing
+downstream could tell a hand resting on a surface from a hand in free air.
+They are now `extra["{side}_torque_nm"]` and `extra["{side}_velocity"]`, seven
+floats each, beside the `{side}_mode` / `{side}_error_code` added in 0.15.0.
+This is the direction-free half of the contact-probe work; the verb that will
+use it is not in this release.
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO

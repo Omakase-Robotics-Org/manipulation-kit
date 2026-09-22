@@ -196,14 +196,32 @@ class StrokeReport:
     stalled: Optional[bool] = None
     waited_s: float = 0.0
     detail: str = ""
+    #: the producer's own name for the outcome, when it has one — the
+    #: daemon's ``StrokeKind`` (``grasp``/``open``/``empty``/``fault``/...).
+    #: Empty when the transport cannot say, which is not the same as unknown.
+    kind: str = ""
+    #: is the GRIPPER faulted — latched, disabled, refusing further strokes?
+    #: Distinct from ``not settled``: a faulted gripper's jaws are perfectly
+    #: stationary, which is what made a fault look like a completed stroke.
+    faulted: bool = False
+    #: the producer's fault code, when it publishes one. ``None`` = not said.
+    fault_code: Optional[int] = None
 
     def to_json(self) -> Dict[str, Any]:
-        return {"settled": bool(self.settled),
-                "closedness": (None if not np.isfinite(self.closedness)
-                               else round(float(self.closedness), 3)),
-                "holding": self.holding, "stalled": self.stalled,
-                "waited_s": round(float(self.waited_s), 3),
-                "detail": self.detail}
+        out: Dict[str, Any] = {
+            "settled": bool(self.settled),
+            "closedness": (None if not np.isfinite(self.closedness)
+                           else round(float(self.closedness), 3)),
+            "holding": self.holding, "stalled": self.stalled,
+            "waited_s": round(float(self.waited_s), 3),
+            "detail": self.detail}
+        if self.kind:
+            out["kind"] = self.kind
+        if self.faulted:
+            out["faulted"] = True
+        if self.fault_code is not None:
+            out["fault_code"] = int(self.fault_code)
+        return out
 
 
 #: Default barriers. Both are generous — they are deadlines, not budgets.
@@ -367,8 +385,18 @@ ARRIVED_OFF_BY = "arrived_off_by"
 ARRIVAL_UNKNOWN = "arrival_unknown"
 NOT_SETTLED = "not_settled"
 STROKE_UNFINISHED = "stroke_unfinished"
+#: The GRIPPER itself is faulted — the motor latched an error or refused the
+#: stroke, and no further stroke will do anything until something clears it.
+#: Its own reason rather than ``stroke_unfinished`` because the two have
+#: different answers: an unfinished stroke can be waited for or retried, and a
+#: faulted gripper cannot (d1-firmwared 0.3.0 has no clear-fault route at all,
+#: so on that build the answer is a power cycle). d1-2, 2026-09-22: a firm
+#: hold wound its own torque to -4.17 Nm, the motor raised its fault flag, and
+#: every stroke after it ended `Fault` immediately while the jaws sat
+#: stationary — which the barrier read as "terminal state reached".
+GRIPPER_FAULT = "gripper_fault"
 RUN_REASONS: Tuple[str, ...] = (ARRIVED_OFF_BY, ARRIVAL_UNKNOWN, NOT_SETTLED,
-                                STROKE_UNFINISHED)
+                                STROKE_UNFINISHED, GRIPPER_FAULT)
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1140,32 @@ def barrier_refusal(plan: Plan, side: str, arrival: ArrivalReport,
         primitive=plan.primitive, side=side)
 
 
+def stroke_refusal(plan: Plan, side: str, stroke: StrokeReport) -> RunRefusal:
+    """Why a gripper step stopped the run, in the refusal vocabulary.
+
+    ONE builder, used by both runners, because the two used to stop with a
+    bare sentence and no ``refusal`` object at all — so a consumer that
+    switched on ``RunRefusal.reason`` (which is every consumer the typed
+    vocabulary was added for) saw a gripper fault as an untyped stop.
+    """
+    if stroke.faulted:
+        code = ("" if stroke.fault_code is None
+                else f", fault_code {stroke.fault_code}")
+        return RunRefusal(
+            GRIPPER_FAULT,
+            f"the {side} gripper is FAULTED"
+            + (f" ({stroke.kind}{code})" if stroke.kind else code)
+            + f": {stroke.detail}. The jaws are stationary because the motor "
+              f"is not driving them, not because the stroke finished; no "
+              f"further stroke will do anything until the fault is cleared",
+            stage="gripper_stroke", primitive=plan.primitive, side=side)
+    return RunRefusal(
+        STROKE_UNFINISHED,
+        f"the {side} gripper stroke did not reach a terminal state: "
+        f"{stroke.detail}",
+        stage="gripper_stroke", primitive=plan.primitive, side=side)
+
+
 def run(plan: Plan, executor: "Executor", *, hz: float = 50.0,
         allow_unbound: bool = False, allow_unguarded: bool = False,
         arrive_tol_rad: float = ARRIVE_TOL_RAD,
@@ -1353,9 +1407,8 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
             stroke = _stroke_of(executor, step.side, timeout_s=stroke_timeout_s)
             strokes.append(stroke)
             if not stroke.settled:
-                return stop(index, BARRIER_FAILED,
-                            f"the {step.side} gripper stroke did not reach a "
-                            f"terminal state: {stroke.detail}")
+                refusal = stroke_refusal(plan, step.side, stroke)
+                return stop(index, BARRIER_FAILED, refusal.detail, refusal)
             sent += 1
         elif isinstance(step, SettleStep):
             settle = executor.settle(step.timeout_s)

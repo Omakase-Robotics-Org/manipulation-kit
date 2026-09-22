@@ -490,7 +490,14 @@ class Approach(Primitive):
         side = _resolved_side(self.side, world, p)
         r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
                                       dyaw_rad=math.radians(self.jaw_turn_deg))
-        return side, ap.standoff_pose(p, self.approach, self.standoff_m), r_tcp, []
+        # THE SAME REFERENCE THE DESCENT STARTS FROM. ``Grasp`` travels to
+        # ``grasp_point``, which for ``top_down`` is NOT the object's centre —
+        # it is raised until the pad tips clear the support. Standing off the
+        # centre therefore left the hand nearer the object than ``standoff_m``
+        # said, and made the two verbs disagree about the corridor.
+        p_grasp, _raised = ap.grasp_point(item, self.approach, world.frames)
+        return (side, ap.standoff_pose(p_grasp, self.approach, self.standoff_m),
+                r_tcp, [])
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
