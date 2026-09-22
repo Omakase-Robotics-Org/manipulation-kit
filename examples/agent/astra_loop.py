@@ -163,7 +163,7 @@ def build_model(dry_run: bool, obj: str = "red_block", to: str = "box"):
             print("[astra_loop] no OPENAI_API_KEY; running the scripted stub",
                   file=sys.stderr)
         return ScriptedModel(obj, to)
-    return OpenAIModel(os.environ.get("OPENAI_MODEL", "gpt-5"), key)
+    return OpenAIModel(os.environ.get("OPENAI_MODEL", "gpt-6-astra"), key)
 
 
 def _say(messages: List[Dict[str, Any]], call_id: str, text: str) -> None:
