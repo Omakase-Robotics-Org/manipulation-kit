@@ -397,12 +397,29 @@ class OpenAIModel:
                 {k: v for k, v in p.items() if not k.startswith("_")}
                 for p in content])
 
+        # gpt-6-astra with three photos spent its whole default output budget
+        # on hidden reasoning and returned NOTHING (status=incomplete,
+        # max_output_tokens; d1-2 2026-09-22). Budget explicitly.
+        extra: Dict[str, Any] = {
+            "max_output_tokens": int(os.environ.get("ASTRA_MAX_OUTPUT_TOKENS", "12000"))}
+        effort = os.environ.get("ASTRA_REASONING", "medium")
+        if effort:
+            extra["reasoning"] = {"effort": effort}
         response = self.client.responses.create(
             model=self.model,
             input=[clean(m) for m in messages],
+            **extra,
             tools=[{"type": "function", **t} for t in tools])
         calls = [i for i in response.output
                  if getattr(i, "type", "") == "function_call"]
+        if os.environ.get("ASTRA_DEBUG"):
+            kinds = [getattr(i, "type", "?") for i in response.output]
+            print(f"[astra_loop] model output items: {kinds}; text: "
+                  f"{(getattr(response, 'output_text', '') or '')[:600]!r}; "
+                  f"status={getattr(response, 'status', '?')} "
+                  f"incomplete={getattr(response, 'incomplete_details', None)} "
+                  f"usage={getattr(response, 'usage', None)}",
+                  file=sys.stderr)
         if not calls:
             return {"name": None, "arguments": {},
                     "claimed": getattr(response, "output_text", "")}

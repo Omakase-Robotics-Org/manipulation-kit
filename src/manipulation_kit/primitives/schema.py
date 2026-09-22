@@ -79,6 +79,14 @@ def _json_schema(spec, names: Optional[Sequence[str]]) -> Dict[str, Any]:
         schema["type"] = "string"
         if names is not None:
             schema["enum"] = list(names)
+            if not schema["enum"]:
+                # An EMPTY enum is an unsatisfiable grammar: the Responses API
+                # returns status=incomplete with zero output tokens and no error
+                # (d1-2 2026-09-22, a scene with nothing declared yet). Leave the
+                # name free and say why; decode() still rejects an unknown name.
+                del schema["enum"]
+                schema["description"] = (schema.get("description", "")
+                                         + " (nothing of this kind is known yet; declare_scene first)")
     elif domain["kind"] == "number":
         schema.update(type="number", minimum=domain["minimum"],
                       maximum=domain["maximum"])
