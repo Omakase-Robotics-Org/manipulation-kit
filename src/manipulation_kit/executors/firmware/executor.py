@@ -76,8 +76,8 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         MAX_TRAVEL, SIDES, TRANSPORT_ERROR, UNMEASURED,
                         ArrivalReport, ContactReport, ContactWatch, LiftState,
                         NeckState, RawState, RunReport, SettleReport,
-                        StrokeReport, ToolGate, WIRE_DIM, arrive_labels,
-                        barrier_refusal, contact_kin, contact_report,
+                        StrokeReport, ToolGate, WIRE_DIM, _final_arrival,
+                        arrive_labels, barrier_refusal, contact_kin, contact_report,
                         controller_fault, fault_refusal, retract_path,
                         stroke_refusal)
 from ...primitives.types import (ContactCriterion, ContactStep, GripStep,
@@ -1096,6 +1096,35 @@ class FirmwareExecutor:
                 refusal = barrier_refusal(plan, closing.side, arrival, gate)
                 return report(index, BARRIER_FAILED, refusal.detail, refusal)
 
+            def arrive_after(played: Sequence[JointStep], index: int, *,
+                             final: bool):
+                """Measure the leg just played, before anything that is
+                not another joint leg. THE SAME RULE ``run_steps`` applies:
+                a gated waypoint gets the tool gate; otherwise, before a
+                settle and at the end of the plan, the joint-space barrier.
+
+                Before this, the trajectory runner flushed a gated waypoint
+                only when ANOTHER joint leg followed it or a stroke did, and
+                ran no arrival at all before a settle or at the end: an
+                Approach whose last leg ends on a settle reported
+                ``completed`` with ``arrivals: []`` while its J7 sat 50 deg
+                short (d1-2, 2026-09-22).
+                """
+                if not played or not last:
+                    return None
+                if played[-1].waypoint in labels:
+                    return gate_at(played[-1], index)
+                if not final:
+                    return None
+                arrival = _final_arrival(self, plan, self._vector(last),
+                                         tol_rad=tol, timeout_s=arrive_s,
+                                         gate=gate)
+                arrivals.append(arrival)
+                if arrival.arrived:
+                    return None
+                refusal = barrier_refusal(plan, plan.side, arrival, gate)
+                return report(index, BARRIER_FAILED, arrival.detail, refusal)
+
             for index, step in enumerate(plan.steps):
                 if isinstance(step, JointStep):
                     if (batch and step.waypoint != batch[-1].waypoint
@@ -1141,11 +1170,17 @@ class FirmwareExecutor:
                                       refusal)
                     sent += 1
                 elif isinstance(step, SettleStep):
+                    stopped = arrive_after(played, index, final=True)
+                    if stopped is not None:
+                        return stopped
                     settle = self.settle(step.timeout_s)
                     sent += 1
                     if not settle.settled:
                         return report(index, BARRIER_FAILED, settle.detail)
                 elif isinstance(step, ContactStep):
+                    stopped = arrive_after(played, index, final=False)
+                    if stopped is not None:
+                        return stopped
                     contact = self.move_until(
                         step.timed_path(), side=step.side,
                         criterion=step.criterion, kin=gate.kin,
@@ -1169,6 +1204,9 @@ class FirmwareExecutor:
                     return report(index, TRANSPORT_ERROR,
                                   f"not a plan step: {step!r}")
             sent += self._play(batch)
+            stopped = arrive_after(batch, len(plan.steps) - 1, final=True)
+            if stopped is not None:
+                return stopped
         except FirmwareUnavailable as exc:
             return report(-1, TRANSPORT_ERROR, str(exc))
         finally:

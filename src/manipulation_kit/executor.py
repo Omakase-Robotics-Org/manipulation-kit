@@ -1179,6 +1179,42 @@ def _arrival_of(executor: "Executor", q16, *, tol_rad: float,
     return wait(q16, tol_rad=tol_rad, timeout_s=timeout_s)
 
 
+def _final_arrival(executor: "Executor", plan: Plan, q16, *, tol_rad: float,
+                   timeout_s: float, gate: Optional["ToolGate"] = None
+                   ) -> ArrivalReport:
+    """The joint-space barrier at the END of a plan's motion.
+
+    The same :func:`_arrival_of` a stroke waits on, run where no stroke and no
+    gated waypoint follows the last leg: before a settle and at the end of the
+    plan. Without it a transport's ``completed`` WAS the run's ``completed``
+    (d1-2, 2026-09-22: an Approach whose J7 stopped 50 deg short of its
+    command, the tool 167 mm and 53 deg off, reported ``completed`` with no
+    arrival at all). When the barrier fails and a kinematic model is at hand,
+    the report carries the TOOL miss too — "50 deg on one joint" and "167 mm
+    at the tool" are the same fact, and the second is the one a reader acts on.
+    """
+    label = "end of motion"
+    arrival = _arrival_of(executor, q16, tol_rad=tol_rad, timeout_s=timeout_s)
+    if arrival.arrived:
+        return _with_label(arrival, label)
+    detail = (f"the {plan.side} arm is not at the posture the plan ended on: "
+              f"{arrival.detail}")
+    miss = None
+    if gate is not None and plan.side in JOINT_SLICE:
+        try:
+            q_meas = executor.state().joints.get(plan.side)
+            if q_meas is not None:
+                want = np.asarray(q16, dtype=float).reshape(WIRE_DIM)
+                miss = gate._miss(gate.model(executor), plan.side,
+                                  want[JOINT_SLICE[plan.side]],
+                                  np.asarray(q_meas, dtype=float))
+        except Exception:  # noqa: BLE001 - the joint answer stands alone
+            miss = None
+    if miss is not None:
+        detail = f"{detail}; {miss.sentence(plan.side, label)}"
+    return _with_label(arrival, label, detail=detail, miss=miss)
+
+
 def _stroke_of(executor: "Executor", side: str, *, timeout_s: float
                ) -> StrokeReport:
     wait = getattr(executor, "wait_gripper_settled", None)
@@ -2098,6 +2134,20 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
                 return stop(index, BARRIER_FAILED, refusal.detail, refusal)
             sent += 1
         elif isinstance(step, SettleStep):
+            # A SETTLE IS NOT AN ARRIVAL. "Stationary" is true of an arm that
+            # stopped 50 deg short on one joint (d1-2, 2026-09-22: J7 held at
+            # -39.5 deg against a -90 deg command, the tool 167 mm off, and the
+            # run said completed). The last commanded posture is measured
+            # first; the settle then says the arm has stopped there.
+            if last_vector is not None and not _same(gated, last_vector):
+                arrival = _final_arrival(executor, plan, last_vector,
+                                         tol_rad=arrive_tol_rad,
+                                         timeout_s=arrive_timeout_s, gate=gate)
+                arrivals.append(arrival)
+                gated = last_vector
+                if not arrival.arrived:
+                    refusal = barrier_refusal(plan, plan.side, arrival, gate)
+                    return stop(index, BARRIER_FAILED, arrival.detail, refusal)
             settle = executor.settle(step.timeout_s)
             sent += 1
             if not settle.settled:
@@ -2140,10 +2190,26 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
                 last_vector = vector
             joints[step.side] = np.array(last_vector[JOINT_SLICE[step.side]],
                                          dtype=float)
-            gated = None
+            # A contact leg ends where the contact stopped it, and that is
+            # MEASURED by the leg itself; the hold that follows is not a
+            # posture the arm is expected to reach through the surface.
+            gated = last_vector
             sent += 1
         else:
             return stop(index, TRANSPORT_ERROR, f"not a plan step: {step!r}")
+    if last_vector is not None and not _same(gated, last_vector):
+        # THE LAST LEG IS MEASURED TOO. A plan that ends on joint steps with
+        # no stroke and no gated waypoint after them used to return
+        # ``completed`` the moment the last command left, which says nothing
+        # about where the arm is.
+        arrival = _final_arrival(executor, plan, last_vector,
+                                 tol_rad=arrive_tol_rad,
+                                 timeout_s=arrive_timeout_s, gate=gate)
+        arrivals.append(arrival)
+        if not arrival.arrived:
+            refusal = barrier_refusal(plan, plan.side, arrival, gate)
+            return stop(len(plan.steps) - 1, BARRIER_FAILED, arrival.detail,
+                        refusal)
     end = getattr(executor, "end_run", None)
     if end is not None:
         end(plan)
