@@ -223,6 +223,7 @@ def _moved(world: WorldView, name: str, delta) -> WorldView:
 
 def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
                approach: str = "top_down", lift_m: float = 0.12,
+               jaw_turn_deg: float = 0.0,
                grip: str = "firm") -> ChainPlan:
     """Approach -> Grasp -> Lift -> Carry -> Place, for ONE arm. Nothing moves.
 
@@ -232,8 +233,10 @@ def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
     """
     links: List[ChainLink] = []
     state = world
-    for primitive in (Approach(object=obj, side=side, approach=approach),
-                      Grasp(object=obj, side=side, approach=approach, grip=grip),
+    for primitive in (Approach(object=obj, side=side, approach=approach,
+                               jaw_turn_deg=jaw_turn_deg),
+                      Grasp(object=obj, side=side, approach=approach, grip=grip,
+                            jaw_turn_deg=jaw_turn_deg),
                       Lift(object=obj, side=side, height_m=lift_m),
                       Carry(object=obj, to=destination, side=side),
                       Place(object=obj, to=destination, side=side)):
@@ -276,6 +279,7 @@ def _near_hand(world: WorldView, obj: str) -> str:
 
 def choose_side(world: WorldView, kin, *, obj: str, destination: str,
                 approach: str = "top_down", lift_m: float = 0.12,
+               jaw_turn_deg: float = 0.0,
                 sides: Sequence[str] = SIDES) -> SideChoice:
     """The hand that can plan the WHOLE task, not the hand nearest the block.
 
@@ -288,7 +292,8 @@ def choose_side(world: WorldView, kin, *, obj: str, destination: str,
        "no arm can deliver this" is a finding, not a default.
     """
     chains = {side: plan_chain(world, kin, obj=obj, destination=destination,
-                               side=side, approach=approach, lift_m=lift_m)
+                               side=side, approach=approach, lift_m=lift_m,
+                               jaw_turn_deg=jaw_turn_deg)
               for side in sides}
     near = _near_hand(world, obj)
     ordered = sorted(chains.values(),

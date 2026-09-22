@@ -455,6 +455,14 @@ class Approach(Primitive):
     side: str = AUTO
     approach: str = TOP_DOWN
     standoff_m: float = DEFAULT_STANDOFF_M
+    #: 0 squares the jaws across the object's long axis (the default grasp);
+    #: 90 turns the hand a quarter turn about the approach axis so the jaws
+    #: close across the OTHER horizontal side. The planner does not choose this
+    #: by itself: a caller falls back to 90 when the 0 posture is refused by
+    #: the guard or IK and the other side still fits the jaws (d1-2 run6,
+    #: 2026-09-22: a 45x55 mm charger, jaws-across-x wrist posture rejected,
+    #: jaws-across-y fine).
+    jaw_turn_deg: float = 0.0
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
@@ -480,7 +488,8 @@ class Approach(Primitive):
         if unmet:
             return None, None, None, unmet
         side = _resolved_side(self.side, world, p)
-        r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames)
+        r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
+                                      dyaw_rad=math.radians(self.jaw_turn_deg))
         return side, ap.standoff_pose(p, self.approach, self.standoff_m), r_tcp, []
 
     def plan(self, world: WorldView, kin) -> Any:
@@ -540,6 +549,7 @@ class Grasp(Primitive):
     approach: str = TOP_DOWN
     standoff_m: float = DEFAULT_STANDOFF_M
     grip: str = "soft"
+    jaw_turn_deg: float = 0.0   # see Approach.jaw_turn_deg
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
@@ -556,7 +566,8 @@ class Grasp(Primitive):
         if side is None:
             return unmet
         try:
-            r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames)
+            r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
+                                      dyaw_rad=math.radians(self.jaw_turn_deg))
             width = ap.grasp_width(item, world.frames, r_tcp)
             flat = (self.approach == TOP_DOWN
                     and ap.grasps_above_its_top(item, world.frames))
@@ -593,7 +604,8 @@ class Grasp(Primitive):
         if unmet:
             return None, None, None, None, unmet
         side = _resolved_side(self.side, world, p)
-        r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames)
+        r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
+                                      dyaw_rad=math.radians(self.jaw_turn_deg))
         # The tool point is the pad CENTRE and the pads reach 29 mm past it,
         # so a top-down grasp on the object's centre asks for the finger tips
         # under the table. ``grasp_point`` lifts it just clear — from the
@@ -605,7 +617,8 @@ class Grasp(Primitive):
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
         return Approach(object=self.object, side=self.side,
-                        approach=self.approach).resolve_side(world)
+                        approach=self.approach,
+                        jaw_turn_deg=self.jaw_turn_deg).resolve_side(world)
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)

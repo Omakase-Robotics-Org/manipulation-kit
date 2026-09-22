@@ -141,6 +141,11 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
           "'tool' = along the hand's own axes, 'base' = along the robot's"),
     _number("standoff_m", 0.02, 0.30, "m",
             "how far off the object to wait before closing on it"),
+    _number("jaw_turn_deg", -90.0, 90.0, "deg",
+            "0 (default): the jaws close across the object's long side; 90: the "
+            "hand is turned a quarter turn about the approach axis so they close "
+            "across the other horizontal side (used when the 0 posture is "
+            "refused by the guard or IK and the other side still fits)"),
     _number("height_m", 0.01, 0.40, "m", "how far straight up"),
     _number("clearance_m", 0.0, 0.40, "m",
             "how far above the destination (carry: transit height above the "

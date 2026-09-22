@@ -119,6 +119,12 @@ How to get metres out of a photograph, and you are given everything you need:
   and declare a better one from what you can see: known objects have known
   sizes, and a cup you can see is about 110 mm tall.
 
+Sizes matter as much as positions: the jaws open 60 mm and take at most
+52 mm across, so `size` must be the object's tight outer dimensions —
+read the footprint from the object's own base outline, never from its
+shadow or its blurred edge. Over-reporting a 47 mm side as 55 mm makes
+every grasp of it refused as too wide; the top face gives the truest width.
+
 `confidence` below 1 is expected and is not a reason to refuse to answer.
 Declare your best estimate, then FIX IT BY MEASURING: approach, look at the
 wrist photo, and `nudge` — nudges are exactly what an uncertain declaration
@@ -572,10 +578,13 @@ def plan_the_hand(world, kin, *, obj: str, destination: str):
         return None
     hand = None
     for approach in ("top_down", "front", "side_right", "side_left"):
-        candidate = choose_side(world, kin, obj=obj, destination=destination,
-                                approach=approach)
-        if hand is None or (candidate.reachable and not hand.reachable):
-            hand = candidate
+        for jaw_turn in (0.0, -90.0, 90.0):      # see Approach.jaw_turn_deg
+            candidate = choose_side(world, kin, obj=obj, destination=destination,
+                                    approach=approach, jaw_turn_deg=jaw_turn)
+            if hand is None or (candidate.reachable and not hand.reachable):
+                hand = candidate
+            if hand.reachable:
+                break
         if hand.reachable:
             break
     return hand
@@ -745,6 +754,30 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             _dump_messages(trace_path, messages)
             continue
         plan = check(primitive, world, kin)
+        # JAW-TURN FALLBACK. The kit squares the jaws across the object's long
+        # axis; when that wrist posture is refused by the guard or IK at the
+        # standoff, the same grasp a quarter turn round often stands (d1-2
+        # run6: a 45x55 mm charger). Try it once; the Grasp preconditions
+        # still refuse the turned grasp if the other side is too wide.
+        if (not getattr(plan, "ok", False)
+                and primitive.name() in ("approach", "grasp")
+                and getattr(primitive, "jaw_turn_deg", 0.0) == 0.0
+                and getattr(plan, "reason", "") in ("guard_reject", "ik_fail")
+                and getattr(plan, "waypoint_label", "") == "standoff"):
+            import dataclasses as _dc  # noqa: PLC0415
+            turned, plan2 = primitive, plan
+            for turn in (-90.0, 90.0):   # the two quarter turns are different wrists
+                turned = _dc.replace(primitive, jaw_turn_deg=turn)
+                plan2 = check(turned, world, kin)
+                if getattr(plan2, "ok", False):
+                    break
+            if getattr(plan2, "ok", False):
+                _say(messages, call_id,
+                     f"note: {label_for(primitive)} with the jaws across the long "
+                     f"side was refused ({plan.reason} at the standoff); the "
+                     f"hand is turned 90 deg so the jaws close across the other "
+                     f"side, which fits.")
+                primitive, plan = turned, plan2
         if not getattr(plan, "ok", False):
             record.refused = [plan.to_json()]
             _say(messages, call_id, f"{label_for(primitive)} was refused: {plan}")
