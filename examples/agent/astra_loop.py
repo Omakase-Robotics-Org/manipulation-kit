@@ -877,6 +877,44 @@ def camera_from_scene(scene: Optional[Dict[str, Any]]):
                       notes=tuple(block.get("notes", ())))
 
 
+
+def robot_camera_opts(robot_url: str, options: str) -> str:
+    """Fill the ROBOT's own numbers into perceive's options from the daemon.
+
+    Zero-shot means nobody types the neck angle: read ``/v1/neck/state`` and
+    ``/v1/slider/state`` and append ``--neck-pitch/--neck-yaw/--lift`` unless
+    the caller already gave them. SIGN: the daemon reports pitch NEGATIVE when
+    the head looks down (d1-2: -0.61) while the kit URDF's neck_pitch is
+    positive-down, so the value is negated here (verified 2026-09-22 on d1-2:
+    -0.6117 -> +0.6117 puts the table in front of the lens; the raw value put
+    the whole table above the horizon).
+    """
+    import json as _json  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    have = set(options.split())
+    extra = []
+    try:
+        if "--neck-pitch" not in have or "--neck-yaw" not in have:
+            neck = _json.load(urllib.request.urlopen(
+                f"{robot_url}/v1/neck/state", timeout=3))["data"]
+            if "--neck-pitch" not in have:
+                extra += ["--neck-pitch", f"{-float(neck['pitch']):.4f}"]
+            if "--neck-yaw" not in have:
+                extra += ["--neck-yaw", f"{float(neck['yaw']):.4f}"]
+        if "--lift" not in have:
+            lift = _json.load(urllib.request.urlopen(
+                f"{robot_url}/v1/slider/state", timeout=3))["data"]
+            extra += ["--lift", f"{float(lift['height_m']):.4f}"]
+    except Exception as exc:  # noqa: BLE001 - say what is missing, do not guess
+        print(f"[astra_loop] could not read the neck/lift from {robot_url}: "
+              f"{exc!r}; pass --perceive-opts yourself", file=sys.stderr)
+        return options
+    if extra:
+        print(f"[astra_loop] camera pose from the daemon: {' '.join(extra)}",
+              file=sys.stderr)
+    return (options + " " + " ".join(extra)).strip()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--task", default=DEFAULT_TASK)
@@ -917,9 +955,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     scene = None
     world0 = None
     if args.perceive is not None:
+        options = args.perceive_opts
+        if args.executor == "firmware":
+            options = robot_camera_opts(args.robot, options)
         scene = perceived_scene(args.perceive, trace_path=args.trace,
                                 obj=args.object, destination=args.destination,
-                                options=args.perceive_opts)
+                                options=options)
     elif args.scene is not None:
         from live import load_scene  # noqa: PLC0415
         scene = load_scene(args.scene)
