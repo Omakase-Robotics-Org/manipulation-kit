@@ -567,6 +567,10 @@ class GripperView:
     grip: str = "firm"                 # soft | firm | strong
     #: commanded closed AND stopped short of the target; None = not measured
     jaw_stalled: Optional[bool] = None
+    #: the pad gap THIS hand reaches driven fully open [m], as its producer
+    #: reports it (``HandState.open_gap_m``); None = use the hand
+    #: description's nominal driven opening. What a grasp's fit is judged by.
+    open_gap_m: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.side not in _SIDES:
@@ -583,6 +587,8 @@ class GripperView:
             out["jaw_gap_m"] = round(float(self.jaw_gap_m), 4)
         if self.jaw_stalled is not None:
             out["jaw_stalled"] = bool(self.jaw_stalled)
+        if self.open_gap_m is not None:
+            out["open_gap_m"] = round(float(self.open_gap_m), 4)
         if self.held_object:
             out["held_object"] = self.held_object
         return out
@@ -617,6 +623,10 @@ class WorldView:
     #: against a different one (R8). Producers that do not count simply leave
     #: it at 0 and the binding falls back to the stamp and the frame set.
     revision: int = 0
+    #: Which firmware contract the ROBOT half of this observation came through
+    #: (the executor's ``firmware_spec``: an OpenAPI sha256, ``"kinematic"``),
+    #: "" when the producer does not say. Recorded in every plan's binding.
+    firmware_spec: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "objects", tuple(self.objects))
@@ -638,12 +648,14 @@ class WorldView:
            frames: Optional[FrameGraph] = None,
            arms: Sequence[ArmView] = (),
            grippers: Sequence[GripperView] = (),
-           stamp: float = 0.0, revision: int = 0) -> "WorldView":
+           stamp: float = 0.0, revision: int = 0,
+           firmware_spec: str = "") -> "WorldView":
         return cls(frames=frames if frames is not None else FrameGraph(now=stamp),
                    objects=tuple(objects),
                    arms={a.side: a for a in arms},
                    grippers={g.side: g for g in grippers},
-                   stamp=stamp, revision=revision)
+                   stamp=stamp, revision=revision,
+                   firmware_spec=str(firmware_spec or ""))
 
     # -- identity ---------------------------------------------------------- #
     def observation_id(self) -> Tuple[Any, ...]:
@@ -709,7 +721,8 @@ class WorldView:
             objects=tuple(changes.get("objects", self.objects)),
             arms=changes.get("arms", self.arms),
             grippers=changes.get("grippers", self.grippers),
-            stamp=stamp, revision=int(revision))
+            stamp=stamp, revision=int(revision),
+            firmware_spec=changes.get("firmware_spec", self.firmware_spec))
 
     # -- serialisation ----------------------------------------------------- #
     def to_json(self) -> Dict[str, Any]:

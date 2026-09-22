@@ -310,6 +310,12 @@ class PlanBinding:
     #: travels with the plan, and the hardware boundary refuses the unguarded
     #: kind unless the caller says so explicitly.
     guarded: bool = True
+    #: the FIRMWARE CONTRACT the observation came through — for d1-firmwared
+    #: the sha256 of the OpenAPI document the executor's client was generated
+    #: from (``WorldView.firmware_spec``), ``"kinematic"`` for the mirror, ""
+    #: when the producer did not say. ``executor.check_binding`` refuses to
+    #: play a plan against a transport that drives a different one.
+    firmware_spec: str = ""
 
     @classmethod
     def of(cls, world, kin=None, *, joint_tol_rad: float = 0.05,
@@ -324,7 +330,8 @@ class PlanBinding:
                    tool_revision=tool_revision(),
                    joint_tol_rad=float(joint_tol_rad),
                    max_age_s=float(max_age_s),
-                   guarded=bool(getattr(gate, "installed", False)))
+                   guarded=bool(getattr(gate, "installed", False)),
+                   firmware_spec=str(getattr(world, "firmware_spec", "") or ""))
 
     def drift(self, *, joints=None, world=None, now: float = float("nan"),
               tool_revision: str = "") -> Optional[str]:
@@ -376,6 +383,8 @@ class PlanBinding:
             "joint_tol_deg": round(math.degrees(self.joint_tol_rad), 2),
             "guarded": bool(self.guarded),
         }
+        if self.firmware_spec:
+            out["firmware_spec"] = self.firmware_spec
         if math.isfinite(self.max_age_s):
             out["max_age_s"] = round(float(self.max_age_s), 3)
         return out
