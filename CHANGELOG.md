@@ -8,6 +8,35 @@ loud reason, not a legacy path kept alive beside the new one.
 
 ## 0.16.0 — unreleased
 
+### The last leg is measured (d1-2 Approach miss, 2026-09-22)
+
+- **A run no longer says `completed` without measuring where the arm ended
+  up.** Both runners (`run_steps` and `FirmwareExecutor.run_plan`) now run the
+  joint-space arrival barrier before every `SettleStep` and at the end of the
+  plan whenever the last joint leg was not already gated; the report carries
+  it as an arrival labelled `end of motion`, with the tool-point miss when a
+  kinematic model is at hand, and a miss stops the run with
+  `barrier_failed` and a typed refusal. `SettleStep` alone only ever said the
+  arms were STATIONARY. On d1-2 an `Approach` ended with J7 at -39.5 deg
+  against a -90 deg command (tool 167 mm / 53 deg off) and reported
+  `completed: true, arrivals: []`. **Breaking for callers** of executors
+  without `wait_arrived` (or a `RecordingExecutor` without
+  `pretend_arrived`): a plan that moves the arm now fails its final barrier on
+  them, as a plan with a stroke already did.
+- **The trajectory runner gates an `arrive` waypoint before a settle, a
+  contact leg and at the end of the plan**, not only before another joint leg
+  or a stroke. A gated last waypoint used to go unmeasured on the default
+  firmware transport while the streamed one gated it.
+- **`Approach` marks its standoff `arrive`**, the same tool gate `Grasp`
+  puts on the same pose. It had none.
+- **`Probe` tries the planner's rolls** (`contact.PROBE_ROLLS_RAD`: the
+  wrist's own, then the quarter turns, then the half turn) instead of only
+  the wrist's current roll; a roll other than the first is stated in the
+  plan notes.
+- `docs/probe-hardware-trial.md`: the trial script stops at the first
+  refused probe instead of lifting after it, and refuses to start from a hand
+  more than 20 deg from fingertips-down.
+
 ### Executor state (redesign step 1)
 
 - **The bundled d1-firmwared client is regenerated from the document the

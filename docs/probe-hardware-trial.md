@@ -63,7 +63,10 @@ All green, or do not go further.
 4. With the console or teleop, put the **left** hand **50–60 mm** above the
    wagon at the probe spot, roughly fingertips-down. (The probe re-aims the hand at
    its current point; a hand far from pointing down means a large wrist turn
-   before the leg, which the plan will show as many standoff steps.)
+   before the leg, which the plan will show as many standoff steps. The
+   script measures the start and stops with `"stopped": "start_posture"` when
+   the hand is more than 20 deg from fingertips-down; it also stops at the
+   first REFUSED probe instead of lifting after it.)
 5. Release the console/teleop arm lease (the trial takes it at class
    `policy`, and an `operator` holder outranks it).
 
@@ -88,6 +91,7 @@ from manipulation_kit.world import ArmView, GripperView, WorldView
 ROBOT = "http://d1-2:4750"
 TABLE_FROM_FLOOR_M = 0.884          # <- the tape, at the probe spot
 TABLE_TRIALS, AIR_TRIALS = 10, 3
+MAX_START_TILT_DEG = 20.0          # the hand must start roughly fingertips-down
 DRY = "--dry" in sys.argv           # kinematic mirror: plans only, no robot
 
 kin = get_arm_kinematics("d1/arm", quiet=True)
@@ -145,7 +149,11 @@ def trial(robot, world, kind, n, z_tape):
              Probe(side="left", direction="down", max_travel_m=0.03))
     plan = probe.plan(world, kin)
     if not plan.ok:
-        return world, {"kind": kind, "n": n, "plan": plan.to_json()}
+        # REFUSED: nothing moved, so nothing is lifted back either. The
+        # caller stops on this line (d1-2, 2026-09-22: every probe was
+        # refused and the lift after each one walked the hand to head height).
+        return world, {"kind": kind, "n": n, "refused": True,
+                       "plan": plan.to_json()}
     report = run(plan, robot, kin=kin)
     after = record_contacts(observe(robot, world), report, probe)
     c = after.contacts[-1] if report.contacts else None
@@ -177,6 +185,17 @@ def main():
                               **health(robot)}))
         world = observe(robot)
         lines = []
+        # THE START POSTURE IS CHECKED, not assumed: a hand far from
+        # fingertips-down is a large in-place wrist turn the plan may refuse
+        # (d1-2, 2026-09-22: 53 deg off after an Approach that missed). The
+        # dry run starts from HOME on purpose and is not checked.
+        axis = world.arm("left").tool_r.apply([0.0, 0.0, 1.0])
+        tilt = math.degrees(math.acos(max(-1.0, min(1.0, -float(axis[2])))))
+        if not DRY and tilt > MAX_START_TILT_DEG:
+            print(json.dumps({"stopped": "start_posture",
+                              "tilt_from_down_deg": round(tilt, 1),
+                              "limit_deg": MAX_START_TILT_DEG}))
+            return
         # G4 first: free air. Up 50 mm (the hand starts 50-60 mm above the
         # wagon, so 100-110 mm), then 30 mm probes, each lifted back 30 mm.
         lift_off(robot, world, 0.05)
@@ -185,7 +204,7 @@ def main():
         for n in range(AIR_TRIALS):
             world, line = trial(robot, world, "air", n, z_tape)
             print(json.dumps(line)); lines.append(line)
-            if line.get("faults") or line.get("stop_reason"):
+            if stop_here(line):
                 return summary(lines)
             lift_off(robot, observe(robot, world), 0.03)
             world = observe(robot, world)
@@ -194,11 +213,18 @@ def main():
         for n in range(TABLE_TRIALS):
             world, line = trial(robot, world, "table", n, z_tape)
             print(json.dumps(line)); lines.append(line)
-            if line.get("faults") or line.get("stop_reason"):
+            if stop_here(line):
                 break                       # G1: stop at the first fault
             lift_off(robot, world, 0.05)
             world = observe(robot, world)
         summary(lines)
+
+
+def stop_here(line):
+    """A fault, a stopped run, or a REFUSED plan ends the trial. A refused
+    probe moved nothing; lifting after it only walks the hand upward."""
+    return bool(line.get("faults") or line.get("stop_reason")
+                or line.get("refused"))
 
 
 class _null:
