@@ -62,6 +62,13 @@ from trace import DecisionRecord, DecisionTrace  # noqa: E402
 DEFAULT_TASK = "put the red block in the box"
 
 SYSTEM = """You drive a D1 humanoid's two arms through a fixed set of verbs.
+Each observation may carry two photos: the head camera (scene from above the
+torso) and the right wrist camera (looking along the right hand past its jaws).
+Use them to judge what the text cannot: whether the object stands or has
+tipped, whether the jaws straddle it, whether it is inside the container.
+Object positions in the text come from a measured scene and can be off by
+1-2 cm; when a photo contradicts the text, say which and act on the photo
+(nudge, re-approach with a smaller standoff, release and retry).
 
 Rules that are not negotiable, because the robot enforces them anyway:
 - You never give an orientation. Name an approach (top_down, front, side_left,
@@ -133,9 +140,17 @@ class OpenAIModel:
         self.model = model
 
     def __call__(self, messages, tools) -> Dict[str, Any]:
+        def clean(message):
+            content = message.get("content")
+            if not isinstance(content, list):
+                return message
+            return dict(message, content=[
+                {k: v for k, v in p.items() if not k.startswith("_")}
+                for p in content])
+
         response = self.client.responses.create(
             model=self.model,
-            input=messages,
+            input=[clean(m) for m in messages],
             tools=[{"type": "function", **t} for t in tools])
         calls = [i for i in response.output
                  if getattr(i, "type", "") == "function_call"]
@@ -183,7 +198,17 @@ def _dump_messages(trace_path: Optional[Path], messages: List[Dict[str, Any]]) -
     if trace_path is None:
         return
     path = Path(trace_path).with_suffix(".messages.json")
-    path.write_text(json.dumps(messages, indent=1, default=str), encoding="utf-8")
+
+    def slim(message):
+        content = message.get("content")
+        if not isinstance(content, list):
+            return message
+        parts = [dict(p, image_url=f"<{p.get('_file', 'image')}>")
+                 if p.get("type") == "input_image" else p for p in content]
+        return dict(message, content=parts)
+
+    path.write_text(json.dumps([slim(m) for m in messages], indent=1,
+                               default=str), encoding="utf-8")
 
 
 def _snapshot(trace_path: Optional[Path], turn: int) -> None:
@@ -192,7 +217,7 @@ def _snapshot(trace_path: Optional[Path], turn: int) -> None:
     frames (the loop is text-only); they are for the human reading the run."""
     cmd = os.environ.get("ASTRA_SNAPSHOT_CMD")
     if not cmd or trace_path is None:
-        return
+        return []
     import subprocess  # noqa: PLC0415
     env = dict(os.environ, ASTRA_TURN=str(turn),
                ASTRA_OUT_DIR=str(Path(trace_path).parent))
@@ -201,6 +226,28 @@ def _snapshot(trace_path: Optional[Path], turn: int) -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as exc:  # noqa: BLE001 - a snapshot must never stop a run
         print(f"[astra_loop] snapshot failed: {exc!r}", file=sys.stderr)
+        return []
+    out = Path(trace_path).parent
+    # The model is shown the head and the RIGHT wrist frame of this turn (the
+    # left wrist sees nothing useful while the right hand works). Attach in a
+    # fixed order so the trace is comparable turn to turn.
+    wanted = (f"turn{turn}_base_0_rgb.jpg", f"turn{turn}_right_wrist_0_rgb.jpg")
+    return [out / name for name in wanted if (out / name).exists()]
+
+
+def _observation(text: str, frames) -> Any:
+    """The user turn: the world as text, plus this turn's camera frames as
+    images when there are any (Shu, 2026-09-22: 'Astra に画像を渡すのは必須')."""
+    if not frames:
+        return text
+    import base64  # noqa: PLC0415
+    parts: List[Dict[str, Any]] = [{"type": "input_text", "text": text}]
+    for path in frames:
+        data = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+        parts.append({"type": "input_image", "detail": "high",
+                      "image_url": f"data:image/jpeg;base64,{data}",
+                      "_file": Path(path).name})
+    return parts
 
 
 def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
@@ -248,8 +295,9 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
     stop = Stop("max_turns", f"{max_turns} turns without a measured goal")
     for turn in range(max_turns):
         world = robot.world()
-        _snapshot(trace_path, turn)
-        messages.append({"role": "user", "content": world.to_text()})
+        frames = _snapshot(trace_path, turn)
+        messages.append({"role": "user",
+                         "content": _observation(world.to_text(), frames)})
         tools = tool_schemas(world)      # REFRESHED: the names narrow as the
         record = DecisionRecord(iteration=turn, world=world.to_json())
         record.task = task
