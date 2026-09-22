@@ -87,6 +87,10 @@ def sync_detailed(
 ) -> Response[ChassisRemoteCtlResponse200 | ErrorEnvelope]:
     """Enter or leave the vendor remote-control mode
 
+     Reads the resulting mode back. Entry from navigation abandons the active goal, closes navigation and
+    waits for settling. Mapping, charging and unknown modes refuse entry. A stopping request interrupts
+    a pending transition.
+
     Args:
         body (OnRequest): `POST /v1/chassis/light` and `POST /v1/chassis/remote_ctl`.
 
@@ -116,6 +120,10 @@ def sync(
 ) -> ChassisRemoteCtlResponse200 | ErrorEnvelope | None:
     """Enter or leave the vendor remote-control mode
 
+     Reads the resulting mode back. Entry from navigation abandons the active goal, closes navigation and
+    waits for settling. Mapping, charging and unknown modes refuse entry. A stopping request interrupts
+    a pending transition.
+
     Args:
         body (OnRequest): `POST /v1/chassis/light` and `POST /v1/chassis/remote_ctl`.
 
@@ -139,6 +147,10 @@ async def asyncio_detailed(
     body: OnRequest,
 ) -> Response[ChassisRemoteCtlResponse200 | ErrorEnvelope]:
     """Enter or leave the vendor remote-control mode
+
+     Reads the resulting mode back. Entry from navigation abandons the active goal, closes navigation and
+    waits for settling. Mapping, charging and unknown modes refuse entry. A stopping request interrupts
+    a pending transition.
 
     Args:
         body (OnRequest): `POST /v1/chassis/light` and `POST /v1/chassis/remote_ctl`.
@@ -166,6 +178,10 @@ async def asyncio(
     body: OnRequest,
 ) -> ChassisRemoteCtlResponse200 | ErrorEnvelope | None:
     """Enter or leave the vendor remote-control mode
+
+     Reads the resulting mode back. Entry from navigation abandons the active goal, closes navigation and
+    waits for settling. Mapping, charging and unknown modes refuse entry. A stopping request interrupts
+    a pending transition.
 
     Args:
         body (OnRequest): `POST /v1/chassis/light` and `POST /v1/chassis/remote_ctl`.

@@ -11,6 +11,7 @@ from ..models.arm_side import ArmSide
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.advisory import Advisory
     from ..models.arm_controller_servos import ArmControllerServos
     from ..models.arm_state import ArmState
 
@@ -33,6 +34,7 @@ class ArmPreflightReport:
         side (ArmSide): Selects one of the two physical arms.
         state (ArmState): Arm feedback and command echo.
         warnings (list[str]): Optional diagnostics unavailable or incomplete; not hidden as success.
+        advisory (Advisory | None | Unset):
         controller_servos (ArmControllerServos | None | Unset):
     """
 
@@ -45,10 +47,12 @@ class ArmPreflightReport:
     side: ArmSide
     state: ArmState
     warnings: list[str]
+    advisory: Advisory | None | Unset = UNSET
     controller_servos: ArmControllerServos | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.advisory import Advisory
         from ..models.arm_controller_servos import ArmControllerServos
 
         blocking = self.blocking
@@ -68,6 +72,14 @@ class ArmPreflightReport:
         state = self.state.to_dict()
 
         warnings = self.warnings
+
+        advisory: dict[str, Any] | None | Unset
+        if isinstance(self.advisory, Unset):
+            advisory = UNSET
+        elif isinstance(self.advisory, Advisory):
+            advisory = self.advisory.to_dict()
+        else:
+            advisory = self.advisory
 
         controller_servos: dict[str, Any] | None | Unset
         if isinstance(self.controller_servos, Unset):
@@ -92,6 +104,8 @@ class ArmPreflightReport:
                 "warnings": warnings,
             }
         )
+        if advisory is not UNSET:
+            field_dict["advisory"] = advisory
         if controller_servos is not UNSET:
             field_dict["controller_servos"] = controller_servos
 
@@ -99,6 +113,7 @@ class ArmPreflightReport:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.advisory import Advisory
         from ..models.arm_controller_servos import ArmControllerServos
         from ..models.arm_state import ArmState
 
@@ -120,6 +135,23 @@ class ArmPreflightReport:
         state = ArmState.from_dict(d.pop("state"))
 
         warnings = cast(list[str], d.pop("warnings"))
+
+        def _parse_advisory(data: object) -> Advisory | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                advisory_type_1 = Advisory.from_dict(data)
+
+                return advisory_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(Advisory | None | Unset, data)
+
+        advisory = _parse_advisory(d.pop("advisory", UNSET))
 
         def _parse_controller_servos(
             data: object,
@@ -150,6 +182,7 @@ class ArmPreflightReport:
             side=side,
             state=state,
             warnings=warnings,
+            advisory=advisory,
             controller_servos=controller_servos,
         )
 

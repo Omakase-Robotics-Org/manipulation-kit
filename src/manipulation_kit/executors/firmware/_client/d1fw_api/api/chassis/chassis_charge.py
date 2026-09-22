@@ -74,7 +74,21 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ChassisChargeResponse200 | ErrorEnvelope]:
-    """Send the chassis to its charging dock
+    """Start the mobile base's automatic charging routine
+
+     Sends the base to the charging dock configured with `chassis_maps_charging_dock_put`, and answers
+    with the charge state read immediately afterwards, so a display starts from a reading rather than
+    from an assumption. It does NOT wait for the base to dock: the base then moves its own fields on its
+    own schedule -- `work_mode` to `auto_charging` and `charge.dock` from `not_docking` to `docking`,
+    then to `docked` once it is on the pile, and finally to `leaving` and back to `not_docking` when it
+    drives off. Whether current is actually flowing is a SEPARATE fact reported only by the battery
+    packs, as `charge.charging` with `charge.basis` saying where that came from; a base can be `docked`
+    with `charging` still null. Poll `GET /v1/chassis/charge` to follow the flow. Preconditions: a
+    charging dock must have been configured (the base otherwise refuses with `kind`
+    `dock_unconfigured`), the base must not already be charging (`auto_charging`) or be plugged in by
+    hand (`manual_charging`), autonomous navigation must be on (`navigation_disabled`), and the physical
+    emergency stop must be released. Every one of those is a 409 naming its `kind`. Gated by the chassis
+    soft-kill latch.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -97,7 +111,21 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ChassisChargeResponse200 | ErrorEnvelope | None:
-    """Send the chassis to its charging dock
+    """Start the mobile base's automatic charging routine
+
+     Sends the base to the charging dock configured with `chassis_maps_charging_dock_put`, and answers
+    with the charge state read immediately afterwards, so a display starts from a reading rather than
+    from an assumption. It does NOT wait for the base to dock: the base then moves its own fields on its
+    own schedule -- `work_mode` to `auto_charging` and `charge.dock` from `not_docking` to `docking`,
+    then to `docked` once it is on the pile, and finally to `leaving` and back to `not_docking` when it
+    drives off. Whether current is actually flowing is a SEPARATE fact reported only by the battery
+    packs, as `charge.charging` with `charge.basis` saying where that came from; a base can be `docked`
+    with `charging` still null. Poll `GET /v1/chassis/charge` to follow the flow. Preconditions: a
+    charging dock must have been configured (the base otherwise refuses with `kind`
+    `dock_unconfigured`), the base must not already be charging (`auto_charging`) or be plugged in by
+    hand (`manual_charging`), autonomous navigation must be on (`navigation_disabled`), and the physical
+    emergency stop must be released. Every one of those is a 409 naming its `kind`. Gated by the chassis
+    soft-kill latch.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -116,7 +144,21 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ChassisChargeResponse200 | ErrorEnvelope]:
-    """Send the chassis to its charging dock
+    """Start the mobile base's automatic charging routine
+
+     Sends the base to the charging dock configured with `chassis_maps_charging_dock_put`, and answers
+    with the charge state read immediately afterwards, so a display starts from a reading rather than
+    from an assumption. It does NOT wait for the base to dock: the base then moves its own fields on its
+    own schedule -- `work_mode` to `auto_charging` and `charge.dock` from `not_docking` to `docking`,
+    then to `docked` once it is on the pile, and finally to `leaving` and back to `not_docking` when it
+    drives off. Whether current is actually flowing is a SEPARATE fact reported only by the battery
+    packs, as `charge.charging` with `charge.basis` saying where that came from; a base can be `docked`
+    with `charging` still null. Poll `GET /v1/chassis/charge` to follow the flow. Preconditions: a
+    charging dock must have been configured (the base otherwise refuses with `kind`
+    `dock_unconfigured`), the base must not already be charging (`auto_charging`) or be plugged in by
+    hand (`manual_charging`), autonomous navigation must be on (`navigation_disabled`), and the physical
+    emergency stop must be released. Every one of those is a 409 naming its `kind`. Gated by the chassis
+    soft-kill latch.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,7 +179,21 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ChassisChargeResponse200 | ErrorEnvelope | None:
-    """Send the chassis to its charging dock
+    """Start the mobile base's automatic charging routine
+
+     Sends the base to the charging dock configured with `chassis_maps_charging_dock_put`, and answers
+    with the charge state read immediately afterwards, so a display starts from a reading rather than
+    from an assumption. It does NOT wait for the base to dock: the base then moves its own fields on its
+    own schedule -- `work_mode` to `auto_charging` and `charge.dock` from `not_docking` to `docking`,
+    then to `docked` once it is on the pile, and finally to `leaving` and back to `not_docking` when it
+    drives off. Whether current is actually flowing is a SEPARATE fact reported only by the battery
+    packs, as `charge.charging` with `charge.basis` saying where that came from; a base can be `docked`
+    with `charging` still null. Poll `GET /v1/chassis/charge` to follow the flow. Preconditions: a
+    charging dock must have been configured (the base otherwise refuses with `kind`
+    `dock_unconfigured`), the base must not already be charging (`auto_charging`) or be plugged in by
+    hand (`manual_charging`), autonomous navigation must be on (`navigation_disabled`), and the physical
+    emergency stop must be released. Every one of those is a 409 naming its `kind`. Gated by the chassis
+    soft-kill latch.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -6,17 +6,17 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.arm_move_joints_body import ArmMoveJointsBody
 from ...models.arm_move_joints_response_200 import ArmMoveJointsResponse200
 from ...models.arm_side import ArmSide
 from ...models.error_envelope import ErrorEnvelope
-from ...models.joints_request import JointsRequest
 from ...types import Response
 
 
 def _get_kwargs(
     side: ArmSide,
     *,
-    body: JointsRequest,
+    body: ArmMoveJointsBody,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -89,15 +89,21 @@ def sync_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointsRequest,
+    body: ArmMoveJointsBody,
 ) -> Response[ArmMoveJointsResponse200 | ErrorEnvelope]:
     """Command one arm to a joint target
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
 
+    The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
+    is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
+    merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.
+    Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout
+    waiting for a convergence that servo-off joints cannot reach.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointsRequest): `POST /v1/arm/{side}/move_joints`.
+        body (ArmMoveJointsBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,15 +129,21 @@ def sync(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointsRequest,
+    body: ArmMoveJointsBody,
 ) -> ArmMoveJointsResponse200 | ErrorEnvelope | None:
     """Command one arm to a joint target
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
 
+    The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
+    is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
+    merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.
+    Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout
+    waiting for a convergence that servo-off joints cannot reach.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointsRequest): `POST /v1/arm/{side}/move_joints`.
+        body (ArmMoveJointsBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,15 +164,21 @@ async def asyncio_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointsRequest,
+    body: ArmMoveJointsBody,
 ) -> Response[ArmMoveJointsResponse200 | ErrorEnvelope]:
     """Command one arm to a joint target
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
 
+    The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
+    is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
+    merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.
+    Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout
+    waiting for a convergence that servo-off joints cannot reach.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointsRequest): `POST /v1/arm/{side}/move_joints`.
+        body (ArmMoveJointsBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,15 +202,21 @@ async def asyncio(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointsRequest,
+    body: ArmMoveJointsBody,
 ) -> ArmMoveJointsResponse200 | ErrorEnvelope | None:
     """Command one arm to a joint target
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
 
+    The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
+    is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
+    merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.
+    Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout
+    waiting for a convergence that servo-off joints cannot reach.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointsRequest): `POST /v1/arm/{side}/move_joints`.
+        body (ArmMoveJointsBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

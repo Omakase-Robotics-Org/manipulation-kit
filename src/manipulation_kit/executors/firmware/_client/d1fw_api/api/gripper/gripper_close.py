@@ -100,11 +100,12 @@ def sync_detailed(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (GripRequest | Unset): How hard a closing stroke holds what it meets.
+        body (GripRequest | Unset): How hard a closing stroke squeezes and holds what it meets.
 
             At most one of the two fields is given: a named [`GripPreset`], or an
-            explicit standing preload in motor radians. Neither means the backend's
-            configured default. Carried by [`GripperTarget`] and by a bare `close`.
+            explicit standing preload in motor radians (which keeps the `firm`
+            preset's stop torque). Neither means the backend's configured default,
+            `firm`. Carried by [`GripperTarget`] and by a bare `close`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,11 +141,12 @@ def sync(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (GripRequest | Unset): How hard a closing stroke holds what it meets.
+        body (GripRequest | Unset): How hard a closing stroke squeezes and holds what it meets.
 
             At most one of the two fields is given: a named [`GripPreset`], or an
-            explicit standing preload in motor radians. Neither means the backend's
-            configured default. Carried by [`GripperTarget`] and by a bare `close`.
+            explicit standing preload in motor radians (which keeps the `firm`
+            preset's stop torque). Neither means the backend's configured default,
+            `firm`. Carried by [`GripperTarget`] and by a bare `close`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,11 +177,12 @@ async def asyncio_detailed(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (GripRequest | Unset): How hard a closing stroke holds what it meets.
+        body (GripRequest | Unset): How hard a closing stroke squeezes and holds what it meets.
 
             At most one of the two fields is given: a named [`GripPreset`], or an
-            explicit standing preload in motor radians. Neither means the backend's
-            configured default. Carried by [`GripperTarget`] and by a bare `close`.
+            explicit standing preload in motor radians (which keeps the `firm`
+            preset's stop torque). Neither means the backend's configured default,
+            `firm`. Carried by [`GripperTarget`] and by a bare `close`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,11 +216,12 @@ async def asyncio(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (GripRequest | Unset): How hard a closing stroke holds what it meets.
+        body (GripRequest | Unset): How hard a closing stroke squeezes and holds what it meets.
 
             At most one of the two fields is given: a named [`GripPreset`], or an
-            explicit standing preload in motor radians. Neither means the backend's
-            configured default. Carried by [`GripperTarget`] and by a bare `close`.
+            explicit standing preload in motor radians (which keeps the `firm`
+            preset's stop torque). Neither means the backend's configured default,
+            `firm`. Carried by [`GripperTarget`] and by a bare `close`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

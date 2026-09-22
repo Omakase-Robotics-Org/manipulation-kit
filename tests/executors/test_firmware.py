@@ -11,7 +11,7 @@ trajectory arithmetic are all checked as DATA.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pytest
@@ -49,6 +49,25 @@ class FakeGripperState:
     live: bool = True
     open_rad: float = 1.16
     coil_c: int = 30
+    #: the document's ``fault_code`` (a string such as ``over_current``)
+    fault_code: Optional[str] = None
+
+
+@dataclass
+class FakeNeckState:
+    pitch: float = -0.35
+    yaw: float = 0.05
+    enabled: bool = True
+    moving: bool = False
+
+
+@dataclass
+class FakeSliderState:
+    height_m: float = 0.205
+    moving: bool = False
+    alarm: bool = False
+    alarm_code: int = 0
+    alarm_text: str = ""
 
 
 @dataclass
@@ -71,6 +90,15 @@ class FakeClient:
     stroke_polls: int = 1
     #: the arm never gets where it was sent — the "stopped short" case
     arrival_offset_deg: float = 0.0
+    #: how the next stroke ENDS, in the document's StrokeKind vocabulary, and
+    #: the fault code it carries ("idle" is a pre-outcome fake reading that
+    #: says nothing, which the executor treats like ``blind``)
+    stroke_kind: str = "idle"
+    stroke_fault: Optional[str] = None
+    #: the controller latches (mode "error") when a trajectory completes
+    latch_after_play: Optional[str] = None
+    neck: FakeNeckState = field(default_factory=FakeNeckState)
+    slider: FakeSliderState = field(default_factory=FakeSliderState)
     _pending: Dict[str, Any] = field(default_factory=dict)
     _stroke: Dict[str, Any] = field(default_factory=dict)
     cancelled: List[int] = field(default_factory=list)
@@ -107,6 +135,9 @@ class FakeClient:
             if phase == "completed" and self._pending:
                 self._apply(self._pending["waypoints"][-1])
                 self._pending = {}
+                if self.latch_after_play:
+                    latched = self.arms[self.latch_after_play]
+                    latched.mode, latched.error_code = "error", 3
             return {"id": 42, "phase": phase, "elapsed_ms": 10, "message": "boom"}
         raise AssertionError(f"unexpected call {method} {path}")
 
@@ -140,16 +171,26 @@ class FakeClient:
                 return FakeGripperState(kind="moving",
                                         jaw_rad=stroke["jaw"] + 0.01 * stroke["polls"])
             self.grippers[side] = FakeGripperState(
-                kind="idle", jaw_rad=stroke["jaw"],
-                holding=self.grippers[side].holding)
+                kind=self.stroke_kind, jaw_rad=stroke["jaw"],
+                holding=self.grippers[side].holding,
+                fault_code=self.stroke_fault)
             self._stroke.pop(side)
         return self.grippers[side]
 
-    def gripper_set(self, side: str, closedness: float, *, grip=None) -> None:
+    def gripper_set(self, side: str, closedness: float, *, grip=None,
+                    timeout_s=None) -> None:
         self.calls.append(("POST", f"/v1/gripper/{side}/set",
                            {"closedness": closedness, "grip": grip}))
         target = (1.0 - float(closedness)) * self.grippers[side].open_rad
         self._stroke[side] = {"jaw": target, "polls": int(self.stroke_polls)}
+
+    def neck_state(self) -> FakeNeckState:
+        self.calls.append(("GET", "/v1/neck/state", None))
+        return self.neck
+
+    def slider_state(self) -> FakeSliderState:
+        self.calls.append(("GET", "/v1/slider/state", None))
+        return self.slider
 
     # -- inspection -------------------------------------------------------- #
     def posts(self, path: str) -> List[Any]:
@@ -748,3 +789,170 @@ def test_a_nonsense_construction_argument_is_refused(kwargs):
     deadline unreachable, and nothing downstream would have said so."""
     with pytest.raises(ValueError):
         FirmwareExecutor(FakeClient(), **kwargs)
+
+
+# --------------------------------------------------------------------------- #
+# redesign step 1 — the executor state, faults and the commanded gripper
+# --------------------------------------------------------------------------- #
+
+def test_state_publishes_everything_the_wire_carries(executor):
+    """Velocity, torque, mode and error code reach the kit as typed fields —
+    not dropped, and not smuggled through ``extra`` as string keys."""
+    executor.client.arms["a"] = FakeArmState(
+        feedback_joints=(10.0,) + (0.0,) * 6,
+        feedback_velocity=(0.0, 20.0) + (0.0,) * 5,
+        feedback_torque=(0.0, 0.0, 4.5) + (0.0,) * 4)
+    executor.client.grippers["a"] = FakeGripperState(
+        kind="grasp", holding=True, jaw_rad=0.58, torque_nm=-0.3)
+    state = executor.state()
+    arm, hand = state.arms["left"], state.hands["left"]
+    assert arm.q[0] == pytest.approx(np.radians(10.0))
+    assert arm.qd[1] == pytest.approx(np.radians(20.0))
+    assert arm.torque_nm[2] == pytest.approx(4.5)
+    assert arm.mode == "position" and arm.error_code == 0
+    assert hand.holding is True and hand.stalled is True
+    assert hand.torque_nm == pytest.approx(-0.3)
+    assert hand.jaw_gap_m is not None and hand.open_gap_m is not None
+    assert not any(k.endswith(("_mode", "_error_code")) for k in state.extra)
+
+
+def test_the_hand_opening_is_the_daemons_open_rad_not_a_kit_constant(executor):
+    from manipulation_kit.hands.d1.parallel_gripper.description import (
+        DRIVEN_OPEN_GAP_M, gap_from_motor_rad)
+    executor.client.grippers["a"] = FakeGripperState(open_rad=1.35, jaw_rad=1.35)
+    hand = executor.state().hands["left"]
+    assert hand.open_gap_m == pytest.approx(gap_from_motor_rad(1.35))
+    assert hand.open_gap_m == pytest.approx(0.0605, abs=5e-4)
+    assert hand.open_gap_m > DRIVEN_OPEN_GAP_M
+
+
+def test_a_faulted_gripper_is_not_a_settled_one(executor, d1_arm, observe):
+    """Review 13. A faulted gripper's jaws are perfectly stationary; two
+    identical readings used to be accepted as a finished stroke, and the loop
+    carried on planning on a hand that could not close (d1-2, 2026-09-22)."""
+    executor.client.grippers["a"] = FakeGripperState(
+        kind="fault", fault_code="over_current", jaw_rad=0.9)
+    report = executor.wait_gripper_settled("left", timeout_s=1.0)
+    assert not report.settled and report.faulted
+    assert report.fault == "over_current" and report.kind == "fault"
+
+    # ...and inside a run, it is a typed stop, not a completed stroke
+    executor.client.grippers["a"] = FakeGripperState()
+    executor.client.stroke_kind, executor.client.stroke_fault = "fault", None
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    with executor as robot:
+        run_report = robot.run_plan(plan)
+    assert not run_report.completed
+    assert run_report.stop_reason == "barrier_failed"
+    assert run_report.refusal is not None
+    assert run_report.refusal.reason == "gripper_fault"
+    assert run_report.strokes[-1].faulted
+
+
+def test_a_stroke_the_daemon_timed_out_is_not_settled(executor):
+    executor.client.grippers["a"] = FakeGripperState(kind="timeout")
+    report = executor.wait_gripper_settled("left", timeout_s=1.0)
+    assert not report.settled and not report.faulted
+
+
+def test_a_latched_controller_stops_the_run(executor, d1_arm, observe):
+    """d1-2 run5 (2026-09-22): the right arm latched and the loop kept
+    planning on it, because the fault only existed as an ``extra`` key an
+    example had to remember to read. The kit stops the run itself."""
+    from manipulation_kit.executor import run
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    for side, wire in (("left", "a"), ("right", "b")):
+        executor.client.arms[wire] = FakeArmState(
+            feedback_joints=tuple(np.degrees(world.arm(side).joints)),
+            command_joints=tuple(np.degrees(world.arm(side).joints)))
+    executor.client.arms["b"].mode = "error"
+    executor.client.arms["b"].error_code = 3
+    executor.acquire()
+    report = run(plan, executor)
+    assert report.stop_reason == "controller_fault", report.error
+    assert report.refusal is not None and report.refusal.reason == "controller_fault"
+    assert "right arm" in report.error and "error code 3" in report.error
+    assert not executor.client.posts("/v1/arm/trajectory/start")
+    assert not executor.client.posts("/v1/gripper/a/set")
+
+
+def test_a_controller_that_latches_mid_run_stops_it_between_steps(
+        executor, d1_arm, observe):
+    world = observe(d1_arm, block_p=REACHABLE)
+    plan = Grasp(object="red_block", side="left").plan(world, d1_arm)
+    executor.client.latch_after_play = "b"
+    with executor as robot:
+        report = robot.run_plan(plan)
+    assert report.stop_reason == "controller_fault", report.error
+    assert len(executor.client.posts("/v1/arm/trajectory/start")) == 1
+    closes = [b for b in executor.client.posts("/v1/gripper/a/set")
+              if b["closedness"] == 1.0]
+    assert not closes, "the jaws closed on a robot whose controller had latched"
+
+
+def test_a_holding_gripper_publishes_its_command(executor, d1_arm, observe):
+    """The runner refuses to move a hand that reports a hold when nobody can
+    say what it is COMMANDED to (re-commanding the measurement releases the
+    squeeze, F9). The firmware executor never published the command, so on
+    hardware that refusal fired after every successful grasp. It knows what
+    it commanded; it says so."""
+    from manipulation_kit.executor import run
+    from manipulation_kit.primitives import Lift
+    world = observe(d1_arm, block_p=REACHABLE, closed={"left": 1.0},
+                    held={"left": "red_block"})
+    for side, wire in (("left", "a"), ("right", "b")):
+        executor.client.arms[wire] = FakeArmState(
+            feedback_joints=tuple(np.degrees(world.arm(side).joints)),
+            command_joints=tuple(np.degrees(world.arm(side).joints)))
+    executor.client.grippers["a"] = FakeGripperState(kind="grasp", holding=True)
+    executor.transport = "stream"          # the generic runner, the one that refused
+    executor.acquire()
+    executor.client.stroke_kind = "grasp"
+    executor.set_gripper("left", 1.0, grip="firm")
+    assert executor.wait_gripper_settled("left", timeout_s=1.0).settled
+    state = executor.state()
+    assert state.hands["left"].commanded == 1.0
+    assert state.commanded_grippers == {"left": 1.0}
+    assert state.holding["left"] is True
+    plan = Lift(object="red_block", side="left", height_m=0.10).plan(world, d1_arm)
+    assert plan.ok, plan
+    report = run(plan, executor)
+    assert report.completed, report.error
+
+
+def test_the_blocking_stroke_is_bounded_by_the_executors_stroke_timeout(executor):
+    seen = {}
+    inner = executor.client.gripper_set
+
+    def spy(side, closedness, *, grip=None, timeout_s=None):
+        seen["timeout_s"] = timeout_s
+        inner(side, closedness, grip=grip, timeout_s=timeout_s)
+
+    executor.client.gripper_set = spy
+    executor.set_gripper("left", 1.0)
+    assert seen["timeout_s"] == executor.stroke_timeout_s
+
+
+def test_the_schedule_rate_is_derived_from_the_ratio_the_executor_installs():
+    from manipulation_kit.executors.firmware import schedule_rate_deg_s
+    slow = FirmwareExecutor(FakeClient(), vel_ratio=0.15, acc_ratio=0.15)
+    assert slow.max_rate == pytest.approx(MAX_JOINT_RATE_DEG_S * 0.15)
+    assert slow.max_rate == pytest.approx(schedule_rate_deg_s(0.15))
+    full = FirmwareExecutor(FakeClient(), vel_ratio=1.0)
+    assert full.max_rate == pytest.approx(MAX_JOINT_RATE_DEG_S)
+    pinned = FirmwareExecutor(FakeClient(), max_joint_rate_deg_s=60.0)
+    assert pinned.max_rate == 60.0
+
+
+def test_the_neck_and_the_lift_are_read_through_the_transport(executor):
+    from manipulation_kit.executor import (LiftState, NeckState, read_lift,
+                                           read_neck)
+    neck, lift = read_neck(executor), read_lift(executor)
+    assert isinstance(neck, NeckState) and isinstance(lift, LiftState)
+    assert neck.pitch_rad == pytest.approx(-0.35)     # not flipped
+    assert lift.height_m == pytest.approx(0.205) and lift.alarm is None
+    executor.client.slider = FakeSliderState(alarm=True, alarm_code=0x21,
+                                             alarm_text="overcurrent")
+    assert executor.lift_state().alarm == "overcurrent"

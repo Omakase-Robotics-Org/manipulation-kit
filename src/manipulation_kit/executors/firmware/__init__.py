@@ -13,7 +13,8 @@ Four modules, and the split is the point:
     Which generated client matches the daemon in front of us, and regenerating
     one on the spot when the bundled snapshot is older than the firmware.
 :mod:`~manipulation_kit.executors.firmware.client`
-    The four verbs the executor drives, over that generated client.
+    The verbs the executor drives, over that generated client, and the
+    field-for-field conversion of its models into the kit's state.
 :mod:`~manipulation_kit.executors.firmware.errors`
     What can go wrong, all of it under :class:`FirmwareUnavailable`.
 
@@ -26,24 +27,29 @@ The usual entry is still one name::
 """
 from __future__ import annotations
 
-from .client import ArmState, FirmwareClient, GripperState
+from .client import (FirmwareClient, hand_state, joint_state, lift_state,
+                     neck_state)
 from .ensure import (ClientTree, Resolution, bundled_spec_sha256, ensure_client,
                      resolve_client, snapshot)
 from .errors import (ClientUnavailable, DeviceUnavailable, FirmwareError,
                      FirmwareUnavailable, LeasePreempted, ProtocolError,
                      RateRefused)
-from .executor import (ANCHOR_GAP_DEG, DEFAULT_ACC_RATIO, DEFAULT_TTL_S,
+from .executor import (ANCHOR_GAP_DEG, DEFAULT_ACC_RATIO,
+                       DEFAULT_STROKE_TIMEOUT_S, DEFAULT_TTL_S,
                        DEFAULT_VEL_RATIO, INTERPOLATION_S, LEASE_CLASS,
                        MAX_COMMAND_STEP_DEG, MAX_JOINT_RATE_DEG_S, STREAM_HZ,
-                       FirmwareExecutor, Lease, default_holder)
+                       FirmwareExecutor, Lease, default_holder,
+                       schedule_rate_deg_s)
 
 __all__ = [
-    "ANCHOR_GAP_DEG", "ArmState", "ClientTree", "ClientUnavailable",
-    "DEFAULT_ACC_RATIO", "DEFAULT_TTL_S", "DEFAULT_VEL_RATIO",
+    "ANCHOR_GAP_DEG", "ClientTree", "ClientUnavailable",
+    "DEFAULT_ACC_RATIO", "DEFAULT_STROKE_TIMEOUT_S", "DEFAULT_TTL_S",
+    "DEFAULT_VEL_RATIO",
     "DeviceUnavailable", "FirmwareClient", "FirmwareError", "FirmwareExecutor",
-    "FirmwareUnavailable", "GripperState", "INTERPOLATION_S", "LEASE_CLASS",
+    "FirmwareUnavailable", "INTERPOLATION_S", "LEASE_CLASS",
     "Lease", "LeasePreempted", "MAX_COMMAND_STEP_DEG", "MAX_JOINT_RATE_DEG_S",
     "ProtocolError", "RateRefused", "Resolution", "STREAM_HZ",
-    "bundled_spec_sha256", "default_holder", "ensure_client", "resolve_client",
-    "snapshot",
+    "bundled_spec_sha256", "default_holder", "ensure_client", "hand_state",
+    "joint_state", "lift_state", "neck_state", "resolve_client",
+    "schedule_rate_deg_s", "snapshot",
 ]

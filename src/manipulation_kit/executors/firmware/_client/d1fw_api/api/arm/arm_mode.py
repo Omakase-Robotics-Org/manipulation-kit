@@ -6,11 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.arm_mode_request_type_0 import ArmModeRequestType0
-from ...models.arm_mode_request_type_1 import ArmModeRequestType1
-from ...models.arm_mode_request_type_2 import ArmModeRequestType2
-from ...models.arm_mode_request_type_3 import ArmModeRequestType3
-from ...models.arm_mode_request_type_4 import ArmModeRequestType4
+from ...models.arm_mode_command import ArmModeCommand
 from ...models.arm_mode_response_200 import ArmModeResponse200
 from ...models.arm_side import ArmSide
 from ...models.error_envelope import ErrorEnvelope
@@ -20,11 +16,7 @@ from ...types import Response
 def _get_kwargs(
     side: ArmSide,
     *,
-    body: ArmModeRequestType0
-    | ArmModeRequestType1
-    | ArmModeRequestType2
-    | ArmModeRequestType3
-    | ArmModeRequestType4,
+    body: ArmModeCommand,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -35,15 +27,7 @@ def _get_kwargs(
         ),
     }
 
-    if (
-        isinstance(body, ArmModeRequestType0)
-        or isinstance(body, ArmModeRequestType1)
-        or isinstance(body, ArmModeRequestType2)
-        or isinstance(body, ArmModeRequestType3)
-    ):
-        _kwargs["json"] = body.to_dict()
-    else:
-        _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -105,11 +89,7 @@ def sync_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmModeRequestType0
-    | ArmModeRequestType1
-    | ArmModeRequestType2
-    | ArmModeRequestType3
-    | ArmModeRequestType4,
+    body: ArmModeCommand,
 ) -> Response[ArmModeResponse200 | ErrorEnvelope]:
     """Set one arm's control mode
 
@@ -124,15 +104,23 @@ def sync_detailed(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmModeRequestType0 | ArmModeRequestType1 | ArmModeRequestType2 |
-            ArmModeRequestType3 | ArmModeRequestType4): A requested arm control mode.
+        body (ArmModeCommand): The advertised request body of `POST /v1/arm/{side}/mode`.
 
-            The two torque-based variants both put the controller into its `TORQ`
-            state and differ only in the impedance type they select and in the
-            parameters they send: `CartesianImpedance` selects impedance type 2 and
-            configures Cartesian stiffness, damping, and end-effector rotation;
-            `ForceCompliance` selects impedance type 3 and configures a force
-            direction set, a force loop, and a target contact force.
+            This is a *flattened, advertise-only* view of the tagged
+            [`d1fw_core::ArmModeRequest`] enum with the arm lease's optional `holder`
+            folded in as a top-level field. The daemon still deserializes the wire
+            body into `ArmModeRequest` and reads `holder` off it separately (see
+            `d1fw_front_rest::lease`); nothing deserializes into this struct. It exists
+            only so the published document describes the body as one flat object.
+
+            `openapi-python-client` silently skips any endpoint whose request body is
+            an `allOf` containing a `oneOf`, which is exactly what the tagged enum plus
+            a composed-in `holder` used to emit — so `POST /v1/arm/{side}/mode`, the
+            most-used arm verb, was missing from every generated Python client. A
+            single flat object with a `mode` string discriminator and every per-variant
+            parameter optional generates cleanly. Which fields are required for a given
+            `mode`, and their defaults, are documented on [`d1fw_core::ArmModeRequest`]
+            and enforced by the daemon, not by this looser schema.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,11 +146,7 @@ def sync(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmModeRequestType0
-    | ArmModeRequestType1
-    | ArmModeRequestType2
-    | ArmModeRequestType3
-    | ArmModeRequestType4,
+    body: ArmModeCommand,
 ) -> ArmModeResponse200 | ErrorEnvelope | None:
     """Set one arm's control mode
 
@@ -177,15 +161,23 @@ def sync(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmModeRequestType0 | ArmModeRequestType1 | ArmModeRequestType2 |
-            ArmModeRequestType3 | ArmModeRequestType4): A requested arm control mode.
+        body (ArmModeCommand): The advertised request body of `POST /v1/arm/{side}/mode`.
 
-            The two torque-based variants both put the controller into its `TORQ`
-            state and differ only in the impedance type they select and in the
-            parameters they send: `CartesianImpedance` selects impedance type 2 and
-            configures Cartesian stiffness, damping, and end-effector rotation;
-            `ForceCompliance` selects impedance type 3 and configures a force
-            direction set, a force loop, and a target contact force.
+            This is a *flattened, advertise-only* view of the tagged
+            [`d1fw_core::ArmModeRequest`] enum with the arm lease's optional `holder`
+            folded in as a top-level field. The daemon still deserializes the wire
+            body into `ArmModeRequest` and reads `holder` off it separately (see
+            `d1fw_front_rest::lease`); nothing deserializes into this struct. It exists
+            only so the published document describes the body as one flat object.
+
+            `openapi-python-client` silently skips any endpoint whose request body is
+            an `allOf` containing a `oneOf`, which is exactly what the tagged enum plus
+            a composed-in `holder` used to emit — so `POST /v1/arm/{side}/mode`, the
+            most-used arm verb, was missing from every generated Python client. A
+            single flat object with a `mode` string discriminator and every per-variant
+            parameter optional generates cleanly. Which fields are required for a given
+            `mode`, and their defaults, are documented on [`d1fw_core::ArmModeRequest`]
+            and enforced by the daemon, not by this looser schema.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,11 +198,7 @@ async def asyncio_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmModeRequestType0
-    | ArmModeRequestType1
-    | ArmModeRequestType2
-    | ArmModeRequestType3
-    | ArmModeRequestType4,
+    body: ArmModeCommand,
 ) -> Response[ArmModeResponse200 | ErrorEnvelope]:
     """Set one arm's control mode
 
@@ -225,15 +213,23 @@ async def asyncio_detailed(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmModeRequestType0 | ArmModeRequestType1 | ArmModeRequestType2 |
-            ArmModeRequestType3 | ArmModeRequestType4): A requested arm control mode.
+        body (ArmModeCommand): The advertised request body of `POST /v1/arm/{side}/mode`.
 
-            The two torque-based variants both put the controller into its `TORQ`
-            state and differ only in the impedance type they select and in the
-            parameters they send: `CartesianImpedance` selects impedance type 2 and
-            configures Cartesian stiffness, damping, and end-effector rotation;
-            `ForceCompliance` selects impedance type 3 and configures a force
-            direction set, a force loop, and a target contact force.
+            This is a *flattened, advertise-only* view of the tagged
+            [`d1fw_core::ArmModeRequest`] enum with the arm lease's optional `holder`
+            folded in as a top-level field. The daemon still deserializes the wire
+            body into `ArmModeRequest` and reads `holder` off it separately (see
+            `d1fw_front_rest::lease`); nothing deserializes into this struct. It exists
+            only so the published document describes the body as one flat object.
+
+            `openapi-python-client` silently skips any endpoint whose request body is
+            an `allOf` containing a `oneOf`, which is exactly what the tagged enum plus
+            a composed-in `holder` used to emit — so `POST /v1/arm/{side}/mode`, the
+            most-used arm verb, was missing from every generated Python client. A
+            single flat object with a `mode` string discriminator and every per-variant
+            parameter optional generates cleanly. Which fields are required for a given
+            `mode`, and their defaults, are documented on [`d1fw_core::ArmModeRequest`]
+            and enforced by the daemon, not by this looser schema.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -257,11 +253,7 @@ async def asyncio(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmModeRequestType0
-    | ArmModeRequestType1
-    | ArmModeRequestType2
-    | ArmModeRequestType3
-    | ArmModeRequestType4,
+    body: ArmModeCommand,
 ) -> ArmModeResponse200 | ErrorEnvelope | None:
     """Set one arm's control mode
 
@@ -276,15 +268,23 @@ async def asyncio(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmModeRequestType0 | ArmModeRequestType1 | ArmModeRequestType2 |
-            ArmModeRequestType3 | ArmModeRequestType4): A requested arm control mode.
+        body (ArmModeCommand): The advertised request body of `POST /v1/arm/{side}/mode`.
 
-            The two torque-based variants both put the controller into its `TORQ`
-            state and differ only in the impedance type they select and in the
-            parameters they send: `CartesianImpedance` selects impedance type 2 and
-            configures Cartesian stiffness, damping, and end-effector rotation;
-            `ForceCompliance` selects impedance type 3 and configures a force
-            direction set, a force loop, and a target contact force.
+            This is a *flattened, advertise-only* view of the tagged
+            [`d1fw_core::ArmModeRequest`] enum with the arm lease's optional `holder`
+            folded in as a top-level field. The daemon still deserializes the wire
+            body into `ArmModeRequest` and reads `holder` off it separately (see
+            `d1fw_front_rest::lease`); nothing deserializes into this struct. It exists
+            only so the published document describes the body as one flat object.
+
+            `openapi-python-client` silently skips any endpoint whose request body is
+            an `allOf` containing a `oneOf`, which is exactly what the tagged enum plus
+            a composed-in `holder` used to emit — so `POST /v1/arm/{side}/mode`, the
+            most-used arm verb, was missing from every generated Python client. A
+            single flat object with a `mode` string discriminator and every per-variant
+            parameter optional generates cleanly. Which fields are required for a given
+            `mode`, and their defaults, are documented on [`d1fw_core::ArmModeRequest`]
+            and enforced by the daemon, not by this looser schema.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

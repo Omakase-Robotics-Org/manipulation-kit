@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+from typing_extensions import Self
+
+from ..models.chassis_param_type_3_kind import ChassisParamType3Kind
+
+T = TypeVar("T", bound="ChassisParamType3")
+
+
+@_attrs_define
+class ChassisParamType3:
+    """Nominally the local planner's speed limit inside a narrow passage —
+    **refused by the daemon, and not sent**.
+
+    The vendor's writer for this type targets
+    `navigator/teb_path_stop.yaml` while its own reader reports the
+    `narrow` value out of `navigator/teb_path_narrow.yaml`, so the write
+    can never be read back. The variant exists so that asking for it is
+    answered with that reason rather than with "unknown kind".
+
+        Attributes:
+            kind (ChassisParamType3Kind):
+            value (float): Nominally the local planner's speed limit inside a narrow passage —
+                **refused by the daemon, and not sent**.
+
+                The vendor's writer for this type targets
+                `navigator/teb_path_stop.yaml` while its own reader reports the
+                `narrow` value out of `navigator/teb_path_narrow.yaml`, so the write
+                can never be read back. The variant exists so that asking for it is
+                answered with that reason rather than with "unknown kind".
+    """
+
+    kind: ChassisParamType3Kind
+    value: float
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        kind = self.kind.value
+
+        value = self.value
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "kind": kind,
+                "value": value,
+            }
+        )
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        d = dict(src_dict)
+        kind = ChassisParamType3Kind(d.pop("kind"))
+
+        value = d.pop("value")
+
+        chassis_param_type_3 = cls(
+            kind=kind,
+            value=value,
+        )
+
+        chassis_param_type_3.additional_properties = d
+        return chassis_param_type_3
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

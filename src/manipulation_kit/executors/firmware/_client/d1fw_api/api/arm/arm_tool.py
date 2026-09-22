@@ -7,16 +7,16 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.arm_side import ArmSide
+from ...models.arm_tool_body import ArmToolBody
 from ...models.arm_tool_response_200 import ArmToolResponse200
 from ...models.error_envelope import ErrorEnvelope
-from ...models.tool_config import ToolConfig
 from ...types import Response
 
 
 def _get_kwargs(
     side: ArmSide,
     *,
-    body: ToolConfig,
+    body: ArmToolBody,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -89,7 +89,7 @@ def sync_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ToolConfig,
+    body: ArmToolBody,
 ) -> Response[ArmToolResponse200 | ErrorEnvelope]:
     """Set one arm's tool centre point and payload
 
@@ -98,7 +98,7 @@ def sync_detailed(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ToolConfig): Tool-center-point and dynamics configuration for one arm.
+        body (ArmToolBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,7 +124,7 @@ def sync(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ToolConfig,
+    body: ArmToolBody,
 ) -> ArmToolResponse200 | ErrorEnvelope | None:
     """Set one arm's tool centre point and payload
 
@@ -133,7 +133,7 @@ def sync(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ToolConfig): Tool-center-point and dynamics configuration for one arm.
+        body (ArmToolBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,7 +154,7 @@ async def asyncio_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ToolConfig,
+    body: ArmToolBody,
 ) -> Response[ArmToolResponse200 | ErrorEnvelope]:
     """Set one arm's tool centre point and payload
 
@@ -163,7 +163,7 @@ async def asyncio_detailed(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ToolConfig): Tool-center-point and dynamics configuration for one arm.
+        body (ArmToolBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,7 +187,7 @@ async def asyncio(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ToolConfig,
+    body: ArmToolBody,
 ) -> ArmToolResponse200 | ErrorEnvelope | None:
     """Set one arm's tool centre point and payload
 
@@ -196,7 +196,7 @@ async def asyncio(
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ToolConfig): Tool-center-point and dynamics configuration for one arm.
+        body (ArmToolBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

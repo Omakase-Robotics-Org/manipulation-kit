@@ -47,7 +47,6 @@ it is MOVED: see :data:`JAW_MESH_ORIGIN_Z_M`.
 """
 from __future__ import annotations
 
-import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -105,12 +104,36 @@ JAW_OPEN_GAP_M = 2 * JAW_STROKE_M
 #: 1.43 rad rather than the ~1.55 rad of mechanism travel the CAD implied. So
 #: either the travel is shorter than the CAD said or the map is not linear
 #: through zero. Both endpoint GAPS are measured; the map between them is
-#: not, and nothing here depends on it.
-DRIVEN_OPEN_GAP_M = float(os.environ.get("MKIT_DRIVEN_OPEN_GAP_M", "0.05196"))
-# ^ 0.05196 is the driver's OPEN_RAD = 1.16 rad stop measured 2026-08-24.
-# d1-firmwared 0.3.0 reports open_rad 1.35 on d1-2 (2026-09-22), i.e. about
-# 60.5 mm at 44.8 mm/rad; until the kit reads the daemon's open_rad at run
-# time, the operator sets MKIT_DRIVEN_OPEN_GAP_M=0.0605 on that robot.
+#: not — :data:`JAW_GAP_PER_MOTOR_RAD_M` below is the linear assumption the
+#: firmware executor converts the daemon's jaw readings with.
+DRIVEN_OPEN_GAP_M = 0.05196
+#: ^ the NOMINAL driven opening, for kinematics, sim and dry-runs. It is not
+#: what a particular robot's hand opens to: d1-firmwared publishes its own
+#: ``open_rad`` ceiling (1.35 rad on d1-2 on 2026-09-22, about 60.5 mm), and
+#: the firmware executor reports THAT, through :func:`gap_from_motor_rad`, as
+#: ``HandState.open_gap_m``. Nothing reads an environment variable for it.
+
+#: The daemon's driven-open ceiling this description's nominal gap was
+#: measured at [motor rad] (d1-3, 2026-08-24).
+NOMINAL_OPEN_RAD = 1.16
+
+#: Pad-face gap per motor radian [m/rad] — the kinematic map between the
+#: daemon's ``jaw_rad`` / ``open_rad`` and a gap, linear through zero
+#: (``jaw_rad = 0`` is closed): 51.96 mm / 1.16 rad = 44.8 mm/rad. The kit
+#: owns this GEOMETRY; the daemon owns the VALUE of ``open_rad``.
+#:
+#: Linear through zero is an assumption with one measured point behind it
+#: (see above: extrapolated, it puts the 64 mm mechanical stop at 1.43 rad).
+#: It is the map d1-2's 1.35 rad -> 60.5 mm was computed with.
+JAW_GAP_PER_MOTOR_RAD_M = DRIVEN_OPEN_GAP_M / NOMINAL_OPEN_RAD
+
+
+def gap_from_motor_rad(motor_rad: float) -> float:
+    """The pad-face gap [m] at a jaw motor position [rad], clipped to the
+    mechanism's measured 0 .. :data:`JAW_OPEN_GAP_M`."""
+    return max(0.0, min(JAW_OPEN_GAP_M, float(motor_rad) * JAW_GAP_PER_MOTOR_RAD_M))
+
+
 #: The jaw joint value at the driven-open stop: q = (JAW_OPEN_GAP_M -
 #: DRIVEN_OPEN_GAP_M) / 2 per finger. Sim "fully open" is this, not 0.
 DRIVEN_OPEN_Q = (JAW_OPEN_GAP_M - DRIVEN_OPEN_GAP_M) / 2.0

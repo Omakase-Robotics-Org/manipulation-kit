@@ -137,6 +137,20 @@ def bundled_spec_sha256() -> str:
     return sha256_bytes(bundled_spec_bytes())
 
 
+def document_bytes(resolution: "Resolution") -> bytes:
+    """The OpenAPI document the tree ``resolution`` names was generated FROM.
+
+    The bundled snapshot keeps it under ``_client/openapi/``; a regenerated
+    tree keeps a copy beside itself in the cache (:func:`_regenerate`). The
+    generator does not carry vendor extensions such as ``x-timeout-seconds``
+    into the code, so this is how an adapter reads them — from the same
+    contract, never from a constant.
+    """
+    if resolution.source == "bundled":
+        return bundled_spec_bytes()
+    return (Path(resolution.path).parent / "openapi.json").read_bytes()
+
+
 def fetch_spec(base_url: str, *, timeout_s: float = SPEC_TIMEOUT_S) -> bytes:
     """``GET <base_url>/openapi.json``. Raises :class:`OSError` when it cannot.
 

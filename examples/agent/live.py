@@ -63,6 +63,45 @@ def objects_from(scene: Dict[str, Any]) -> List[ObjectView]:
     return out
 
 
+def hand_open_gap_m(scene: Optional[Dict[str, Any]]) -> Optional[float]:
+    """The robot's measured driven-open gripper gap from a scene file [m].
+
+    A scene is a measurement of one robot at one table, so it can carry that
+    robot's hand too::
+
+        "robot": {"hand": {"open_gap_m": 0.0605}}
+
+    It is a FALLBACK for a transport that cannot report the hand itself (the
+    kinematic mirror in ``--dry-run``); on hardware the executor publishes the
+    daemon's own ``open_rad`` as ``HandState.open_gap_m`` and that wins.
+    ``None`` when the file says nothing: the planner then uses the hand
+    description's nominal opening.
+    """
+    value = ((scene or {}).get("robot") or {}).get("hand", {}).get("open_gap_m")
+    if value is None:
+        return None
+    gap = float(value)
+    if not (0.0 < gap < 0.2):
+        raise ValueError(f"scene robot.hand.open_gap_m must be a gap in metres, "
+                         f"got {value!r}")
+    return gap
+
+
+def with_declared_hand(world: WorldView,
+                       scene: Optional[Dict[str, Any]]) -> WorldView:
+    """``world`` with the scene's measured hand on every gripper that has no
+    measured opening of its own (see :func:`hand_open_gap_m`)."""
+    import dataclasses  # noqa: PLC0415
+
+    gap = hand_open_gap_m(scene)
+    if gap is None:
+        return world
+    return world.with_(grippers={
+        side: (g if g.open_gap_m is not None
+               else dataclasses.replace(g, open_gap_m=gap))
+        for side, g in world.grippers.items()})
+
+
 def frames_from(scene: Dict[str, Any], *, now: float) -> FrameGraph:
     graph = FrameGraph(now=now)
     for frame in scene.get("frames", ()):
@@ -132,31 +171,39 @@ class LiveRobot:
     def world(self) -> WorldView:
         state = self.executor.state()
         self.revision += 1
+        declared_gap = hand_open_gap_m(self.scene)
         arms, grippers = [], []
         for side in ("left", "right"):
-            q = state.joints.get(side)
-            if q is None:
+            arm = state.arms.get(side)
+            if arm is None:
                 continue
+            q = arm.q
             saved = np.array(self.kin.joints(side), dtype=float)
             try:
                 self.kin.set_joints(side, q)
                 p, r = tool_from_link7(*self.kin.ee_pose(side))
             finally:
                 self.kin.set_joints(side, saved)
+            # The controller's own mode and error code, typed. A latched arm
+            # stops the run in the kit (``controller_fault``); the view just
+            # tells the model what the robot says.
             arms.append(ArmView(side, joints=q, tool_p=p, tool_r=r,
-                                mode=state.extra.get(f"{side}_mode") or "position",
-                                error_code=int(state.extra.get(f"{side}_error_code", 0) or 0),
-                                stationary=state.stationary))
-            closedness = state.grippers.get(side)
-            if closedness is None:
+                                mode=arm.mode, error_code=arm.error_code,
+                                stationary=arm.stationary))
+            hand = state.hands.get(side)
+            if hand is None or hand.closedness is None:
                 continue        # UNKNOWN, not "open"
-            holding = bool(state.holding.get(side, False))
+            holding = bool(hand.holding)
             grippers.append(GripperView(
-                side, closedness, holding=holding,
+                side, hand.closedness, holding=holding,
                 held_object=self.held.get(side) if holding else None,
-                jaw_gap_m=state.extra.get(f"{side}_jaw_gap_m"),
-                jaw_stalled=state.extra.get(f"{side}_jaw_stalled")))
+                jaw_gap_m=hand.jaw_gap_m,
+                jaw_stalled=hand.stalled,
+                open_gap_m=(hand.open_gap_m if hand.open_gap_m is not None
+                            else declared_gap)))
         return WorldView.of(objects=objects_from(self.scene),
                             frames=frames_from(self.scene, now=state.stamp),
                             arms=arms, grippers=grippers,
-                            stamp=state.stamp, revision=self.revision)
+                            stamp=state.stamp, revision=self.revision,
+                            firmware_spec=getattr(self.executor,
+                                                  "firmware_spec", None) or "")

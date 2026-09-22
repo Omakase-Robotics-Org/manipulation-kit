@@ -5,15 +5,15 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.arm_trajectory_start_body import ArmTrajectoryStartBody
 from ...models.arm_trajectory_start_response_200 import ArmTrajectoryStartResponse200
 from ...models.error_envelope import ErrorEnvelope
-from ...models.trajectory_request import TrajectoryRequest
 from ...types import Response
 
 
 def _get_kwargs(
     *,
-    body: TrajectoryRequest,
+    body: ArmTrajectoryStartBody,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -83,17 +83,18 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: TrajectoryRequest,
+    body: ArmTrajectoryStartBody,
 ) -> Response[ArmTrajectoryStartResponse200 | ErrorEnvelope]:
     """Start a guarded dual-arm trajectory
 
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
-    position or torque hold within 3 degrees of the first waypoint. Not available over WebSocket.
+    position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
+    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
+    WebSocket.
 
     Args:
-        body (TrajectoryRequest): A bounded trajectory upload. Mode and tool selection remain
-            explicit verbs.
+        body (ArmTrajectoryStartBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -117,17 +118,18 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: TrajectoryRequest,
+    body: ArmTrajectoryStartBody,
 ) -> ArmTrajectoryStartResponse200 | ErrorEnvelope | None:
     """Start a guarded dual-arm trajectory
 
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
-    position or torque hold within 3 degrees of the first waypoint. Not available over WebSocket.
+    position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
+    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
+    WebSocket.
 
     Args:
-        body (TrajectoryRequest): A bounded trajectory upload. Mode and tool selection remain
-            explicit verbs.
+        body (ArmTrajectoryStartBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,17 +148,18 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: TrajectoryRequest,
+    body: ArmTrajectoryStartBody,
 ) -> Response[ArmTrajectoryStartResponse200 | ErrorEnvelope]:
     """Start a guarded dual-arm trajectory
 
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
-    position or torque hold within 3 degrees of the first waypoint. Not available over WebSocket.
+    position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
+    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
+    WebSocket.
 
     Args:
-        body (TrajectoryRequest): A bounded trajectory upload. Mode and tool selection remain
-            explicit verbs.
+        body (ArmTrajectoryStartBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,17 +181,18 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: TrajectoryRequest,
+    body: ArmTrajectoryStartBody,
 ) -> ArmTrajectoryStartResponse200 | ErrorEnvelope | None:
     """Start a guarded dual-arm trajectory
 
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
-    position or torque hold within 3 degrees of the first waypoint. Not available over WebSocket.
+    position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
+    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
+    WebSocket.
 
     Args:
-        body (TrajectoryRequest): A bounded trajectory upload. Mode and tool selection remain
-            explicit verbs.
+        body (ArmTrajectoryStartBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

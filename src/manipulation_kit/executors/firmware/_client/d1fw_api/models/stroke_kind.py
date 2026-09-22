@@ -9,6 +9,7 @@ class StrokeKind(str, Enum):
     GRASP = "grasp"
     LOST = "lost"
     OPEN = "open"
+    OVERLOAD = "overload"
     TIMEOUT = "timeout"
 
     def __str__(self) -> str:
