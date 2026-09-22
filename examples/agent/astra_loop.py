@@ -329,6 +329,17 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         # THE GATE, on the BOUND call. A model may ask for anything; decode
         # checks the arguments against the kit's own table and the guard
         # decides the rest. This is the step PR #17 was missing.
+        # Operator cap on the grip preset (d1-2 2026-09-22: `firm` preload on a
+        # rigid body wound the hold up to -4.2 Nm and faulted the motor;
+        # d1-firmware #89). ASTRA_GRIP_CAP=soft rewrites firmer requests.
+        cap = os.environ.get("ASTRA_GRIP_CAP")
+        if cap and call["arguments"].get("grip") not in (None, cap):
+            asked = call["arguments"]["grip"]
+            order = ("soft", "firm", "strong")
+            if asked in order and cap in order and order.index(asked) > order.index(cap):
+                call["arguments"]["grip"] = cap
+                _say(messages, call_id,
+                     f"note: grip {asked!r} is capped to {cap!r} on this robot tonight")
         primitive = decode(call["name"], call["arguments"], world)
         if not isinstance(primitive, object) or getattr(primitive, "ok", None) is False:
             record.refused = [primitive.to_json()]
