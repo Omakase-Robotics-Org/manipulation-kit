@@ -266,11 +266,146 @@ class SettleStep:
     timeout_s: float = 2.0
 
 
+@dataclass(frozen=True)
+class ContactCriterion:
+    """When to call it contact. MEASURED, never commanded.
+
+    Position mode only (Shu, 2026-09-22): a contact leg is a position-
+    commanded motion WATCHED for resistance, not a compliant or torque-mode
+    motion. So every number here is a threshold on what the transport
+    MEASURES, and none of them is ever sent to a controller.
+
+    ``joint_torque_nm``       the rise, on any one joint of the moving arm,
+                              over the torque that joint read BEFORE the
+                              motion started [Nm]. A rise, not an absolute:
+                              the arm carries its own weight and a held tool.
+    ``tool_force_n``          a force at the tool, when a transport can
+                              ESTIMATE one [N]. No transport in this package
+                              can, so a criterion that sets it is refused
+                              (``unmeasured``) rather than silently ignored.
+    ``stall_velocity_rad_s``  the arm counts as STOPPED ON something only
+                              while no joint moves faster than this — a torque
+                              rise on a moving arm is acceleration or gravity,
+                              not a surface. Skipped when the transport does
+                              not publish velocity.
+    ``settle_s``              how long both have to hold before it is called
+                              contact [s]. The command is FROZEN while it is
+                              being confirmed, so confirming costs no travel.
+    """
+
+    joint_torque_nm: float = 4.0
+    tool_force_n: Optional[float] = None
+    stall_velocity_rad_s: float = 0.02
+    settle_s: float = 0.15
+
+    def __post_init__(self) -> None:
+        for name in ("joint_torque_nm", "stall_velocity_rad_s", "settle_s"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"ContactCriterion.{name} must be a positive "
+                                 f"finite number, got {getattr(self, name)!r}")
+            object.__setattr__(self, name, value)
+        if self.tool_force_n is not None:
+            force = float(self.tool_force_n)
+            if not math.isfinite(force) or force <= 0.0:
+                raise ValueError(f"ContactCriterion.tool_force_n must be a "
+                                 f"positive finite number or None, got "
+                                 f"{self.tool_force_n!r}")
+            object.__setattr__(self, "tool_force_n", force)
+
+    def to_json(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "joint_torque_nm": round(self.joint_torque_nm, 3),
+            "stall_velocity_rad_s": round(self.stall_velocity_rad_s, 4),
+            "settle_s": round(self.settle_s, 3)}
+        if self.tool_force_n is not None:
+            out["tool_force_n"] = round(self.tool_force_n, 3)
+        return out
+
+
+@dataclass(frozen=True)
+class ContactStep:
+    """A straight leg that STOPS ON WHATEVER RESISTS, and reports where.
+
+    Run by the executor's ``move_until`` (the protocol's contact capability):
+    the leg is position-commanded knot by knot while :attr:`criterion` watches
+    the measured torque, and the motion is stopped the moment it is met. An
+    executor with no ``move_until`` fails this step with ``transport_error``
+    — never plays the leg blind, because a leg played blind is a position-
+    controlled arm driven into a table.
+
+    THE LEG'S KNOTS LIVE INSIDE THIS STEP (``path``), not as ``JointStep``s
+    beside it, so a runner that does not understand a contact step cannot
+    play the leg by accident: it can only refuse the step.
+
+    ``direction``   the travel, RESOLVED into the base frame at plan time.
+    ``path``        the leg's joint knots for ``side``, from the posture the
+                    leg starts at (``path[0]``) to the one ``max_travel_m``
+                    along ``direction`` (``path[-1]``), each already solved by
+                    the same IK, clamp and guard as every other plan step.
+    ``s``           each knot's distance along ``direction`` from the start [m].
+    ``speed_m_s``   how fast the tool travels along the leg. Slow on purpose:
+                    what the arm overshoots after contact is this speed times
+                    the transport's detection latency.
+    ``hold_s``      after contact, keep the command where it stopped this long
+                    (a press holds; a probe does not).
+    ``retract``     after the hold, travel the leg BACK to its start (a press
+                    returns to its standoff). Without it the arm is re-
+                    commanded at the posture it MEASURED at contact, so it
+                    stops pushing but stays touching.
+    ``waypoint``    the index of the plan waypoint the leg ends at.
+    """
+
+    side: str
+    direction: Any                      # world.Direction, base frame
+    max_travel_m: float
+    criterion: ContactCriterion = field(default_factory=ContactCriterion)
+    waypoint: int = -1
+    path: Tuple[np.ndarray, ...] = ()
+    s: Tuple[float, ...] = ()
+    speed_m_s: float = 0.01
+    hold_s: float = 0.0
+    retract: bool = False
+
+    def __post_init__(self) -> None:
+        path = tuple(np.array(q, dtype=float).reshape(7) for q in self.path)
+        for q in path:
+            q.setflags(write=False)
+        object.__setattr__(self, "path", path)
+        object.__setattr__(self, "s", tuple(float(v) for v in self.s))
+        if len(self.s) != len(path):
+            raise ValueError(f"ContactStep: {len(path)} knots but "
+                             f"{len(self.s)} distances")
+        if len(path) < 2:
+            raise ValueError("ContactStep: a contact leg needs its start and at "
+                             "least one knot")
+        if getattr(self.direction, "frame", _BASE) != _BASE:
+            raise ValueError("ContactStep.direction must be resolved into the "
+                             "base frame at plan time")
+        for name in ("max_travel_m", "speed_m_s"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"ContactStep.{name} must be positive, got "
+                                 f"{getattr(self, name)!r}")
+        if not math.isfinite(float(self.hold_s)) or float(self.hold_s) < 0.0:
+            raise ValueError(f"ContactStep.hold_s must be >= 0, got "
+                             f"{self.hold_s!r}")
+
+    def timed_path(self) -> Tuple[Tuple[float, np.ndarray], ...]:
+        """``(t, q)`` per knot, ``t`` seconds from the leg start at
+        :attr:`speed_m_s` — the one timing every transport plays."""
+        return tuple((max(0.0, s) / self.speed_m_s, q)
+                     for s, q in zip(self.s, self.path))
+
+    def duration_s(self) -> float:
+        return max(0.0, self.s[-1]) / self.speed_m_s
+
+
 #: The closed set of things a plan can contain. Spelt as a Union rather than
 #: ``Any`` so a consumer's type checker can see that the generic runner's
 #: ``raise TypeError`` and the firmware runner's silent skip were not the same
 #: behaviour over the same set.
-Step = Union[JointStep, GripStep, SettleStep]
+Step = Union[JointStep, GripStep, SettleStep, ContactStep]
 
 
 @dataclass(frozen=True)
@@ -403,6 +538,17 @@ def _step_json(step: Step) -> Dict[str, Any]:
                 "grip": step.grip, "waypoint": int(step.waypoint)}
     if isinstance(step, SettleStep):
         return {"step": "settle", "timeout_s": round(float(step.timeout_s), 3)}
+    if isinstance(step, ContactStep):
+        return {"step": "contact", "side": step.side,
+                "direction": step.direction.to_json(),
+                "max_travel_m": round(float(step.max_travel_m), 4),
+                "criterion": step.criterion.to_json(),
+                "speed_m_s": round(float(step.speed_m_s), 4),
+                "hold_s": round(float(step.hold_s), 3),
+                "retract": bool(step.retract),
+                "waypoint": int(step.waypoint),
+                "s_m": [round(float(v), 5) for v in step.s],
+                "q_rad": [[round(float(v), 6) for v in q] for q in step.path]}
     raise TypeError(f"not a plan step: {step!r}")
 
 
@@ -470,6 +616,14 @@ class Plan:
             "notes": list(self.notes),
             "binding": None if self.binding is None else self.binding.to_json(),
         }
+        contacts = [s for s in self.steps if isinstance(s, ContactStep)]
+        if contacts:
+            out["contact_steps"] = [
+                {"side": s.side, "direction": s.direction.label(),
+                 "max_travel_m": round(float(s.max_travel_m), 4),
+                 "criterion": s.criterion.to_json(),
+                 "hold_s": round(float(s.hold_s), 3),
+                 "retract": bool(s.retract)} for s in contacts]
         if full:
             out["steps"] = [_step_json(step) for step in self.steps]
         else:
@@ -643,6 +797,16 @@ class Primitive:
         The kit owns this, not the schema exporter: a verb that accepts a value
         no exported schema mentions is a robot with two different action spaces
         depending on which model is driving.
+        """
+        return {}
+
+    @classmethod
+    def arg_roles(cls) -> Dict[str, str]:
+        """Per-verb ROLE of a name argument, where it differs from the table's.
+
+        Same reasoning as :meth:`arg_enums`: ``target`` is a vessel for
+        ``pour`` and anything in the world for ``press``, and the verb says
+        so once, so the schema export and ``decode`` cannot disagree.
         """
         return {}
 
