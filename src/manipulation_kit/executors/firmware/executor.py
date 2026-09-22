@@ -423,12 +423,18 @@ class FirmwareExecutor:
         joints: Dict[str, np.ndarray] = {}
         grippers: Dict[str, float] = {}
         holding: Dict[str, bool] = {}
+        extra: Dict[str, Any] = {}
         stationary = True
         for side in SIDES:
             wire = _wire_side(side)
             arm = self.client.arm_state(wire)
             joints[side] = np.radians(np.asarray(arm.feedback_joints, dtype=float))
             stationary = stationary and bool(arm.stationary)
+            # The controller's own mode and error code travel with the state:
+            # a latched arm (mode "error") used to be published as "position"
+            # and the loop kept planning on it (d1-2 run5, 2026-09-22).
+            extra[f"{side}_mode"] = str(getattr(arm, "mode", "") or "")
+            extra[f"{side}_error_code"] = int(getattr(arm, "error_code", 0) or 0)
             try:
                 report = self.client.gripper_state(wire)
             except Exception:  # noqa: BLE001 - a gripper that cannot be read is
@@ -437,7 +443,7 @@ class FirmwareExecutor:
             if report.open_rad:
                 grippers[side] = max(0.0, min(1.0, 1.0 - report.jaw_rad / report.open_rad))
         return RawState(joints=joints, grippers=grippers, holding=holding,
-                        stationary=stationary, stamp=self._clock())
+                        stationary=stationary, stamp=self._clock(), extra=extra)
 
     def begin_run(self, plan: Plan = None) -> None:
         """A new plan starts a new clock.

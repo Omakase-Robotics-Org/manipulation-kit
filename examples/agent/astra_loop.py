@@ -119,8 +119,8 @@ How to get metres out of a photograph, and you are given everything you need:
   and declare a better one from what you can see: known objects have known
   sizes, and a cup you can see is about 110 mm tall.
 
-Sizes matter as much as positions: the jaws open 60 mm and take at most
-52 mm across, so `size` must be the object's tight outer dimensions —
+Sizes matter as much as positions: the jaws open {open_mm} mm and take at most
+{grasp_mm} mm across, so `size` must be the object's tight outer dimensions —
 read the footprint from the object's own base outline, never from its
 shadow or its blurred edge. Over-reporting a 47 mm side as 55 mm makes
 every grasp of it refused as too wide; the top face gives the truest width.
@@ -166,6 +166,16 @@ Call exactly one tool per turn."""
 #
 # Neither moves anything, so neither goes through the motion gate; both are
 # answered inside the loop and reported back correlated with the call.
+
+from manipulation_kit.hands.d1.parallel_gripper.description import DRIVEN_OPEN_GAP_M as _OPEN_M  # noqa: E402
+from manipulation_kit.primitives.approach import GRASPABLE_WIDTH_M as _GRASP_M  # noqa: E402
+SYSTEM = SYSTEM.replace("{open_mm}", f"{_OPEN_M * 1000:.0f}").replace(
+    "{grasp_mm}", f"{_GRASP_M * 1000:.0f}")
+SYSTEM += (
+    "\n`locate` returns the CONTACT point of the pixel you gave — for the bottom of a\n"
+    "silhouette that is the object's NEAR edge on the table, not its centre: move\n"
+    "the declared centre about half the object's depth away from the camera, and\n"
+    "declare z as the table top plus half the object's height.\n")
 
 SCENE_TOOLS = ("declare_scene", "locate")
 
@@ -278,12 +288,38 @@ def apply_declare_scene(robot, arguments: Dict[str, Any]) -> str:
         views = objects_from({"objects": items})
     except (KeyError, ValueError, TypeError) as exc:
         return f"that scene is malformed and nothing was changed: {exc}"
+    # THE DESCENT FLOOR TRUSTS THE OBJECT'S BOTTOM (approach.py). A declared
+    # bottom below the table top would send the pad tips into the table, so a
+    # declared object is lifted onto the surface it stands on (Astra review,
+    # 2026-09-22, finding 4).
+    import dataclasses as _dc  # noqa: PLC0415
+    surfaces = [v for v in views if v.kind == "surface"]
+    try:
+        surfaces += [o for o in robot.world().objects if o.kind == "surface"]
+    except Exception:  # noqa: BLE001 - no world yet is fine
+        pass
+    lifted = []
+    if surfaces:
+        top = max(float(s.p[2]) + float(s.size[2]) / 2.0 for s in surfaces)
+        fixed = []
+        for v in views:
+            if v.kind == "surface":
+                fixed.append(v)
+                continue
+            bottom = float(v.p[2]) - float(v.size[2]) / 2.0
+            if bottom < top - 0.002:
+                dz = top - bottom
+                v = _dc.replace(v, p=np.array([v.p[0], v.p[1], float(v.p[2]) + dz], dtype=float))
+                lifted.append(f"{v.name} raised {dz * 1000:.0f} mm so its bottom sits on the table top ({top:.3f} m)")
+            fixed.append(v)
+        views = fixed
     robot.declare(views)
     lines = [f"{v.name!r} ({v.kind}) at ({v.p[0]:.3f}, {v.p[1]:.3f}, "
              f"{v.p[2]:.3f}) m, {v.size[0]*1000:.0f}x{v.size[1]*1000:.0f}x"
              f"{v.size[2]*1000:.0f} mm" for v in views]
     return ("recorded, and the next observation is measured against it: "
-            + "; ".join(lines))
+            + "; ".join(lines)
+            + ((" | corrections: " + "; ".join(lifted)) if lifted else ""))
 
 
 def apply_locate(camera, world, arguments: Dict[str, Any]) -> str:
@@ -658,6 +694,21 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
     stop = Stop("max_turns", f"{max_turns} turns without a measured goal")
     for turn in range(max_turns):
         world = robot.world()
+        faulted = [a for a in world.arms if (a.mode or "position") != "position"
+                   or int(getattr(a, "error_code", 0) or 0)]
+        if faulted:
+            # A latched controller is not something the model can talk its
+            # way out of. Stop, say which arm, and leave recovery to the
+            # operator (console: Clear error -> Home). Astra review finding 2.
+            record = DecisionRecord(iteration=turn, world=world.to_json())
+            record.task = task
+            record.stop = "arm_error"
+            trace.write(record)
+            _dump_messages(trace_path, messages)
+            stop = Stop("arm_error", "; ".join(
+                f"{a.side} arm mode {a.mode!r} error_code {getattr(a, 'error_code', 0)}"
+                for a in faulted))
+            break
         frames = _snapshot(trace_path, turn)
         messages.append({"role": "user",
                          "content": _observation(world.to_text(), frames)})
@@ -821,7 +872,8 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             robot.expect(getattr(plan, "side", None) or primitive.side,
                          primitive.object)
         try:
-            report = run(plan, robot.executor)
+            report = run(plan, robot.executor, kin=kin,
+                         arrive_timeout_s=float(os.environ.get("ASTRA_ARRIVE_TIMEOUT_S", "4.0")))
         except Exception as exc:
             # The turn is written BEFORE the exception propagates: run1 on d1-2
             # (2026-09-22) lost its whole trace to an httpx timeout in here.
@@ -1072,7 +1124,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                 destination=args.destination)
                   if (args.dry_run or not os.environ.get("OPENAI_API_KEY"))
                   and world0 is not None else None)
-    trace = loop(build_model(args.dry_run, args.object, args.destination,
+    # ENTER the executor: lease, position mode (vel/acc ratios), heartbeat —
+    # and RELEASE on every exit, Ctrl-C included (Astra review finding 1: the
+    # loop drove the daemon without ever entering the executor).
+    import contextlib as _contextlib  # noqa: PLC0415
+    with _contextlib.ExitStack() as stack:
+        executor = getattr(robot, "executor", None)
+        if hasattr(executor, "__enter__"):
+            stack.enter_context(executor)
+        trace = loop(build_model(args.dry_run, args.object, args.destination,
                              declare=stub_scene), robot, task=args.task,
                  max_turns=args.max_turns, trace_path=args.trace,
                  world0=world0, kin=kin, obj=args.object,

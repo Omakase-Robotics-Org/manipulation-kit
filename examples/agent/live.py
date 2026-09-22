@@ -144,7 +144,9 @@ class LiveRobot:
             finally:
                 self.kin.set_joints(side, saved)
             arms.append(ArmView(side, joints=q, tool_p=p, tool_r=r,
-                                mode="position", stationary=state.stationary))
+                                mode=state.extra.get(f"{side}_mode") or "position",
+                                error_code=int(state.extra.get(f"{side}_error_code", 0) or 0),
+                                stationary=state.stationary))
             closedness = state.grippers.get(side)
             if closedness is None:
                 continue        # UNKNOWN, not "open"

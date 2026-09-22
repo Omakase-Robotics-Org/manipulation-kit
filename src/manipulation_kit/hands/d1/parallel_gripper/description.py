@@ -105,7 +105,11 @@ JAW_OPEN_GAP_M = 2 * JAW_STROKE_M
 #: either the travel is shorter than the CAD said or the map is not linear
 #: through zero. Both endpoint GAPS are measured; the map between them is
 #: not, and nothing here depends on it.
-DRIVEN_OPEN_GAP_M = 0.05196
+DRIVEN_OPEN_GAP_M = float(os.environ.get("MKIT_DRIVEN_OPEN_GAP_M", "0.05196"))
+# ^ 0.05196 is the driver's OPEN_RAD = 1.16 rad stop measured 2026-08-24.
+# d1-firmwared 0.3.0 reports open_rad 1.35 on d1-2 (2026-09-22), i.e. about
+# 60.5 mm at 44.8 mm/rad; until the kit reads the daemon's open_rad at run
+# time, the operator sets MKIT_DRIVEN_OPEN_GAP_M=0.0605 on that robot.
 #: The jaw joint value at the driven-open stop: q = (JAW_OPEN_GAP_M -
 #: DRIVEN_OPEN_GAP_M) / 2 per finger. Sim "fully open" is this, not 0.
 DRIVEN_OPEN_Q = (JAW_OPEN_GAP_M - DRIVEN_OPEN_GAP_M) / 2.0
