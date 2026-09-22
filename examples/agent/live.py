@@ -41,6 +41,14 @@ def objects_from(scene: Dict[str, Any]) -> List[ObjectView]:
             extra["interior"] = item["interior"]
         if kind is ContainerView and "rim_height_m" in item:
             extra["rim_height_m"] = item["rim_height_m"]
+        if kind is ContainerView and "interior_measured" in item:
+            # A scene file that GIVES an interior used to be believed
+            # unconditionally, because ``ContainerView`` only clears the flag
+            # for the interior it invents itself. A perceived interior is a
+            # number AND a guess (``examples/agent/perceive.py`` writes 85% of
+            # the measured outside), and ``Place`` refuses to drop into a
+            # guessed interior — which it cannot do if the file cannot say so.
+            extra["interior_measured"] = bool(item["interior_measured"])
         out.append(kind(
             item["name"], p=item["p"], size=item["size"],
             r=R.from_quat(item["quat_xyzw"]) if "quat_xyzw" in item
