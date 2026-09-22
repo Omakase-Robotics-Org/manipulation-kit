@@ -3,6 +3,12 @@
 One turn = **observe → model → gate → execute → verify → record**. Nothing the
 model says moves the robot until the kit's own gate has re-derived it.
 
+Before turn 0: the operator policy (flags / `--policy FILE`), the robot profile
+(`--robot-profile d1-2`, or the scene's `"robot": {"profile": ...}`: hand gap,
+both wrist fisheyes, head mount), `reach.choose_side` (which hand can do the
+WHOLE task), and — with `look_before_stroke` — a check that a wrist camera
+model exists (else `look_unavailable`, before anything moves).
+
 ```
  d1-firmwared (REST :4750)                 scene file (--scene) or perceive
    GET /v1/arm/{a,b}/state  ─┐              (objects: name, kind, p, size, …)
@@ -24,9 +30,15 @@ model says moves the robot until the kit's own gate has re-derived it.
                                                                               │
                                                                               ▼
                         decode(name, args, world)  → primitive (Grasp/Lift/Carry/Place/Release/Nudge…)
+                        policy.clamp(primitive)     → grip/contact caps lowered; direction,
+                                                      look (a grasp not yet looked at from
+                                                      here → one WRIST LOOK instead), nudge
+                                                      budget refused as kit Unmets
                         check(primitive, world, kin) → Plan | Refusal
                           · preconditions (object_too_wide/flat, gripper_unknown, unsupported_release…)
                           · IK for every waypoint, motion guard (body / arm-arm / self)
+                          · scene gate: every declared thing is an obstacle to the arm links
+                            (margin + droop_margin_m), free transits rise up-and-over
                           · Waypoint.arrive flags → tool-space arrival gate at standoff & grasp
                                                                               │ Plan
                                                                               ▼
@@ -64,6 +76,9 @@ model says moves the robot until the kit's own gate has re-derived it.
   torque presets (soft/firm/strong are names; the daemon's `[gripper.*]` table holds the Nm).
 - Which hand: `choose_side()` plans the whole chain for both arms before turn 0 and the loop
   pins the hand; the model's `side` argument is accepted but the plan is re-checked.
+- The stop: a latched arm controller ends the run in the kit (`controller_fault`), a
+  receiving hand that did not measurably take hold stops a `handover` before the giver opens
+  (`hold_not_confirmed`).
 - Success: only the kit's verifiers (gripper `holding` + `held_object`, FK tool point, object
   pose bookkeeping) can turn a turn "true". A model "done" without a measured goal is recorded
   as `claimed_but_unmeasured`.
@@ -77,7 +92,11 @@ model says moves the robot until the kit's own gate has re-derived it.
 | `scene.json` / `scene_perceived.json` | the scene the run used |
 
 ## Known gaps (2026-09-22, d1-2)
-- Object poses come from a measured scene file; perception (`perceive.py`) is in progress.
+- Object poses come from a measured scene file or from what the model declares off the head
+  photo (`perceive.py --perceive`); nothing on the robot detects objects by itself.
+- The wrist cameras' INTRINSICS are measured (d1-2 profile, fisheye), their EXTRINSIC is the
+  kit's nominal plate geometry; the first live run uses `--no-look-before-stroke`.
+- `handover` and `Grasp(contact="tip")` have only run on the kinematic mirror.
 - `LiveRobot` cannot see WHAT the jaws hold — the object between the pads at the stroke is
   associated by position, and its pose is then INFERRED from the tool (`provenance="attached"`,
   `"predicted"` once released) until a sighting replaces it.

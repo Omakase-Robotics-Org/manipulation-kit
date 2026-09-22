@@ -37,8 +37,6 @@ def test_the_example_carries_no_policy():
         assert gone not in text, gone
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="step 9 shrinks astra_loop.py below 200 lines")
 def test_the_example_is_short():
     text = (AGENT / "astra_loop.py").read_text(encoding="utf-8")
     assert len(text.splitlines()) < 200

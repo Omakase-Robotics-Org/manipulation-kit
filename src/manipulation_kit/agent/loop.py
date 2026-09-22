@@ -94,11 +94,15 @@ class Stop:
 def robot_facts(world: Any = None) -> str:
     """The numbers the kit OWNS, generated rather than quoted in a prompt:
     the jaw capacity (from the hand the world measured, else the nominal
-    description), the nudge grid and yaw clamp, and the direction vocabulary."""
+    description), the nudge grid and yaw clamp, the contact modes (``tip``
+    flagged experimental until the d1-2 tip trial), the tool revision
+    (:func:`~manipulation_kit.primitives.orientation.tool_revision`) and the
+    direction vocabulary (:func:`~manipulation_kit.primitives.schema.direction_doc`)."""
     from ..hands.d1.parallel_gripper.description import (  # noqa: PLC0415
         DRIVEN_OPEN_GAP_M)
     from ..primitives.grasp_geometry import (PAD,  # noqa: PLC0415
                                              graspable_width_m)
+    from ..primitives.orientation import tool_revision  # noqa: PLC0415
     opening = None
     for gripper in (getattr(world, "grippers", None) or {}).values():
         if gripper.open_gap_m is not None:
@@ -114,6 +118,11 @@ def robot_facts(world: Any = None) -> str:
         f"- `nudge` translations snap to a {grid} mm grid per axis, and its "
         f"`dyaw` is clamped to +-{math.degrees(NUDGE_MAX_YAW_RAD):.0f} degrees "
         f"about the hand's own approach axis",
+        "- `contact` is where on the hand the object is taken: \"pad\" (the "
+        "default) or \"tip\" for something flat on a surface. \"tip\" is "
+        "EXPERIMENTAL: not yet measured on hardware (docs/"
+        "probe-hardware-trial.md, tip grasp trial), so prefer \"pad\"",
+        f"- tool geometry this robot plans with: {tool_revision()}",
         "- directions (the way the hand TRAVELS):"]
     lines += ["  " + line for line in direction_doc().splitlines()]
     return "\n".join(lines)
