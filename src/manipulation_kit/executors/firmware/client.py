@@ -56,7 +56,9 @@ SIDES: Tuple[str, str] = ("a", "b")
 #: every one of them is in the bundled OpenAPI document, so a spec that moves
 #: a route breaks the build rather than the robot.
 ROUTES = ("/v1/arm/{side}/state", "/v1/gripper/{side}/state",
-          "/v1/gripper/{side}/set", "/v1/neck/state", "/v1/slider/state")
+          "/v1/gripper/{side}/set", "/v1/neck/state", "/v1/slider/state",
+          "/v1/arm/trajectory/start", "/v1/arm/trajectory/{id}/status",
+          "/v1/arm/trajectory/{id}/cancel")
 
 #: The daemon's ``StrokeKind`` values that mean the GRIPPER IS FAULTED: the
 #: motor latched or refused the stroke, and every stroke after it ends the
@@ -433,6 +435,50 @@ class FirmwareClient:
         if data is not None:
             raise ProtocolError(f"POST /v1/gripper/{wire}/set: the document "
                                 f"says this returns null, got {data!r}")
+
+    # -- trajectories (the contact leg's transport) ------------------------ #
+    def trajectory_start(self, points: Sequence[Tuple[float, Sequence[float],
+                                                      Sequence[float]]], *,
+                         holder: Optional[str] = None):
+        """``POST /v1/arm/trajectory/start`` through the generated operation.
+
+        ``points`` are ``(t_s, a_deg, b_deg)``; the body is the generated
+        ``ArmTrajectoryStartBody`` of generated ``Waypoint``s and the answer a
+        generated ``TrajectoryStatus``.
+        """
+        waypoint = self.model("Waypoint")
+        fields: Dict[str, Any] = {"waypoints": [
+            waypoint(a=[float(v) for v in joints7(a)],
+                     b=[float(v) for v in joints7(b)], t=float(t))
+            for t, a, b in points]}
+        if holder is not None:
+            fields["holder"] = str(holder)
+        body = self.model("ArmTrajectoryStartBody")(**fields)
+        data = self._send(self.api_module("arm.arm_trajectory_start")
+                          ._get_kwargs(body=body))
+        return self._status(data, "POST /v1/arm/trajectory/start")
+
+    def trajectory_status(self, job: int):
+        """``GET /v1/arm/trajectory/{id}/status`` -> generated ``TrajectoryStatus``."""
+        data = self._send(self.api_module("arm.arm_trajectory_status")
+                          ._get_kwargs(id=int(job)))
+        return self._status(data, f"GET /v1/arm/trajectory/{int(job)}/status")
+
+    def trajectory_cancel(self, job: int):
+        """``POST /v1/arm/trajectory/{id}/cancel`` -> generated ``TrajectoryStatus``.
+
+        The document: "the arms hold the last accepted target rather than
+        stopping dead".
+        """
+        data = self._send(self.api_module("arm.arm_trajectory_cancel")
+                          ._get_kwargs(id=int(job)))
+        return self._status(data, f"POST /v1/arm/trajectory/{int(job)}/cancel")
+
+    def _status(self, data: Any, what: str):
+        try:
+            return self.model("TrajectoryStatus").from_dict(data)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ProtocolError(f"{what}: not a TrajectoryStatus: {exc!r}") from exc
 
     # -- lifecycle --------------------------------------------------------- #
     def close(self) -> None:
