@@ -70,19 +70,20 @@ firmware = ["httpx>=0.23", "attrs>=21.3", "typing_extensions>=4.0"]
 # are outside the wheel, and need the private assets repository — see
 # tools/vendoring/README.md).
 meshes = ["trimesh", "fast-simplification"]
-# Reading an image. NOT a dependency of the package: nothing under
-# manipulation_kit opens a camera or decodes a frame, and that stays true.
-# examples/agent/perceive.py — which measures a scene from one head frame —
-# needs a decoder, and this is the small, pure-wheel one. OpenCV works too if
-# a robot already has it (d1-inference does); perceive.py takes whichever is
-# installed.
-perceive = ["pillow"]
+# Reading an image. NOT a dependency of the package: manipulation_kit.perception
+# models cameras and measures pixels, but nothing under manipulation_kit opens
+# a camera or decodes a frame, and that stays true — it takes (H, W, 3) arrays.
+# examples/agent/perceive.py, the CLI that feeds it one head frame from a
+# file, needs a decoder, and this is the small, pure-wheel one. OpenCV works
+# too if a robot already has it (d1-inference does); perceive.py takes
+# whichever is installed.
+perception = ["pillow"]
 # yourdfpy is a TEST dependency, not a runtime one: two gripper tests load the
 # vendor URDF through a third-party parser to confirm our own reading of it is
 # not the only reading. Without it they skip, and a skipped cross-check is not
 # a cross-check.
 #
-# `pillow` is here for the same reason: the perception example's tests measure
+# `pillow` is here for the same reason: the perception tests measure
 # five real frames of the d1-2 wagon against the numbers that came off them on
 # the night they were taken, and a suite that SKIPS that because it cannot
 # open a JPEG is a suite that stopped checking the thing it exists to check.

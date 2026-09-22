@@ -45,10 +45,17 @@ def objects_from(scene: Dict[str, Any]) -> List[ObjectView]:
             # A scene file that GIVES an interior used to be believed
             # unconditionally, because ``ContainerView`` only clears the flag
             # for the interior it invents itself. A perceived interior is a
-            # number AND a guess (``examples/agent/perceive.py`` writes 85% of
-            # the measured outside), and ``Place`` refuses to drop into a
+            # number AND a guess (``manipulation_kit.perception`` writes
+            # ``INTERIOR_FRACTION`` of the measured outside), and ``Place`` refuses to drop into a
             # guessed interior — which it cannot do if the file cannot say so.
             extra["interior_measured"] = bool(item["interior_measured"])
+        if kind is SurfaceView:
+            # How the top's HEIGHT is known travels into the world, not just
+            # the file (Astra review 8): a pixel located on this surface later
+            # inherits its source and its height uncertainty.
+            for key in ("plane_source", "height_uncertainty_m"):
+                if item.get(key) is not None:
+                    extra[key] = item[key]
         out.append(kind(
             item["name"], p=item["p"], size=item["size"],
             r=R.from_quat(item["quat_xyzw"]) if "quat_xyzw" in item

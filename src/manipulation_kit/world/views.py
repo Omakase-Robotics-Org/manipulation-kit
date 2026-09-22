@@ -300,6 +300,14 @@ class ObjectView:
                 f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg{doubt}")
 
 
+#: A container's interior, as a fraction of its outside, when nobody measured
+#: it. THE one number: :class:`ContainerView` invents it when a producer
+#: gives no interior, and ``manipulation_kit.perception.measure`` uses it for
+#: a perceived container. (They disagreed — 0.9 here, 0.85 there — design
+#: L15.) Anything built with it says ``interior_measured: false``.
+INTERIOR_FRACTION = 0.9
+
+
 @dataclass(frozen=True)
 class ContainerView(ObjectView):
     """An object with an INSIDE — a box, a cup, a tray.
@@ -315,7 +323,8 @@ class ContainerView(ObjectView):
     interior: Optional[np.ndarray] = None
     #: height of the rim above the container's centre [m]; ``None`` = size/2
     rim_height_m: Optional[float] = None
-    #: was ``interior`` MEASURED, or is it the 90% estimate? A placement that
+    #: was ``interior`` MEASURED, or is it the :data:`INTERIOR_FRACTION`
+    #: estimate? A placement that
     #: needs the walls to be where they are said to be must not run on a
     #: guess, so the flag travels with the number and
     #: :class:`~manipulation_kit.primitives.Place` refuses a tight fit against
@@ -325,7 +334,8 @@ class ContainerView(ObjectView):
     def __post_init__(self) -> None:
         super().__post_init__()
         estimated = self.interior is None
-        interior = (np.asarray(self.size, dtype=float) * 0.9 if estimated
+        interior = (np.asarray(self.size, dtype=float) * INTERIOR_FRACTION
+                    if estimated
                     else _vec3(self.interior, f"{self.name}.interior"))
         if np.any(interior <= 0.0) or np.any(interior > self.size + 1e-9):
             raise ValueError(f"{self.name}.interior must be positive and no "
@@ -400,7 +410,8 @@ class ContainerView(ObjectView):
         return out
 
     def to_text(self, frames: Optional[FrameGraph] = None) -> str:
-        how = "measured" if self.interior_measured else "ESTIMATED at 90% of size"
+        how = ("measured" if self.interior_measured
+               else f"ESTIMATED at {INTERIOR_FRACTION:.0%} of size")
         return (super().to_text(frames) + f", interior "
                 f"{self.interior[0] * 1000:.0f}x{self.interior[1] * 1000:.0f}"
                 f"x{self.interior[2] * 1000:.0f}mm ({how})")
@@ -408,9 +419,29 @@ class ContainerView(ObjectView):
 
 @dataclass(frozen=True)
 class SurfaceView(ObjectView):
-    """A table, a shelf, a wagon top — something to put things ON."""
+    """A table, a shelf, a wagon top — something to put things ON.
+
+    ``plane_source`` / ``height_uncertainty_m`` say how the top's HEIGHT is
+    known, when a producer knows: a single camera cannot measure the height
+    of the plane it is looking at, so a perceived surface arrives
+    ``provisional`` (+-100 mm), ``known-length`` or ``declared``, and that
+    has to reach the world rather than stop at the scene file (Astra review
+    8). ``None`` = the producer did not say.
+    """
 
     kind: str = "surface"
+    plane_source: Optional[str] = None
+    height_uncertainty_m: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.height_uncertainty_m is not None:
+            value = float(self.height_uncertainty_m)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{self.name}.height_uncertainty_m must be a "
+                                 f"finite non-negative number, got "
+                                 f"{self.height_uncertainty_m!r}")
+            object.__setattr__(self, "height_uncertainty_m", value)
 
     def top_z(self, frames: FrameGraph) -> float:
         """World z of the top face, from the RESOLVED pose (R1/R9)."""
@@ -450,6 +481,23 @@ class SurfaceView(ObjectView):
         half = np.asarray(self.size, dtype=float) / 2.0 + float(pad_m)
         return bool(abs(local[0]) <= half[0] and abs(local[1]) <= half[1]
                     and -0.005 <= local[2] - half[2] <= 0.030 + float(pad_m))
+
+    def to_json(self) -> Dict[str, Any]:
+        out = super().to_json()
+        if self.plane_source is not None:
+            out["plane_source"] = self.plane_source
+        if self.height_uncertainty_m is not None:
+            out["height_uncertainty_m"] = round(self.height_uncertainty_m, 4)
+        return out
+
+    def to_text(self, frames: Optional[FrameGraph] = None) -> str:
+        text = super().to_text(frames)
+        if self.plane_source is None and self.height_uncertainty_m is None:
+            return text
+        how = self.plane_source or "unstated"
+        plus = ("" if self.height_uncertainty_m is None
+                else f" +-{self.height_uncertainty_m * 1000:.0f}mm")
+        return text + f", top height {how}{plus}"
 
     def supports_object(self, obj: "ObjectView", frames: FrameGraph, *,
                         pad_m: float = 0.0, tol_m: float = 0.005) -> bool:

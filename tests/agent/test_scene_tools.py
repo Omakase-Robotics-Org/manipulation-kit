@@ -40,7 +40,7 @@ def loop_module(agent_examples):
 
 @pytest.fixture
 def camera(agent_examples):
-    from camera import HeadCamera
+    from manipulation_kit.perception import HeadCamera
     return HeadCamera.from_robot(width=640, height=480, neck_pitch=0.512,
                                  lift_m=0.205)
 
@@ -214,7 +214,7 @@ def test_locate_says_which_surface_and_how_sure_it_is(loop_module, camera,
 
 def test_locate_refuses_rather_than_extrapolating(loop_module, camera,
                                                   d1_arm):
-    from camera import HeadCamera
+    from manipulation_kit.perception import HeadCamera
     world = _world(_empty_scene(), d1_arm)
     # at this neck angle EVERY pixel in frame still meets the table; tip the
     # head up and the top of the frame stops being a place.
@@ -377,7 +377,7 @@ def test_the_camera_travels_in_the_scene_file(loop_module, agent_examples,
     assert camera is not None
     assert camera.neck_pitch == pytest.approx(0.512)
     assert camera.calibrated is False
-    from camera import HeadCamera
+    from manipulation_kit.perception import HeadCamera
     direct = HeadCamera.from_robot(width=640, height=480, neck_pitch=0.512)
     # the file rounds; a millimetre and a hundred-thousandth of a quaternion
     assert np.allclose(camera.p, direct.p, atol=1e-4)

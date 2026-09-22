@@ -132,7 +132,7 @@ committed URDF for the neck joints you give it. No table width, no far-edge x,
 no table height, no marker, no tape on anything.
 
 ```sh
-pip install -e '.[perceive]'
+pip install -e '.[perception]'
 python examples/agent/perceive.py --image turn0_base_0_rgb.jpg \
     --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 \
     --out examples/agent/scenes/live.json --debug /tmp/fit.png

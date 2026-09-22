@@ -163,7 +163,7 @@ Call exactly one tool per turn."""
 #                   otherwise does not have.
 #   locate          the deterministic half. A pixel the model picked, turned
 #                   into a base-frame point ON THE CURRENT TABLE PLANE by
-#                   examples/agent/camera.py, with the uncertainty the nominal
+#                   manipulation_kit.perception, with the uncertainty the nominal
 #                   head mount actually carries. The model should not be doing
 #                   projective geometry in its head when a function can.
 #
@@ -176,11 +176,10 @@ SYSTEM = SYSTEM.replace("{directions}", "\n".join(
     "  " + line for line in direction_doc().splitlines()))
 SYSTEM = SYSTEM.replace("{open_mm}", f"{_OPEN_M * 1000:.0f}").replace(
     "{grasp_mm}", f"{_GRASP_M * 1000:.0f}")
-SYSTEM += (
-    "\n`locate` returns the CONTACT point of the pixel you gave — for the bottom of a\n"
-    "silhouette that is the object's NEAR edge on the table, not its centre: move\n"
-    "the declared centre about half the object's depth away from the camera, and\n"
-    "declare z as the table top plus half the object's height.\n")
+# `locate` labels its own answer (a CONTACT point vs a CENTRE) and does the
+# contact -> centre conversion itself when given a size — the kit's
+# `perception.contact_to_centre`, not a sentence asking the model to do it in
+# its head (Astra review 7).
 
 SCENE_TOOLS = ("declare_scene", "locate")
 
@@ -254,7 +253,18 @@ LOCATE_SCHEMA = {
         "properties": {
             "u": {"type": "number", "description": "pixel x, 0 at the left"},
             "v": {"type": "number", "description": "pixel y, 0 at the top"},
-            "camera": {"type": "string", "enum": ["head"], "default": "head"}},
+            "camera": {"type": "string", "enum": ["head"], "default": "head"},
+            "size": {"type": "array", "minItems": 3, "maxItems": 3,
+                     "items": {"type": "number", "exclusiveMinimum": 0},
+                     "description": "optional: the object's size in metres. "
+                                    "With it, (u, v) is read as the BOTTOM of "
+                                    "the object's silhouette and the answer "
+                                    "is the object's CENTRE, ready to "
+                                    "declare. Without it the answer is the "
+                                    "contact point on the table"},
+            "yaw_rad": {"type": "number",
+                        "description": "optional, with size: the object's "
+                                       "yaw"}},
         "required": ["u", "v"], "additionalProperties": False}}
 
 
@@ -288,37 +298,29 @@ def apply_declare_scene(robot, arguments: Dict[str, Any]) -> str:
             # Stated by the model = stated. The flag is what `Place` reads,
             # and the alternative is a container that can never be placed into.
             item["interior_measured"] = True
+        if item.get("kind") == "surface":
+            # a surface the model declares has a DECLARED height
+            item.setdefault("plane_source", "declared")
         items.append(item)
     try:
         views = objects_from({"objects": items})
     except (KeyError, ValueError, TypeError) as exc:
         return f"that scene is malformed and nothing was changed: {exc}"
-    # THE DESCENT FLOOR TRUSTS THE OBJECT'S BOTTOM (approach.py). A declared
-    # bottom below the table top would send the pad tips into the table, so a
-    # declared object is lifted onto the surface it stands on (Astra review,
-    # 2026-09-22, finding 4).
-    import dataclasses as _dc  # noqa: PLC0415
-    surfaces = [v for v in views if v.kind == "surface"]
+    # THE DESCENT FLOOR TRUSTS THE OBJECT'S BOTTOM, so a declared object is
+    # lifted onto the surface it stands on — the kit's rule, which resolves
+    # the surface's frame and rotation (Astra review 4; design L5/L15).
+    from manipulation_kit.perception import lift_onto_support  # noqa: PLC0415
+    from manipulation_kit.world import FrameGraph, SurfaceView  # noqa: PLC0415
+    surfaces = [v for v in views if isinstance(v, SurfaceView)]
+    frames = FrameGraph()
     try:
-        surfaces += [o for o in robot.world().objects if o.kind == "surface"]
+        current = robot.world()
+        surfaces += list(current.surfaces())
+        frames = current.frames
     except Exception:  # noqa: BLE001 - no world yet is fine
         pass
-    lifted = []
-    if surfaces:
-        top = max(float(s.p[2]) + float(s.size[2]) / 2.0 for s in surfaces)
-        fixed = []
-        for v in views:
-            if v.kind == "surface":
-                fixed.append(v)
-                continue
-            bottom = float(v.p[2]) - float(v.size[2]) / 2.0
-            if bottom < top - 0.002:
-                dz = top - bottom
-                v = _dc.replace(v, p=np.array([v.p[0], v.p[1], float(v.p[2]) + dz], dtype=float))
-                lifted.append(f"{v.name} raised {dz * 1000:.0f} mm so its bottom sits on the table top ({top:.3f} m)")
-            fixed.append(v)
-        views = fixed
-    robot.declare(views)
+    views, lifted = lift_onto_support(views, surfaces, frames)
+    robot.declare(list(views))
     lines = [f"{v.name!r} ({v.kind}) at ({v.p[0]:.3f}, {v.p[1]:.3f}, "
              f"{v.p[2]:.3f}) m, {v.size[0]*1000:.0f}x{v.size[1]*1000:.0f}x"
              f"{v.size[2]*1000:.0f} mm" for v in views]
@@ -328,37 +330,31 @@ def apply_declare_scene(robot, arguments: Dict[str, Any]) -> str:
 
 
 def apply_locate(camera, world, arguments: Dict[str, Any]) -> str:
-    """Answer a ``locate`` call from the camera model and the current plane."""
-    from camera import NotOnThePlane  # noqa: PLC0415
+    """Answer a ``locate`` call through the kit's perceiver: the highest
+    surface's RESOLVED top, its provenance and height uncertainty, and —
+    given a size — the contact -> centre conversion."""
+    from manipulation_kit.perception import (  # noqa: PLC0415
+        NoSupport, NotOnThePlane, ScenePerceiver, contact_to_centre)
     if camera is None:
         return ("there is no camera model in this run, so a pixel cannot be "
                 "turned into a position")
-    plane_z, source = table_plane_z(world)
-    if plane_z is None:
+    perceiver = ScenePerceiver({"head": camera}, world)
+    try:
+        located = perceiver.locate("head", float(arguments["u"]),
+                                   float(arguments["v"]))
+        if arguments.get("size") is not None:
+            located = contact_to_centre(
+                located, size=arguments["size"], viewpoint=camera.p,
+                yaw_rad=float(arguments.get("yaw_rad", 0.0)))
+    except NoSupport:
         return ("there is no table in the scene yet, so a pixel has no plane "
                 "to land on. Declare the surface first with declare_scene "
                 "(kind 'surface'), then ask again")
-    try:
-        located = camera.locate(float(arguments["u"]), float(arguments["v"]),
-                                plane_z=plane_z, plane_source=source)
     except NotOnThePlane as exc:
         return str(exc)
     except (KeyError, TypeError, ValueError) as exc:
         return f"that pixel is not usable: {exc}"
     return located.to_text()
-
-
-def table_plane_z(world) -> "tuple":
-    """The z of the top of the highest SURFACE in the world, and where it
-    came from. ``(None, "")`` when nobody has said there is a table."""
-    from manipulation_kit.world import SurfaceView  # noqa: PLC0415
-    tops = [(float(o.p[2]) + float(o.size[2]) / 2.0, o)
-            for o in world.objects if isinstance(o, SurfaceView)]
-    if not tops:
-        return None, ""
-    z, surface = max(tops, key=lambda pair: pair[0])
-    return z, (f"the top of {surface.name!r}, confidence "
-               f"{surface.confidence:.1f}")
 
 
 @dataclass
@@ -910,7 +906,8 @@ def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
 
 def perceived_scene(source: str, *, trace_path: Optional[Path],
                     obj: str, destination: str,
-                    options: str = "") -> Dict[str, Any]:
+                    options: str = "", neck=None,
+                    lift=None) -> Dict[str, Any]:
     """``--perceive``: MEASURE the scene from one head frame instead of
     reading one somebody measured by hand.
 
@@ -929,9 +926,10 @@ def perceived_scene(source: str, *, trace_path: Optional[Path],
     have to agree with.
 
     ``options`` is a string of ``perceive.py`` flags, parsed by that file's
-    OWN argument parser — the priors (table width, fx, anchor, neck angles)
-    are its business and duplicating them here would be a second definition
-    to keep in step.
+    OWN argument parser. ``neck`` / ``lift`` are the executor's typed
+    ``neck_state()`` / ``lift_state()`` for a LIVE frame; they are passed to
+    the kit's ``HeadCameraConfig`` as objects, never re-typed into flags, and
+    a neck flag in ``options`` as well is refused as two answers.
     """
     import shlex  # noqa: PLC0415
 
@@ -957,7 +955,7 @@ def perceived_scene(source: str, *, trace_path: Optional[Path],
         tokens += ["--objects", f"{obj}:object,{destination}:container"]
     args = perceive.build_parser().parse_args(
         ["--image", str(image)] + tokens)
-    scene = perceive.perceive(args)
+    scene = perceive.perceive(args, neck=neck, lift=lift)
     if trace_path is not None:
         out = Path(trace_path).parent / "scene_perceived.json"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -978,56 +976,31 @@ def camera_from_scene(scene: Optional[Dict[str, Any]]):
     block = (scene or {}).get("_perceive", {}).get("camera")
     if not block:
         return None
-    from camera import HeadCamera  # noqa: PLC0415
-    from scipy.spatial.transform import Rotation  # noqa: PLC0415
-    width, height = block["image"]
-    return HeadCamera(fx=block["fx"], cx=block["cx"], cy=block["cy"],
-                      width=width, height=height,
-                      p=np.asarray(block["p_base"], dtype=float),
-                      r=Rotation.from_quat(block["quat_xyzw"]),
-                      neck_pitch=block.get("neck_pitch_rad", 0.0),
-                      neck_yaw=block.get("neck_yaw_rad", 0.0),
-                      lift_m=block.get("lift_m"),
-                      calibrated=bool(block.get("calibrated", False)),
-                      notes=tuple(block.get("notes", ())))
+    from manipulation_kit.perception import HeadCamera  # noqa: PLC0415
+    return HeadCamera.from_json(block)
 
 
 
-def robot_camera_opts(robot_url: str, options: str) -> str:
-    """Fill the ROBOT's own numbers into perceive's options from the daemon.
+def robot_head_state(robot_url: str):
+    """The LIVE neck and lift states, typed, from the firmware executor.
 
-    Zero-shot means nobody types the neck angle: read ``/v1/neck/state`` and
-    ``/v1/slider/state`` and append ``--neck-pitch/--neck-yaw/--lift`` unless
-    the caller already gave them. SIGN: the daemon reports pitch NEGATIVE when
-    the head looks down (d1-2: -0.61) while the kit URDF's neck_pitch is
-    positive-down, so the value is negated here (verified 2026-09-22 on d1-2:
-    -0.6117 -> +0.6117 puts the table in front of the lens; the raw value put
-    the whole table above the horizon).
+    Zero-shot means nobody types the neck angle. The states come from the
+    executor's ``neck_state()`` / ``lift_state()`` — the generated d1-firmwared
+    client, not a raw HTTP read — and go to the kit's ``HeadCameraConfig``
+    as they are: the daemon's LOGICAL pitch, flipped only by
+    ``description.head_camera``. FAILS CLOSED: an executor that cannot say
+    where the head points stops the run rather than perceiving through a
+    level-neck default.
     """
-    import json as _json  # noqa: PLC0415
-    import urllib.request  # noqa: PLC0415
-    have = set(options.split())
-    extra = []
+    from manipulation_kit.executors.firmware import FirmwareExecutor  # noqa: PLC0415
+    from manipulation_kit.perception import (HeadPoseUnknown,  # noqa: PLC0415
+                                             read_head_state)
     try:
-        if "--neck-pitch" not in have or "--neck-yaw" not in have:
-            neck = _json.load(urllib.request.urlopen(
-                f"{robot_url}/v1/neck/state", timeout=3))["data"]
-            if "--neck-pitch" not in have:
-                extra += ["--neck-pitch", f"{-float(neck['pitch']):.4f}"]
-            if "--neck-yaw" not in have:
-                extra += ["--neck-yaw", f"{float(neck['yaw']):.4f}"]
-        if "--lift" not in have:
-            lift = _json.load(urllib.request.urlopen(
-                f"{robot_url}/v1/slider/state", timeout=3))["data"]
-            extra += ["--lift", f"{float(lift['height_m']):.4f}"]
-    except Exception as exc:  # noqa: BLE001 - say what is missing, do not guess
-        print(f"[astra_loop] could not read the neck/lift from {robot_url}: "
-              f"{exc!r}; pass --perceive-opts yourself", file=sys.stderr)
-        return options
-    if extra:
-        print(f"[astra_loop] camera pose from the daemon: {' '.join(extra)}",
-              file=sys.stderr)
-    return (options + " " + " ".join(extra)).strip()
+        return read_head_state(FirmwareExecutor(base_url=robot_url,
+                                                heartbeat=False))
+    except HeadPoseUnknown as exc:
+        raise SystemExit(f"[astra_loop] --perceive on a live robot needs the "
+                         f"neck pose: {exc}") from None
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -1070,12 +1043,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     scene = None
     world0 = None
     if args.perceive is not None:
-        options = args.perceive_opts
+        neck = lift = None
         if args.executor == "firmware":
-            options = robot_camera_opts(args.robot, options)
+            neck, lift = robot_head_state(args.robot)
         scene = perceived_scene(args.perceive, trace_path=args.trace,
                                 obj=args.object, destination=args.destination,
-                                options=options)
+                                options=args.perceive_opts, neck=neck,
+                                lift=lift)
     elif args.scene is not None:
         from live import load_scene  # noqa: PLC0415
         scene = load_scene(args.scene)

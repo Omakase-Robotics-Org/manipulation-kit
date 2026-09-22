@@ -50,14 +50,15 @@ DOWN, limits [-0.35, +0.65] rad. That is the same convention as the neck
 safety source of truth (``omakase_neck/src/limits.py``) and the OPPOSITE sign
 of the *logical* pitch ``omakase_neck/config/config.yaml`` exposes
 (logical = -motor). ``d1-firmwared``'s ``GET /v1/neck/state`` reports the
-stack's logical pitch, so pass ``neck_pitch=-state["pitch"]`` — or call
-:func:`pose_from_neck_state`, which does it for you and is the reason this
-module would rather you did not do the arithmetic by hand.
+stack's logical pitch; :func:`neck_joints_from_state` turns it into the URDF
+joint and is the ONLY place in the package that does (``pose_from_neck_state``
+and ``manipulation_kit.perception.HeadCamera`` call it). Do not do the
+arithmetic by hand.
 """
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -134,18 +135,41 @@ def head_camera_pose(neck_pitch: float = 0.0, neck_yaw: float = 0.0,
                      OPTICAL_LINK if optical else CAMERA_LINK, q)
 
 
-def pose_from_neck_state(state: Dict[str, float], *, optical: bool = True,
+def neck_joints_from_state(state: Any) -> Tuple[float, float]:
+    """``(neck_tilt, neck_pan)`` URDF joint values from a daemon neck state.
+
+    THE ONE PLACE THE SIGN IS FLIPPED. The daemon reports the stack's LOGICAL
+    pitch, which is the negative of the URDF joint; yaw is the same in both.
+    Doing that flip in one place is the point: a consumer that gets it wrong
+    aims the camera 2x the neck angle away and the error looks like a bad
+    calibration rather than like a sign.
+
+    ``state`` is either the firmware executor's ``NeckState`` (attributes
+    ``pitch_rad`` / ``yaw_rad``) or a ``GET /v1/neck/state`` body
+    (``{"pitch": ..., "yaw": ...}``). A missing or non-finite pitch is an
+    error, never a level head.
+    """
+    if isinstance(state, Mapping):
+        pitch, yaw = state.get("pitch"), state.get("yaw", 0.0)
+    else:
+        pitch = getattr(state, "pitch_rad", None)
+        yaw = getattr(state, "yaw_rad", 0.0)
+    if pitch is None or yaw is None:
+        raise ValueError(f"a neck state needs a pitch and a yaw, got {state!r}")
+    pitch, yaw = float(pitch), float(yaw)
+    if not (math.isfinite(pitch) and math.isfinite(yaw)):
+        raise ValueError(f"the neck state is not finite: pitch={pitch!r}, "
+                         f"yaw={yaw!r}")
+    return -pitch, yaw
+
+
+def pose_from_neck_state(state: Any, *, optical: bool = True,
                          urdf_path: Optional[str] = None
                          ) -> Tuple[np.ndarray, R]:
-    """:func:`head_camera_pose` from a ``GET /v1/neck/state`` body.
-
-    The daemon reports the stack's LOGICAL pitch, which is the negative of the
-    URDF joint. Doing that flip in one place is the point: a consumer that
-    gets it wrong aims the camera 2x the neck angle away and the error looks
-    like a bad calibration rather than like a sign.
-    """
-    return head_camera_pose(neck_pitch=-float(state.get("pitch", 0.0)),
-                            neck_yaw=float(state.get("yaw", 0.0)),
+    """:func:`head_camera_pose` from a daemon neck state, sign flip included
+    (:func:`neck_joints_from_state`)."""
+    tilt, pan = neck_joints_from_state(state)
+    return head_camera_pose(neck_pitch=tilt, neck_yaw=pan,
                             optical=optical, urdf_path=urdf_path)
 
 
@@ -173,5 +197,6 @@ def nominal_tilt_rad(revision: str = DEFAULT_HARDWARE_REVISION) -> float:
 
 
 __all__ = ["BASE_LINK", "CAMERA_LINK", "OPTICAL_LINK", "PAN_JOINT",
-           "TILT_JOINT", "head_camera_pose", "pose_from_neck_state",
+           "TILT_JOINT", "head_camera_pose", "neck_joints_from_state",
+           "pose_from_neck_state",
            "floor_to_base_m", "nominal_tilt_rad"]
