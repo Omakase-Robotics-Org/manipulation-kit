@@ -177,6 +177,32 @@ def _say(messages: List[Dict[str, Any]], call_id: str, text: str) -> None:
                                  else text)})
 
 
+def _dump_messages(trace_path: Optional[Path], messages: List[Dict[str, Any]]) -> None:
+    """Keep the model's whole chat history next to the trace, rewritten every
+    turn so a crash mid-turn still leaves it on disk (Shu, 2026-09-22)."""
+    if trace_path is None:
+        return
+    path = Path(trace_path).with_suffix(".messages.json")
+    path.write_text(json.dumps(messages, indent=1, default=str), encoding="utf-8")
+
+
+def _snapshot(trace_path: Optional[Path], turn: int) -> None:
+    """Optional camera record per turn: run ``$ASTRA_SNAPSHOT_CMD`` with
+    ``ASTRA_TURN`` and ``ASTRA_OUT_DIR`` set. The model is NOT shown these
+    frames (the loop is text-only); they are for the human reading the run."""
+    cmd = os.environ.get("ASTRA_SNAPSHOT_CMD")
+    if not cmd or trace_path is None:
+        return
+    import subprocess  # noqa: PLC0415
+    env = dict(os.environ, ASTRA_TURN=str(turn),
+               ASTRA_OUT_DIR=str(Path(trace_path).parent))
+    try:
+        subprocess.run(cmd, shell=True, env=env, timeout=40, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:  # noqa: BLE001 - a snapshot must never stop a run
+        print(f"[astra_loop] snapshot failed: {exc!r}", file=sys.stderr)
+
+
 def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
          trace_path: Optional[Path] = None, goal=None, world0=None, kin=None,
          obj: str = "red_block", destination: str = "box") -> DecisionTrace:
@@ -213,6 +239,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         record.stop = "unreachable_task"
         record.refused = [c.to_json() for c in hand.chains.values()]
         trace.write(record)
+        _dump_messages(trace_path, messages)
         trace.stop = Stop("unreachable_task", hand.reason).reason
         return trace
 
@@ -221,6 +248,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
     stop = Stop("max_turns", f"{max_turns} turns without a measured goal")
     for turn in range(max_turns):
         world = robot.world()
+        _snapshot(trace_path, turn)
         messages.append({"role": "user", "content": world.to_text()})
         tools = tool_schemas(world)      # REFRESHED: the names narrow as the
         record = DecisionRecord(iteration=turn, world=world.to_json())
@@ -234,6 +262,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         if call.get("protocol_error"):
             _say(messages, call_id, call["protocol_error"])
             trace.write(record)
+            _dump_messages(trace_path, messages)
             continue
         if not call["name"]:
             # The model stopped. That is a claim about the task, and the task
@@ -243,6 +272,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             record.goal_verdict = goal_report.to_json()
             record.stop = "model_stopped"
             trace.write(record)
+            _dump_messages(trace_path, messages)
             stop = Stop("goal_verified" if goal_report.verdict == "true"
                         else "model_stopped", goal_report.reason)
             break
@@ -255,17 +285,28 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             record.refused = [primitive.to_json()]
             _say(messages, call_id, f"that call is malformed: {primitive}")
             trace.write(record)
+            _dump_messages(trace_path, messages)
             continue
         plan = check(primitive, world, kin)
         if not getattr(plan, "ok", False):
             record.refused = [plan.to_json()]
             _say(messages, call_id, f"{label_for(primitive)} was refused: {plan}")
             trace.write(record)
+            _dump_messages(trace_path, messages)
             continue
         record.offered = [{"id": f"{primitive.name()}", "label": label_for(primitive)}]
 
         record.plan = plan.to_json()
-        report = run(plan, robot.executor)
+        try:
+            report = run(plan, robot.executor)
+        except Exception as exc:
+            # The turn is written BEFORE the exception propagates: run1 on d1-2
+            # (2026-09-22) lost its whole trace to an httpx timeout in here.
+            record.run = {"completed": False, "stop_reason": "exception",
+                          "error": repr(exc)}
+            trace.write(record)
+            _dump_messages(trace_path, messages)
+            raise
         record.run = report.to_json()
         after = robot.world()
         verdict = primitive.verifier(world)(after)
@@ -283,6 +324,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         goal_report = goal.verifier(world)(after)
         record.goal_verdict = goal_report.to_json()
         trace.write(record)
+        _dump_messages(trace_path, messages)
         if goal_report.verdict == "true":
             stop = Stop("goal_verified", goal_report.reason)
             break
