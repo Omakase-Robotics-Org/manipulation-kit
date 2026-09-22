@@ -26,6 +26,7 @@ is also why it is 100 mm here and 108.5 mm in older CAD-derived code.
 from __future__ import annotations
 
 import math
+import os
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -65,7 +66,12 @@ TIP_BELOW_TOOL_M = PAD_TIP_Z_M - PAD_CENTRE_Z_M
 #: to the side (still 2.5 deg from the commanded posture after two seconds of
 #: holding it, while the same arm tracks a free-air posture to 0.00 deg in
 #: 0.7 s), and the jaws closed beside the block. Ten attempts, ten failures.
-SUPPORT_CLEARANCE_M = 0.003
+SUPPORT_CLEARANCE_M = float(os.environ.get("MKIT_SUPPORT_CLEARANCE_M", "0.003"))
+# ^ Operator override. 3 mm is right for a rigid arm; the real D1 arm sags
+# ~1 cm at a long reach (F16 droop, no along-axis compensation in ToolGate
+# yet), so on d1-2 (2026-09-22 run7, x 0.48) the pad tips met the table and
+# the controller raised error 15 during the descent. Set e.g. 0.015 on the
+# robot until the gate compensates droop.
 
 #: ...and the least the SOLVED descent may actually keep, as opposed to what
 #: the waypoint asked for. The IK converges to about 2 mm and the path window
