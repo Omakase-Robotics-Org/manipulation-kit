@@ -500,6 +500,31 @@ def _say(messages: List[Dict[str, Any]], call_id: str, text: str) -> None:
                                  else text)})
 
 
+
+PLANNER_ONLY_ARGS = ("jaw_turn_deg",)
+
+
+def _hide_planner_args(tools):
+    """Strip arguments the LOOP decides, not the model.
+
+    ``jaw_turn_deg`` exists so the fallback below can re-plan a refused grasp
+    with the wrist a quarter turn round; shown to the model (d1-2 run8,
+    2026-09-22) it picked +90 on its own, which is the IK-infeasible turn, and
+    spent the run on ik_fail refusals while the plain posture would have
+    planned. The model asks for a grasp; which wrist stands is the kit's call.
+    """
+    out = []
+    for tool in tools:
+        props = dict(tool["parameters"].get("properties", {}))
+        for name in PLANNER_ONLY_ARGS:
+            props.pop(name, None)
+        params = dict(tool["parameters"], properties=props)
+        if "required" in params:
+            params["required"] = [r for r in params["required"] if r not in PLANNER_ONLY_ARGS]
+        out.append(dict(tool, parameters=params))
+    return out
+
+
 def _dump_messages(trace_path: Optional[Path], messages: List[Dict[str, Any]]) -> None:
     """Keep the model's whole chat history next to the trace, rewritten every
     turn so a crash mid-turn still leaves it on disk (Shu, 2026-09-22)."""
@@ -640,7 +665,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         # world changes, and the OBSERVATION tools travel with them so a model
         # that has just been told "that is not where you said" can answer with
         # a measurement instead of another guess.
-        tools = tool_schemas(world) + scene_tools(camera)
+        tools = _hide_planner_args(tool_schemas(world)) + scene_tools(camera)
         record = DecisionRecord(iteration=turn, world=world.to_json())
         record.task = task
 
@@ -746,6 +771,8 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
                 trace.write(record)
                 _dump_messages(trace_path, messages)
                 continue
+        for name in PLANNER_ONLY_ARGS:
+            call["arguments"].pop(name, None)
         primitive = decode(call["name"], call["arguments"], world)
         if not isinstance(primitive, object) or getattr(primitive, "ok", None) is False:
             record.refused = [primitive.to_json()]
@@ -761,12 +788,12 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         # still refuse the turned grasp if the other side is too wide.
         if (not getattr(plan, "ok", False)
                 and primitive.name() in ("approach", "grasp")
-                and getattr(primitive, "jaw_turn_deg", 0.0) == 0.0
                 and getattr(plan, "reason", "") in ("guard_reject", "ik_fail")
                 and getattr(plan, "waypoint_label", "") == "standoff"):
             import dataclasses as _dc  # noqa: PLC0415
             turned, plan2 = primitive, plan
-            for turn in (-90.0, 90.0):   # the two quarter turns are different wrists
+            asked = float(getattr(primitive, "jaw_turn_deg", 0.0))
+            for turn in [x for x in (0.0, -90.0, 90.0) if x != asked]:
                 turned = _dc.replace(primitive, jaw_turn_deg=turn)
                 plan2 = check(turned, world, kin)
                 if getattr(plan2, "ok", False):
