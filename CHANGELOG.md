@@ -219,6 +219,70 @@ Tests: `tests/agent/test_perceive.py` moved to `tests/perception/test_perceive.p
 scene-reader tests are `tests/agent/test_perceive_cli.py`; new
 `tests/perception/test_perception_interface.py`.
 
+### The scene is an obstacle set (redesign step 5)
+
+- **New `manipulation_kit.primitives.clearance`: `Obstacle`, `obstacles_of`,
+  `SceneGate`, `ClearanceReport`, `ClearancePolicy`.** Every `SurfaceView`,
+  `ContainerView` and `ObjectView` in the world — minus the verb's own
+  target/destination (`object`, `to`, `source`, `target`) and whatever a
+  gripper holds — is an oriented box the arm's LINKS (`Base`..`Link7`, the
+  body guard's own capsules via `guard.urdf_model.prim_to_world`) must keep
+  clear of. `guard/` is unchanged and still stdlib-only; the scene half lives
+  in `primitives/`, where numpy and `WorldView` already are.
+- **Every accepted joint step is swept against the scene** (`planning.Kin(...,
+  scene=)`; `_straight` and `joint_ramp` call `SceneGate.swept_ok` per
+  interval). A hit is the existing **`guard_reject`** refusal with the
+  obstacle and link NAMED in `detail`, `attempted=("obstacle:<name>",
+  "link:<link>")`, `stage="scene"`, and **`residual_m` = how far the link is
+  inside the clearance that obstacle requires** (Shu decision 4: refuse, with
+  the number). A dead end whose straight line died on the body guard while
+  the routes around it died on the scene says so too. An arm that STARTS
+  inside an envelope may move out of it, never deeper.
+- **Margins are per obstacle** (`ClearancePolicy`): a probed surface
+  (`plane_source` `probed`/`contact`) 5 mm, a declared surface 10 mm, a
+  declared object/container 10 mm or its own new **`ObjectView.uncertainty_m`**
+  when stated; a surface's `height_uncertainty_m` grows its box vertically
+  only. **Sampling is stated**: links every 4 mm, postures every 6 mm of link
+  travel, and the 5 mm this can miss by (`SceneGate.sampling_allowance_m`) is
+  ADDED to every requirement — a declared obstacle needs 15 mm.
+- **Up-and-over is the default shape of a free transit** (`allow_via=True`
+  legs): when the hand would pass low over something (its top + required
+  clearance + how far the hand hangs below the tool point, per orientation),
+  the leg rises — straight up, or through the measured `VIA_OFFSETS_M`
+  clearance points, now raised to at least that height — traverses and
+  descends, and the plan note says what it cleared. `VIA_OFFSETS_M` is the
+  fallback, no longer the recovery list. `allow_via=False` legs (grasp
+  descent, lift, nudge, retreat, carry/place legs) are never re-shaped.
+  When no route over plans, the old straight/via transit is still tried with
+  the links checked, and the note says the hand's clearance was not built.
+- **BREAKING: `MKIT_SUPPORT_CLEARANCE_M` is deleted.** `SUPPORT_CLEARANCE_M` is
+  the rigid-arm 3 mm constant again; the F16 arm droop the variable
+  compensated is **`ClearancePolicy.droop_margin_m`** (default **0.0** =
+  rigid model; d1-2 measured **0.012**, the old 15 mm floor), attached to the
+  kinematics with `clearance.set_policy(kin, ClearancePolicy(...))` and
+  read by every plan (`policy_of(kin)`). It raises the top-down fingertip
+  floor (`orientation.lowest_top_down_tool_z(..., droop_margin_m=)`,
+  `grasp_point(..., droop_margin_m=)`) and every obstacle clearance. The
+  operator policy (step 7) sets it on a live robot.
+- What changes for existing plans (golden file, capture stack): 22 of 229
+  cases, all `direction: forward`, become `guard_reject` naming the table or
+  box their forearm/wrist passes 11-15 mm from (listed by number in
+  `tests/primitives/test_golden_plans.py::SCENE_REFUSED`); no top-down case
+  changes. The d1-2 top-down pick-and-place still plans end to end, with and
+  without the 12 mm droop. Planning cost on the d1-2 scene: +60-75 ms per
+  plan (213 -> 274 ms for a top-down grasp, 264 -> 338 ms for the 5-verb
+  chain).
+- **Contact legs** (step 4's `Probe`/`Press`, driven up to `max_travel_m`
+  past the surface they measure): build their gate with
+  `SceneGate.for_contact(world, kin, p_start, direction, travel_m)`, which
+  leaves out the first obstacle the leg's ray meets (`contact_target`) and
+  keeps the rest. Obstacles keep their full pose rotation, and a surface's
+  `height_uncertainty_m` grows it along its OWN normal (a probed wall's is
+  horizontal).
+- Not yet: the hand (TCP flange, palm, fingers) is not in the scene gate —
+  same collision policy as the body guard; its transit clearance is by
+  construction only.
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO
