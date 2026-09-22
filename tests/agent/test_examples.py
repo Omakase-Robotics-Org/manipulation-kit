@@ -1,48 +1,103 @@
-"""The examples are runnable, and they CONSUME the packaged boundary.
+"""The example is a prompt and a call; everything it must TRUST is in the wheel.
 
-``examples/agent`` is outside the wheel (Shu, 2026-09-19) and what is left in
-it is the part that knows a model exists: the prompt, the provider clients,
-the scripted stand-in, the Jev menu renderer and the demo scene. The gate, the
-schema and the arm choice moved into ``manipulation_kit.primitives`` — their
-own tests live beside them in ``tests/primitives/`` — and these assert that
-the examples use them rather than keeping a second copy.
-
-A broken example is a broken explanation, so they run here too.
+``examples/agent`` is outside the wheel (Shu, 2026-09-19) and customers read
+it. Until 0.16.0 its anti-drift test asserted only that three files did not
+EXIST, and it passed through every patch of 2026-09-22: eight environment
+variables of operator policy, five gates, two candidate sweeps. These are the
+checks that would have caught that night (design C.12), plus the example still
+running end to end.
 """
 
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import fields
+from pathlib import Path
 
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+AGENT = ROOT / "examples" / "agent"
 
 
 # --------------------------------------------------------------------------- #
-# the examples import the wheel, they do not re-implement it
+# C.12: the three checks
 # --------------------------------------------------------------------------- #
 
-def test_no_example_keeps_its_own_gate_or_schema():
-    """The split, asserted as a fact about the tree rather than a promise in
-    a README: the three modules that moved are gone from examples/."""
-    from pathlib import Path
-    agent = Path(__file__).resolve().parents[2] / "examples" / "agent"
-    assert not (agent / "offer.py").exists()
-    assert not (agent / "schema.py").exists()
-    assert not (agent / "chain.py").exists()
-    for name in ("astra_loop.py", "menu.py"):
-        text = (agent / name).read_text(encoding="utf-8")
-        assert "manipulation_kit.primitives" in text
+def test_the_example_carries_no_policy():
+    text = (AGENT / "astra_loop.py").read_text(encoding="utf-8")
+    assert "os.environ" not in text
+    assert "manipulation_kit.primitives.orientation" not in text, (
+        "the example is doing geometry again")
+    assert "from manipulation_kit.agent import" in text
+    # the gates and sweeps the design deleted (D.1 rows 2, 3, 7, 9)
+    for gone in ("plan_the_hand", "PLANNER_ONLY_ARGS", "_hide_planner_args",
+                 "jaw_turn", "ExitStack", ".expect(", "isinstance(primitive, object)"):
+        assert gone not in text, gone
 
 
-def test_the_loop_runs_a_plan_through_the_shared_runner(agent_examples):
-    """R, section 1: the old loop hardcoded ``Mirror``, its own private step
-    walker and a block attached to the hand, and then claimed "swap the
-    executor; the loop does not change"."""
-    from pathlib import Path
-    agent = Path(__file__).resolve().parents[2] / "examples" / "agent"
-    text = (agent / "astra_loop.py").read_text(encoding="utf-8")
-    assert "from manipulation_kit.executor import run" in text
-    assert "isinstance(step, JointStep)" not in text, (
-        "the loop is walking plan steps itself again")
+@pytest.mark.xfail(strict=False,
+                   reason="step 9 shrinks astra_loop.py below 200 lines")
+def test_the_example_is_short():
+    text = (AGENT / "astra_loop.py").read_text(encoding="utf-8")
+    assert len(text.splitlines()) < 200
+
+
+def test_every_operator_knob_is_a_field_of_OperatorPolicy(agent_examples):
+    from manipulation_kit.agent import OperatorPolicy
+    # nothing in the agent example reads the environment at all, and no
+    # ASTRA_* knob survives anywhere a customer could find one
+    for path in sorted(AGENT.glob("*.py")):
+        assert "os.environ" not in path.read_text(encoding="utf-8"), path.name
+        assert "getenv" not in path.read_text(encoding="utf-8"), path.name
+    knobs = re.compile(r"ASTRA_(GRIP_CAP|APPROACH_ALLOW|VEL_RATIO|"
+                       r"ARRIVE_TIMEOUT_S|SNAPSHOT_CMD|MAX_OUTPUT_TOKENS|"
+                       r"REASONING|DEBUG)")
+    for path in (ROOT / "examples").rglob("*"):
+        if path.suffix in (".py", ".md", ".json", ".sh"):
+            assert not knobs.search(path.read_text(encoding="utf-8")), path
+    for path in (ROOT / "src" / "manipulation_kit" / "agent").glob("*.py"):
+        assert "os.environ" not in path.read_text(encoding="utf-8"), path
+    names = {f.name for f in fields(OperatorPolicy)}
+    # the four robot-policy env vars of 2026-09-22, each a field now
+    assert {"max_grip", "allowed_directions", "vel_ratio",
+            "arrive_timeout_s"} <= names
+    # ...and every field is an operator FLAG of the example
+    import astra_loop
+    options = {opt for action in astra_loop.build_parser()._actions
+               for opt in action.option_strings}
+    for name in names:
+        assert OperatorPolicy.flag(name) in options, name
+    assert "--policy" in options
+
+
+def test_the_prompt_quotes_no_number_the_kit_owns(agent_examples):
+    """Jaw millimetres, the nudge grid, the yaw clamp and the direction
+    vocabulary are generated by the kit (``robot_facts``), never copied into
+    the prompt where they go stale the day a hand is re-measured."""
+    import astra_loop
+    from manipulation_kit.agent import robot_facts
+    from manipulation_kit.hands.d1.parallel_gripper.description import (
+        DRIVEN_OPEN_GAP_M as JAW_OPEN_M)
+    from manipulation_kit.primitives.grasp_geometry import graspable_width_m
+    GRASPABLE_WIDTH_M = graspable_width_m()
+    from manipulation_kit.primitives.schema import direction_doc
+    from manipulation_kit.primitives.types import (NUDGE_GRID_M,
+                                                   NUDGE_MAX_YAW_RAD)
+    prompt = astra_loop.SYSTEM
+    owned = [f"{JAW_OPEN_M * 1000:.0f}", f"{GRASPABLE_WIDTH_M * 1000:.0f}",
+             f"{NUDGE_MAX_YAW_RAD * 180 / 3.141592653589793:.0f}"]
+    owned += [f"{g * 1000:.0f}" for g in NUDGE_GRID_M]
+    numbers = set(re.findall(r"\d+(?:\.\d+)?", prompt))
+    assert not numbers & set(owned), numbers & set(owned)
+    for line in direction_doc().splitlines():
+        assert line.strip() not in prompt
+    facts = robot_facts()
+    for number in owned:
+        assert number in facts, number
+    for line in direction_doc().splitlines():
+        assert line.strip() in facts
 
 
 # --------------------------------------------------------------------------- #
@@ -60,15 +115,14 @@ def test_the_scripted_loop_completes_the_task_and_measures_it(agent_examples,
     lines = (tmp_path / "trace.jsonl").read_text().strip().splitlines()
     assert len(lines) == len(trace.records)
     first = json.loads(lines[0])
-    assert first["choice"]["name"] == "grasp"
-    # the TASK is in the record, and so is the observation that followed
+    assert first["choice"]["name"] == "approach"
     assert first["task"] == astra_loop.DEFAULT_TASK
     assert first["observation_after"]
+    # the messages are kept beside the trace, written atomically
+    assert json.loads((tmp_path / "trace.messages.json").read_text())
 
 
-def test_the_model_is_told_the_task(agent_examples):
-    """R, section 1: "The real model is never told the actual task in
-    ``loop()``; ``goal`` affects grading only"."""
+def test_the_model_is_told_the_task_the_policy_and_the_robot(agent_examples):
     import astra_loop
     seen = {}
 
@@ -79,8 +133,9 @@ def test_the_model_is_told_the_task(agent_examples):
 
     astra_loop.loop(Listening(), task="put the red block in the box",
                     max_turns=1)
-    text = "\n".join(m["content"] for m in seen["first"])
+    text = "\n".join(str(m["content"]) for m in seen["first"])
     assert "put the red block in the box" in text
+    assert "OPERATOR POLICY" in text and "ROBOT FACTS" in text
 
 
 def test_a_model_that_says_done_early_does_not_end_the_run(agent_examples):
@@ -113,8 +168,6 @@ def test_the_loop_stops_at_max_turns_even_when_nothing_works(agent_examples):
 
 
 def test_a_model_that_stops_still_has_the_goal_measured(agent_examples):
-    """R, section 3: "It breaks on no call without checking the goal,
-    contrary to its two-stop-condition docstring"."""
     import astra_loop
 
     class Quits:
@@ -128,8 +181,6 @@ def test_a_model_that_stops_still_has_the_goal_measured(agent_examples):
 
 
 def test_two_tool_calls_in_one_turn_are_a_protocol_error(agent_examples):
-    """R, section 3: "It accepts the first call if several arrive despite
-    asking for exactly one" — which teaches the model the rest ran too."""
     import astra_loop
 
     class Chatty:
@@ -171,13 +222,28 @@ def test_the_trace_records_refusals_with_their_reasons(agent_examples):
 
 
 def test_the_summary_keeps_transport_and_task_apart(agent_examples):
-    """R, section 1: "``model_stopped``, transport completion, primitive
-    success, and task success must remain separate results"."""
     import astra_loop
     trace = astra_loop.loop(astra_loop.ScriptedModel(), max_turns=8)
     summary = trace.summary()
     for key in ("transport_completed", "verdicts", "goal_verdict", "stop"):
         assert key in summary
+
+
+def test_a_model_error_is_recorded_before_it_propagates(agent_examples,
+                                                        tmp_path):
+    """Astra review 15: failures outside ``run()`` left no record."""
+    import astra_loop
+
+    class Broken:
+        def __call__(self, messages, tools):
+            raise RuntimeError("the provider fell over")
+
+    with pytest.raises(RuntimeError):
+        astra_loop.loop(Broken(), max_turns=2,
+                        trace_path=tmp_path / "trace.jsonl")
+    record = json.loads((tmp_path / "trace.jsonl").read_text().splitlines()[-1])
+    assert record["stop"] == "exception"
+    assert "the provider fell over" in record["error"]
 
 
 # --------------------------------------------------------------------------- #
@@ -186,8 +252,6 @@ def test_the_summary_keeps_transport_and_task_apart(agent_examples):
 
 def test_the_jev_menu_carries_the_task_and_a_way_to_not_move(agent_examples,
                                                              d1_arm, observe):
-    """R, section 3: "The question asks which action advances 'the task'
-    without taking a task", and there was no wait / rescan / stop."""
     from menu import choice_menu
     menu = choice_menu(observe(d1_arm), d1_arm, task="put the block in the box")
     assert "put the block in the box" in menu["question"]
@@ -197,8 +261,6 @@ def test_the_jev_menu_carries_the_task_and_a_way_to_not_move(agent_examples,
 
 
 def test_the_menu_reports_what_the_cap_hid(agent_examples, d1_arm, observe):
-    """R, section 3: "The reported 'tried' count omits valid-but-truncated
-    candidates"."""
     from menu import choice_menu
     menu = choice_menu(observe(d1_arm), d1_arm, task="t", cap=4)
     motions = [c for c in menu["choices"] if "index" in c]
@@ -209,7 +271,6 @@ def test_the_menu_reports_what_the_cap_hid(agent_examples, d1_arm, observe):
 
 def test_the_menu_spends_its_slots_on_task_verbs_before_corrections(
         agent_examples, d1_arm, observe):
-    """A menu that filled its twenty slots with nudges has hidden the grasp."""
     from menu import choice_menu
     menu = choice_menu(observe(d1_arm), d1_arm, task="t", cap=20)
     verbs = [c["verb"] for c in menu["choices"] if "verb" in c]
@@ -217,8 +278,6 @@ def test_the_menu_spends_its_slots_on_task_verbs_before_corrections(
 
 
 def test_the_menu_interleaves_the_two_hands(agent_examples, d1_arm, observe):
-    """R, section 3: "Candidate order is left-arm first, then right; cap=20
-    can remove the needed right-hand action"."""
     from menu import choice_menu
     menu = choice_menu(observe(d1_arm), d1_arm, task="t", cap=8)
     sides = [c["arguments"].get("side") for c in menu["choices"] if "verb" in c]
@@ -233,20 +292,39 @@ def test_the_jev_menu_renders_without_a_model(agent_examples, capsys):
     assert "grasp red_block" in printed
 
 
+# --------------------------------------------------------------------------- #
+# the command line
+# --------------------------------------------------------------------------- #
+
 def test_the_astra_example_runs_dry(agent_examples, capsys):
     import astra_loop
     assert astra_loop.main(["--dry-run"]) == 0
     assert "CLAIMED DONE, NOT MEASURED" in capsys.readouterr().out
 
 
-def test_the_decision_trace_separates_the_claim_from_the_measurement(
-        agent_examples):
-    from trace import DecisionRecord, DecisionTrace
-    tracker = DecisionTrace()
-    tracker.write(DecisionRecord(0, world={}, claimed="done",
-                                 goal_verdict={"verdict": "false",
-                                               "reason": "not in the box"}))
-    tracker.write(DecisionRecord(1, world={}, claimed=None,
-                                 goal_verdict={"verdict": "true", "reason": "in"}))
-    assert len(tracker.disagreements()) == 1
-    assert tracker.summary()["claimed_but_unmeasured"] == 1
+def test_the_tabletop_scene_runs_dry_to_a_measured_goal(agent_examples,
+                                                        tmp_path, capsys):
+    """The dry-run verifier of step 7, as a test: the committed scene, the
+    scripted stub, the default policy (look before the stroke included)."""
+    import astra_loop
+    assert astra_loop.main(["--dry-run", "--executor", "kinematic",
+                            "--scene", str(AGENT / "scenes" / "tabletop.json"),
+                            "--object", "red_block", "--destination", "box",
+                            "--trace", str(tmp_path / "t.jsonl")]) == 0
+    summary = json.loads(capsys.readouterr().out.split("\n\n")[1]
+                         .split("\nCLAIMED")[0])
+    assert summary["stop"] == "goal_verified"
+    records = [json.loads(line) for line in
+               (tmp_path / "t.jsonl").read_text().splitlines()]
+    assert any(r["look"] for r in records)
+
+
+def test_policy_flags_reach_the_loop(agent_examples, tmp_path, capsys):
+    import astra_loop
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"max_turns": 2}))
+    assert astra_loop.main(["--dry-run", "--policy", str(policy)]) == 0
+    out = capsys.readouterr().out
+    assert '"turns": 2' in out and '"stop": "max_turns"' in out
+    with pytest.raises(SystemExit):
+        astra_loop.main(["--dry-run", "--max-grip", "crushing"])

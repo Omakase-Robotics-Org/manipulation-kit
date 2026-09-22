@@ -110,6 +110,23 @@ def _round(values: Iterable[float], places: int = 3) -> list:
     return [round(float(v), places) for v in values]
 
 
+#: WHERE AN OBJECT'S POSE CAME FROM (design C.9, Astra review 11). A verifier
+#: that reads a pose has to know whether anybody SAW the thing there:
+#:
+#: ``observed``   a sensor or a simulator's ground truth put it there
+#: ``declared``   somebody said so — a tape-measured scene file, or a model
+#:                declaring what it sees in a photograph
+#: ``attached``   it is in a hand: the pose is the tool pose composed with the
+#:                grasp transform recorded at the stroke
+#:                (:func:`manipulation_kit.world.attach.with_attached`) —
+#:                inferred, not sighted
+#: ``predicted``  where it should be and nobody has looked: let go at the
+#:                last attached pose, or a planner's rolled-forward world
+PROVENANCES: Tuple[str, ...] = ("observed", "declared", "attached", "predicted")
+#: the two that are inferences, not sightings
+INFERRED: Tuple[str, ...] = ("attached", "predicted")
+
+
 @dataclass(frozen=True)
 class ObjectView:
     """One named thing with a measured extent, in the frame it was seen in."""
@@ -127,6 +144,9 @@ class ObjectView:
     #: producer says; the scene gate (``primitives.clearance``) keeps the arm
     #: that far away from it. ``None`` = not stated (the gate's default).
     uncertainty_m: Optional[float] = None
+    #: one of :data:`PROVENANCES`. ``attached`` / ``predicted`` are
+    #: INFERENCES and every verifier that reads the pose says so.
+    provenance: str = "observed"
 
     def __post_init__(self) -> None:
         if self.uncertainty_m is not None:
@@ -136,6 +156,9 @@ class ObjectView:
                                  f"non-negative number, got "
                                  f"{self.uncertainty_m!r}")
             object.__setattr__(self, "uncertainty_m", value)
+        if self.provenance not in PROVENANCES:
+            raise ValueError(f"{self.name}.provenance must be one of "
+                             f"{PROVENANCES}, got {self.provenance!r}")
         object.__setattr__(self, "p", _vec3(self.p, f"{self.name}.p"))
         size = _vec3(self.size, f"{self.name}.size")
         if np.any(size <= 0.0):
@@ -261,6 +284,12 @@ class ObjectView:
         the same number for an upright box and the right one for any other."""
         return float(self.size[2])
 
+    @property
+    def inferred(self) -> bool:
+        """``True`` when nobody SAW it where :attr:`p` says (attached or
+        predicted)."""
+        return self.provenance in INFERRED
+
     def to_json(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
             "name": self.name, "kind": self.kind, "frame_id": self.frame_id,
@@ -268,6 +297,7 @@ class ObjectView:
             "quat_xyzw": _round(self.r.as_quat(), 4),
             "confidence": round(float(self.confidence), 3),
             "stamp": round(float(self.stamp), 3),
+            "provenance": self.provenance,
         }
         if self.colour:
             out["colour"] = self.colour
@@ -308,10 +338,16 @@ class ObjectView:
         # checked, 2026-09-22 — so it is information, not a permission.
         doubt = "" if self.confidence >= 1.0 else \
             f", confidence {self.confidence:.2f}"
+        # An inferred pose is SAID to be one, on the line the model reads —
+        # otherwise a pose computed from the tool reads exactly like a sight.
+        how = {"attached": ", ATTACHED: riding the hand that holds it — "
+                           "inferred from the tool pose, not sighted",
+               "predicted": ", PREDICTED: where it was let go, not sighted "
+                            "since"}.get(self.provenance, "")
         return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "
                 f"{where[1]:.3f}, {where[2]:.3f}) m base{note}, "
                 f"{self.size[0] * 1000:.0f}x{self.size[1] * 1000:.0f}x"
-                f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg{doubt}")
+                f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg{doubt}{how}")
 
 
 #: A container's interior, as a fraction of its outside, when nobody measured

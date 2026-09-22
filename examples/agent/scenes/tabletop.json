@@ -28,8 +28,17 @@
     "    measured in it then refuses rather than returning a plausible number.",
     "",
     "The 'table' entry is a SURFACE, which is what a Place lands on and what",
-    "a Lift is checked as having left."
+    "a Lift is checked as having left.",
+    "",
+    "'robot.wrist_camera' is the wrist lens's INTRINSICS (the mount is the",
+    "kit's). The operator policy looks through it before every grasp. The",
+    "numbers here are a 640x480 placeholder for the kinematic mirror, which",
+    "takes no photograph; on a robot, put your stream's own."
   ],
+  "robot": {
+    "wrist_camera": {"fx": 320.0, "fy": 320.0, "cx": 320.0, "cy": 240.0,
+                     "width": 640, "height": 480}
+  },
   "frames": [],
   "objects": [
     {

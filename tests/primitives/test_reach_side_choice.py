@@ -23,6 +23,8 @@ Real ``d1.urdf``, real IK, real guard, all of it.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -210,13 +212,22 @@ def test_the_world_the_chain_rolls_forward_holds_the_block_it_grasped(
     posed = _posed(world, d1_arm, "right", q)
     assert np.allclose(posed.arm("right").joints, q)
     assert np.allclose(posed.arm("right").tool_p, _tool_of(d1_arm, "right", q)[0])
-    held = _grasped(posed, "right", "block_red")
+    held, grasp = _grasped(posed, "right", "block_red")
     assert held.gripper("right").holding
     assert held.gripper("right").held_object == "block_red"
     assert held.holder_of("block_red") == "right"
-    moved = _moved(held, "block_red", np.array([0.0, 0.0, 0.12]))
-    assert moved.find("block_red").p[2] == pytest.approx(
-        world.find("block_red").p[2] + 0.12)
+    # the grasp does not move the object; carrying it does, by the ONE
+    # attachment rule (world.attach, step 7): 120 mm up with the tool
+    assert np.allclose(held.find("block_red").pose_in_base(held.frames)[0],
+                       world.find("block_red").pose_in_base(world.frames)[0])
+    assert held.find("block_red").provenance == "attached"
+    arms = dict(held.arms)
+    arms["right"] = dataclasses.replace(
+        arms["right"], tool_p=arms["right"].tool_p + np.array([0.0, 0.0, 0.12]))
+    moved = _moved(held.with_(arms=arms), grasp)
+    assert moved.find("block_red").pose_in_base(moved.frames)[0][2] == \
+        pytest.approx(world.find("block_red").pose_in_base(world.frames)[0][2]
+                      + 0.12)
     # ...and none of it touched the world it was derived from
     assert not world.gripper("right").holding
     assert np.allclose(world.arm("right").joints, d1_arm.home("right"))

@@ -87,10 +87,11 @@ def test_the_loops_locate_tool_does_the_conversion_given_a_size(
     import time
 
     import astra_loop
-    from live import frames_from, objects_from
+    from manipulation_kit.agent.robot import frames_from, objects_from
     from scene import demo_scene
     assert "move\nthe declared centre about half" not in astra_loop.SYSTEM
-    assert "size" in astra_loop.LOCATE_SCHEMA["parameters"]["properties"]
+    from manipulation_kit.agent.tools import LOCATE_SCHEMA, apply_locate
+    assert "size" in LOCATE_SCHEMA["parameters"]["properties"]
     scene = {"objects": [{"name": "table", "kind": "surface",
                           "p": [0.55, 0.0, 0.156], "size": [0.4, 0.6, 0.02],
                           "confidence": 0.2}], "frames": []}
@@ -98,8 +99,8 @@ def test_the_loops_locate_tool_does_the_conversion_given_a_size(
                                 objects=tuple(objects_from(scene)),
                                 frames=frames_from(scene, now=time.time()))
     camera = _head()
-    contact = astra_loop.apply_locate(camera, world, {"u": 400, "v": 380})
-    centre = astra_loop.apply_locate(camera, world, {
+    contact = apply_locate(camera, world, {"u": 400, "v": 380})
+    centre = apply_locate(camera, world, {
         "u": 400, "v": 380, "size": [0.05, 0.05, 0.10]})
     assert "CONTACT" in contact and "CENTRE" in centre
     assert "z=0.166" in centre
@@ -377,7 +378,7 @@ def test_plane_source_and_height_uncertainty_reach_the_world():
 
 def test_a_scene_file_surface_keeps_its_provenance_through_the_reader(
         agent_examples):
-    from live import objects_from
+    from manipulation_kit.agent.robot import objects_from
     views = objects_from({"objects": [
         {"name": "table", "kind": "surface", "p": [0.55, 0, 0.156],
          "size": [0.4, 0.6, 0.02], "plane_source": "known-length",
@@ -433,8 +434,10 @@ def test_a_declared_object_is_lifted_onto_its_support_with_the_frame_resolved():
 
 
 def test_the_loops_declare_scene_uses_the_kit_rule(agent_examples, d1_arm):
-    """``apply_declare_scene`` no longer open-codes the lift."""
-    source = (EXAMPLES / "agent" / "astra_loop.py").read_text(encoding="utf-8")
+    """``apply_declare_scene`` no longer open-codes the lift (it moved into
+    ``manipulation_kit.agent.tools`` in step 7)."""
+    import manipulation_kit.agent.tools as tools
+    source = Path(tools.__file__).read_text(encoding="utf-8")
     assert "lift_onto_support" in source
     assert "float(s.p[2]) + float(s.size[2]) / 2.0" not in source
     assert "float(o.p[2]) + float(o.size[2]) / 2.0" not in source

@@ -19,8 +19,11 @@ from .frames import (BASE, FRAME_STALE, FUTURE_TOL_S, UNKNOWN_FRAME, Frame,
                      FrameError, FrameGraph)
 from .direction import (ALIASES, FRAMES, OBJECT_PREFIX, TOOL, Direction,
                         frame_rotation, object_frame, parse_direction, toward)
-from .views import (UPRIGHT_TOL_RAD, ArmView, ContactView, ContainerView,
-                    GripperView, ObjectView, SurfaceView, WorldView)
+from .views import (INFERRED, PROVENANCES, UPRIGHT_TOL_RAD, ArmView,
+                    ContactView, ContainerView, GripperView, ObjectView,
+                    SurfaceView, WorldView)
+from .attach import (GraspTransform, attached, grasp_transform, released,
+                     with_attached)
 
 __all__ = [
     "ALIASES", "Direction", "FRAMES", "OBJECT_PREFIX", "TOOL",
@@ -29,4 +32,7 @@ __all__ = [
     "Frame", "FrameError", "FrameGraph",
     "ObjectView", "ContainerView", "SurfaceView",
     "ArmView", "GripperView", "WorldView", "ContactView",
+    "INFERRED", "PROVENANCES",
+    "GraspTransform", "attached", "grasp_transform", "released",
+    "with_attached",
 ]

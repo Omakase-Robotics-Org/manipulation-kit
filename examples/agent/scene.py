@@ -16,6 +16,12 @@ from manipulation_kit.world import (ArmView, ContainerView, GripperView,
 
 BLOCK_P = (0.38, 0.25, 0.05)
 BOX_P = (0.33, 0.34, 0.03)
+#: The mirror's wrist-camera INTRINSICS — a 640x480 placeholder, because the
+#: demo robot has a wrist-camera model (so the policy's look before a stroke
+#: runs) and no photograph. Not any real lens: on a robot these come from the
+#: stream, in the scene's ``robot.wrist_camera``.
+DEMO_WRIST_CAMERA = {"fx": 320.0, "fy": 320.0, "cx": 320.0, "cy": 240.0,
+                     "width": 640, "height": 480}
 
 
 def observe(kin, *, block_p=BLOCK_P, closed=None, held=None) -> WorldView:

@@ -120,7 +120,7 @@ a worked example with the conventions written into it. The short version:
 
 The robot half of the observation — both arms, their tool poses, both grippers
 — is filled in from live state by
-[`examples/agent/live.py`](examples/agent/live.py); you supply only the things.
+`manipulation_kit.agent.robot.SceneSource`; you supply only the things.
 
 #### …or do not measure it at all
 
@@ -192,20 +192,20 @@ from manipulation_kit.executor import run
 from manipulation_kit.executors.firmware import FirmwareExecutor
 from manipulation_kit.primitives import Grasp, Lift
 
-# examples/agent/live.py — the robot half from RawState, the things from the
-# scene file you measured in step 3
-from live import LiveRobot, load_scene
+# manipulation_kit.agent.robot — the robot half from RawState, the things
+# from the scene file you measured in step 3; a held object rides the tool
+from manipulation_kit.agent.robot import SceneSource, load_scene
 
 with FirmwareExecutor(base_url="http://d1-2:4750") as executor:
-    source = LiveRobot(executor, kin, load_scene("examples/agent/scenes/tabletop.json"))
-    world = source.world()
+    source = SceneSource.from_scene(
+        executor, kin, load_scene("examples/agent/scenes/tabletop.json"))
+    world = source.observe()
 
     verb = Grasp(object="red_block", side="left")
     plan = verb.plan(world, kin)          # pure: nothing has moved
     assert plan.ok, plan                  # a refusal names the waypoint and the residual
-    source.expect("left", "red_block")    # what the next stroke is closing on
     report = run(plan, executor)          # lease, mode, barriers, transport
-    after = source.world()                # RE-OBSERVE. Always.
+    after = source.observe()              # RE-OBSERVE. Always.
     print(report.completed, json.dumps(verb.verifier(world)(after).to_json()))
 ```
 
@@ -540,8 +540,9 @@ things had been filed on the wrong side of it:
 |---|---|
 | `world/` — the perception-result types | `astra_loop.py` — the prompt, the provider client, the scripted stand-in, the message bookkeeping |
 | `primitives/` — the verbs, their plans and their measured verifiers | `menu.py` / `jev_menu.py` — the Jev renderer: ranking, the cap, wait/rescan/stop, the question itself |
-| `primitives/offer.py` — the IK+guard gate: what can this robot do right now | `mirror.py`, `live.py` — the demo robot and the real one |
-| `primitives/schema.py`, `arguments.py` — the canonical argument table, a JSON Schema export, and `decode()` back | `scene.py`, `trace.py` — the shared demo scene and the JSONL decision record |
+| `primitives/offer.py` — the IK+guard gate: what can this robot do right now | `snapshot.py` — the camera-grab contract |
+| `primitives/schema.py`, `arguments.py` — the canonical argument table, a JSON Schema export, and `decode()` back | `scene.py` — the shared demo scene |
+| `agent/` — `OperatorPolicy`, the provider-independent loop, `LiveRobot` / `KinematicMirror` and the `--executor` registry, the JSONL decision trace | |
 | `primitives/reach.py` — which hand can do the WHOLE task | |
 | `executor.py`, `executors/` — how a plan reaches a robot | |
 

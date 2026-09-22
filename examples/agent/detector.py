@@ -17,7 +17,6 @@ kit's :class:`~manipulation_kit.perception.ScenePerceiver`, so ``locate`` and
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any, Dict, List, Sequence
 
@@ -129,7 +128,7 @@ def detect_objects(image, names: Sequence[Any], *, model: str = "gpt-6-astra",
                              "names": ", ".join(i["name"] for i in requested)}
     if client is None:                          # pragma: no cover - network
         from openai import OpenAI  # noqa: PLC0415
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        client = OpenAI()      # the SDK reads OPENAI_API_KEY itself
     content: List[Dict[str, Any]] = [
         {"type": "input_text", "text": prompt},
         {"type": "input_image", "detail": "high",
