@@ -175,6 +175,24 @@ def _why_missing(world: WorldView, name: str) -> str:
     return f"{name!r} has no usable position"
 
 
+def _inferred(world: WorldView, name: str) -> str:
+    """"" for a sighted pose; otherwise the words that say it is not one.
+
+    An ``attached`` pose is the tool pose composed with the grasp recorded at
+    the stroke, a ``predicted`` one is where the hand let go — both inferences
+    (:mod:`manipulation_kit.world.attach`). A verdict computed from either says
+    so, and a NEGATIVE one becomes UNKNOWN: a confident FALSE from a pose
+    nobody saw is as wrong as a confident TRUE (Astra review 11).
+    """
+    item = world.find(name)
+    if item is None or item.provenance not in ("attached", "predicted"):
+        return ""
+    how = ("riding the hand — the tool pose and the grasp recorded at the "
+           "stroke" if item.provenance == "attached"
+           else "where the hand let go")
+    return f"{name!r}'s pose is {item.provenance} ({how}): inferred, not sighted"
+
+
 def turn_tol(asked_rad: float) -> float:
     return max(MIN_TURN_TOL_RAD, TURN_TOL_FRACTION * abs(float(asked_rad)))
 
@@ -519,6 +537,10 @@ class ObjectRose(Verifier):
         gripper = world1.gripper(self.side)
         measured = {"rise_m": round(rise, 4), "asked_m": round(self.height_m, 4),
                     "holding": None if gripper is None else bool(gripper.holding)}
+        inferred = _inferred(world1, self.name)
+        item = world1.find(self.name)
+        if item is not None:
+            measured["provenance"] = item.provenance
         if gripper is None:
             # "Still held" is half the predicate, so a missing gripper report
             # is missing EVIDENCE, not a pass (R12). The old code skipped the
@@ -542,7 +564,13 @@ class ObjectRose(Verifier):
         if support is not None:
             return _false(f"{self.name} reports a {rise * 1000:.0f} mm rise but "
                           f"its underside is still on {support.name}", **measured)
-        return _true(f"{self.name} rose {rise * 1000:.0f} mm", **measured)
+        # A held object's pose is the ATTACHED one (the tool pose and the
+        # grasp recorded at the stroke), so the rise is the hand's, measured,
+        # with the gripper reporting the object still in it. That is the
+        # evidence a lift can have without a fresh sight, and the verdict says
+        # which kind it is.
+        return _true(f"{self.name} rose {rise * 1000:.0f} mm"
+                     + (f" — {inferred}" if inferred else ""), **measured)
 
 
 class ObjectOver(Verifier):
@@ -582,9 +610,18 @@ class ObjectOver(Verifier):
             return _false(f"the {self.side} gripper is holding "
                           f"{gripper.held_object!r}, not {self.name!r}",
                           **measured)
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = world1.find(self.name).provenance
         if gap <= self.tol_m:
             return _true(f"{self.name} is {gap * 1000:.0f} mm from over "
-                         f"{self.destination}", **measured)
+                         f"{self.destination}"
+                         + (f" — {inferred}" if inferred else ""), **measured)
+        if inferred:
+            return _unknown(f"by its inferred pose {self.name} is "
+                            f"{gap * 1000:.0f} mm from over "
+                            f"{self.destination}, but {inferred}; a sighting "
+                            f"is what can call it", **measured)
         return _false(f"{self.name} is {gap * 1000:.0f} mm from over "
                       f"{self.destination}", **measured)
 
@@ -630,9 +667,17 @@ class ObjectClears(Verifier):
         measured = {"underside_z_m": round(under, 4),
                     f"{what}_z_m": round(top, 4),
                     "clearance_m": round(gap, 4)}
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = obj.provenance
         if gap >= self.margin_m:
             return _true(f"{self.name}'s underside is {gap * 1000:.0f} mm above "
-                         f"{self.destination}'s {what}", **measured)
+                         f"{self.destination}'s {what}"
+                         + (f" — {inferred}" if inferred else ""), **measured)
+        if inferred:
+            return _unknown(f"by its inferred pose {self.name}'s underside is "
+                            f"{-gap * 1000:.0f} mm below {self.destination}'s "
+                            f"{what}, but {inferred}", **measured)
         return _false(f"{self.name}'s underside is {-gap * 1000:.0f} mm BELOW "
                       f"{self.destination}'s {what}", **measured)
 
@@ -706,6 +751,22 @@ class ObjectIn(Verifier):
         rest = under - floor
         measured["inside"] = bool(inside)
         measured["underside_above_floor_m"] = round(rest, 4)
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = obj.provenance
+            if gripper is not None and gripper.holding and (
+                    not gripper.held_object
+                    or gripper.held_object == self.name):
+                return _false(f"the {self.side} gripper is still holding "
+                              f"{self.name}", **measured)
+            # "In the cup, released, standing on the floor" is a claim about
+            # where the thing CAME TO REST, and an inferred pose has not seen
+            # it come to rest anywhere: never TRUE, never a confident FALSE.
+            return _unknown(
+                f"by its inferred pose {self.name} would be "
+                f"{'' if inside else 'NOT '}{where} "
+                f"({rest * 1000:+.0f} mm from the floor), but {inferred}; "
+                f"look, and declare what you see, to measure it", **measured)
         if not inside:
             return _false(f"{self.name} — all of it, not just its centre — is "
                           f"not {where}", **measured)

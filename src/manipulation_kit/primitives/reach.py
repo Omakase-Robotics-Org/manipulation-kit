@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from ..world import ArmView, GripperView, WorldView
+from ..world.attach import GraspTransform, grasp_transform, with_attached
 from ..world.direction import ALIASES, Direction
 from .orientation import tool_from_link7
 from .types import JointStep, Plan, PlanError, Primitive
@@ -173,12 +174,19 @@ def _posed(world: WorldView, kin, side: str, q) -> WorldView:
     return world.with_(arms=arms, revision=int(world.revision) + 1)
 
 
-def _grasped(world: WorldView, side: str, name: str) -> WorldView:
-    """The same world with ``side`` holding ``name``.
+def _grasped(world: WorldView, side: str, name: str
+             ) -> Tuple[WorldView, Optional[GraspTransform]]:
+    """The same world with ``side`` holding ``name``, and the grasp recorded.
 
     The closedness is the COMMAND (1.0), not a prediction of where the jaws
     will stop — nothing in a plan reads it, and inventing a stall position
     would be a measurement this function is not entitled to make.
+
+    The object then RIDES THE TOOL through
+    :func:`manipulation_kit.world.attach.with_attached` — the same rule a live
+    producer uses — so the predicted world and the observed one cannot disagree
+    about where a held object goes. ``None`` for the grasp when the object or
+    the tool pose is missing (the object is then left where it was).
     """
     item = world.find(name)
     grippers = dict(world.grippers)
@@ -187,35 +195,28 @@ def _grasped(world: WorldView, side: str, name: str) -> WorldView:
         side, 1.0, holding=True, held_object=name,
         jaw_gap_m=None if item is None else item.min_horizontal_extent(),
         grip=was.grip if was is not None else "firm", jaw_stalled=True)
-    return world.with_(grippers=grippers, revision=int(world.revision) + 1)
+    world = world.with_(grippers=grippers, revision=int(world.revision) + 1)
+    try:
+        grasp = grasp_transform(world, side=side, name=name)
+    except LookupError:
+        return world, None
+    return with_attached(world, side=side, name=name, grasp=grasp), grasp
 
 
-def _moved(world: WorldView, name: str, delta) -> WorldView:
-    """The same world with one object translated — a rigid grasp, in a value.
+def _moved(world: WorldView, grasp: GraspTransform) -> WorldView:
+    """The same world with the held object carried to where the tool now is.
 
-    ``delta`` is a BASE-frame displacement and ``o.p`` is in the object's OWN
-    frame, so it is rotated into that frame before it is added. Adding one to
-    the other directly is the same mistake as R1, one module along: on a
-    wagon frame yawed 25 degrees it moved the predicted object sideways.
-    An object whose frame will not resolve is left alone rather than moved by
-    a number that means nothing.
+    A rigid grasp, in a value: the tool's new pose composed with the transform
+    recorded at the stroke (:func:`~manipulation_kit.world.attach.with_attached`),
+    rotation included. The old rule added the tool's TRANSLATION to the
+    object's position and ignored the wrist's turn — a second grasp rule,
+    disagreeing with the first one about every carry that rotates the hand.
     """
-    import dataclasses
-    delta = np.asarray(delta, dtype=float)
-    objects = []
-    for item in world.objects:
-        if item.name != name:
-            objects.append(item)
-            continue
-        try:
-            _p, r = item.pose_in_base(world.frames)
-            local = r.inv().apply(delta) if item.frame_id != "base" else delta
-        except LookupError:
-            objects.append(item)
-            continue
-        objects.append(dataclasses.replace(
-            item, p=np.asarray(item.p, dtype=float) + local))
-    return world.with_(objects=tuple(objects))
+    try:
+        return with_attached(world, side=grasp.side, name=grasp.name,
+                             grasp=grasp)
+    except LookupError:
+        return world
 
 
 # --------------------------------------------------------------------------- #
@@ -238,6 +239,7 @@ def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
     """
     links: List[ChainLink] = []
     state = world
+    grasp: Optional[GraspTransform] = None
     for primitive in (Approach(object=obj, side=side, direction=direction,
                                roll_rad=roll_rad),
                       Grasp(object=obj, side=side, direction=direction,
@@ -253,16 +255,11 @@ def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
         if not getattr(result, "ok", False):
             break
         q_after = _last_q(result, side, q_before)
-        held = state.gripper(side)
-        carrying = bool(held is not None and held.holding
-                        and held.held_object == obj)
-        if carrying:
-            before = _tool_of(kin, side, q_before)[0]
-            after = _tool_of(kin, side, q_after)[0]
-            state = _moved(state, obj, after - before)
         state = _posed(state, kin, side, q_after)
+        if grasp is not None:
+            state = _moved(state, grasp)
         if primitive.name() == "grasp":
-            state = _grasped(state, side, obj)
+            state, grasp = _grasped(state, side, obj)
     return ChainPlan(side, tuple(links))
 
 
