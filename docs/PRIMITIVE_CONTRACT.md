@@ -19,8 +19,11 @@ asked*, which is a different question from *can the arm get there*:
 * `no_such_object` — and the `Unmet.remedy` lists what the world does hold
 * `frame_stale` / `unknown_frame` — the pose exists but cannot be resolved
 * `not_holding` / `already_holding` — the hand is in the wrong state
-* `object_too_wide` — the driven jaws open 51.96 mm and this is wider
-* `bad_side`, `bad_approach`, `bad_grip`, `bad_frame`, `no_motion` — the
+* `object_too_wide` / `object_too_flat` — against THIS hand's measured
+  opening (`GripperView.open_gap_m`; the nominal 51.96 mm when none is
+  measured) and the contact reference (`pad` / `tip`)
+* `bad_argument` (a direction that does not resolve or travels the wrong
+  way, a number out of its published range), `bad_side`, `no_motion` — the
   arguments themselves
 
 Keeping these separate from the reach problem matters because the two want

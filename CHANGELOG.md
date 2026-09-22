@@ -8,7 +8,60 @@ loud reason, not a legacy path kept alive beside the new one.
 
 ## 0.16.0 — unreleased
 
-### Executor state (redesign step 1)
+The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the
+vocabulary a model and a Python caller use is rebuilt around a `Direction`,
+the executor state is typed from the daemon's own OpenAPI document, contact
+and scene clearance become kit concepts, perception and the agent loop move
+into the wheel, `handover` plans both arms, and every per-robot number lives
+in one typed robot profile. **It is a clean break**: nothing below is kept
+alive beside its replacement except the one transitional `RawState`
+accessor set, removed in 0.17.
+
+### BREAKING — read this first
+
+1. **`approach: "top_down"|"front"|"side_left"|"side_right"` → `direction`**
+   on every verb (a `world.Direction`: an alias or `{axis, frame}`), and
+   **`jaw_turn_deg` is removed** (the roll is the kit's one sweep). Map old
+   names BY VECTOR — `side_left` is `right`, `side_right` is `left`.
+2. **`RawState` is `arms: {side: JointState}` + `hands: {side: HandState}`**;
+   the flat `joints/grippers/holding/commanded_grippers/stationary`
+   accessors and keywords survive ONE release (0.17 removes them).
+3. **Environment variables are gone**: `MKIT_DRIVEN_OPEN_GAP_M` (read the
+   daemon's `open_rad`; a robot profile for a transport without one),
+   `MKIT_SUPPORT_CLEARANCE_M` (`OperatorPolicy.droop_margin_m`), and all eight
+   `ASTRA_*` (`OperatorPolicy` fields and `astra_loop.py` flags).
+4. **`primitives/approach.py` is `primitives/orientation.py`**; the grasp
+   point, standoff and fit moved to `primitives/grasp_geometry.py`.
+5. **`examples/agent/{camera,live,mirror,trace}.py` are gone** — import
+   `manipulation_kit.perception` and `manipulation_kit.agent`. The
+   `perceive` extra is renamed **`perception`**.
+6. The firmware executor's hand-written `ArmState`/`GripperState` are gone;
+   state comes from the generated client's models.
+
+#### Migration, for the consumer sweep (d1-inference, dx-inspect-robots, d1-isaaclab)
+
+| old (0.15) | new (0.16) | known user (the sweep checks all three) |
+|---|---|---|
+| `Grasp(object=o, approach="top_down")` | `Grasp(object=o, direction="down")` | — |
+| `approach="front"` / `"side_left"` / `"side_right"` | `direction="forward"` / **`"right"`** / **`"left"`** | — |
+| `jaw_turn_deg=90` | *(delete it; the plan's notes say which roll was used)* | — |
+| `from manipulation_kit.primitives.approach import tool_from_link7, TCP_P, TCP_R, ...` | `from manipulation_kit.primitives.orientation import ...` | **d1-isaaclab `scripts/eval/agent_eval/world.py`** |
+| `approach.GRASPABLE_WIDTH_M`, `JAW_OPEN_M`, `grasp_point`, `standoff_pose`, `TIP_BELOW_TOOL_M` | `grasp_geometry.graspable_width_m(PAD, open_gap_m)`, `hands.d1.parallel_gripper.description.DRIVEN_OPEN_GAP_M`, `grasp_geometry.grasp_pose` / `standoff_point`, `PAD.lead_m` | — |
+| `RawState(joints=..., grippers=..., holding=...)` | `RawState(arms={s: JointState(q=...)}, hands={s: HandState(closedness=..., holding=...)})` (old keywords still accepted until 0.17) | d1-isaaclab `agent_eval` executor |
+| `MKIT_DRIVEN_OPEN_GAP_M=0.0605` | `HandState.open_gap_m` from the executor; `KinematicExecutor(open_gap_m=)`; `RobotProfile.hand` | d1-2 dry runs |
+| `MKIT_SUPPORT_CLEARANCE_M=0.015` | `OperatorPolicy(droop_margin_m=0.012)` / `--droop-margin-m 0.012` | d1-2 operators |
+| `ASTRA_GRIP_CAP` / `ASTRA_APPROACH_ALLOW` / `ASTRA_VEL_RATIO` / `ASTRA_ARRIVE_TIMEOUT_S` | `--max-grip` / `--allowed-directions` / `--vel-ratio` / `--arrive-timeout-s` (or `--policy FILE`) | operators |
+| `ASTRA_SNAPSHOT_CMD` / `ASTRA_MAX_OUTPUT_TOKENS` / `ASTRA_REASONING` / `ASTRA_DEBUG` | `--snapshot-cmd` / `--max-output-tokens` / `--reasoning` / `--debug` | operators |
+| `examples/agent/live.py` `LiveRobot`, `mirror.py`, `trace.py` | `manipulation_kit.agent.LiveRobot` / `KinematicMirror` / `DecisionTrace` | — |
+| `examples/agent/camera.py` `PinholeCamera`/`HeadCamera` | `manipulation_kit.perception` | — |
+| a scene's `robot.wrist_camera` / `robot.hand` numbers | `"robot": {"profile": "d1-2"}` (or `--robot-profile`); scene keys still override | everyone with a d1-2 scene |
+| `pip install '.[perceive]'` | `pip install '.[perception]'` | CI |
+| `candidates_for(approaches=...)` | `candidates_for(directions=...)` | — |
+| `reach.plan_chain(..., approach=, jaw_turn_deg=)` | `reach.plan_chain(..., direction=, contact=)` | — |
+
+The consumers are updated in a following sweep, not in this repository.
+
+### Executor state
 
 - **The bundled d1-firmwared client is regenerated from the document the
   daemon on d1-2 actually serves** (d1-firmwared 0.3.0, `GET /openapi.json`,
@@ -81,12 +134,12 @@ loud reason, not a legacy path kept alive beside the new one.
   pitch sign, unflipped) and `LiftState(height_m, moving, alarm)`. An optional
   capability (`read_neck`/`read_lift`); `KinematicExecutor` returns `None`.
 - Examples: `astra_loop`'s arm-fault gate is deleted (the kit stops the run;
-  the loop ends on a `controller_fault` report). The d1-2 scene carries the
-  robot's hand (`robot.hand.open_gap_m: 0.0605`), which the kinematic dry-run
-  uses, so `--dry-run --executor kinematic --scene d1-2_tape_cup.json` reaches
-  `goal_verified` with no environment variable.
+  the loop ends on a `controller_fault` report). The d1-2 hand (60.5 mm) now
+  comes from the d1-2 robot profile (below), so `--dry-run --executor
+  kinematic --scene d1-2_tape_cup.json` reaches `goal_verified` with no
+  environment variable.
 
-### BREAKING: a direction is a value, not one of four words (redesign step 2)
+### BREAKING: a direction is a value, not one of four words
 
 `approach: str` (`"top_down"`, `"front"`, `"side_left"`, `"side_right"`) and
 `jaw_turn_deg` are **deleted** from every verb. There is no compatibility
@@ -145,12 +198,13 @@ shim: a call that still says `approach=` is a `TypeError` from Python and a
   chooser, `ASTRA_APPROACH_ALLOW` default, `offer.candidates_for`).
   `candidates_for(approaches=)` is now `directions=` and defaults to all four
   (it was `("top_down", "front")`).
-* **Unchanged motion.** Every plan the example scenes produce — 392 cases,
-  each verb, each old approach and jaw turn, both arms, the whole
-  Approach->Place chain — is identical to the last float with the alias of the
-  same vector (`tests/primitives/test_golden_plans.py`).
+* **The vocabulary change alone moved nothing.** Every plan the example
+  scenes produced — 392 cases, each verb, each old approach and jaw turn, both
+  arms, the whole Approach->Place chain — was identical to the last float with
+  the alias of the same vector before the grasp geometry below changed any of
+  them on purpose (`tests/primitives/test_golden_plans.py`).
 
-### Grasp geometry (redesign step 3) — where and how the hand meets an object
+### Grasp geometry — where and how the hand meets an object
 
 **BREAKING.** `primitives/grasp_geometry.py` is new and is the one place that
 decides the grasp point, its descent floor, the standoff, the roll and the
@@ -232,7 +286,7 @@ fit. What it replaces is deleted, not deprecated.
   `Lift` (`guard_reject`): the 54 mm deeper standoff reaches the same grasp
   pose on a different elbow branch.
 
-### `manipulation_kit.perception` (redesign step 6) — perception is a kit interface
+### `manipulation_kit.perception` — perception is a kit interface
 
 **BREAKING for anyone importing the example modules.** `examples/agent/camera.py`
 is gone (moved, history kept, to `manipulation_kit.perception.camera`), and the
@@ -300,7 +354,7 @@ Tests: `tests/agent/test_perceive.py` moved to `tests/perception/test_perceive.p
 scene-reader tests are `tests/agent/test_perceive_cli.py`; new
 `tests/perception/test_perception_interface.py`.
 
-### Contact verbs: `probe` and `press` on `move_until` (redesign step 4)
+### Contact verbs: `probe` and `press` on `move_until`
 
 Contact becomes a concept (design C.3, L8/B8). Additive — nothing is removed —
 and **not yet validated on hardware**: `docs/probe-hardware-trial.md` is the
@@ -353,7 +407,7 @@ probes) and it has not been run.
   `Primitive.arg_roles()` lets a verb narrow what a name argument may name
   (`press.target` is anything in the world; `pour.target` stays a vessel).
 
-### The scene is an obstacle set (redesign step 5)
+### The scene is an obstacle set
 
 - **New `manipulation_kit.primitives.clearance`: `Obstacle`, `obstacles_of`,
   `SceneGate`, `ClearanceReport`, `ClearancePolicy`.** Every `SurfaceView`,
@@ -420,7 +474,7 @@ probes) and it has not been run.
   same collision policy as the body guard; its transit clearance is by
   construction only.
 
-### `manipulation_kit.agent` (redesign step 7) — the loop is a kit module
+### `manipulation_kit.agent` — the loop is a kit module
 
 - **NEW `manipulation_kit.agent`**: `OperatorPolicy` (`policy.py`), the
   provider-independent loop `run()` (`loop.py`), `LiveRobot` /
@@ -476,7 +530,7 @@ probes) and it has not been run.
   An unknown name fails with the available names and what to install.
   `LiveRobot` is a context manager (the example's `ExitStack` is gone).
 - The example's operator gates, its two candidate sweeps (the arm choice is
-  `reach.choose_side`, `TODO(step3)` for `roll_candidates()`), the jaw-turn
+  `reach.choose_side`, whose chain sweeps `roll_candidates()`), the jaw-turn
   fallback, the dead `isinstance` and the shadowed `turn` are deleted; the
   `controller_fault` stop is the loop's. The prompt quotes no kit number —
   `agent.robot_facts()` generates the jaw capacity, nudge grid and
@@ -485,7 +539,7 @@ probes) and it has not been run.
   recorded however it ends; the message history is written atomically and
   earlier photos are not resent.
 
-### Phase B integration (steps 3, 4, 5, 7 together)
+### The pieces together
 
 - **Contact legs are scene-gated.** `Probe`/`Press` plan through
   `SceneGate.for_contact(world, kin, p_standoff, direction, travel_m,
@@ -510,12 +564,11 @@ probes) and it has not been run.
   folded contact to the world source, later observations carry them in
   `WorldView.contacts`, and a `declare_scene` clears them. A surface they
   fitted stays a `SurfaceView` with `plane_source="contact"`.
-- **d1-2 scene: `robot.wrist_camera` placeholder, `"measured": false`.** The
-  d1-2 wrist fisheye has never been calibrated; the placeholder lets the
-  kinematic mirror dry-run the default look policy. The firmware robot
-  ignores an unmeasured block (`wrist_camera_from_scene(..., measured_only=
-  True)`) and stops with `look_unavailable`, whose message now says a live
-  run needs the lens's MEASURED intrinsics.
+- **A wrist block marked `"measured": false` is a placeholder**: the
+  kinematic mirror may dry-run the look policy through it, the firmware robot
+  ignores it (`wrist_camera_from_scene(..., measured_only=True)`) and stops
+  with `look_unavailable`. (The d1-2 scene's own placeholder is gone: its
+  lenses are measured now, see "Robot profile".)
 - The chain chooser in `agent/loop.py` has no roll logic: every
   Approach/Grasp in the chain sweeps `grasp_geometry`'s candidate rolls.
   When every roll fails, the refusal also lists the obstacles that refused
@@ -528,10 +581,112 @@ probes) and it has not been run.
   off, on the merged tree: 5 of 163 cases change, all top-down chains whose
   Place link moved (<= 1.1 mm waypoints) because a held object now turns with
   the wrist (step 7's `world.attach`). `SCENE_REFUSED` re-derived (above).
-- Still open: the demo/tabletop `forward` chains stop at `Lift` with
-  `guard_reject` (gate off) — step 3's deeper standoff reaches the grasp on
-  another elbow branch and the straight lift from there is refused; step 5's
+- `Primitive.DIRECTION_ARRIVES` / `agent.policy.DIRECTED_VERBS` — see
+  above; `handover` is directed too (its receiver arrives).
+
+### Robot profile, and the wrist fisheye
+
+- **NEW `manipulation_kit.description.robot_profile`**: `RobotProfile(name,
+  hand: HandMeasurement(open_gap_m), head_mount_delta: HeadMountDelta | None,
+  wrist_cameras: {side: WristIntrinsics(fx, fy, cx, cy, width, height,
+  model, k, valid_radius_px)})` — one typed file per robot, `RobotProfile.
+  load(path)`, `.named("d1-2")` (committed under `description/profiles/`,
+  shipped in the wheel), `.resolve(name_or_path)`, and `.from_files(...)`,
+  which reads the d1-inference artefacts VERBATIM: `head_aruco`'s
+  `cameras_<robot>.head*.json` and `d1-calibrate-wrist`'s
+  `wrist_<side>_intrinsics.json` (PR #77).
+- **`description/profiles/d1-2.json`** — measured: hand 60.5 mm (daemon
+  `open_rad` 1.35); **both wrist fisheyes** (2026-09-22, 48 ChArUco views
+  each, gate PASS: left fx 238.54 fy 239.67 cx 314.00 cy 224.76, RMS 0.218 px,
+  valid radius 304 px; right fx 237.64 fy 238.95 cx 328.37 cy 225.58, RMS
+  0.392 px, valid radius 326 px); the head mount (interior fit 2026-09-10,
+  [-23.9, -43.0, +24.6] mm / [+5.60, +2.27, +1.34] deg, RMS 3.89 px).
+- **The head mount is applied ABSOLUTELY.** `HeadMountDelta` keeps the
+  nominal it was fitted against (the 17.25 deg head tilt of 2026-09-10) and
+  rebuilds `head_link -> optical` from it; the kit's own nominal has moved
+  since (15 deg design tilt), and pasting the delta onto it would put the
+  camera 2.25 deg off. `HeadCamera.from_robot/from_config(...,
+  mount_delta=)` (new `description.head_camera.measured_head_camera_pose`)
+  and **only then** `calibrated: true`. On the d1-2 cube's pixel at neck
+  0.62 rad the measured mount moves the wagon-top point ~8 cm outward
+  relative to the nominal.
+- **`WristCamera` consumes the fisheye model** (`model="fisheye"`, `k`):
+  project and unproject through OpenCV's `cv2.fisheye` equidistant model
+  (`theta_d = theta (1 + k1 theta^2 + k2 theta^4 + k3 theta^6 + k4 theta^8)`)
+  in numpy, fixed-point inverse — no OpenCV dependency. A pinhole model of
+  that lens is ~10 % off at 30 deg off-axis, where the look-before-stroke
+  looks. Pixels outside `valid_radius_px` are "outside the calibrated
+  radius", not trusted.
+- **Scenes name a profile**: `"robot": {"profile": "d1-2"}` (a committed name
+  or a path relative to the scene); the scene's own `robot` keys override the
+  profile's. `agent.load_scene(path, profile=)`, `LiveRobot.from_flag(...,
+  profile=)` / `LiveRobot.firmware(..., profile=)`, `astra_loop.py
+  --robot-profile NAME|FILE`, `perceive.py --robot-profile` (head mount).
+  Wrist intrinsics are per side now (`{side: kwargs}`; a flat block still
+  means "both hands"), and a MEASURED profile's lenses reach the firmware
+  robot, so the look policy works live on d1-2.
+- **Before the first live look**: the wrist EXTRINSIC (lens on the plate) is
+  still the kit's nominal plate geometry; `--no-look-before-stroke` is the
+  documented first-live-run setting (`docs/agent.md`).
+
+### `handover` — the one verb that plans both arms
+
+- **`Handover(object, from_side=auto, to_side=auto, direction="left",
+  clearance_m=0.10)`** (design C.10): the giving hand takes the object to a
+  meeting point, the receiving hand approaches and grasps it travelling
+  `direction`, the giving hand opens and backs out `clearance_m`. Built on
+  the chain planner over two sides (`reach.handover_chain`,
+  `reach.plan_handover`); the meeting point is the first rung of
+  `reach.HANDOVER_MEETING_POINTS_M` whose whole two-arm chain plans. None →
+  the new plan reason **`unreachable_handover`** (every rung in `attempted`).
+  A direction that takes the receiver AWAY from the giver is `bad_argument`.
+  Verifier `Holding(receiver) ∧ NotHolding(giver) ∧ ToolClearOf(giver)` (new
+  `verifiers.ToolClearOf`).
+- **The give waits for a measured take**: `GripStep.expect_hold` — the
+  receiver's close must end with `StrokeReport.holding is True` or the run
+  stops with the new run-refusal reason **`hold_not_confirmed`** before the
+  giver opens (generic runner and firmware executor).
+- `Release` counts the other hand holding the same named object as support
+  (so the model can also compose the handover verb by verb);
+  `SceneSource` re-attaches an object that passed hand to hand within one
+  observation at the receiver's pad centre.
+- `Primitive.applicable(world)`: `tool_schemas(world)` describes `handover`
+  only while exactly one hand holds a named object and the other is free, and
+  `candidates_for` offers it then. Under `look_before_stroke` the operator
+  policy refuses a `handover` with **`look_not_possible`** (its receiving
+  close has no posture a look can precede) and says how to compose it.
+  New arguments `from_side`, `to_side`.
+
+### Examples and docs
+
+- `examples/agent/astra_loop.py` is **199 lines**: the prompt, the OpenAI
+  client, `loop()` and `main()` over `manipulation_kit.agent`. The scripted
+  stand-in moved to `examples/agent/scripted.py`; `--perceive`'s helpers to
+  `examples/agent/run_scene.py` (`perceived_scene`, `robot_head_state`,
+  `scene_for_run`). The
+  prompt quotes no kit number: jaw capacity, nudge grid, directions
+  (`direction_doc()`), `contact` (with `"tip"` marked EXPERIMENTAL — not yet
+  measured on hardware) and `tool_revision()` reach the model as the
+  generated `agent.robot_facts()`.
+- The three C.12 example tests pass (`test_the_example_is_short` is no
+  longer an expected failure).
+- `docs/probe-hardware-trial.md` gains the **tip grasp trial** (6 mm card,
+  `Grasp(contact="tip", grip="soft")` x 10; until it passes the default stays
+  `contact="pad"`). `README.md`, `docs/agent.md`, `examples/README.md` and
+  `examples/agent/DATAFLOW.md` describe the 0.16 flow.
+
+### Known, not fixed here
+
+- The demo/tabletop `forward` chains stop at `Lift` with `guard_reject`
+  (golden cases 17, 48, gate off): the deeper standoff reaches the grasp on
+  another elbow branch and the straight lift from there is refused; the
   up-and-over applies to `allow_via` transits only, not to a Lift.
+- A `press` on a small object standing on a table leaves the TABLE out of
+  the scene check too (the contact ray, widened by the hand and the
+  clearance, meets the table top first).
+- `handover` plans on the kinematic mirror only; nothing about a hand-to-hand
+  transfer is measured on hardware, and the hands' own geometry (fingers,
+  palm) is not in the scene gate.
 
 ## 0.15.0 — 2026-09-22
 
