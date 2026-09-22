@@ -257,7 +257,7 @@ class _Declaring:
             {"name": "declare_scene", "arguments": DECLARED},
             {"name": "grasp", "arguments": {"object": "charger",
                                             "side": "right",
-                                            "approach": "top_down"}},
+                                            "direction": "down"}},
             {"name": "lift", "arguments": {"object": "charger",
                                            "side": "right",
                                            "height_m": 0.1}},

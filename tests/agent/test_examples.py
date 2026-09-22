@@ -102,7 +102,7 @@ def test_the_loop_stops_at_max_turns_even_when_nothing_works(agent_examples):
         def __call__(self, messages, tools):
             return {"name": "grasp",
                     "arguments": {"object": "red_block", "side": "right",
-                                  "approach": "top_down"},
+                                  "direction": "down"},
                     "claimed": ""}
 
     trace = astra_loop.loop(Stubborn(), max_turns=3)
@@ -162,7 +162,7 @@ def test_the_trace_records_refusals_with_their_reasons(agent_examples):
         def __call__(self, messages, tools):
             return {"name": "grasp",
                     "arguments": {"object": "red_block", "side": "right",
-                                  "approach": "top_down"},
+                                  "direction": "down"},
                     "claimed": ""}
 
     trace = astra_loop.loop(AsksForTheImpossible(), max_turns=1)

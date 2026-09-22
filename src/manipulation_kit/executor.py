@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, runtime
 
 import numpy as np
 
-from .primitives.approach import link7_from_tool, tool_from_link7, tool_revision
+from .primitives.orientation import link7_from_tool, tool_from_link7, tool_revision
 from .primitives.types import (GripStep, JointStep, Plan, SettleStep, Waypoint)
 
 #: wire layout — see the module docstring
@@ -1545,5 +1545,5 @@ class KinematicExecutor:
                             detail="a kinematic stroke completes at once")
 
     def tool_pose(self, side: str):
-        from .primitives.approach import tool_from_link7
+        from .primitives.orientation import tool_from_link7
         return tool_from_link7(*self.kin.ee_pose(side))

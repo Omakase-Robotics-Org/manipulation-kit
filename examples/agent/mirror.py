@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 
 from manipulation_kit.executor import KinematicExecutor
-from manipulation_kit.primitives.approach import tool_from_link7
+from manipulation_kit.primitives.orientation import tool_from_link7
 from scene import BLOCK_P, observe
 
 

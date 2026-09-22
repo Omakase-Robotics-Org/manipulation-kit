@@ -1,5 +1,11 @@
 """Orientation is DERIVED here, and nowhere else. The model never emits one.
 
+THE ONLY PLACE A QUATERNION IS PRODUCED: :func:`align_tool`. Every verb hands
+it a base-frame direction (a resolved :class:`~manipulation_kit.world.Direction`)
+and, where it matters, the axis the jaws should close across; it returns the TCP
+orientation. (This module was ``primitives/approach.py`` before 0.16.0, when
+the direction was a four-word enum whose geometry lived in a table here.)
+
 The argument, short: rotation is the dimension where every emitter measurably
 fails. pi05 end-effector policies fit rotation ~3.3x worse than translation on
 a clean held-out split (0.120 vs 0.037 rad/m); an LLM steering roll/pitch/yaw
@@ -10,10 +16,12 @@ the wrist camera against the torso, twin 2026-09-08). Translation has none of
 those problems, which is why :class:`~manipulation_kit.primitives.verbs.Nudge`
 still carries dx/dy/dz.
 
-So the vocabulary is four named approaches, and the one remaining degree of
-freedom — the roll about the approach axis, i.e. which way the jaws close — is
-taken from the object's own principal axis. A model names ``top_down`` and a
-block; the kit works out that the jaws must close across the 40 mm side.
+So the vocabulary is a DIRECTION (``down``, ``forward``, or any vector in a
+named frame), and the one remaining degree of freedom — the roll about the
+approach axis, i.e. which way the jaws close — is taken from the object's own
+principal axis. A model names ``down`` and a block; the kit works out that the
+jaws must close across the 40 mm side. A further roll (``roll_rad``) is a
+PLANNER choice and is never offered to a model.
 
 Frames, once. ``Link7`` is the IK's end-effector body. The URDF's fixed
 ``JointTCP_*`` puts the TCP frame on it (translation ``(0, -0.087, 0)`` in
@@ -36,7 +44,6 @@ from ..hands.d1.parallel_gripper.description import (DRIVEN_OPEN_GAP_M,
                                                      PAD_CENTRE_Z_M,
                                                      PAD_TIP_Z_M)
 from ..world import FrameGraph, ObjectView
-from .types import APPROACHES, FRONT, SIDE_LEFT, SIDE_RIGHT, TOP_DOWN
 
 #: Link7 -> TCP, read off ``description/d1/d1.urdf``'s ``JointTCP_{R,L}``.
 #: Identical on both arms; the per-arm mirroring is in the POSE, not here.
@@ -93,24 +100,11 @@ PADS_DOWN_WXYZ_BY_SIDE: Dict[str, Tuple[float, float, float, float]] = {
     "right": (0.0, -0.7071068, -0.7071068, 0.0),
 }
 
-#: Unit vector the TOOL TRAVELS ALONG as it closes on the object, base frame.
-#: ``top_down`` descends (-z); ``front`` comes in from the robot's side of the
-#: object and pushes forward (+x); ``side_left`` comes in from the robot's LEFT
-#: and travels toward -y. The tool's approach axis (TCP +z) is aligned with it,
-#: so the standoff pose sits at ``grasp_point - direction * standoff``.
-APPROACH_DIRECTION: Dict[str, np.ndarray] = {
-    TOP_DOWN: np.array([0.0, 0.0, -1.0]),
-    FRONT: np.array([1.0, 0.0, 0.0]),
-    SIDE_LEFT: np.array([0.0, -1.0, 0.0]),
-    SIDE_RIGHT: np.array([0.0, 1.0, 0.0]),
-}
-
-APPROACH_DOC: Dict[str, str] = {
-    TOP_DOWN: "descend onto the object from above; jaws close horizontally",
-    FRONT: "come in horizontally from the robot's side and close facing forward",
-    SIDE_LEFT: "come in horizontally from the robot's LEFT",
-    SIDE_RIGHT: "come in horizontally from the robot's RIGHT",
-}
+#: ``|d . z|`` above which a direction counts as VERTICAL: the tool is seeded
+#: from the measured per-side PADS_DOWN quaternion rather than built from a
+#: horizontal jaw gap, and a downward one is a DESCENT onto what the object
+#: stands on (the support floor applies).
+VERTICAL_COS = 0.9
 
 
 def tool_revision() -> str:
@@ -126,14 +120,17 @@ def tool_revision() -> str:
             f"driven_open={DRIVEN_OPEN_GAP_M:.5f}")
 
 
-def check_approach(approach: str) -> str:
-    if approach not in APPROACHES:
-        raise ValueError(f"approach must be one of {APPROACHES}, got {approach!r}")
-    return approach
+def _unit(d) -> np.ndarray:
+    d = np.asarray(d, dtype=float).reshape(3)
+    n = float(np.linalg.norm(d))
+    if n < 1e-9:
+        raise ValueError("a tool direction cannot be the zero vector")
+    return d / n
 
 
-def direction(approach: str) -> np.ndarray:
-    return APPROACH_DIRECTION[check_approach(approach)].copy()
+def is_descent(d_base) -> bool:
+    """Does the tool travel DOWN onto the object (so its tips meet the support)?"""
+    return float(_unit(d_base)[2]) < -VERTICAL_COS
 
 
 #: The widest object the driven jaws can take, clearance included.
@@ -192,16 +189,25 @@ def tool_from_link7(p7, r7: R) -> Tuple[np.ndarray, R]:
 def _seed(side: str, d: np.ndarray) -> R:
     """A TCP orientation whose +z is ``d``, before the principal-axis roll.
 
-    Vertical approaches start from the measured per-side PADS_DOWN quaternion,
-    so the mirror convention enters exactly once. Horizontal approaches build
-    a frame with the jaw gap horizontal, which is the grasp a person makes when
-    reaching for something on a table.
+    Vertical directions start from the measured per-side PADS_DOWN quaternion,
+    so the mirror convention enters exactly once; a direction a few degrees off
+    vertical tilts that seed by the smallest rotation that puts its +z on
+    ``d`` (none at all for exactly ``down``). Horizontal ones build a frame with
+    the jaw gap horizontal, which is the grasp a person makes when reaching for
+    something on a table.
     """
-    if abs(float(d[2])) > 0.9:
+    if abs(float(d[2])) > VERTICAL_COS:
+        if float(d[2]) > 0:           # pads UP: nothing on a D1 reaches that way
+            raise ValueError("no upward tool direction is defined: the hand "
+                             "cannot approach an object from underneath")
         w, x, y, z = PADS_DOWN_WXYZ_BY_SIDE[side]
         r = R.from_quat([x, y, z, w])
-        if float(d[2]) > 0:           # "pads up" is not in the approach set
-            raise ValueError("no upward approach is defined")
+        z_now = r.as_matrix()[:, 2]
+        axis = np.cross(z_now, d)
+        s = float(np.linalg.norm(axis))
+        if s > 1e-12:
+            angle = math.atan2(s, float(np.dot(z_now, d)))
+            r = R.from_rotvec(axis / s * angle) * r
         return r
     up = np.array([0.0, 0.0, 1.0])
     x_axis = np.cross(up, d)
@@ -226,16 +232,52 @@ def _roll_to(seed: R, d: np.ndarray, gap_axis: np.ndarray) -> R:
     return R.from_rotvec(d * angle) * seed
 
 
-def grasp_orientation(side: str, approach: str, obj: Optional[ObjectView] = None,
+def roll_about(r: R, axis, roll_rad: float) -> R:
+    """``r`` turned by ``roll_rad`` about ``axis`` (base frame). The one roll."""
+    if not roll_rad:
+        return r
+    return R.from_rotvec(np.asarray(axis, dtype=float) * float(roll_rad)) * r
+
+
+def roll_tool(r_tcp: R, roll_rad: float) -> R:
+    """Turn the hand about ITS OWN approach axis (TCP +z) — what a Nudge's
+    ``dyaw`` asks for."""
+    return roll_about(r_tcp, r_tcp.as_matrix()[:, 2], roll_rad)
+
+
+def align_tool(side: str, d_base, *, roll_to=None, roll_rad: float = 0.0) -> R:
+    """The TCP orientation whose +z is ``d_base``, in the base frame.
+
+    Rolled about ``d_base`` so the jaw-gap axis (TCP +x) lies along ``roll_to``
+    (its component perpendicular to ``d_base``; the nearest half-turn
+    representative, so the wrist turns at most 90 deg), then by ``roll_rad``.
+    The per-side mirrored PADS_DOWN seed is used when ``|d.z| > 0.9``,
+    otherwise the horizontal frame. THE ONLY PLACE A QUATERNION IS PRODUCED.
+
+    Raises ``ValueError`` for an upward direction; verbs refuse that before
+    they get here.
+    """
+    d = _unit(d_base)
+    r = _seed(side, d)
+    if roll_to is not None:
+        gap = np.asarray(roll_to, dtype=float).reshape(3)
+        gap = gap - d * float(np.dot(gap, d))
+        n = float(np.linalg.norm(gap))
+        if n > 1e-6:
+            r = _roll_to(r, d, gap / n)
+    return roll_about(r, d, roll_rad)
+
+
+def grasp_orientation(side: str, d_base, obj: Optional[ObjectView] = None,
                       frames: Optional[FrameGraph] = None, *,
-                      dyaw_rad: float = 0.0) -> R:
-    """The TCP orientation for ``approach`` on ``obj``, in the base frame.
+                      roll_rad: float = 0.0) -> R:
+    """The TCP orientation for a grasp travelling along ``d_base`` onto ``obj``.
 
-    This is the entire orientation surface of this package. ``dyaw_rad`` is the
-    bounded correction ``Nudge`` may carry — a roll about the approach axis,
-    the one rotation with an obvious visual meaning ("turn the hand a little").
+    ``d_base`` is a RESOLVED base-frame vector (``Direction.resolve``); the
+    rotation itself is :func:`align_tool`'s. ``roll_rad`` is the planner's
+    extra turn about the approach axis (never a model argument).
 
-    With no object the approach set's own default jaw orientation is kept.
+    With no object the direction's own default jaw orientation is kept.
     With one, the jaws are squared to the object's own faces — its long axis
     where it has one, its widest horizontal axis where it does not
     (``ObjectView.footprint_axis``). A square footprint has no PREFERRED grasp
@@ -244,20 +286,18 @@ def grasp_orientation(side: str, approach: str, obj: Optional[ObjectView] = None
     take, so the pads meet two corners and hold nothing (measured over five
     blocks-eval trials, 2026-09-19).
     """
-    d = direction(approach)
-    r = _seed(side, d)
+    d = _unit(d_base)
     axis = None if obj is None or frames is None else obj.footprint_axis(frames)
+    gap = None
     if axis is not None:
         # The jaws must close ACROSS the object's long axis: the gap direction
         # is perpendicular to both the approach and that axis.
         perp = axis - d * float(np.dot(axis, d))
         if np.linalg.norm(perp) > 1e-6:
-            gap = np.cross(d, perp / np.linalg.norm(perp))
-            if np.linalg.norm(gap) > 1e-6:
-                r = _roll_to(r, d, gap / np.linalg.norm(gap))
-    if dyaw_rad:
-        r = R.from_rotvec(d * float(dyaw_rad)) * r
-    return r
+            cross = np.cross(d, perp / np.linalg.norm(perp))
+            if np.linalg.norm(cross) > 1e-6:
+                gap = cross / np.linalg.norm(cross)
+    return align_tool(side, d, roll_to=gap, roll_rad=roll_rad)
 
 
 def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph) -> float:
@@ -276,11 +316,12 @@ def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph) -> float:
     return obj.bottom_z(frames) + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
 
 
-def grasp_point(obj: ObjectView, approach: str, frames: FrameGraph
+def grasp_point(obj: ObjectView, d_base, frames: FrameGraph
                 ) -> Tuple[np.ndarray, bool]:
     """Where the TOOL POINT goes to grasp ``obj``, and whether it was raised.
 
-    The object's RESOLVED base-frame centre, except for ``top_down``, where
+    The object's RESOLVED base-frame centre, except for a descent
+    (:func:`is_descent`), where
     the finger tips would otherwise be driven into whatever the object is
     standing on: there the point is lifted to :func:`lowest_top_down_tool_z`.
     The pads are 58 mm deep, so a 40 mm cube grasped 12 mm above its centre
@@ -293,7 +334,7 @@ def grasp_point(obj: ObjectView, approach: str, frames: FrameGraph
     (0.38, 0.25, 0.05) (R1).
     """
     p = np.asarray(obj.pose_in_base(frames)[0], dtype=float).reshape(3).copy()
-    if check_approach(approach) != TOP_DOWN:
+    if not is_descent(d_base):
         return p, False
     floor = lowest_top_down_tool_z(obj, frames)
     if floor <= p[2]:
@@ -319,9 +360,9 @@ def grasps_above_its_top(obj: ObjectView, frames: FrameGraph) -> bool:
     return lowest_top_down_tool_z(obj, frames) > obj.top_face_z(frames)
 
 
-def standoff_pose(grasp_p, approach: str, standoff_m: float) -> np.ndarray:
-    """Where the tool point waits before travelling along the approach axis."""
-    return np.asarray(grasp_p, dtype=float) - direction(approach) * float(standoff_m)
+def standoff_pose(grasp_p, d_base, standoff_m: float) -> np.ndarray:
+    """Where the tool point waits before travelling along ``d_base`` (base)."""
+    return np.asarray(grasp_p, dtype=float) - _unit(d_base) * float(standoff_m)
 
 
 def choose_side(obj_p_base, *, available=("left", "right")) -> str:

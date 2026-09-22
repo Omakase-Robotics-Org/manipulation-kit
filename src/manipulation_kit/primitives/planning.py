@@ -32,7 +32,7 @@ from scipy.spatial.transform import Rotation as R
 from ..arms import safety
 from ..arms.ik import clamp_joint_step
 from ..world import ArmView, WorldView
-from . import approach as ap
+from . import orientation as ap
 from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanError, UNREACHABLE_OBJECT, Waypoint)
 
 #: How many clamped ``solve_ee`` calls ONE INTERPOLATION KNOT may take before

@@ -300,7 +300,7 @@ PROVISIONAL_UNCERTAINTY_M = 0.10
 
 def provisional_table_z(kin=None) -> float:
     """Where to put the plane before anyone has measured it. See above."""
-    from manipulation_kit.primitives.approach import (  # noqa: PLC0415
+    from manipulation_kit.primitives.orientation import (  # noqa: PLC0415
         tool_from_link7)
     if kin is None:
         from manipulation_kit.arms import get_arm_kinematics  # noqa: PLC0415

@@ -41,7 +41,7 @@ class Mirror:
                                   for s in ("left", "right")})
 
     def run(self, plan) -> int:
-        from manipulation_kit.primitives.approach import tool_from_link7
+        from manipulation_kit.primitives.orientation import tool_from_link7
         state = self.executor.state()
         joints = {s: np.array(q, dtype=float) for s, q in state.joints.items()}
         grippers = dict(state.grippers)

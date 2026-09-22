@@ -23,7 +23,7 @@ from scipy.spatial.transform import Rotation as R
 
 from ..world import (ContainerView, FrameError, ObjectView, SurfaceView,
                      WorldView)
-from .approach import JAW_CLEARANCE_M
+from .orientation import JAW_CLEARANCE_M
 from .types import Verdict, VerdictReport, Verifier
 
 #: how close a measured tool point must be to a commanded ABSOLUTE pose to
@@ -44,7 +44,7 @@ MOVED_FRACTION = 0.7
 OPEN_CLOSEDNESS = 0.15
 #: How far the MEASURED pad gap may sit either side of the object's own width
 #: and still be that object between the pads. It is the planner's own clearance
-#: (``approach.JAW_CLEARANCE_M``, 4 mm) rather than a second number: the kit
+#: (``orientation.JAW_CLEARANCE_M``, 4 mm) rather than a second number: the kit
 #: refuses to plan a grasp that does not leave this much per side, so a gap
 #: outside the window is either the jaws closed on something else or on
 #: themselves. MEASURED, 2026-09-19: a 40 mm cube stops the sim's jaws at a
@@ -290,12 +290,12 @@ class ToolTurned(Verifier):
     describes = "the hand turned by what was asked"
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
-                 dyaw_rad: float, axis=None, tol_rad: Optional[float] = None):
+                 roll_rad: float, axis=None, tol_rad: Optional[float] = None):
         super().__init__(primitive, world0)
         self.side = side
-        self.dyaw_rad = float(dyaw_rad)
+        self.roll_rad = float(roll_rad)
         self.axis = None if axis is None else np.asarray(axis, dtype=float)
-        self.tol_rad = turn_tol(dyaw_rad) if tol_rad is None else float(tol_rad)
+        self.tol_rad = turn_tol(roll_rad) if tol_rad is None else float(tol_rad)
         arm = world0.arm(side)
         self.before = None if arm is None else arm.tool_r
 
@@ -313,9 +313,9 @@ class ToolTurned(Verifier):
         local = self.before.inv().apply(np.asarray(axis, dtype=float))
         local = local / max(float(np.linalg.norm(local)), 1e-12)
         turned = float(np.dot(delta, local))
-        err = abs(turned - self.dyaw_rad)
+        err = abs(turned - self.roll_rad)
         measured = {"turned_deg": round(math.degrees(turned), 2),
-                    "asked_deg": round(math.degrees(self.dyaw_rad), 2),
+                    "asked_deg": round(math.degrees(self.roll_rad), 2),
                     "off_axis_deg": round(math.degrees(float(np.linalg.norm(
                         delta - local * turned))), 2),
                     "tolerance_deg": round(math.degrees(self.tol_rad), 2)}
@@ -325,7 +325,7 @@ class ToolTurned(Verifier):
                          f"axis as asked", **measured)
         return _false(f"the {self.side} hand turned "
                       f"{math.degrees(turned):+.1f} deg of the "
-                      f"{math.degrees(self.dyaw_rad):+.1f} deg asked",
+                      f"{math.degrees(self.roll_rad):+.1f} deg asked",
                       **measured)
 
 

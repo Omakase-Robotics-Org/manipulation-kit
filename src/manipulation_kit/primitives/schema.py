@@ -37,17 +37,25 @@ from dataclasses import fields
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..world import WorldView
+from ..world.direction import (ALIAS_MEANING, ALIASES, FRAMES, OBJECT_PREFIX,
+                               Direction, parse_direction)
 from .arguments import ARGUMENTS, ROLE_ANY, argument, check_arguments, names_for
 from .types import BAD_ARGUMENT, PlanError, Primitive, Unmet
 from .verbs import BY_VERB, PRIMITIVES
 
 
-#: Arguments a MODEL is not offered, because they are deployment
-#: configuration rather than a choice about the task. ``policy`` names a
-#: learned checkpoint: which one is served is a property of the robot in front
-#: of you, and a free string invites a model to invent one (R, section 3).
-#: They keep their defaults and are still bindable from Python.
-NOT_MODEL_BINDABLE: Tuple[str, ...] = ("policy",)
+#: Arguments a MODEL is not offered — and that :func:`decode` REFUSES from one
+#: — because they are deployment configuration or planner choices rather than
+#: a choice about the task. ``policy`` names a learned checkpoint: which one is
+#: served is a property of the robot in front of you, and a free string
+#: invites a model to invent one (R, section 3). ``roll_rad`` is the planner's
+#: turn of the hand about the approach axis: shown to a model as
+#: ``jaw_turn_deg`` (d1-2 run8, 2026-09-22) it picked the IK-infeasible turn
+#: on its own and spent the run on refusals; the plan's notes say which roll
+#: the planner used. They keep their defaults and are still bindable from
+#: Python. THIS IS THE ONE ALLOWLIST: a consumer does not strip arguments on
+#: the way out or pop them on the way in.
+NOT_MODEL_BINDABLE: Tuple[str, ...] = ("policy", "roll_rad")
 
 #: What a verb cannot promise, added to its description so the limitation
 #: reaches capability discovery rather than only a docstring.
@@ -94,9 +102,52 @@ def _json_schema(spec, names: Optional[Sequence[str]]) -> Dict[str, Any]:
             schema["description"] = f"{spec.doc} [{spec.unit}]"
     elif domain["kind"] == "boolean":
         schema["type"] = "boolean"
+    elif domain["kind"] == "direction":
+        schema["oneOf"] = [
+            {"type": "string", "enum": list(domain["aliases"]),
+             "description": "a named direction"},
+            {"type": "object",
+             "description": "a free direction: a vector in a named frame",
+             "properties": {
+                 "axis": {"type": "array", "items": {"type": "number"},
+                          "minItems": 3, "maxItems": 3},
+                 "frame": _frame_schema(names)},
+             "required": ["axis", "frame"], "additionalProperties": False}]
     else:
         schema["type"] = "string"
     return schema
+
+
+def _frame_schema(object_names: Optional[Sequence[str]]) -> Dict[str, Any]:
+    """The frames a free direction may name: base, tool, or an object's own."""
+    if object_names is None:
+        return {"type": "string",
+                "description": "base, tool, or object:<name>",
+                "pattern": f"^(base|tool|{OBJECT_PREFIX}.+)$"}
+    return {"type": "string",
+            "enum": list(FRAMES) + [f"{OBJECT_PREFIX}{n}" for n in object_names]}
+
+
+def _default(value: Any) -> Any:
+    """A field default as JSON: a direction is written the way a model writes it."""
+    return value.as_argument() if isinstance(value, Direction) else value
+
+
+def direction_doc() -> str:
+    """The prompt text for directions, GENERATED from the aliases.
+
+    One line per alias from :meth:`Direction.label` and its vector, so the
+    text a model reads cannot drift from what ``decode`` accepts (L11: the old
+    ``APPROACH_DOC`` existed to be this and was never used).
+    """
+    lines = ["A direction is which way the HAND TRAVELS. Name one of:"]
+    for name, d in ALIASES.items():
+        axis = ", ".join(f"{c:+.0f}" for c in d.v)
+        lines.append(f"  {d.label()}: ({axis}) in {d.frame} — "
+                     f"{ALIAS_MEANING.get(name, '')}".rstrip(" —"))
+    lines.append("  or give {axis: [x, y, z], frame: base|tool|object:<name>} "
+                 "for any other; base is +x forward, +y the robot's left, +z up.")
+    return "\n".join(lines)
 
 
 def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
@@ -122,13 +173,18 @@ def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
             if field.name in NOT_MODEL_BINDABLE:
                 continue
             spec = argument(field.name, cls.name(), overrides)
-            names = (None if world is None or spec.domain()["kind"] != "name"
-                     else names_for(world, spec.role))
+            kind = spec.domain()["kind"]
+            if world is None or kind not in ("name", "direction"):
+                names = None
+            elif kind == "direction":
+                names = world.names()
+            else:
+                names = names_for(world, spec.role)
             properties[field.name] = _json_schema(spec, names)
-            if spec.domain()["kind"] == "name":
+            if kind == "name":
                 required.append(field.name)
             elif field.default is not None:
-                properties[field.name]["default"] = field.default
+                properties[field.name]["default"] = _default(field.default)
         description = (cls.__doc__ or "").strip().splitlines()[0]
         if cls.name() in CAVEATS:
             description = f"{description} {CAVEATS[cls.name()]}"
@@ -142,7 +198,8 @@ def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
 
 
 def decode(name: str, arguments: Dict[str, Any],
-           world: Optional[WorldView] = None) -> Union[Primitive, PlanError]:
+           world: Optional[WorldView] = None, *,
+           model_bindable_only: bool = True) -> Union[Primitive, PlanError]:
     """A model's function call back into a primitive, or a typed refusal.
 
     Every way a call can be malformed ends here as a ``PlanError`` with
@@ -151,6 +208,12 @@ def decode(name: str, arguments: Dict[str, Any],
     world or cannot play that role. The old loop caught ``TypeError`` and
     ``ValueError`` around the CONSTRUCTOR only, and planning happened outside
     that handler (R3/R14).
+
+    ``model_bindable_only`` (the default — this is the MODEL's door) refuses
+    every field in :data:`NOT_MODEL_BINDABLE`: a model that sends ``policy``
+    or ``roll_rad`` gets a typed refusal, not a silently-honoured knob
+    (Astra review 5). A direction arrives as an alias or ``{axis, frame}``
+    (or a bare ``[x, y, z]``, base frame) and leaves as a ``Direction``.
     """
     cls = BY_VERB.get(name)
     if cls is None:
@@ -158,6 +221,20 @@ def decode(name: str, arguments: Dict[str, Any],
                          f"no verb called {name!r}; the verbs are "
                          f"{sorted(BY_VERB)}", primitive=str(name))
     known = {f.name for f in fields(cls)}
+    if model_bindable_only:
+        hidden = sorted(set(arguments) & set(NOT_MODEL_BINDABLE) & known)
+        if hidden:
+            return PlanError(
+                BAD_ARGUMENT,
+                f"{name}: {hidden} not model-bindable — the robot decides "
+                f"{'them' if len(hidden) > 1 else 'it'}; leave "
+                f"{'them' if len(hidden) > 1 else 'it'} out",
+                primitive=name,
+                unmet=tuple(Unmet(BAD_ARGUMENT,
+                                  f"{h!r} is not a model argument",
+                                  "leave it out", {"argument": h})
+                            for h in hidden))
+        known -= set(NOT_MODEL_BINDABLE)
     extra = sorted(set(arguments) - known)
     if extra:
         return PlanError(BAD_ARGUMENT,
@@ -165,6 +242,19 @@ def decode(name: str, arguments: Dict[str, Any],
                          primitive=name,
                          unmet=tuple(Unmet(BAD_ARGUMENT, f"unknown argument {e!r}")
                                      for e in extra))
+    arguments = dict(arguments)
+    for key, value in list(arguments.items()):
+        spec = ARGUMENTS.get(key)
+        if spec is not None and spec.kind == "direction":
+            try:
+                arguments[key] = parse_direction(value)
+            except (TypeError, ValueError) as exc:
+                return PlanError(BAD_ARGUMENT, f"{name}: {key}: {exc}",
+                                 primitive=name,
+                                 unmet=(Unmet(BAD_ARGUMENT, str(exc),
+                                              "name a direction or give "
+                                              "{axis, frame}",
+                                              {"argument": key}),))
     try:
         call = cls(**arguments)
     except (TypeError, ValueError) as exc:
@@ -237,6 +327,12 @@ def domains_in(schemas: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
                                   "unit": ARGUMENTS[name].unit}
             elif prop.get("type") == "boolean":
                 rendered[name] = {"kind": "boolean"}
+            elif "oneOf" in prop:
+                named = [b for b in prop["oneOf"] if b.get("type") == "string"]
+                free = [b for b in prop["oneOf"] if b.get("type") == "object"]
+                rendered[name] = {"kind": "direction",
+                                  "aliases": list(named[0]["enum"]) if named else [],
+                                  "free": bool(free)}
             elif name in ARGUMENTS and ARGUMENTS[name].kind == "name":
                 rendered[name] = {"kind": "name", "role": ARGUMENTS[name].role}
             else:

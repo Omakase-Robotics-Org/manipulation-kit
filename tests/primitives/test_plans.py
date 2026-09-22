@@ -11,12 +11,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from manipulation_kit.world.direction import ALIASES
+
 from manipulation_kit.primitives import (Approach, Carry, GoHome, Grasp,
                                          GripStep, Lift, Nudge, Place, Pour,
                                          Release, Retreat, SettleStep)
 from manipulation_kit.primitives.types import (FRAME_STALE, GUARD_REJECT,
                                                LEARNED_POLICY_REQUIRED,
                                                NO_SUCH_OBJECT, PLAN_REASONS)
+
+#: the base-frame "down" vector the orientation helpers take
+DOWN = ALIASES["down"].vector()
 
 #: A block the LEFT arm can reach, measured by sweeping the bundled URDF.
 REACHABLE = (0.38, 0.25, 0.05)
@@ -40,7 +45,7 @@ def test_a_grasp_of_a_reachable_block_plans_a_continuous_joint_path(d1_arm, obse
         assert np.max(np.abs(step.q - q)) <= safety.MAX_JOINT_STEP_RAD + 1e-9
         q = step.q
     # ... and the last one puts the tool on the block
-    from manipulation_kit.primitives.approach import tool_from_link7
+    from manipulation_kit.primitives.orientation import tool_from_link7
     d1_arm.set_joints("left", steps[-1].q)
     tool = tool_from_link7(*d1_arm.ee_pose("left"))[0]
     assert np.linalg.norm(tool - np.array(REACHABLE)) < 0.01
@@ -95,7 +100,7 @@ def test_planning_leaves_the_kinematic_model_exactly_where_it_was(d1_arm, observ
     before = {s: d1_arm.joints(s).copy() for s in ("left", "right")}
     world = observe(d1_arm, block_p=REACHABLE)
     for verb in (Grasp(object="red_block", side="left"),
-                 Grasp(object="red_block", side="left", approach="front"),
+                 Grasp(object="red_block", side="left", direction="forward"),
                  Grasp(object="red_block", side="right"),
                  Nudge(side="left", dz=0.03)):
         verb.plan(world, d1_arm)
@@ -246,7 +251,7 @@ def test_a_top_down_grasp_keeps_the_pad_tips_off_the_table(d1_arm, observe):
     tracks a free-air posture to 0.00 deg in 0.7 s — and the jaws closed
     beside the block every time.
     """
-    from manipulation_kit.primitives import approach as ap
+    from manipulation_kit.primitives import orientation as ap
 
     block = (0.38, 0.25, 0.05)                  # 50 x 40 x 50 mm, so it stands
     world = observe(d1_arm, block_p=block)      # on a surface at z = 0.025
@@ -268,14 +273,14 @@ def test_a_top_down_grasp_keeps_the_pad_tips_off_the_table(d1_arm, observe):
 def test_an_object_tall_enough_is_grasped_at_its_centre_as_before(d1_arm, observe):
     """The clearance is a floor, not an offset: nothing that already cleared
     the table moves."""
-    from manipulation_kit.primitives import approach as ap
+    from manipulation_kit.primitives import orientation as ap
 
     from manipulation_kit.world import FrameGraph, ObjectView
 
     frames = FrameGraph()
     tall = ObjectView("tall_block", p=(0.38, 0.25, 0.12), size=(0.05, 0.04, 0.16))
-    assert not ap.grasp_point(tall, "top_down", frames)[1]
-    assert np.allclose(ap.grasp_point(tall, "top_down", frames)[0], tall.p)
+    assert not ap.grasp_point(tall, DOWN, frames)[1]
+    assert np.allclose(ap.grasp_point(tall, DOWN, frames)[0], tall.p)
 
 
 def test_a_flat_object_is_refused_rather_than_grasped_over(d1_arm, observe):
@@ -289,20 +294,20 @@ def test_a_flat_object_is_refused_rather_than_grasped_over(d1_arm, observe):
     assert not Grasp(object="red_block", side="left").plan(world, d1_arm).ok
     # ...and coming in from the side is not refused for that reason
     side_on = {u.code for u in Grasp(object="red_block", side="left",
-                                     approach="front").preconditions(world)}
+                                     direction="forward").preconditions(world)}
     assert "object_too_flat" not in side_on
 
 
 def test_a_horizontal_approach_still_aims_at_the_object_centre(d1_arm, observe):
     """The clamp is about what the object STANDS on, which only the top-down
     descent drives into."""
-    from manipulation_kit.primitives import approach as ap
+    from manipulation_kit.primitives import orientation as ap
 
     from manipulation_kit.world import FrameGraph, ObjectView
 
     frames = FrameGraph()
     low = ObjectView("low_block", p=(0.38, 0.25, 0.02), size=(0.05, 0.04, 0.04))
-    for name in ("front", "side_left", "side_right"):
-        point, raised = ap.grasp_point(low, name, frames)
+    for name in ("forward", "right", "left"):
+        point, raised = ap.grasp_point(low, ALIASES[name].vector(), frames)
         assert not raised and np.allclose(point, low.p)
-    assert ap.grasp_point(low, "top_down", frames)[1]
+    assert ap.grasp_point(low, DOWN, frames)[1]

@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -81,7 +82,8 @@ from manipulation_kit.executor import run  # noqa: E402
 from manipulation_kit.primitives import Place  # noqa: E402
 from manipulation_kit.primitives.offer import check, label_for  # noqa: E402
 from manipulation_kit.primitives.reach import choose_side  # noqa: E402
-from manipulation_kit.primitives.schema import decode, tool_schemas  # noqa: E402
+from manipulation_kit.primitives.schema import decode, direction_doc, tool_schemas  # noqa: E402
+from manipulation_kit.primitives.types import GRASP_DIRECTIONS  # noqa: E402
 from mirror import MirrorRobot, SceneMirrorRobot  # noqa: E402
 from scene import demo_scene  # noqa: E402
 from trace import DecisionRecord, DecisionTrace  # noqa: E402
@@ -131,8 +133,9 @@ wrist photo, and `nudge` — nudges are exactly what an uncertain declaration
 is for, and a 10 mm one costs nothing.
 
 Rules that are not negotiable, because the robot enforces them anyway:
-- You never give an orientation. Name an approach (top_down, front, side_left,
-  side_right) and the robot derives the wrist pose from the object.
+- You never give an orientation. Give a `direction` — the way the hand travels —
+  and the robot derives the wrist pose from it and the object.
+{directions}
 - `nudge` translations are snapped to a 10/30/50 mm grid, and its `dyaw` is
   clamped to +-15 degrees about the hand's own approach axis. Every OTHER
   number you give is used as you write it, inside the range in the schema.
@@ -168,7 +171,9 @@ Call exactly one tool per turn."""
 # answered inside the loop and reported back correlated with the call.
 
 from manipulation_kit.hands.d1.parallel_gripper.description import DRIVEN_OPEN_GAP_M as _OPEN_M  # noqa: E402
-from manipulation_kit.primitives.approach import GRASPABLE_WIDTH_M as _GRASP_M  # noqa: E402
+from manipulation_kit.primitives.orientation import GRASPABLE_WIDTH_M as _GRASP_M  # noqa: E402
+SYSTEM = SYSTEM.replace("{directions}", "\n".join(
+    "  " + line for line in direction_doc().splitlines()))
 SYSTEM = SYSTEM.replace("{open_mm}", f"{_OPEN_M * 1000:.0f}").replace(
     "{grasp_mm}", f"{_GRASP_M * 1000:.0f}")
 SYSTEM += (
@@ -382,7 +387,7 @@ class ScriptedModel:
         self.declare = declare
         self.script: List[Dict[str, Any]] = [
             {"name": "grasp", "arguments": {"object": obj, "side": "left",
-                                            "approach": "top_down"}},
+                                            "direction": "down"}},
             # A shorter hop when the things were declared onto a perceived
             # table: that table is 0.17 m up, and 0.10 m of lift from there
             # puts the tool outside the arm's envelope — a real reach fact,
@@ -537,30 +542,6 @@ def _say(messages: List[Dict[str, Any]], call_id: str, text: str) -> None:
 
 
 
-PLANNER_ONLY_ARGS = ("jaw_turn_deg",)
-
-
-def _hide_planner_args(tools):
-    """Strip arguments the LOOP decides, not the model.
-
-    ``jaw_turn_deg`` exists so the fallback below can re-plan a refused grasp
-    with the wrist a quarter turn round; shown to the model (d1-2 run8,
-    2026-09-22) it picked +90 on its own, which is the IK-infeasible turn, and
-    spent the run on ik_fail refusals while the plain posture would have
-    planned. The model asks for a grasp; which wrist stands is the kit's call.
-    """
-    out = []
-    for tool in tools:
-        props = dict(tool["parameters"].get("properties", {}))
-        for name in PLANNER_ONLY_ARGS:
-            props.pop(name, None)
-        params = dict(tool["parameters"], properties=props)
-        if "required" in params:
-            params["required"] = [r for r in params["required"] if r not in PLANNER_ONLY_ARGS]
-        out.append(dict(tool, parameters=params))
-    return out
-
-
 def _dump_messages(trace_path: Optional[Path], messages: List[Dict[str, Any]]) -> None:
     """Keep the model's whole chat history next to the trace, rewritten every
     turn so a crash mid-turn still leaves it on disk (Shu, 2026-09-22)."""
@@ -638,10 +619,11 @@ def plan_the_hand(world, kin, *, obj: str, destination: str):
     if obj not in names or destination not in names:
         return None
     hand = None
-    for approach in ("top_down", "front", "side_right", "side_left"):
-        for jaw_turn in (0.0, -90.0, 90.0):      # see Approach.jaw_turn_deg
+    for direction in GRASP_DIRECTIONS:
+        for jaw_turn in (0.0, -90.0, 90.0):      # see Approach.roll_rad
             candidate = choose_side(world, kin, obj=obj, destination=destination,
-                                    approach=approach, jaw_turn_deg=jaw_turn)
+                                    direction=direction,
+                                    roll_rad=math.radians(jaw_turn))
             if hand is None or (candidate.reachable and not hand.reachable):
                 hand = candidate
             if hand.reachable:
@@ -717,7 +699,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         # world changes, and the OBSERVATION tools travel with them so a model
         # that has just been told "that is not where you said" can answer with
         # a measurement instead of another guess.
-        tools = _hide_planner_args(tool_schemas(world)) + scene_tools(camera)
+        tools = tool_schemas(world) + scene_tools(camera)
         record = DecisionRecord(iteration=turn, world=world.to_json())
         record.task = task
 
@@ -810,21 +792,19 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         # sweep the forearm through the wagon top (d1-2 run5, error 2 latch).
         allowed = os.environ.get("ASTRA_APPROACH_ALLOW")
         if allowed and call["name"] in ("approach", "grasp"):
-            asked = call["arguments"].get("approach", "top_down")
-            if asked not in allowed.split(","):
+            asked = call["arguments"].get("direction", GRASP_DIRECTIONS[0])
+            if not isinstance(asked, str) or asked not in allowed.split(","):
                 record.refused = [{"reason": "approach_disabled",
                                    "detail": f"{asked!r} approaches are disabled on this robot "
                                              f"tonight; allowed: {allowed}"}]
                 _say(messages, call_id,
                      f"{call['name']} was refused: the {asked!r} approach direction is "
                      f"disabled on this robot (the guard cannot yet see the table); "
-                     f"use one of: {allowed}. If top_down is refused near the body, the "
+                     f"use one of: {allowed}. If down is refused near the body, the "
                      f"object is closer than you declared — re-check with locate.")
                 trace.write(record)
                 _dump_messages(trace_path, messages)
                 continue
-        for name in PLANNER_ONLY_ARGS:
-            call["arguments"].pop(name, None)
         primitive = decode(call["name"], call["arguments"], world)
         if not isinstance(primitive, object) or getattr(primitive, "ok", None) is False:
             record.refused = [primitive.to_json()]
@@ -844,9 +824,9 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
                 and getattr(plan, "waypoint_label", "") == "standoff"):
             import dataclasses as _dc  # noqa: PLC0415
             turned, plan2 = primitive, plan
-            asked = float(getattr(primitive, "jaw_turn_deg", 0.0))
-            for turn in [x for x in (0.0, -90.0, 90.0) if x != asked]:
-                turned = _dc.replace(primitive, jaw_turn_deg=turn)
+            asked = float(getattr(primitive, "roll_rad", 0.0))
+            for turn in [x for x in (0.0, -math.pi / 2, math.pi / 2) if x != asked]:
+                turned = _dc.replace(primitive, roll_rad=turn)
                 plan2 = check(turned, world, kin)
                 if getattr(plan2, "ok", False):
                     break

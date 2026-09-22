@@ -50,7 +50,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     from manipulation_kit.arms import get_arm_kinematics
     from manipulation_kit.executors.firmware import FirmwareExecutor
-    from manipulation_kit.primitives.approach import tool_from_link7, tool_revision
+    from manipulation_kit.primitives.orientation import tool_from_link7, tool_revision
 
     problems: List[str] = []
     kin = get_arm_kinematics("d1/arm", quiet=True)

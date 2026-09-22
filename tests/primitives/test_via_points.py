@@ -21,14 +21,19 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from manipulation_kit.world.direction import ALIASES
+
 from manipulation_kit.arms import safety
 from manipulation_kit.primitives import Approach, Carry, Grasp
 from manipulation_kit.primitives import planning
-from manipulation_kit.primitives.approach import tool_from_link7
+from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.primitives.planning import Kin, solve_path
 from manipulation_kit.primitives.types import GUARD_REJECT, Waypoint
 from manipulation_kit.world import (ArmView, ContainerView, GripperView,
                                     ObjectView, SurfaceView, WorldView)
+
+#: the base-frame "down" vector the orientation helpers take
+DOWN = ALIASES["down"].vector()
 
 #: The three cubes, in the base frame, as the served scene reports them.
 CUBES = {"block_red": (0.4651, -0.0966, 0.195),
@@ -99,7 +104,7 @@ def test_a_top_down_grasp_over_the_wagon_plans_from_home(d1_arm, name):
     # stands on rather than driven through it
     centre = np.array(CUBES[name])
     assert np.linalg.norm(tool[:2] - centre[:2]) < 0.01
-    from manipulation_kit.primitives import approach as ap
+    from manipulation_kit.primitives import orientation as ap
     assert tool[2] == pytest.approx(
         centre[2] - CUBE_SIZE[2] / 2 + ap.TIP_BELOW_TOOL_M
         + ap.SUPPORT_CLEARANCE_M, abs=0.005)
@@ -240,7 +245,7 @@ def test_the_jaws_are_squared_to_a_yawed_cube_not_to_the_base_frame(d1_arm):
     """
     from scipy.spatial.transform import Rotation as R
 
-    from manipulation_kit.primitives import approach as ap
+    from manipulation_kit.primitives import orientation as ap
 
     for yaw in (0.0, 11.7, 25.0):
         cube = ObjectView("cube", p=(0.44, -0.05, 0.19), size=CUBE_SIZE,
@@ -249,7 +254,7 @@ def test_the_jaws_are_squared_to_a_yawed_cube_not_to_the_base_frame(d1_arm):
             [cube, SurfaceView("wagon_top", p=WAGON_TOP, size=(0.4, 0.6, 0.002))],
             arms=[ArmView(s, joints=d1_arm.joints(s)) for s in ("left", "right")],
             grippers=[GripperView(s, 0.0) for s in ("left", "right")])
-        r_tcp = ap.grasp_orientation("right", "top_down", cube, world.frames)
+        r_tcp = ap.grasp_orientation("right", DOWN, cube, world.frames)
         gap = r_tcp.as_matrix()[:, 0]
         half = cube.axes_in_base(world.frames) * np.array(cube.size) / 2.0
         width = 2 * sum(abs(float(np.dot(half[:, i], gap))) for i in range(3))

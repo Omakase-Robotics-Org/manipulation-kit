@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from manipulation_kit.primitives.approach import tool_from_link7
+from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.world import (ArmView, ContainerView, Frame, FrameGraph,
                                     GripperView, ObjectView, SurfaceView,
                                     WorldView)
