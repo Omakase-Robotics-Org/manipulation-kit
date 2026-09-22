@@ -583,7 +583,12 @@ class Grasp(Primitive):
                 f"tips still on the surface",
                 "come in from the side, or use a different tool",
                 {"height_m": round(tall, 4)}))
-        if width > ap.GRASPABLE_WIDTH_M:
+        # The hand in front of us, as its executor measured it; the nominal
+        # description only when nothing measured it.
+        hand = world.gripper(side)
+        opening = getattr(hand, "open_gap_m", None)
+        graspable = ap.graspable_width_m(opening)
+        if width > graspable:
             # ALONG THE JAW AXIS, not the object's smallest side. A
             # 100x80x40 mm box passed the old min-extent test on its 40 mm
             # edge while this grasp closes across 80 mm of it (R9).
@@ -591,12 +596,12 @@ class Grasp(Primitive):
                 OBJECT_TOO_WIDE,
                 f"{self.object} presents {width * 1000:.0f} mm across the jaw "
                 f"axis of this {self.approach} grasp, and the driven jaws take "
-                f"{ap.GRASPABLE_WIDTH_M * 1000:.0f} mm "
-                f"(opening {ap.JAW_OPEN_M * 1000:.0f} mm, "
+                f"{graspable * 1000:.0f} mm "
+                f"(opening {(ap.JAW_OPEN_M if opening is None else opening) * 1000:.0f} mm, "
                 f"{ap.JAW_CLEARANCE_M * 1000:.0f} mm clearance per side)",
                 "approach it across a narrower face, or use a different tool",
                 {"presented_width_m": round(width, 4),
-                 "graspable_width_m": round(ap.GRASPABLE_WIDTH_M, 4)}))
+                 "graspable_width_m": round(graspable, 4)}))
         return unmet
 
     def _geometry(self, world: WorldView):

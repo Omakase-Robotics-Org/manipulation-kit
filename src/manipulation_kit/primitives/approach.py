@@ -121,6 +121,12 @@ def tool_revision() -> str:
     a different place. A plan records this and the executor refuses to run one
     whose tool no longer matches (R8) — cheap, and the only alternative is
     trusting that nobody changed the hand between planning and moving.
+
+    A pure function of the hand DESCRIPTION: no environment variable feeds it
+    (the ``MKIT_DRIVEN_OPEN_GAP_M`` knob that did is gone). What a particular
+    robot's hand opens to is a measurement published by its executor
+    (``HandState.open_gap_m``), and which firmware produced that measurement
+    is bound separately (``PlanBinding.firmware_spec``).
     """
     return (f"pad_centre={PAD_CENTRE_Z_M:.4f};pad_tip={PAD_TIP_Z_M:.4f};"
             f"driven_open={DRIVEN_OPEN_GAP_M:.5f}")
@@ -138,6 +144,19 @@ def direction(approach: str) -> np.ndarray:
 
 #: The widest object the driven jaws can take, clearance included.
 GRASPABLE_WIDTH_M = JAW_OPEN_M - 2 * JAW_CLEARANCE_M
+
+
+def graspable_width_m(open_gap_m: Optional[float] = None) -> float:
+    """What the jaws can close on, for a hand that opens to ``open_gap_m``.
+
+    ``None`` is the hand description's nominal driven opening
+    (:data:`GRASPABLE_WIDTH_M`); a measured gap — the executor's
+    ``HandState.open_gap_m``, carried on ``GripperView.open_gap_m`` — replaces
+    it. The clearance per side is the same either way.
+    """
+    if open_gap_m is None:
+        return GRASPABLE_WIDTH_M
+    return float(open_gap_m) - 2 * JAW_CLEARANCE_M
 
 
 def jaw_axis(r_tcp: R) -> np.ndarray:
