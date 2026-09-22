@@ -93,8 +93,14 @@ def test_a_top_down_grasp_over_the_wagon_plans_from_home(d1_arm, name):
     assert plan.ok, str(plan)
     steps = plan.joint_steps()
     assert steps
-    # it went AROUND something, and says so in its own record
+    # it went AROUND something, and says so in its own record. Since 0.16.0
+    # the wagon top is in the scene gate, so the transit from HOME (whose
+    # hand hangs below the wagon's clearance height) is planned up-and-over
+    # BY CONSTRUCTION, rising through the same measured clearance point the
+    # guard-rejection detour used to find by trial.
     assert any("routed via a clearance point" in note or "READY" in note
+               or ("rose" in note and "cm out" in note
+                   and "'wagon_top'" in note)
                for note in plan.notes), plan.notes
     # ...and it still ends where the plan said: a detour that does not arrive
     # is not a plan, it is a wander

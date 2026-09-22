@@ -32,6 +32,7 @@ from . import grasp_geometry as gg
 from . import orientation as ap
 from . import verifiers as V
 from .arguments import check_arguments
+from .clearance import SceneGate, policy_of
 from .planning import IncompleteObservation, Kin, joint_ramp, solve_path
 from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, INCOMPLETE_OBSERVATION, LearnedPrimitive,
@@ -222,12 +223,34 @@ def _incomplete(primitive: Primitive, side: str, exc) -> PlanError:
                                   "publish both arms in the observation"),))
 
 
+#: The fields that name what a verb acts ON. Those are not obstacles to it —
+#: a grasp must reach its object, a place its destination — so the scene gate
+#: leaves them out (and whatever a hand holds, which rides the tool).
+SCENE_TARGET_FIELDS: Tuple[str, ...] = ("object", "to", "source", "target")
+
+
+def _scene_for(primitive: Primitive, world: WorldView, kin
+               ) -> SceneGate:
+    """The scene gate this verb's plan is checked against."""
+    names = [getattr(primitive, f, "") for f in SCENE_TARGET_FIELDS]
+    return SceneGate.of(world, kin, exclude=[n for n in names if n])
+
+
+def _unchecked_note(scene) -> Tuple[str, ...]:
+    if not scene.unresolved:
+        return ()
+    return (f"not checked for clearance (frame does not resolve): "
+            f"{', '.join(scene.unresolved)}",)
+
+
 def _solve(primitive: Primitive, world: WorldView, kin, side: str, waypoints):
     """``(steps, error, notes)`` with the model restored and the lock held."""
+    scene = _scene_for(primitive, world, kin)
     try:
-        with Kin(kin, world) as borrowed:
-            return solve_path(borrowed, side, waypoints,
-                              primitive=primitive.name())
+        with Kin(kin, world, scene=scene) as borrowed:
+            steps, error, notes = solve_path(borrowed, side, waypoints,
+                                             primitive=primitive.name())
+            return steps, error, list(notes) + list(_unchecked_note(scene))
     except IncompleteObservation as exc:
         return [], _incomplete(primitive, side, exc), []
 
@@ -595,9 +618,13 @@ def _own_frame(direction: Direction, item: ObjectView, world: WorldView
 
 
 def _meet(world: WorldView, name: str, side_arg: str, direction: Direction,
-          contact: str, standoff_m: float
+          contact: str, standoff_m: float, *, droop_margin_m: float = 0.0
           ) -> Tuple[Optional[_Meet], List[Unmet]]:
-    """The shared geometry, or the typed reason it cannot be computed."""
+    """The shared geometry, or the typed reason it cannot be computed.
+
+    ``droop_margin_m`` (:class:`~.clearance.ClearancePolicy`) raises the
+    fingertip floor of a descent by how far the real arm sags below the
+    commanded pose; 0 for the rigid model and for every verifier."""
     item, p, _r, unmet = _locate(world, name)
     if unmet:
         return None, unmet
@@ -615,7 +642,8 @@ def _meet(world: WorldView, name: str, side_arg: str, direction: Direction,
     try:
         support = gg.support_of(world, name)
         p_grasp, _r_tcp, grasp_notes = gg.grasp_pose(
-            item, world.frames, spec, side=side, support=support)
+            item, world.frames, spec, side=side, support=support,
+            droop_margin_m=droop_margin_m)
         p_stand = gg.standoff_point(item, world.frames, spec, p_grasp)
         hand = world.gripper(side)
         opening = getattr(hand, "open_gap_m", None)
@@ -702,9 +730,11 @@ def _first_roll_that_plans(primitive: Primitive, world: WorldView, kin,
         if first_error is None:
             first_error = error
     if len(meet.rolls) > 1:
+        # keep what the failure itself attempted (the scene gate names the
+        # obstacle there) and add the rolls that were tried
         first_error = dataclasses.replace(
-            first_error, attempted=tuple(f"roll {math.degrees(r):+.0f} deg"
-                                         for r in meet.rolls))
+            first_error, attempted=tuple(first_error.attempted or ())
+            + tuple(f"roll {math.degrees(r):+.0f} deg" for r in meet.rolls))
     return None, first_error
 
 
@@ -869,9 +899,10 @@ class Grasp(Primitive):
             unmet += problems[0]
         return unmet
 
-    def _meet(self, world: WorldView):
+    def _meet(self, world: WorldView, *, droop_margin_m: float = 0.0):
         return _meet(world, self.object, self.side, self.direction,
-                     self.contact, self.standoff_m)
+                     self.contact, self.standoff_m,
+                     droop_margin_m=droop_margin_m)
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
         return self._approach().resolve_side(world)
@@ -880,7 +911,10 @@ class Grasp(Primitive):
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
-        meet, unmet = self._meet(world)
+        # the real arm's sag raises the fingertip floor (F16; the typed
+        # replacement of MKIT_SUPPORT_CLEARANCE_M, see primitives.clearance)
+        droop = policy_of(kin).droop_margin_m
+        meet, unmet = self._meet(world, droop_margin_m=droop)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
         side = meet.side
@@ -924,7 +958,8 @@ class Grasp(Primitive):
                     f"stands on, under the "
                     f"{ap.MIN_ACHIEVED_CLEARANCE_M * 1000:.0f} mm this plan "
                     f"has to keep. The waypoint asked for "
-                    f"{ap.SUPPORT_CLEARANCE_M * 1000:.0f} mm; the IK did not "
+                    f"{(ap.SUPPORT_CLEARANCE_M + droop) * 1000:.0f} mm; the "
+                    f"IK did not "
                     f"get there, and the fingers would jam on the surface "
                     f"before the jaws close",
                     waypoint_index=1, waypoint_label="grasp",
@@ -1688,7 +1723,8 @@ class GoHome(Primitive):
             return self._unmet_error(unmet, self.side)
         steps = []
         try:
-            with Kin(kin, world) as borrowed:
+            with Kin(kin, world,
+                     scene=_scene_for(self, world, kin)) as borrowed:
                 for side in self._sides():
                     part, error = joint_ramp(borrowed, side, kin.home(side),
                                              primitive=self.name(), label="HOME")

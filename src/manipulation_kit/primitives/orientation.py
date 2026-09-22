@@ -41,7 +41,6 @@ converted onto it there, once.
 from __future__ import annotations
 
 import math
-import os
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -78,12 +77,15 @@ JAW_CLEARANCE_M = PAD_CLEARANCE_PER_SIDE_M
 #: to the side (still 2.5 deg from the commanded posture after two seconds of
 #: holding it, while the same arm tracks a free-air posture to 0.00 deg in
 #: 0.7 s), and the jaws closed beside the block. Ten attempts, ten failures.
-SUPPORT_CLEARANCE_M = float(os.environ.get("MKIT_SUPPORT_CLEARANCE_M", "0.003"))
-# ^ Operator override. 3 mm is right for a rigid arm; the real D1 arm sags
-# ~1 cm at a long reach (F16 droop, no along-axis compensation in ToolGate
-# yet), so on d1-2 (2026-09-22 run7, x 0.48) the pad tips met the table and
-# the controller raised error 15 during the descent. Set e.g. 0.015 on the
-# robot until the gate compensates droop.
+SUPPORT_CLEARANCE_M = 0.003
+# ^ For a RIGID arm. The real D1 arm sags ~1 cm at a long reach (F16 droop):
+# on d1-2 (2026-09-22 run 7, x 0.48) the pad tips met the table at this floor
+# and the controller raised error 15 during the descent. That used to be
+# patched with an environment variable (``MKIT_SUPPORT_CLEARANCE_M``, deleted
+# in 0.16.0); it is now the typed ``droop_margin_m`` of
+# :class:`~manipulation_kit.primitives.clearance.ClearancePolicy`, which the
+# operator policy sets and which reaches this floor as the ``droop_margin_m``
+# argument of :func:`~manipulation_kit.primitives.grasp_geometry.grasp_pose`.
 
 #: ...and the least the SOLVED descent may actually keep, as opposed to what
 #: the waypoint asked for. The IK converges to about 2 mm and the path window

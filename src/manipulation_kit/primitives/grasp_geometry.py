@@ -237,7 +237,7 @@ def tool_point(p_contact, d_base, reference: GraspReference) -> np.ndarray:
 
 
 def _contact(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
-             support: Optional[SurfaceView]):
+             support: Optional[SurfaceView], droop_margin_m: float = 0.0):
     """``(p_contact, raised, floor_z, floor_note)`` for ``spec``."""
     d = _unit_d(obj, frames, spec)
     p = np.asarray(obj.pose_in_base(frames)[0], dtype=float).reshape(3).copy()
@@ -248,7 +248,7 @@ def _contact(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
         # must stop SUPPORT_CLEARANCE above the floor. Back the contact point
         # out ALONG THE TRAVEL until they do — straight up for ``down``.
         tips_z = float(p[2] + d[2] * spec.reference.lead_m)
-        least = floor + _o.SUPPORT_CLEARANCE_M
+        least = floor + _o.SUPPORT_CLEARANCE_M + float(droop_margin_m)
         if tips_z < least - 1e-9:        # not for a float's last bit
             p = p - d * ((least - tips_z) / -float(d[2]))
             raised = True
@@ -260,7 +260,8 @@ def _unit_d(obj, frames, spec) -> np.ndarray:
 
 
 def grasp_pose(obj: ObjectView, frames: FrameGraph, spec: GraspSpec, *,
-               side: str, support: Optional[SurfaceView]
+               side: str, support: Optional[SurfaceView],
+               droop_margin_m: float = 0.0
                ) -> Tuple[np.ndarray, R, List[str]]:
     """``(p_tool, r_tcp, notes)``: the tool pose at contact.
 
@@ -272,10 +273,15 @@ def grasp_pose(obj: ObjectView, frames: FrameGraph, spec: GraspSpec, *,
     that puts ``spec.reference`` there; ``r_tcp`` is
     :func:`~.orientation.grasp_orientation` squared to the object and rolled
     by ``spec.roll_rad``.
+
+    ``droop_margin_m`` is how far the real arm sags below the commanded pose
+    (``clearance.ClearancePolicy.droop_margin_m``, 0 for the rigid model); it
+    is added to that fingertip clearance.
     """
     d = _unit_d(obj, frames, spec)
     r_tcp = _o.grasp_orientation(side, d, obj, frames, roll_rad=spec.roll_rad)
-    p_contact, raised, _floor, floor_note = _contact(obj, frames, spec, support)
+    p_contact, raised, _floor, floor_note = _contact(obj, frames, spec, support,
+                                                     droop_margin_m)
     notes = [floor_note] if float(d[2]) < -1e-3 else []
     if raised:
         centre = np.asarray(obj.pose_in_base(frames)[0], dtype=float)

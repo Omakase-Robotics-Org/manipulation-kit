@@ -102,10 +102,19 @@ def after_a_real_grasp_and_lift(kin, destination, *, side="right", lift_m=0.12):
     The posture matters: ``Carry`` starts from where the tool actually is, and
     a test that put the arm at HOME and set ``holding=True`` would be planning
     a transit from a pose the robot is never in.
+
+    The DESTINATION JOINS THE WORLD AFTER THE LIFT. The shelf bin hangs
+    30-150 mm straight above the cube (x 0.405-0.555, y -0.225..-0.075, z
+    0.30-0.42 against a cube at (0.45, -0.12)): with the scene gate (0.16.0)
+    a grasp there drives Link7 — 100 mm above the pad centre — into the bin,
+    and the 120 mm lift drives the wrist through its floor. Both refusals are
+    correct geometry and neither is what this file is about, which is the
+    Carry's transit height FROM a holding posture; so the posture is planned
+    in the world without the bin, as the shelf it stands for would be out of
+    the way of the pick.
     """
     world = _home_world(kin, [
         ObjectView("cube", p=CUBE_P, size=(CUBE,) * 3, colour="red"),
-        destination,
         SurfaceView("wagon_top", p=WAGON_TOP, size=(0.4, 0.6, 0.002))])
     grasp = Grasp(object="cube", side=side, direction="down",
                   grip="firm").plan(world, kin)
@@ -118,6 +127,7 @@ def after_a_real_grasp_and_lift(kin, destination, *, side="right", lift_m=0.12):
     q2 = _last_q(lift, side, q1)
     world = _moved(world, "cube",
                    _tool_of(kin, side, q2)[0] - _tool_of(kin, side, q1)[0])
+    world = world.with_(objects=tuple(world.objects) + (destination,))
     return _posed(world, kin, side, q2)
 
 
