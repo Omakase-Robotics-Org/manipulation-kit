@@ -78,3 +78,23 @@ def test_a_urdf_without_the_camera_says_which_link_is_missing():
     with pytest.raises(KeyError) as caught:
         head_camera_pose(urdf_path=str(GUARD_URDF))
     assert "head_camera_optical_frame" in str(caught.value)
+
+
+def test_the_flip_takes_the_executors_typed_neck_state_and_refuses_nonsense():
+    """``neck_joints_from_state`` is the ONE implementation of the flip; it
+    reads the firmware executor's ``NeckState`` (``pitch_rad``/``yaw_rad``) as
+    well as a raw body, and a missing or non-finite pitch is an error, never a
+    level head."""
+    from types import SimpleNamespace
+
+    from manipulation_kit.description.head_camera import (
+        neck_joints_from_state, pose_from_neck_state)
+    typed = SimpleNamespace(pitch_rad=-0.30, yaw_rad=0.1, enabled=True,
+                            moving=False)
+    assert neck_joints_from_state(typed) == (0.30, 0.1)
+    assert np.allclose(pose_from_neck_state(typed)[0],
+                       pose_from_neck_state({"pitch": -0.30, "yaw": 0.1})[0])
+    for bad in ({"yaw": 0.1}, {"pitch": float("nan")},
+                SimpleNamespace(yaw_rad=0.0)):
+        with pytest.raises(ValueError):
+            neck_joints_from_state(bad)
