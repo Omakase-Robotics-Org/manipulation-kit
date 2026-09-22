@@ -21,7 +21,17 @@ from manipulation_kit.primitives import Probe
 from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.world import ArmView, GripperView, WorldView
 
-RIGHT_Q0_DEG = [52.26, 87.38, -88.3, -114.32, -86.67, -1.1, -13.05]
+def _right_home_deg():
+    """The right arm stood at HOME during the live run; read it from the
+    canonical file rather than inlining the angles (test_description_consistency)."""
+    import json as _json
+    from pathlib import Path as _Path
+    cfg = _Path(__file__).resolve().parents[2] / "src" / "manipulation_kit" / "config" / "home_pose.json"
+    pose = _json.load(open(cfg))["home_pose"]
+    return [round(float(v), 2) for v in pose[7:14]]
+
+
+RIGHT_Q0_DEG = _right_home_deg()
 #: a tilted left hand over the wagon whose own roll does not plan down
 TILTED_DEG = [17.4, -75.4, 10.6, -68.9, -10.0, 59.0, -79.0]
 #: d1-2 after the Approach: the plan's final posture with J7 at -39.5 deg
