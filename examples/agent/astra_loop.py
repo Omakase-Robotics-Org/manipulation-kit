@@ -324,7 +324,7 @@ def apply_declare_scene(robot, arguments: Dict[str, Any]) -> str:
 
 def apply_locate(camera, world, arguments: Dict[str, Any]) -> str:
     """Answer a ``locate`` call from the camera model and the current plane."""
-    from camera import NotOnThePlane  # noqa: PLC0415
+    from manipulation_kit.perception.camera import NotOnThePlane  # noqa: PLC0415
     if camera is None:
         return ("there is no camera model in this run, so a pixel cannot be "
                 "turned into a position")
@@ -1011,7 +1011,7 @@ def camera_from_scene(scene: Optional[Dict[str, Any]]):
     block = (scene or {}).get("_perceive", {}).get("camera")
     if not block:
         return None
-    from camera import HeadCamera  # noqa: PLC0415
+    from manipulation_kit.perception.camera import HeadCamera  # noqa: PLC0415
     from scipy.spatial.transform import Rotation  # noqa: PLC0415
     width, height = block["image"]
     return HeadCamera(fx=block["fx"], cx=block["cx"], cy=block["cy"],

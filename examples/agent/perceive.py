@@ -104,7 +104,7 @@ from scipy import ndimage
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 #: Re-exported so ``--fx``'s default and ``camera.py``'s are one number.
-from camera import DEFAULT_FX  # noqa: E402,F401  (after the sys.path insert)
+from manipulation_kit.perception.camera import DEFAULT_FX  # noqa: E402,F401  (after the sys.path insert)
 
 #: Table-top mask thresholds, OpenCV HSV ranges (S and V in 0..255). The JP
 #: wagon top is a bright, almost unsaturated pink; the brick wall behind it and
@@ -793,7 +793,7 @@ def neck_pitch_that_levels(plane: TablePlane, *, neck_yaw: float = 0.0,
     noticing that the two disagree. ``None`` when no angle inside the joint's
     own limits does it.
     """
-    from camera import HeadCamera  # noqa: PLC0415
+    from manipulation_kit.perception.camera import HeadCamera  # noqa: PLC0415
 
     height, width = plane.shape
 
@@ -1588,7 +1588,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def perceive(args: argparse.Namespace) -> Dict[str, Any]:
     """The whole pipeline, as a function, so the loop can call it."""
-    from camera import (PROVISIONAL_UNCERTAINTY_M, HeadCamera,  # noqa: PLC0415
+    from manipulation_kit.perception.camera import (PROVISIONAL_UNCERTAINTY_M, HeadCamera,  # noqa: PLC0415
                         provisional_table_z, read_intrinsics)
 
     intrinsics = {"fx": args.fx, "cx": args.cx, "cy": args.cy}

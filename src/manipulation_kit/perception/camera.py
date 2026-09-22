@@ -135,7 +135,7 @@ class HeadCamera:
         LOGICAL pitch, which is its negative — use
         :meth:`from_neck_state` rather than doing that flip by hand.
         """
-        from manipulation_kit.description.head_camera import (  # noqa: PLC0415
+        from ..description.head_camera import (  # noqa: PLC0415
             head_camera_pose, nominal_tilt_rad)
 
         p, r = head_camera_pose(neck_pitch=neck_pitch, neck_yaw=neck_yaw,
@@ -267,7 +267,7 @@ class HeadCamera:
         """The floor's z in ``base``, when the lift height is known."""
         if self.lift_m is None:
             return None
-        from manipulation_kit.description.head_camera import (  # noqa: PLC0415
+        from ..description.head_camera import (  # noqa: PLC0415
             floor_to_base_m)
         return -floor_to_base_m(self.lift_m)
 
@@ -300,10 +300,10 @@ PROVISIONAL_UNCERTAINTY_M = 0.10
 
 def provisional_table_z(kin=None) -> float:
     """Where to put the plane before anyone has measured it. See above."""
-    from manipulation_kit.primitives.approach import (  # noqa: PLC0415
+    from ..primitives.approach import (  # noqa: PLC0415
         tool_from_link7)
     if kin is None:
-        from manipulation_kit.arms import get_arm_kinematics  # noqa: PLC0415
+        from ..arms import get_arm_kinematics  # noqa: PLC0415
         kin = get_arm_kinematics("d1/arm", quiet=True)
     heights = []
     for side in ("left", "right"):

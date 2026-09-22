@@ -64,7 +64,7 @@ def frames(agent_examples):
 
 @pytest.fixture
 def camera_module(agent_examples):
-    import camera as module
+    from manipulation_kit.perception import camera as module
     return module
 
 
