@@ -439,7 +439,7 @@ world = WorldView.of(
     arms=[ArmView(s, joints=kin.joints(s)) for s in ("left", "right")],
     grippers=[GripperView(s, 0.0) for s in ("left", "right")])
 
-verb = Grasp(object="red_block", side="left", approach="top_down")
+verb = Grasp(object="red_block", side="left", direction="down")
 plan = verb.plan(world, kin)                 # pure — nothing has moved
 print(plan if not plan.ok else run(plan, KinematicExecutor(kin)))
 print(verb.verifier(world)(world).verdict)   # 'false': nothing was measured yet
@@ -467,9 +467,10 @@ Three things are load-bearing, and each is a bug somebody shipped:
   waypoint is retried through a short measured list of clearance points
   (`planning.VIA_OFFSETS_M`) and then a `ready()` re-seed; only a waypoint
   nothing reaches is refused, and the refusal is still the straight line's.
-- **Orientation is derived, not emitted.** A caller names one of four
-  approaches; the kit computes the wrist from the approach axis and the
-  object's principal axis. `Nudge` is the only verb whose numbers are *snapped*
+- **Orientation is derived, not emitted.** A caller gives a `direction` — an
+  alias such as `down`/`forward`, or any `{axis, frame}` — and the kit computes
+  the wrist from it and the object's principal axis
+  (`primitives.orientation.align_tool`). `Nudge` is the only verb whose numbers are *snapped*
   — ±10/30/50 mm and ±15° of yaw about the approach axis — but it is not the
   only one that takes numbers: `standoff_m`, `height_m`, `clearance_m`,
   `distance_m` and `tilt_deg` are used as written, inside the published range.
