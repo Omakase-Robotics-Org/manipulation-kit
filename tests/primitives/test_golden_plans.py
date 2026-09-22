@@ -15,6 +15,26 @@ the joint path (per-waypoint step count, last posture and posture sum), the
 gripper strokes and the refusals to agree to 1e-9. It is the evidence that
 the vocabulary change changed no motion.
 
+WHERE 1e-9 HOLDS. The joint path is the output of an iterative IK solve, and
+its last bits depend on the numeric stack it ran on: the same code planned
+with numpy 2.0.2 / scipy 1.13.1 (CI's Python 3.9 job) takes 26 knots where
+the capture took 18 on one chain (case 86), and on another CI runner a nudge
+that the guard refuses at its first knot here walks 15 mm first (case 45).
+Both are knife edges of the solver, not of the vocabulary: e1dce97 itself,
+captured on numpy 2.0.2 / scipy 1.13.1, disagrees with this file on 14 of
+the 229 cases and the new API reproduces THAT capture to 1e-9 as well. So
+the file records the stack it was captured on (``numeric_stack``) and
+
+* on that stack every field is compared at 1e-9 (the full proof);
+* elsewhere every verdict, refusal reason, side, stage, label, stroke and
+  note must still be IDENTICAL, waypoints agree to ``PORTABLE_TOL`` (a later
+  link of a chain starts from the posture the solver reached, so its
+  waypoints inherit the solver's last bits: 7e-5 m on case 86), and the
+  solver's own path is compared by its final posture only, to
+  ``PORTABLE_Q_TOL`` (knot counts, posture sums and a refusal's residual are
+  the solver's, not the plan's). A vocabulary mistake — a mirrored axis, a
+  90 deg roll — moves these by centimetres and quarter turns.
+
 Deliberately updating it (a later step that changes grasp geometry on
 purpose): ``python tests/primitives/test_golden_plans.py --regenerate`` writes
 the current plans into the file; review the diff and say why in the commit.
@@ -37,6 +57,12 @@ import pytest
 GOLDEN = (Path(__file__).resolve().parents[1] / "data" / "golden_plans"
           / "pre_direction_e1dce97.json")
 TOL = 1e-9
+#: off the capture stack: waypoints (m, quaternion components) ...
+PORTABLE_TOL = 1e-3
+#: ... and the solver's final posture (rad)
+PORTABLE_Q_TOL = 1e-2
+#: fields that are the IK solver's path rather than the plan's geometry
+SOLVER_PATH_KEYS = ("n", "q_sum", "residual_m")
 #: notes the new API adds that the old one did not (the planner reporting the
 #: roll it used, since a model no longer sets one)
 NEW_NOTE_PREFIXES = ("jaws rolled ",)
@@ -138,21 +164,47 @@ def replay(case, kin, world):
 # comparison
 # --------------------------------------------------------------------------- #
 
-def _close(a, b, path, errors, tol=TOL):
+def numeric_stack():
+    """What the joint path's last bits depend on: the linear-algebra stack
+    and the CPU it dispatches for."""
+    import platform
+
+    import numpy
+    import scipy
+    cpu = platform.processor() or platform.machine()
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    cpu = line.split(":", 1)[1].strip()
+                    break
+    except OSError:
+        pass
+    return {"numpy": numpy.__version__, "scipy": scipy.__version__,
+            "cpu": cpu}
+
+
+def _close(a, b, path, errors, tol=TOL, portable=False):
     if isinstance(a, dict) and isinstance(b, dict):
         if sorted(a) != sorted(b):
             errors.append(f"{path}: keys {sorted(a)} != {sorted(b)}")
             return
         for key in a:
+            if portable and key in SOLVER_PATH_KEYS:
+                continue
             scale = max(1, int(a.get("n", 1))) if key == "q_sum" else 1
-            _close(a[key], b[key], f"{path}.{key}", errors, tol * scale)
+            key_tol = tol
+            if portable:
+                key_tol = PORTABLE_Q_TOL if key == "q_last" else PORTABLE_TOL
+            _close(a[key], b[key], f"{path}.{key}", errors, key_tol * scale,
+                   portable)
         return
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             errors.append(f"{path}: {len(a)} items != {len(b)}")
             return
         for i, (x, y) in enumerate(zip(a, b)):
-            _close(x, y, f"{path}[{i}]", errors, tol)
+            _close(x, y, f"{path}[{i}]", errors, tol, portable)
         return
     if isinstance(a, float) or isinstance(b, float):
         if a is None or b is None or not math.isclose(float(a), float(b),
@@ -174,12 +226,14 @@ def test_alias_directions_reproduce_the_pre_direction_plans(d1_arm):
     planned = sum(1 for c in golden["cases"] if c["result"]["kind"] != "refusal")
     assert len(golden["cases"]) >= 200 and planned >= 75, \
         "the golden set shrank; it is the evidence, not a sample"
+    # off the capture stack, only the solver's own path is loosened (above)
+    portable = golden.get("numeric_stack") != numeric_stack()
     failures = []
     for index, case in enumerate(golden["cases"]):
         errors = []
         _close(case["result"], replay(case, d1_arm, worlds[case["scene"]]),
                f"case {index} {case['scene']}/{case['verb']} {case['args']}",
-               errors)
+               errors, portable=portable)
         failures += errors[:3]
     assert not failures, "\n".join(failures[:30])
 
@@ -219,6 +273,7 @@ def _regenerate() -> None:  # pragma: no cover - maintenance entry point
               for name, items in golden["scenes"].items()}
     for case in golden["cases"]:
         case["result"] = rounded(replay(case, kin, worlds[case["scene"]]))
+    golden["numeric_stack"] = numeric_stack()
     head = {k: v for k, v in golden.items() if k not in ("scenes", "cases")}
     with GOLDEN.open("w", encoding="utf-8") as f:
         f.write("{" + ",\n".join(f"{json.dumps(k)}:{json.dumps(v)}"
