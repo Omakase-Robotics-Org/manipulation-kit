@@ -62,8 +62,8 @@ from trace import DecisionRecord, DecisionTrace  # noqa: E402
 DEFAULT_TASK = "put the red block in the box"
 
 SYSTEM = """You drive a D1 humanoid's two arms through a fixed set of verbs.
-Each observation may carry two photos: the head camera (scene from above the
-torso) and the right wrist camera (looking along the right hand past its jaws).
+Each observation may carry three photos: the head camera (scene from above the
+torso) and both wrist cameras (each looking along its hand past the jaws).
 Use them to judge what the text cannot: whether the object stands or has
 tipped, whether the jaws straddle it, whether it is inside the container.
 Object positions in the text come from a measured scene and can be off by
@@ -231,7 +231,8 @@ def _snapshot(trace_path: Optional[Path], turn: int) -> None:
     # The model is shown the head and the RIGHT wrist frame of this turn (the
     # left wrist sees nothing useful while the right hand works). Attach in a
     # fixed order so the trace is comparable turn to turn.
-    wanted = (f"turn{turn}_base_0_rgb.jpg", f"turn{turn}_right_wrist_0_rgb.jpg")
+    wanted = (f"turn{turn}_base_0_rgb.jpg", f"turn{turn}_right_wrist_0_rgb.jpg",
+              f"turn{turn}_left_wrist_0_rgb.jpg")
     return [out / name for name in wanted if (out / name).exists()]
 
 
