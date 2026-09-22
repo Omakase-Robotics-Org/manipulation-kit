@@ -219,6 +219,59 @@ Tests: `tests/agent/test_perceive.py` moved to `tests/perception/test_perceive.p
 scene-reader tests are `tests/agent/test_perceive_cli.py`; new
 `tests/perception/test_perception_interface.py`.
 
+### Contact verbs: `probe` and `press` on `move_until` (redesign step 4)
+
+Contact becomes a concept (design C.3, L8/B8). Additive — nothing is removed —
+and **not yet validated on hardware**: `docs/probe-hardware-trial.md` is the
+d1-2 gate (zero controller errors; table z within +-3 mm of the tape over 10
+probes) and it has not been run.
+
+- **Position mode only** (Shu, decision 3). A contact leg is a position-
+  commanded straight line WATCHED for a joint-torque rise; no arm mode is
+  set, no torque or force is ever commanded.
+- **`primitives.types.ContactCriterion`** (measured thresholds:
+  `joint_torque_nm` rise over the pre-motion baseline, `tool_force_n`,
+  `stall_velocity_rad_s`, `settle_s`) and **`ContactStep`** (`side,
+  direction, max_travel_m, criterion, waypoint`, plus the leg's own knots
+  `path`/`s`, `speed_m_s`, `hold_s`, `retract`) — `ContactStep` joins the
+  closed `Step` union. The leg's knots live INSIDE the step, so a runner that
+  does not understand it can only refuse it, never play the leg blind.
+- **`executor.ContactReport`** (`made, p_tool, travel_m, normal_hint,
+  torque_nm, stopped_by` ∈ `contact | max_travel | fault | guard |
+  unmeasured`, plus `q_stop`, `joint`, `leg_t_s`), measured from the state —
+  never from the command. `RunReport.contacts` carries every leg's report.
+- **`move_until(path, *, side, criterion, hz, kin, direction)`** — an optional
+  executor capability. `ContactWatch` is the one criterion implementation
+  (freeze the command while a rise is confirmed; contact after `settle_s`
+  stalled, or at once at 2x the threshold). `stream_move_until` is the
+  default for a streaming transport that reports torque (opt in with
+  `StreamingContact`). `FirmwareExecutor.move_until` uploads the leg as a
+  guarded trajectory and polls `ArmState` + `TrajectoryStatus`, cancelling
+  on the criterion — all through **generated** operations
+  (`FirmwareClient.trajectory_start/_status/_cancel`, new). `KinematicExecutor`
+  travels the whole leg and reports `made=False, stopped_by="max_travel"`.
+  An executor without `move_until` fails a contact step with
+  `transport_error`.
+- **`primitives.contact`: `Probe(side, direction=down, max_travel_m=0.15,
+  contact_nm=4.0, hand="closed", declare_as="")` and `Press(side, target,
+  direction=forward, depth_m=0.005, force_nm=6.0, hold_s=0.5,
+  hand="closed")`**, both on `Direction`, neither naming one (`touch_down`
+  does not exist). Verifiers `ContactMade`, `SurfaceMeasured` (and `ToolAt`
+  the standoff, for a press).
+- **Contacts feed the scene.** `WorldView.contacts` (`world.ContactView`) is
+  the evidence; `primitives.record_contacts(world, run_report, verb)` folds a
+  run in and, with `declare_as`, publishes a `SurfaceView` whose face is the
+  measured plane (`plane_source="contact"`): one probe = a plane through the
+  contact with the probe's normal, three = a least-squares plane with a real
+  normal (`fit_plane`). `SurfaceView.from_plane`, `.top_normal`,
+  `.plane_offset` are new.
+- **Model surface.** `arguments.py` gains `max_travel_m` (0.01-0.30 m),
+  `contact_nm` (**1.5-6 Nm**), `depth_m` (0-0.03 m), `force_nm` (**2-8 Nm**),
+  `hold_s` (0-5 s), `declare_as`, `hand` (`open|pinched|closed`, mapped to a
+  closedness by `hands/d1/parallel_gripper/description.HAND_CLOSEDNESS`).
+  `Primitive.arg_roles()` lets a verb narrow what a name argument may name
+  (`press.target` is anything in the world; `pour.target` stays a vessel).
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO
