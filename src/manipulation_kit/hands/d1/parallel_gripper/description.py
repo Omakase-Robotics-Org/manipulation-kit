@@ -47,6 +47,7 @@ it is MOVED: see :data:`JAW_MESH_ORIGIN_Z_M`.
 """
 from __future__ import annotations
 
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 

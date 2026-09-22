@@ -694,7 +694,8 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
     stop = Stop("max_turns", f"{max_turns} turns without a measured goal")
     for turn in range(max_turns):
         world = robot.world()
-        faulted = [a for a in world.arms if (a.mode or "position") != "position"
+        arms = list(world.arms.values()) if hasattr(world.arms, "values") else list(world.arms)
+        faulted = [a for a in arms if (getattr(a, "mode", "") or "position") != "position"
                    or int(getattr(a, "error_code", 0) or 0)]
         if faulted:
             # A latched controller is not something the model can talk its
