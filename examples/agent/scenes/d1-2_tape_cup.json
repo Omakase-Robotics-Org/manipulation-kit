@@ -1,8 +1,9 @@
 {
   "_README": [
-    "d1-2, JP wagon moved 4.8 cm toward the robot (2026-09-22 01:50Z): far edge x=0.7065, centre x=0.5065. Cube/cup x,y from the head image via the wagon-plane fit (wagon_plane.py, fx=606, validated on the old frame to 1 mm); sizes from image extents (+-5 mm).",
+    "d1-2, JP wagon; 2026-09-22 02:25Z frame: camera->far-edge distance 0.856 m (original frame 0.847 at far x 0.7545) => far edge x 0.76, centre 0.56. Cube/cup from the wagon-plane fit; charger parallel to the wagon edge (yaw 0), 20 mm across y.",
     "base = dual_base (torso platform), +x forward, +y robot LEFT, +z up.",
     "Table top z in base = 0.884 - (0.513 + lift 0.205) = 0.166 m.",
+    "Wagon plane fit: far corners px (96,217)/(543,203); cup base ctr px (458,424); cube base ctr px (568,436).",
     "Wagon plane fit: far corners px (96,217)/(543,203); cup base ctr px (458,424); cube base ctr px (568,436).",
     "Wagon plane fit: far corners px (96,217)/(543,203); cup base ctr px (458,424); cube base ctr px (568,436).",
     "Wagon plane fit: far corners px (96,217)/(543,203); cup base ctr px (458,424); cube base ctr px (568,436).",
@@ -19,7 +20,7 @@
       "kind": "surface",
       "frame_id": "base",
       "p": [
-        0.5065,
+        0.56,
         0.0,
         0.156
       ],
@@ -36,8 +37,8 @@
       "colour": "white",
       "frame_id": "base",
       "p": [
-        0.385,
-        -0.202,
+        0.384,
+        -0.17,
         0.191
       ],
       "size": [
@@ -45,7 +46,7 @@
         0.02,
         0.05
       ],
-      "yaw_rad": 0.23
+      "yaw_rad": 0.0
     },
     {
       "name": "cup",
@@ -53,8 +54,8 @@
       "colour": "brown",
       "frame_id": "base",
       "p": [
-        0.383,
-        -0.098,
+        0.502,
+        -0.143,
         0.221
       ],
       "size": [

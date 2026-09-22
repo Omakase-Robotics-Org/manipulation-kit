@@ -297,6 +297,12 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         record.offered = [{"id": f"{primitive.name()}", "label": label_for(primitive)}]
 
         record.plan = plan.to_json()
+        # ASSOCIATION half of the pickup predicate: tell the live adapter WHAT
+        # the coming stroke closes on, or every later lift/place is refused
+        # with gripper_unknown (d1-2 run2, 2026-09-22: two real grasps, no lift).
+        if hasattr(robot, "expect") and primitive.name() in ("grasp",):
+            robot.expect(getattr(plan, "side", None) or primitive.side,
+                         primitive.object)
         try:
             report = run(plan, robot.executor)
         except Exception as exc:
