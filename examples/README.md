@@ -30,12 +30,39 @@ to it, which is what keeps one vocabulary instead of one per consumer.
 | `trace.py` | one JSONL record per decision: offers, refusals, the model's claim, and the **measured** verdict beside it | — |
 | `astra_loop.py` | observe → offer → tool call → execute → verify, with two stop conditions. Runs a scripted stub when `OPENAI_API_KEY` is unset | `openai` only for a real run |
 | `jev_menu.py` | the same offer rendered as a typed-choice request | — |
+| `perceive.py` | **one head frame → a measured scene file.** Priors: the table top's width and the camera's `fx`. No ArUco, no tape on the objects, and with `--anchor camera` no table height either — that is measured | `pillow` (or OpenCV); `openai` only for `--detector astra` |
+| `live.py` | a real D1 as the loop's robot: firmware transport plus a scene file | `manipulation-kit[firmware]` |
 
 ```sh
 python examples/agent/astra_loop.py --dry-run
 python examples/agent/jev_menu.py
 python examples/agent/offer.py
+
+# measure a scene from one frame instead of writing one by hand
+pip install -e '.[perceive]'
+python examples/agent/perceive.py --image head.jpg --table-width 0.60 \
+    --anchor camera --neck-pitch 0.52 --lift 0.205 \
+    --objects charger:object,cup:container --detector mask \
+    --out examples/agent/scenes/live.json --debug /tmp/fit.png
+
+# ...or let the loop do it before turn 0
+python examples/agent/astra_loop.py --perceive head.jpg --object charger \
+    --destination cup --trace /tmp/run/trace.jsonl \
+    --perceive-opts "--table-width 0.60 --anchor camera --neck-pitch 0.52"
 ```
+
+### What `perceive.py` measures, and what it cannot
+
+The plane, the table's height and depth, each object's footprint and height —
+all from the fit, all carrying a `confidence` below 1 and a `measurement`
+block saying which parts were seen. What it cannot get from one silhouette is
+an object's extent along the UNSEEN horizontal axis (so the measured width is
+written on both, and yaw is 0) and a container's interior (85 % of the
+outside, flagged `interior_measured: false`, which `Place` then refuses to
+drop into — by design). Both want a second viewpoint or a tape. When you have the tape, `--size
+NAME=LX,LY,LZ` and `--interior NAME=LX,LY,LZ` declare them, and the file keeps
+what the frame said beside what you declared. See the 0.15.0 entry in
+[`../CHANGELOG.md`](../CHANGELOG.md).
 
 The contract these render is [`../docs/PRIMITIVE_CONTRACT.md`](../docs/PRIMITIVE_CONTRACT.md).
 

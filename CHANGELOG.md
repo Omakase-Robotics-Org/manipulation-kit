@@ -6,6 +6,107 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.15.0 — 2026-09-22
+
+**A head frame is now an observation.** `--scene` — the documented first-hour
+path — is a file somebody measured with a tape, and it made two real grasps on
+d1-2 on 2026-09-22. It also does not scale: every number in it is a person with
+a ruler, and all of them are stale the moment the wagon is nudged. Shu's ask
+that day was 「テーブルとかの高さとか知らずにできるべき」— no ArUco board, no
+tape on the objects, not even the table's height.
+
+`examples/agent/perceive.py` does that from ONE frame with two priors: the
+rectangular table top's **width**, and the camera's **fx**. It masks the top,
+fits the far edge and the two side edges, takes the side edges' vanishing point
+as their 3-D direction, and solves the two corner ranges that make the far edge
+perpendicular to it and exactly the known width long. From there everything is
+a ray–plane intersection: the near edge (so the table's DEPTH is measured too
+when it is in frame), each object's footprint, each object's height.
+
+Validated against the five frames now in `tests/data/perceive/`: far corners
+within 1.3 px of what `cv2.fitLine(DIST_HUBER)` produced on the night, the
+near edge 8 mm off a 400 mm tape on both frames that show it, and the two
+objects on the run2 start frame within 17 mm of the positions Shu used for the
+run he quoted to ±20 mm.
+
+### Added
+
+* **`manipulation_kit.description.head_camera`** — the one thing in this
+  change that is inside the wheel. The head camera has had a FRAME here since
+  the whole-body URDF gained cameras (`head_camera_link` on the neck-tilt
+  link, plus its ROS optical child); what it did not have is a way to ASK for
+  it. `head_camera_pose(neck_pitch, neck_yaw)` reads the committed URDF
+  through this package's own parser and returns the pose in `base`, so it
+  cannot drift from the asset. Also `pose_from_neck_state()` (the daemon
+  reports LOGICAL pitch, which is the negative of the URDF joint — one flip,
+  in one place) and `floor_to_base_m(lift)`.
+
+  NOMINAL, not calibrated, and it says so everywhere: it is vendor geometry
+  plus the head part's design tilt, the lens is placed at the housing's front
+  face, and the d1-3 ArUco fit sits ~2.5 deg off it. Everything built on it is
+  stamped `calibrated: false`.
+
+  **The lift does not move the camera in `base`.** `lift` sits BELOW
+  `dual_base`, so the column raises the base and the camera together. A
+  consumer "correcting" for it is wrong by up to 300 mm.
+
+* **`examples/agent/perceive.py`** — the plane fit, two anchors, two
+  detectors, a scene writer and a debug PNG. `--anchor far-edge-x=<m>` is what
+  Shu did by hand and needs `--table-z`; `--anchor camera` is the zero-shot
+  one and MEASURES the height, because the perpendicular distance from the
+  camera centre to the plane does not depend on the camera's aim — only on its
+  height, which is the reliable half of a nominal mount. What the aim IS gets
+  measured too: with `--assume-level` the top is taken to be horizontal (it is
+  a wagon on a floor) and the correction needed to make the nominal frame
+  agree is reported as `level_correction_deg`, along with the `neck_tilt` that
+  would make it zero.
+
+  `--detector astra` is one Responses-API call with the frame attached
+  (`openai` imported lazily, still not a dependency); `--detector mask` is a
+  colour fallback that needs no key.
+
+* **`examples/agent/astra_loop.py --perceive <frame|snapshot>`** — measure the
+  scene before turn 0 instead of reading one. `snapshot` reuses the existing
+  `$ASTRA_SNAPSHOT_CMD` hook and perceives from `turn0_base_0_rgb.jpg`; the
+  result is written beside the trace as `scene_perceived.json`. Mutually
+  exclusive with `--scene`. **Once, before turn zero** — re-perceiving every
+  turn is deliberately out of scope: the object moves while the loop holds it,
+  so a fresh scene would have to be reconciled with the gripper's
+  `held_object` rather than replacing the old one.
+
+### Changed
+
+* **`examples/agent/live.py`: a scene file can now say its container's
+  interior is an ESTIMATE.** `objects_from` reads `interior_measured` and
+  passes it to `ContainerView`, which only cleared that flag for the interior
+  it invents itself — so a file that GAVE an interior was believed
+  unconditionally. A perceived interior is a number *and* a guess (85 % of the
+  measured outside; a wall thickness is not visible from one view above and in
+  front) and `Place` refuses to drop into a guessed interior, which it cannot
+  do if the file cannot say so. Pass `--interior cup=0.08,0.08,0.10` to
+  perceive.py to declare one measured, and `--size charger=0.045,0.02,0.05`
+  for the other one. Both record what the FRAME measured beside what you
+  declared, so the file never loses the disagreement.
+
+### What this does NOT do
+
+Two numbers a single view cannot produce, both found by running it:
+
+* **the unseen horizontal extent.** One view gives one silhouette, so the
+  width is written on BOTH horizontal axes and yaw is 0 (a square footprint is
+  rotation-invariant, which makes that zero harmless rather than invented).
+  On the run2 frame the charger measures **50 mm** across its footprint and
+  the driven jaws take **44 mm**, so the chain Shu's hand-made file planned
+  does not plan off the measurement — his file declared the charger 20 mm
+  across y, which is a tape measurement, not a picture. Put that one number
+  back and the right arm plans Approach → Grasp → Lift → Carry → Place off the
+  perceived positions, heights and table; both halves are pinned in
+  `tests/agent/test_perceive.py`.
+* **a container's interior**, as above.
+
+Neither is a bug to be fixed by better fitting. They want a second viewpoint,
+a depth camera, or a tape.
+
 ## 0.14.1 — 2026-09-21
 
 **The jaw meshes now open 64 mm, like the joints always said.** The vendor CAD

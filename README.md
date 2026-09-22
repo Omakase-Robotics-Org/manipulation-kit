@@ -122,6 +122,30 @@ The robot half of the observation — both arms, their tool poses, both grippers
 — is filled in from live state by
 [`examples/agent/live.py`](examples/agent/live.py); you supply only the things.
 
+#### …or measure it from one photograph
+
+[`examples/agent/perceive.py`](examples/agent/perceive.py) writes that same
+file from **one head frame**, given two priors: the rectangular table top's
+**width** and the camera's **fx**. No ArUco board, no marker on the objects,
+and with `--anchor camera` no table height either — the perpendicular distance
+from the camera centre to the fitted plane does not depend on the camera's aim,
+so the height comes out of the fit.
+
+```sh
+pip install -e '.[perceive]'
+python examples/agent/perceive.py --image turn0_base_0_rgb.jpg \
+    --table-width 0.60 --anchor camera --neck-pitch 0.52 --lift 0.205 \
+    --objects charger:object,cup:container --detector mask \
+    --out examples/agent/scenes/live.json --debug /tmp/fit.png
+```
+
+Look at the debug PNG before believing the JSON: a plane fit that latched onto
+the floor still produces a tidy file. Every number it writes carries a
+`confidence` below 1 and a `measurement` block saying what was seen; the two it
+cannot see at all — an object's extent along the unseen horizontal axis, and a
+container's interior — are called out in the 0.15.0 entry of
+[`CHANGELOG.md`](CHANGELOG.md) with what happened when they were believed.
+
 ### 4. Offer: what can it actually do right now?
 
 ```python
@@ -146,6 +170,11 @@ Three ways, same checked actions underneath:
 python examples/agent/astra_loop.py --dry-run          # scripted: no key, no network
 OPENAI_API_KEY=... python examples/agent/astra_loop.py # a function-calling model
 python examples/agent/jev_menu.py --task "put the red block in the box"
+
+# the loop measuring its own scene from a frame, once, before turn 0
+python examples/agent/astra_loop.py --perceive snapshot --trace /tmp/run/t.jsonl \
+    --object charger --destination cup \
+    --perceive-opts "--table-width 0.60 --anchor camera --neck-pitch 0.52"
 ```
 
 `pip install openai` first for the second one — it is not a dependency of this

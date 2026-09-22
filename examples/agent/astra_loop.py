@@ -33,6 +33,13 @@ Three stop reasons, never conflated:
     python examples/agent/astra_loop.py --dry-run     # scripted, no key needed
     OPENAI_API_KEY=... OPENAI_MODEL=gpt-5 python examples/agent/astra_loop.py
 
+WHERE THE THINGS ARE. ``--scene`` reads a file somebody measured; ``--perceive``
+MEASURES one from a head frame before turn 0 (``examples/agent/perceive.py``)
+and writes it beside the trace as ``scene_perceived.json``. They are mutually
+exclusive, because two answers to "where is everything" is one too many. Once,
+before turn zero — see :func:`perceived_scene` for why re-perceiving mid-run is
+not a small change.
+
 `openai` is NOT a dependency of this repository: ``pip install openai`` before
 using ``--model openai``.
 """
@@ -402,6 +409,64 @@ def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
     return LiveRobot(FirmwareExecutor(base_url=robot_url, client=client), kin, scene)
 
 
+def perceived_scene(source: str, *, trace_path: Optional[Path],
+                    obj: str, destination: str,
+                    options: str = "") -> Dict[str, Any]:
+    """``--perceive``: MEASURE the scene from one head frame instead of
+    reading one somebody measured by hand.
+
+    ``source`` is either a path to a frame or the word ``snapshot``, which
+    runs ``$ASTRA_SNAPSHOT_CMD`` once — the same hook the per-turn record
+    uses, called with ``ASTRA_TURN=0`` — and perceives from the head frame it
+    leaves behind. The scene is written next to the trace as
+    ``scene_perceived.json``, so a run that goes wrong can be re-read against
+    the picture the plan was built from.
+
+    ONCE, BEFORE TURN ZERO. Re-perceiving every turn is out of scope here and
+    is not a small change: the object moves while the loop holds it, so a
+    fresh scene mid-run would have to be RECONCILED with what the gripper is
+    carrying rather than replacing it, and the loop's ``held_object``
+    bookkeeping (``live.LiveRobot.expect``) is what that reconciliation would
+    have to agree with.
+
+    ``options`` is a string of ``perceive.py`` flags, parsed by that file's
+    OWN argument parser — the priors (table width, fx, anchor, neck angles)
+    are its business and duplicating them here would be a second definition
+    to keep in step.
+    """
+    import shlex  # noqa: PLC0415
+
+    import perceive  # noqa: PLC0415
+    if source == "snapshot":
+        if trace_path is None:
+            raise SystemExit("--perceive snapshot needs --trace: the frame is "
+                             "written next to the trace")
+        if not os.environ.get("ASTRA_SNAPSHOT_CMD"):
+            raise SystemExit("--perceive snapshot needs $ASTRA_SNAPSHOT_CMD, "
+                             "the same hook the per-turn frames use")
+        _snapshot(trace_path, 0)
+        image = Path(trace_path).parent / "turn0_base_0_rgb.jpg"
+        if not image.exists():
+            raise SystemExit(f"$ASTRA_SNAPSHOT_CMD left no {image.name}; "
+                             f"nothing to perceive from")
+    else:
+        image = Path(source)
+        if not image.exists():
+            raise SystemExit(f"--perceive {source}: no such frame")
+    tokens = shlex.split(options)
+    if "--objects" not in tokens:
+        tokens += ["--objects", f"{obj}:object,{destination}:container"]
+    args = perceive.build_parser().parse_args(
+        ["--image", str(image)] + tokens)
+    scene = perceive.perceive(args)
+    if trace_path is not None:
+        out = Path(trace_path).parent / "scene_perceived.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(scene, indent=1) + "\n", encoding="utf-8")
+        print(f"[astra_loop] perceived {image.name} -> {out}", file=sys.stderr)
+    return scene
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--task", default=DEFAULT_TASK)
@@ -415,22 +480,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--scene", type=Path, default=None,
                         help="a MEASURED scene file (examples/agent/scenes/*.json); "
                              "default: the built-in demo scene")
+    parser.add_argument("--perceive", default=None, metavar="IMAGE|snapshot",
+                        help="MEASURE the scene from one head frame with "
+                             "examples/agent/perceive.py instead of reading a "
+                             "hand-measured file. 'snapshot' runs "
+                             "$ASTRA_SNAPSHOT_CMD once before turn 0 and "
+                             "perceives from turn0_base_0_rgb.jpg. Once, "
+                             "before turn zero — not per turn.")
+    parser.add_argument("--perceive-opts", default="",
+                        help="flags passed verbatim to perceive.py, e.g. "
+                             "\"--table-width 0.60 --anchor camera "
+                             "--neck-pitch 0.52\"")
     parser.add_argument("--object", default="red_block",
                         help="the scene object to move (default red_block)")
     parser.add_argument("--destination", default="box",
                         help="the scene container to place it in (default box)")
     args = parser.parse_args(argv)
 
+    if args.scene is not None and args.perceive is not None:
+        # Two answers to "where is everything" is one too many, and the loop
+        # would silently take the second.
+        parser.error("--scene and --perceive are mutually exclusive: one "
+                     "reads a scene somebody measured, the other measures it")
+
     _world, kin = demo_scene()
     scene = None
     world0 = None
-    if args.scene is not None:
-        import time as _time  # noqa: PLC0415
-        from live import frames_from, load_scene, objects_from  # noqa: PLC0415
+    if args.perceive is not None:
+        scene = perceived_scene(args.perceive, trace_path=args.trace,
+                                obj=args.object, destination=args.destination,
+                                options=args.perceive_opts)
+    elif args.scene is not None:
+        from live import load_scene  # noqa: PLC0415
         scene = load_scene(args.scene)
+    if scene is not None:
         import dataclasses as _dc  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+        from live import frames_from, objects_from  # noqa: PLC0415
         world0 = _dc.replace(_world, objects=tuple(objects_from(scene)),
-                                frames=frames_from(scene, now=_time.time()))
+                             frames=frames_from(scene, now=_time.time()))
     robot = build_robot(args.executor, kin, args.robot, scene,
                         world0=world0, obj=args.object)
     trace = loop(build_model(args.dry_run, args.object, args.destination), robot, task=args.task,
