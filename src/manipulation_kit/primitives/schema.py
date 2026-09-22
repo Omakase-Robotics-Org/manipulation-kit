@@ -74,8 +74,10 @@ def verbs() -> List[type]:
 
 def argument_domain(name: str, verb: Optional[str] = None) -> Dict[str, Any]:
     """The single description of one argument, shared by every export."""
-    overrides = BY_VERB[verb].arg_enums() if verb in BY_VERB else {}
-    return argument(name, verb, overrides).domain()
+    cls = BY_VERB.get(verb)
+    overrides = cls.arg_enums() if cls is not None else {}
+    roles = cls.arg_roles() if cls is not None else {}
+    return argument(name, verb, overrides, roles).domain()
 
 
 def _json_schema(spec, names: Optional[Sequence[str]]) -> Dict[str, Any]:
@@ -167,12 +169,13 @@ def tool_schemas(world: Optional[WorldView] = None) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for cls in verbs():
         overrides = cls.arg_enums()
+        roles = cls.arg_roles()
         properties: Dict[str, Any] = {}
         required: List[str] = []
         for field in fields(cls):
             if field.name in NOT_MODEL_BINDABLE:
                 continue
-            spec = argument(field.name, cls.name(), overrides)
+            spec = argument(field.name, cls.name(), overrides, roles)
             kind = spec.domain()["kind"]
             if world is None or kind not in ("name", "direction"):
                 names = None
@@ -271,8 +274,10 @@ def decode(name: str, arguments: Dict[str, Any],
 
 def _role_errors(call: Primitive, world: WorldView) -> List[Unmet]:
     out: List[Unmet] = []
+    roles = call.arg_roles()
     for field in fields(call):
-        spec = ARGUMENTS.get(field.name)
+        spec = (argument(field.name, call.name(), None, roles)
+                if field.name in ARGUMENTS else None)
         if spec is None or spec.kind != "name" or spec.role == ROLE_ANY:
             continue
         value = getattr(call, field.name)
@@ -314,10 +319,12 @@ def domains_in(schemas: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for schema in schemas:
         rendered: Dict[str, Any] = {}
+        cls = BY_VERB.get(schema["name"])
+        roles = cls.arg_roles() if cls is not None else {}
         for name, prop in schema["parameters"]["properties"].items():
             if "enum" in prop and name in ("object", "to", "source", "target"):
                 rendered[name] = {"kind": "name",
-                                  "role": ARGUMENTS[name].role}
+                                  "role": roles.get(name, ARGUMENTS[name].role)}
             elif "enum" in prop:
                 rendered[name] = {"kind": "enum", "values": list(prop["enum"])}
             elif prop.get("type") == "number":
@@ -334,7 +341,8 @@ def domains_in(schemas: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
                                   "aliases": list(named[0]["enum"]) if named else [],
                                   "free": bool(free)}
             elif name in ARGUMENTS and ARGUMENTS[name].kind == "name":
-                rendered[name] = {"kind": "name", "role": ARGUMENTS[name].role}
+                rendered[name] = {"kind": "name",
+                                  "role": roles.get(name, ARGUMENTS[name].role)}
             else:
                 rendered[name] = {"kind": "string"}
         out[schema["name"]] = rendered

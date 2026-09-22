@@ -19,8 +19,8 @@ from .frames import (BASE, FRAME_STALE, FUTURE_TOL_S, UNKNOWN_FRAME, Frame,
                      FrameError, FrameGraph)
 from .direction import (ALIASES, FRAMES, OBJECT_PREFIX, TOOL, Direction,
                         frame_rotation, object_frame, parse_direction, toward)
-from .views import (UPRIGHT_TOL_RAD, ArmView, ContainerView, GripperView,
-                    ObjectView, SurfaceView, WorldView)
+from .views import (UPRIGHT_TOL_RAD, ArmView, ContactView, ContainerView,
+                    GripperView, ObjectView, SurfaceView, WorldView)
 
 __all__ = [
     "ALIASES", "Direction", "FRAMES", "OBJECT_PREFIX", "TOOL",
@@ -28,5 +28,5 @@ __all__ = [
     "BASE", "FRAME_STALE", "FUTURE_TOL_S", "UNKNOWN_FRAME", "UPRIGHT_TOL_RAD",
     "Frame", "FrameError", "FrameGraph",
     "ObjectView", "ContainerView", "SurfaceView",
-    "ArmView", "GripperView", "WorldView",
+    "ArmView", "GripperView", "WorldView", "ContactView",
 ]

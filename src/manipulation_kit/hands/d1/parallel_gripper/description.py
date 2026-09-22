@@ -134,6 +134,17 @@ def gap_from_motor_rad(motor_rad: float) -> float:
     return max(0.0, min(JAW_OPEN_GAP_M, float(motor_rad) * JAW_GAP_PER_MOTOR_RAD_M))
 
 
+#: What a NON-GRASPING verb (``probe``, ``press``) asks the hand to be, as the
+#: closedness it is driven to. The hand owns the map, not the verb, so a
+#: different hand says what "closed" means for it. ``closed``: the pads meet
+#: and the fingertips are one blunt probe; ``open``: driven fully open, the
+#: two tips lead; ``pinched``: nearly shut, the tips a few millimetres apart.
+#: (Added by redesign step 4 for the contact verbs; step 3 is to own and
+#: reconcile this map — the values are the obvious ones, not measured.)
+HAND_CLOSEDNESS = {"open": 0.0, "pinched": 0.85, "closed": 1.0}
+HAND_POSES = tuple(HAND_CLOSEDNESS)
+
+
 #: The jaw joint value at the driven-open stop: q = (JAW_OPEN_GAP_M -
 #: DRIVEN_OPEN_GAP_M) / 2 per finger. Sim "fully open" is this, not 0.
 DRIVEN_OPEN_Q = (JAW_OPEN_GAP_M - DRIVEN_OPEN_GAP_M) / 2.0

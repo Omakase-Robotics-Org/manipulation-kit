@@ -29,8 +29,10 @@ model never emits one, and :mod:`.planning` is the single place a
 primitive touches the IK and the guard.
 
 The verbs: ``Approach Grasp Lift Carry Place Release Nudge Retreat GoHome``,
-plus the ``Pour`` CONTRACT whose body is a learned policy
-(:class:`~.types.LearnedPrimitive`).
+the ``Pour`` CONTRACT whose body is a learned policy
+(:class:`~.types.LearnedPrimitive`), and the two contact verbs ``Probe`` and
+``Press`` (:mod:`.contact`), which travel along a direction until something
+resists and report where.
 
 Beside them, three modules that are about CAPABILITY rather than about any
 model, and are therefore here rather than in ``examples/agent/``:
@@ -63,7 +65,8 @@ from .reach import ChainLink, ChainPlan, SideChoice, plan_chain
 from .reach import choose_side as choose_side_for_task
 from .schema import (NOT_MODEL_BINDABLE, decode, direction_doc, domains,
                      domains_in, tool_schemas, verbs_in)
-from .types import (AUTO, BOTH, GOHOME_SIDE_CHOICES, GRIPS,
+from .types import (AUTO, BOTH, ContactCriterion, ContactStep,
+                    GOHOME_SIDE_CHOICES, GRIPS,
                     GRASP_DIRECTIONS, NUDGE_FRAMES, NUDGE_GRID_M,
                     NUDGE_MAX_YAW_RAD, PLAN_REASONS, PRIMITIVE_CONTRACT, SIDES,
                     SIDE_CHOICES, UNMET_CODES, GripStep, JointStep,
@@ -72,6 +75,8 @@ from .types import (AUTO, BOTH, GOHOME_SIDE_CHOICES, GRIPS,
                     VerdictReport, Verifier, Waypoint)
 from .verbs import (BY_VERB, PRIMITIVES, Approach, Carry, GoHome, Grasp, Lift,
                     Nudge, Place, Pour, Release, Retreat, by_verb, snap)
+from .contact import (ContactPlane, Press, Probe, fit_plane, record_contacts,
+                      surface_from_contacts)
 
 __all__ = [
     # the model-independent action boundary (offer / schema / reach)
@@ -82,11 +87,14 @@ __all__ = [
     "plan_chain", "choose_side_for_task", "ChainPlan", "ChainLink", "SideChoice",
     # verbs
     "Approach", "Grasp", "Lift", "Carry", "Place", "Release", "Nudge",
-    "Retreat", "GoHome", "Pour", "PRIMITIVES", "BY_VERB", "by_verb",
+    "Retreat", "GoHome", "Pour", "Probe", "Press", "PRIMITIVES", "BY_VERB",
+    "by_verb",
+    # contact: measured contacts into the world
+    "record_contacts", "fit_plane", "ContactPlane", "surface_from_contacts",
     # contract
     "Primitive", "LearnedPrimitive", "PRIMITIVE_CONTRACT",
     "Plan", "PlanBinding", "PlanError", "Waypoint", "JointStep", "GripStep",
-    "SettleStep", "Step", "UNMET_CODES",
+    "SettleStep", "ContactStep", "ContactCriterion", "Step", "UNMET_CODES",
     "Unmet", "Verdict", "VerdictReport", "Verifier",
     # vocabulary
     "AUTO", "BOTH", "GOHOME_SIDE_CHOICES", "GRASP_DIRECTIONS", "GRIPS",
