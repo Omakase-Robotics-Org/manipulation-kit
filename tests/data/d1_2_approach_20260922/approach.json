@@ -1,0 +1,970 @@
+{
+ "about": "d1-2, 2026-09-22 22:42Z: Approach(probe_spot, left, down, pad) run through LiveRobot.firmware + run() on d1-firmwared 0.3.0. 'plan' is the plan re-derived offline from the trace's binding.q0 and the trial's scene (the live trace kept the summary only); its notes, joint-step count and final_joints_deg match the live summary (final to 1e-3 deg). 'live' is what the robot run recorded.",
+ "plan": {
+  "primitive": "approach",
+  "side": "left",
+  "waypoints": [
+   {
+    "label": "standoff",
+    "p": [
+     0.403,
+     0.1,
+     0.285
+    ],
+    "quat_xyzw": [
+     -0.7071,
+     0.7071,
+     0.0,
+     0.0
+    ],
+    "allow_via": true,
+    "arrive": false
+   }
+  ],
+  "notes": [
+   "descent floor: table's top at z=0.166 m (the surface probe_spot stands on)",
+   "grasping 27 mm above the object's centre so the pad tips clear what it is standing on",
+   "the straight line to 'standoff' was refused by the guard; re-seeded from the READY posture",
+   "the jaws are opened before the arm moves, and the stroke is waited for"
+  ],
+  "steps": [
+   {
+    "step": "grip",
+    "side": "left",
+    "closedness": 0.0,
+    "grip": "soft",
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     -0.618283,
+     1.155578,
+     1.305088,
+     -2.410973,
+     1.378696,
+     0.173543,
+     -0.16117
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     -0.405091,
+     0.910879,
+     1.055088,
+     -2.336248,
+     1.317845,
+     0.235037,
+     -0.147981
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     -0.191899,
+     0.666179,
+     0.805088,
+     -2.261523,
+     1.256993,
+     0.29653,
+     -0.134793
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.021294,
+     0.421479,
+     0.555088,
+     -2.186798,
+     1.196142,
+     0.358023,
+     -0.121605
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.234486,
+     0.17678,
+     0.305088,
+     -2.112073,
+     1.13529,
+     0.419516,
+     -0.108416
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.447678,
+     -0.06792,
+     0.055088,
+     -2.037348,
+     1.074439,
+     0.481009,
+     -0.095228
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.66087,
+     -0.312619,
+     -0.194912,
+     -1.962623,
+     1.013588,
+     0.542503,
+     -0.082039
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.874062,
+     -0.557319,
+     -0.444912,
+     -1.887898,
+     0.952736,
+     0.603996,
+     -0.068851
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     1.087254,
+     -0.802018,
+     -0.694912,
+     -1.813173,
+     0.891885,
+     0.665489,
+     -0.055662
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     1.190294,
+     -0.920286,
+     -0.815742,
+     -1.777057,
+     0.862474,
+     0.69521,
+     -0.049288
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     1.154569,
+     -0.887989,
+     -0.786751,
+     -1.852437,
+     0.859227,
+     0.7574,
+     -0.21996
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     1.100566,
+     -0.865031,
+     -0.754963,
+     -1.909138,
+     0.860128,
+     0.813572,
+     -0.394872
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     1.036373,
+     -0.851994,
+     -0.723897,
+     -1.949316,
+     0.864778,
+     0.860928,
+     -0.573166
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.963891,
+     -0.847591,
+     -0.692297,
+     -1.972993,
+     0.869341,
+     0.900214,
+     -0.750625
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.88604,
+     -0.851048,
+     -0.660251,
+     -1.980355,
+     0.870959,
+     0.931441,
+     -0.923008
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.80675,
+     -0.861868,
+     -0.628947,
+     -1.971952,
+     0.867919,
+     0.954273,
+     -1.08665
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.729928,
+     -0.879499,
+     -0.599742,
+     -1.948719,
+     0.859457,
+     0.968489,
+     -1.238788
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.658652,
+     -0.90325,
+     -0.573589,
+     -1.91188,
+     0.845618,
+     0.9742,
+     -1.377826
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.594897,
+     -0.932391,
+     -0.55095,
+     -1.862811,
+     0.827195,
+     0.971825,
+     -1.503448
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.539583,
+     -0.966226,
+     -0.531865,
+     -1.802897,
+     0.805437,
+     0.962012,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.416354,
+     -0.972424,
+     -0.412571,
+     -1.731499,
+     0.639991,
+     0.991514,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.310573,
+     -0.99377,
+     -0.305062,
+     -1.653328,
+     0.477541,
+     0.99954,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.22228,
+     -1.027139,
+     -0.207334,
+     -1.567385,
+     0.322995,
+     0.988949,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "joint",
+    "side": "left",
+    "q_rad": [
+     0.145456,
+     -1.069719,
+     -0.110241,
+     -1.474244,
+     0.169965,
+     0.963819,
+     -1.5708
+    ],
+    "waypoint": 0
+   },
+   {
+    "step": "settle",
+    "timeout_s": 1.5
+   }
+  ]
+ },
+ "q0_deg": {
+  "left": [
+   -47.64,
+   80.23,
+   89.1,
+   -142.42,
+   82.48,
+   6.42,
+   -9.99
+  ],
+  "right": [
+   52.26,
+   87.38,
+   -88.3,
+   -114.32,
+   -86.67,
+   -1.1,
+   -13.05
+  ]
+ },
+ "live": {
+  "plan_final_joints_deg": {
+   "left": [
+    8.333,
+    -61.29,
+    -6.316,
+    -84.468,
+    9.737,
+    55.223,
+    -90.0
+   ]
+  },
+  "run": {
+   "primitive": "approach",
+   "side": "left",
+   "completed": true,
+   "steps_sent": 62,
+   "settled": true,
+   "stop_reason": "",
+   "stopped_at": -1,
+   "arrivals": [],
+   "strokes": [
+    {
+     "settled": true,
+     "closedness": 0.0,
+     "holding": false,
+     "stalled": false,
+     "waited_s": 0.151,
+     "detail": "the stroke ended open",
+     "kind": "open"
+    }
+   ],
+   "error": ""
+  },
+  "verdict": {
+   "verdict": "false",
+   "reason": "the left tool point is 167 mm from the commanded pose (tolerance 20 mm)",
+   "measured": {
+    "ToolAt": {
+     "verdict": "false",
+     "reason": "the left tool point is 167 mm from the commanded pose (tolerance 20 mm)",
+     "measured": {
+      "tool_p": [
+       0.5526,
+       0.1,
+       0.3598
+      ],
+      "target_p": [
+       0.403,
+       0.1,
+       0.285
+      ],
+      "gap_m": 0.1672
+     }
+    },
+    "ToolFacing": {
+     "verdict": "false",
+     "reason": "the left wrist is 53.1 deg from the derived orientation",
+     "measured": {
+      "orientation_error_deg": 53.12,
+      "tolerance_deg": 5.0
+     }
+    },
+    "NotHolding": {
+     "verdict": "true",
+     "reason": "the left gripper is open and empty",
+     "measured": {
+      "holding": false,
+      "closedness": 0.0
+     }
+    }
+   }
+  }
+ },
+ "stuck_joint": {
+  "side": "left",
+  "index": 6,
+  "deg": -39.5,
+  "why": "the single-joint change of final_joints_deg that reproduces the measured tool point (0.3 mm) and the 53 deg facing error"
+ }
+}

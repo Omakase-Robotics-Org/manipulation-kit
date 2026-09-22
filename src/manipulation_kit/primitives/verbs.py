@@ -836,7 +836,13 @@ class Approach(Primitive):
             return self._unmet_error(unmet, self.resolve_side(world) or "")
         found = _first_roll_that_plans(
             self, world, kin, meet,
-            lambda r: [Waypoint("standoff", meet.p_stand, r, allow_via=True)])
+            # THE STANDOFF IS THE WHOLE VERB, so the tool is gated there —
+            # the same ``arrive`` Grasp puts on the same pose. Without it an
+            # Approach had no tool-space barrier at all: on d1-2
+            # (2026-09-22) one finished 167 mm and 53 deg off its standoff
+            # with ``arrivals: []`` and reported completed.
+            lambda r: [Waypoint("standoff", meet.p_stand, r, allow_via=True,
+                                arrive=True)])
         if found[0] is None:
             return found[1]
         roll, waypoints, steps, detours, _extra = found
