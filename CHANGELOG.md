@@ -119,20 +119,19 @@ shim: a call that still says `approach=` is a `TypeError` from Python and a
 
   `side_left` came in from the robot's left and travelled toward -y, so it is
   `right`. Mapping by name (`side_left -> left`) reverses the approach.
-* **`jaw_turn_deg` -> `roll_rad`** (radians, `roll_rad = radians(jaw_turn_deg)`),
-  a PLANNER-ONLY field on `Approach`/`Grasp` and a keyword of
-  `reach.plan_chain`/`reach.choose_side` (whose `approach=` is now
-  `direction=`). The plan's notes say which roll was used.
+* **`jaw_turn_deg` is gone.** (Step 2 briefly kept it as a planner-only
+  `roll_rad` field; step 3 below deletes that too — the roll is the kit's one
+  sweep.) `reach.plan_chain`/`reach.choose_side`'s `approach=` is now
+  `direction=`. The plan's notes say which roll was used.
 * **`primitives/approach.py` is now `primitives/orientation.py`.**
   `align_tool(side, d_base, *, roll_to, roll_rad)` is the only place a
   quaternion is produced; `grasp_orientation(side, d_base, obj, frames,
-  roll_rad=)` (was `approach, ..., dyaw_rad=`), `grasp_point(obj, d_base,
-  frames)` and `standoff_pose(p, d_base, standoff_m)` take a resolved
-  base-frame vector. Deleted: `APPROACHES`, `TOP_DOWN`, `FRONT`, `SIDE_LEFT`,
+  roll_rad=)` (was `approach, ..., dyaw_rad=`) takes a resolved base-frame
+  vector (`grasp_point`/`standoff_pose` moved to `grasp_geometry` in step 3). Deleted: `APPROACHES`, `TOP_DOWN`, `FRONT`, `SIDE_LEFT`,
   `SIDE_RIGHT`, `APPROACH_DIRECTION`, `APPROACH_DOC`, `check_approach`,
   `direction()`.
 * **One model allowlist.** `schema.NOT_MODEL_BINDABLE` is
-  `("policy", "roll_rad")`, and `decode(..., model_bindable_only=True)` (the
+  `("policy",)` (with `roll_rad` until step 3 deleted the field), and `decode(..., model_bindable_only=True)` (the
   default) now REFUSES those fields from a model instead of honouring them
   (`policy` used to be hidden from the schema but still accepted — Astra review
   5). Pass `model_bindable_only=False` from trusted Python. The example's
@@ -150,6 +149,88 @@ shim: a call that still says `approach=` is a `TypeError` from Python and a
   each verb, each old approach and jaw turn, both arms, the whole
   Approach->Place chain — is identical to the last float with the alias of the
   same vector (`tests/primitives/test_golden_plans.py`).
+
+### Grasp geometry (redesign step 3) — where and how the hand meets an object
+
+**BREAKING.** `primitives/grasp_geometry.py` is new and is the one place that
+decides the grasp point, its descent floor, the standoff, the roll and the
+fit. What it replaces is deleted, not deprecated.
+
+* **Where on the hand: `GraspReference`.** `PAD` (the pad centre, 100 mm,
+  the tips leading it by 29 mm, 4 mm clearance a side) and `TIP` (the finger
+  tips, 129 mm, nothing leading, 2 mm a side), built from the hand
+  description's measured `PAD_CENTRE_Z_M`/`PAD_TIP_Z_M` and its new
+  `PAD_CLEARANCE_PER_SIDE_M`/`TIP_CLEARANCE_PER_SIDE_M`. The model picks one:
+  **`Grasp(contact="pad"|"tip")`** (also on `Approach`, so it stands off for
+  the same geometry; one enum in `arguments.py`). A 6 mm card on a table is
+  grasped at the tips and refused (`object_too_flat`) at the pads. Every
+  waypoint is still the pad-centre tool point (`orientation.TOOL_Z_M`); a tip
+  grasp is converted onto it once (`grasp_geometry.tool_point`).
+* **`tool_revision(reference=None)`** — a grasp plan records its reference
+  (`...;reference=tip`), and `PlanBinding.drift` now compares every field
+  BOTH revisions state: an executor states the hand only, so a tip plan runs on
+  the hand it was made for and is refused wherever a pad plan is expected.
+  `PlanBinding.of(..., reference=)`.
+* **The descent floor is the measured support (L5, Astra review 4).**
+  `support_of(world, name)` finds the level `SurfaceView` under the object
+  (an underside declared below its top, or at most `SUPPORT_CATCH_M` = 30 mm
+  above it); the tips keep `SUPPORT_CLEARANCE_M` over THAT, and over the
+  object's own underside only when no surface is known. The plan's notes say
+  which (`descent floor: table's top at z=...` / `...own declared
+  underside...`), and the achieved-clearance check uses the same floor. The
+  floor applies to any descending direction, backing the contact point out
+  along the travel (straight up for `down`).
+* **The standoff is measured from the silhouette (C.4).** `standoff_m` is the
+  gap between the finger tips and the object's near face along the
+  direction — not a distance from the grasp point, which left the tips under
+  a 110 mm cup's rim. `Approach` stands exactly where `Grasp` descends from
+  (it used to stand off the object's centre). `DEFAULT_STANDOFF_M` stays
+  80 mm, so a top-down standoff over a 50 mm block is ~47-54 mm higher and a
+  `forward` one 54 mm further back than before.
+* **One roll sweep.** `roll_candidates(obj, frames, spec)` — the squared
+  posture, then the quarter turns whose presented width still fits this
+  reference and this hand — is the only roll generator. `Approach`/`Grasp`
+  try it in order (a `Grasp` first tries the roll its `Approach` stands at)
+  and the plan's notes say which roll was used; `roll_rad` is **deleted** from
+  both verbs (it had been a hidden field for one step) and from
+  `NOT_MODEL_BINDABLE`/`arguments.py`, and `reach.plan_chain`/`choose_side`
+  lose their `roll_rad=` (they gain `contact=`). A model that sends
+  `roll_rad` gets `bad_argument` (unknown argument). The example's chooser
+  sweep (`astra_loop.plan_the_hand`) and live jaw-turn fallback are deleted.
+  The verifiers of a multi-roll `Approach`/`Grasp` check the candidate the
+  measured wrist ended at.
+* **`fits(obj, frames, spec, r_tcp, *, open_gap_m, support)`** /
+  `fit_problems(...)`: flat from `reference.lead_m`, width along the jaw axis
+  against `graspable_width_m(reference, open_gap_m)` — the world's measured
+  `GripperView.open_gap_m` when it carries one, the description's nominal
+  otherwise. Deleted from `orientation`: `GRASPABLE_WIDTH_M`,
+  `graspable_width_m`, `JAW_OPEN_M`, `TIP_BELOW_TOOL_M` (use
+  `reference.lead_m`), `fits_jaws`, `lowest_top_down_tool_z`, `grasp_point`,
+  `achieved_clearance`, `grasps_above_its_top`, `standoff_pose` (the
+  `grasp_geometry` functions replace them). `primitives` exports
+  `GraspReference`, `GraspSpec`, `PAD`, `TIP`, `grasp_pose`,
+  `standoff_point`, `roll_candidates`, `fits`, `graspable_width_m`,
+  `support_of` instead of `GRASPABLE_WIDTH_M`/`JAW_OPEN_M`.
+* **A tilted object is grasped along its own face (req 4).**
+  `_upright_geometry` is `support_geometry_known(world, name)`: a tilted
+  object is refused (`object_tilted`) only when no measured surface is under
+  it. Above `UPRIGHT_TOL_RAD` (10 deg, now the threshold for the NOTE, not a
+  gate) a `down` grasp descends along the object's own top-face normal,
+  `Direction(axis, frame="object:<name>")`, with the jaws squared to its
+  projected footprint, and the notes say so. A tilted DESTINATION (Carry/
+  Place) is still refused.
+* **Hand shapes for non-grasping verbs** read the hand description's
+  `HAND_CLOSEDNESS` (`open`/`pinched`/`closed`, shared with the contact verbs
+  of step 4, which own the `hand` argument) through
+  `grasp_geometry.hand_closedness`.
+* **Golden plans regenerated on purpose** (`tests/data/golden_plans/plans.json`,
+  was `pre_direction_e1dce97.json`): the per-`jaw_turn` cases collapse into
+  one each (163 cases, 91 plans), the committed d1-2 scene's measured hand
+  opening is applied, and new cases pin a side approach that PLANS in both
+  directions, a tip grasp, a tilted object, an object declared into its table
+  and a tall cup. A `forward` chain in the demo/tabletop scenes now stops at
+  `Lift` (`guard_reject`): the 54 mm deeper standoff reaches the same grasp
+  pose on a different elbow branch.
 
 ### `manipulation_kit.perception` (redesign step 6) — perception is a kit interface
 

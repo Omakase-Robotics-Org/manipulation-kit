@@ -100,14 +100,17 @@ def test_a_top_down_grasp_over_the_wagon_plans_from_home(d1_arm, name):
     # is not a plan, it is a wander
     tool = _tool(d1_arm, plan.side, steps[-1].q)
     assert np.linalg.norm(tool - plan.waypoints[-1].p) < 0.01
-    # the grasp point is over the cube, and lifted just clear of the table it
-    # stands on rather than driven through it
+    # the grasp point is over the cube, and lifted just clear of the MEASURED
+    # wagon top it stands on (the support, not the cube's declared underside:
+    # the two differ by 5 mm here) rather than driven through it
     centre = np.array(CUBES[name])
     assert np.linalg.norm(tool[:2] - centre[:2]) < 0.01
+    from manipulation_kit.primitives import grasp_geometry as gg
     from manipulation_kit.primitives import orientation as ap
+    top = world.find("wagon_top").top_z(world.frames)
     assert tool[2] == pytest.approx(
-        centre[2] - CUBE_SIZE[2] / 2 + ap.TIP_BELOW_TOOL_M
-        + ap.SUPPORT_CLEARANCE_M, abs=0.005)
+        top + gg.PAD.lead_m + ap.SUPPORT_CLEARANCE_M, abs=0.005)
+    assert any("wagon_top's top" in note for note in plan.notes), plan.notes
 
 
 def test_the_same_grasp_is_refused_with_the_detour_switched_off(d1_arm):
@@ -119,8 +122,10 @@ def test_the_same_grasp_is_refused_with_the_detour_switched_off(d1_arm):
     """
     world = _scene(d1_arm, CUBES)
     verb = Grasp(object="block_blue")
-    side, p_stand, p_grasp, r_tcp, unmet = verb._geometry(world)
+    meet, unmet = verb._meet(world)
     assert not unmet
+    side, p_stand, p_grasp = meet.side, meet.p_stand, meet.p_grasp
+    r_tcp = meet.r_tcp(meet.rolls[0])
     waypoints = [Waypoint("standoff", p_stand, r_tcp),
                  Waypoint("grasp", p_grasp, r_tcp)]
     with Kin(d1_arm, world) as borrowed:
@@ -260,4 +265,5 @@ def test_the_jaws_are_squared_to_a_yawed_cube_not_to_the_base_frame(d1_arm):
         width = 2 * sum(abs(float(np.dot(half[:, i], gap))) for i in range(3))
         assert width == pytest.approx(CUBE_SIZE[0], abs=1e-6), (
             f"a cube yawed {yaw} deg presents {width * 1000:.1f} mm to the jaws")
-        assert width <= ap.JAW_OPEN_M - 2 * ap.JAW_CLEARANCE_M
+        from manipulation_kit.primitives import grasp_geometry as gg
+        assert width <= gg.graspable_width_m(gg.PAD)

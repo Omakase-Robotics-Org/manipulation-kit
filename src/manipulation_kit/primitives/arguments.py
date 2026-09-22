@@ -154,12 +154,14 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
           "'tool' = along the hand's own axes, 'base' = along the robot's"),
     _number("standoff_m", 0.02, 0.30, "m",
             "how far off the object to wait before closing on it"),
-    _number("roll_rad", -math.pi / 2, math.pi / 2, "rad",
-            "PLANNER CHOICE, not a model argument: an extra turn of the hand "
-            "about the approach axis after the jaws are squared to the object "
-            "(0 = across its long side, +-pi/2 = across the other side). Not "
-            "offered to a model — see "
-            "manipulation_kit.primitives.schema.NOT_MODEL_BINDABLE"),
+    # "pad" / "tip": the literal is the closed set of
+    # ``grasp_geometry.CONTACTS`` (checked by the suite; importing it here
+    # would be a cycle)
+    _enum("contact", ("pad", "tip"),
+          "WHERE on the hand the object is taken: 'pad' = between the pad "
+          "centres (the default; the fingers reach past it), 'tip' = between "
+          "the finger tips (for something flat lying on a surface, like a "
+          "card)"),
     _number("height_m", 0.01, 0.40, "m", "how far to lift, along its direction"),
     _number("clearance_m", 0.0, 0.40, "m",
             "how far above the destination (carry: transit height above the "

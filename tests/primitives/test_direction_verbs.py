@@ -6,7 +6,6 @@ import math
 from dataclasses import fields
 
 import numpy as np
-import pytest
 
 from manipulation_kit.primitives import (NOT_MODEL_BINDABLE, PRIMITIVES,
                                          Approach, Grasp, Lift, Retreat,
@@ -61,34 +60,41 @@ def test_no_verb_field_reaches_the_model_unless_allowlisted():
     ``NOT_MODEL_BINDABLE`` — never silently both or neither (run8: a planner
     knob became a schema field just by being declared)."""
     schemas = {s["name"]: s for s in tool_schemas()}
-    assert set(NOT_MODEL_BINDABLE) >= {"policy", "roll_rad"}
+    assert "policy" in NOT_MODEL_BINDABLE
     for cls in PRIMITIVES:
         names = {f.name for f in fields(cls)}
         exported = set(schemas[cls.name()]["parameters"]["properties"])
         assert exported == names - set(NOT_MODEL_BINDABLE), cls.name()
         assert not exported & set(NOT_MODEL_BINDABLE), cls.name()
-        # the deleted names are deleted, not hidden
-        assert "jaw_turn_deg" not in names and "approach" not in names, cls.name()
+        # the deleted names are deleted, not hidden — the planner's roll
+        # included (step 3: grasp_geometry.roll_candidates is the one sweep)
+        assert not names & {"jaw_turn_deg", "approach", "roll_rad"}, cls.name()
     # the drift gate still holds with a direction in the table
     assert domains() == domains_in(tool_schemas())
 
 
 def test_decode_rejects_policy_and_roll_rad_from_the_model(d1_arm, observe):
     world = observe(d1_arm, held={"left": "red_block"})
-    for verb, args, hidden in (
-            ("grasp", {"object": "red_block", "roll_rad": math.pi / 2}, "roll_rad"),
-            ("approach", {"object": "red_block", "roll_rad": 0.0}, "roll_rad"),
-            ("pour", {"source": "box", "target": "box",
-                      "policy": "act:invented"}, "policy")):
-        refused = decode(verb, args, world)
-        assert not getattr(refused, "ok", True), (verb, refused)
-        assert refused.reason == BAD_ARGUMENT
-        assert hidden in refused.detail
-        assert [u.measured.get("argument") for u in refused.unmet] == [hidden]
-    # the Python door stays open, explicitly
-    call = decode("grasp", {"object": "red_block", "roll_rad": math.pi / 2},
-                  world, model_bindable_only=False)
-    assert isinstance(call, Grasp) and call.roll_rad == pytest.approx(math.pi / 2)
+    refused = decode("pour", {"source": "box", "target": "box",
+                              "policy": "act:invented"}, world)
+    assert not getattr(refused, "ok", True), refused
+    assert refused.reason == BAD_ARGUMENT
+    assert "policy" in refused.detail
+    assert [u.measured.get("argument") for u in refused.unmet] == ["policy"]
+    # the Python door stays open for policy, explicitly ...
+    call = decode("pour", {"source": "box", "target": "box",
+                           "policy": "act:invented"}, world,
+                  model_bindable_only=False)
+    assert getattr(call, "policy", None) == "act:invented"
+    # ... and roll_rad is no longer a field at all, through either door
+    for verb in ("grasp", "approach"):
+        for door in (True, False):
+            refused = decode(verb, {"object": "red_block",
+                                    "roll_rad": math.pi / 2}, world,
+                             model_bindable_only=door)
+            assert not getattr(refused, "ok", True), (verb, door, refused)
+            assert refused.reason == BAD_ARGUMENT
+            assert "roll_rad" in refused.detail
 
 
 def test_tool_schemas_expose_direction_as_alias_or_vector(d1_arm, observe):
@@ -171,12 +177,12 @@ def test_retreat_backs_out_along_the_tool_by_default(d1_arm, observe):
 
 
 def test_the_planner_reports_the_roll_it_used(d1_arm, observe):
+    """The squared posture that plans says nothing; a quarter turn the sweep
+    had to take says which (``test_grasp_geometry`` has the scene where the
+    squared wrist is refused and the turn is taken)."""
     world = observe(d1_arm)
-    plan = Approach(object="red_block", side="left",
-                    roll_rad=math.pi / 2).plan(world, d1_arm)
-    if isinstance(plan, Plan):
-        assert any(n.startswith("jaws rolled +90 deg") for n in plan.notes)
     square = Approach(object="red_block", side="left").plan(world, d1_arm)
+    assert isinstance(square, Plan), square
     assert not any(n.startswith("jaws rolled") for n in square.notes)
 
 

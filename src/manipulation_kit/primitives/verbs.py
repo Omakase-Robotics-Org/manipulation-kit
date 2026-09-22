@@ -3,8 +3,11 @@
 Each is a frozen dataclass whose fields are exactly what a model binds: names,
 one of a handful of enumerated choices, a :class:`~manipulation_kit.world.Direction`
 (which way the hand travels), and — in ``Nudge`` alone — correction numbers.
-The orientation is never a field; :func:`.orientation.align_tool` derives it.
-The one planner-only field, ``roll_rad``, is in ``schema.NOT_MODEL_BINDABLE``.
+The orientation is never a field; :func:`.orientation.align_tool` derives it,
+and WHERE the hand meets the object (grasp point, descent floor, standoff, the
+one roll sweep, the fit) is :mod:`.grasp_geometry`'s. No verb has a roll
+field: ``Approach`` and ``Grasp`` try :func:`.grasp_geometry.roll_candidates`
+in order and the plan's notes say which roll was used.
 
 Reading order, because they compose: ``Approach`` stands off, ``Grasp``
 descends and closes, ``Lift`` raises the object, ``Carry`` takes it over the
@@ -22,9 +25,10 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..world import (UPRIGHT_TOL_RAD as _UPRIGHT_TOL_RAD, ContainerView,
+from ..world import (UPRIGHT_TOL_RAD as _UPRIGHT_TOL_RAD, BASE, ContainerView,
                      FrameError, ObjectView, SurfaceView, WorldView)
 from ..world.direction import ALIASES, Direction, frame_rotation, parse_direction
+from . import grasp_geometry as gg
 from . import orientation as ap
 from . import verifiers as V
 from .arguments import check_arguments
@@ -39,9 +43,9 @@ from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     UNSUPPORTED_GEOMETRY, Unmet,
                     Verifier, GripStep, SettleStep, Waypoint)
 
-#: default standoff along the approach axis [m] — far enough that the descent
-#: is a straight line the guard can clear, short enough to stay in reach
-DEFAULT_STANDOFF_M = 0.08
+#: default gap between the finger tips and the object's silhouette at the
+#: standoff [m] (:func:`.grasp_geometry.standoff_point`)
+DEFAULT_STANDOFF_M = gg.DEFAULT_STANDOFF_M
 #: how far above a destination a carried object travels [m] — the LARGEST
 #: rung of :data:`CARRY_CLEARANCE_LADDER_M`, not a fixed height
 DEFAULT_CLEARANCE_M = 0.10
@@ -229,10 +233,13 @@ def _solve(primitive: Primitive, world: WorldView, kin, side: str, waypoints):
 
 
 def _plan(primitive: Primitive, world: WorldView, kin, side: str, waypoints,
-          steps, notes) -> Plan:
-    """A checked plan, BOUND to the posture and observation it was checked in."""
+          steps, notes, *, reference: Optional[str] = None) -> Plan:
+    """A checked plan, BOUND to the posture and observation it was checked in
+    — and, for a grasp, to WHERE on the hand its waypoints put the contact
+    (``reference``: a fingertip plan is not a pad plan)."""
     return Plan(primitive.name(), side, tuple(waypoints), tuple(steps),
-                tuple(notes), binding=PlanBinding.of(world, kin))
+                tuple(notes),
+                binding=PlanBinding.of(world, kin, reference=reference))
 
 
 def _plan_for(primitive: Primitive, world: WorldView, kin, side: str,
@@ -246,15 +253,24 @@ def _plan_for(primitive: Primitive, world: WorldView, kin, side: str,
                  tuple(notes) + tuple(detours))
 
 
-def _upright_geometry(world: WorldView, name: str, what: str = "object"
-                      ) -> List[Unmet]:
-    """Refuse a tilted box rather than computing a height that assumes it is not.
+def support_geometry_known(world: WorldView, name: str, what: str = "object"
+                           ) -> List[Unmet]:
+    """Is there enough MEASURED geometry under ``name`` to plan against?
 
     Every support number in this package — the descent floor, the rim
     clearance, the hang below the tool — reads the vertical extent off the
-    resolved pose. That reading is exact for a yawed box and wrong for a
-    tilted one, and "wrong by an unstated amount" is not a safety property
-    (R9). A deliberately limited v1 says so.
+    RESOLVED pose, which is exact for a yawed box and for a tilted one alike
+    (``ObjectView.extent_along``). What a tilt takes away is the object's own
+    underside as a stand-in for the table: a 30 deg block's lowest corner is
+    not where the surface is. So a tilted object is refused only when there
+    is ALSO no measured surface under it (:func:`.grasp_geometry.support_of`)
+    to give the descent its floor; with one it is planned in its own frame
+    and the notes say so (req 4). Above
+    :data:`~manipulation_kit.world.UPRIGHT_TOL_RAD` is where that switch
+    happens, not a gate.
+
+    A DESTINATION is stricter: a place into a tilted container or onto a
+    sloped surface is not modelled by this version, whatever it stands on.
     """
     item = world.find(name)
     if item is None:
@@ -263,19 +279,28 @@ def _upright_geometry(world: WorldView, name: str, what: str = "object"
         tilt = item.tilt_rad(world.frames)
     except FrameError:
         return []
-    if tilt > _UPRIGHT_TOL_RAD:
-        return [Unmet(
-            OBJECT_TILTED,
-            f"{name} is tilted {math.degrees(tilt):.0f} deg off upright and "
-            f"this version plans support geometry for upright boxes and level "
-            f"surfaces only",
-            "level it, or drive the arm directly",
-            {"tilt_deg": round(math.degrees(tilt), 1)})]
     if isinstance(item, SurfaceView) and not item.level(world.frames):
         return [Unmet(UNSUPPORTED_GEOMETRY,
                       f"{name} is not level and this version places onto level "
                       f"surfaces only")]
-    return []
+    if tilt <= _UPRIGHT_TOL_RAD:
+        return []
+    if what == "destination":
+        return [Unmet(
+            OBJECT_TILTED,
+            f"{name} is tilted {math.degrees(tilt):.0f} deg off upright and "
+            f"this version places into upright containers only",
+            "level it, or choose another destination",
+            {"tilt_deg": round(math.degrees(tilt), 1)})]
+    if gg.support_of(world, name) is not None:
+        return []
+    return [Unmet(
+        OBJECT_TILTED,
+        f"{name} is tilted {math.degrees(tilt):.0f} deg off upright and no "
+        f"measured surface is under it, so nothing gives the descent a floor "
+        f"(a tilted object's own underside is a corner, not the table)",
+        "measure the surface it stands on into the world, or level it",
+        {"tilt_deg": round(math.degrees(tilt), 1)})]
 
 
 def _supported_by(world: WorldView, name: str) -> Optional[str]:
@@ -339,7 +364,7 @@ def _hang_below_tool(world: WorldView, name: str, p_tool) -> float:
 
     MEASURED off the world rather than assumed, because the tool point is the
     pad CENTRE and a top-down grasp sits it ABOVE the object's centre (F6,
-    :func:`~.orientation.grasp_point`): "the object's half height" is only the
+    :func:`~.grasp_geometry.grasp_pose`): "the object's half height" is only the
     right number when the two coincide, and it silently under-states the hang
     by 12 mm on a 40 mm cube. With the tool at the object's centre this
     reduces to exactly ``height / 2``, which is the form the rule is stated in.
@@ -502,11 +527,192 @@ def _approach_unmet(direction: Direction, world: WorldView,
 
 
 def _roll_note(roll_rad: float) -> Tuple[str, ...]:
-    """The planner reports the roll it used, since the model never sets one."""
+    """The planner reports the roll it used, since nobody else sets one."""
     if not roll_rad:
         return ()
     return (f"jaws rolled {math.degrees(roll_rad):+.0f} deg about the approach "
             f"axis (planner choice)",)
+
+
+# --------------------------------------------------------------------------- #
+# the geometry Approach and Grasp share
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True, eq=False)
+class _Meet:
+    """Where and how the hand meets one object, for one side — computed ONCE
+    and shared by ``Approach`` and ``Grasp``, so the standoff the first stands
+    at is exactly the one the second descends from."""
+
+    item: ObjectView
+    side: str
+    #: the direction as asked (or the object's own face, see below)
+    direction: Direction
+    #: base-frame, roll 0 — the input every grasp_geometry call takes
+    spec: "gg.GraspSpec"
+    support: Optional[SurfaceView]
+    p_grasp: np.ndarray
+    p_stand: np.ndarray
+    #: :func:`.grasp_geometry.roll_candidates`, best first
+    rolls: Tuple[float, ...]
+    #: the hand's MEASURED opening, when the world carries one
+    open_gap_m: Optional[float]
+    notes: Tuple[str, ...]
+    #: the frames ``item`` resolves through
+    frames: Any
+
+    @property
+    def d(self) -> np.ndarray:
+        return self.spec.direction.vector()
+
+    def r_tcp(self, roll_rad: float) -> R:
+        return ap.grasp_orientation(self.side, self.d, self.item,
+                                    self.frames, roll_rad=roll_rad)
+
+
+def _own_frame(direction: Direction, item: ObjectView, world: WorldView
+               ) -> Tuple[Direction, Tuple[str, ...]]:
+    """A DESCENT onto an object tilted past ``UPRIGHT_TOL_RAD`` is taken along
+    its own top face's normal, ``object:<name>``, and the notes say so.
+
+    ``down`` on a 30 deg block would put the jaws square to nothing; the face
+    normal puts the pads flat on two faces, and the roll then follows the
+    object's footprint (req 4). An explicit direction is used as given.
+    """
+    if direction != DOWN:
+        return direction, ()
+    try:
+        if not gg.tilted(item, world.frames):
+            return direction, ()
+        tilt = item.tilt_rad(world.frames)
+        own = gg.own_face_direction(item, world.frames)
+    except FrameError:
+        return direction, ()
+    return own, (f"{item.name} is tilted {math.degrees(tilt):.0f} deg off "
+                 f"upright: the descent is taken along its own top face's "
+                 f"normal ({own.frame}) and the jaws are squared to its "
+                 f"footprint",)
+
+
+def _meet(world: WorldView, name: str, side_arg: str, direction: Direction,
+          contact: str, standoff_m: float
+          ) -> Tuple[Optional[_Meet], List[Unmet]]:
+    """The shared geometry, or the typed reason it cannot be computed."""
+    item, p, _r, unmet = _locate(world, name)
+    if unmet:
+        return None, unmet
+    side = _resolved_side(side_arg, world, p)
+    direction, notes = _own_frame(direction, item, world)
+    d, unmet = _resolve(direction, world, side)
+    if unmet or d is None:
+        return None, unmet
+    if float(d[2]) > ap.VERTICAL_COS:
+        return None, _approach_unmet(direction, world, side)
+    reference = gg.REFERENCES.get(contact, gg.PAD)
+    spec = gg.GraspSpec(Direction(tuple(float(c) for c in d), BASE,
+                                  via=direction.label()),
+                        reference, 0.0, float(standoff_m))
+    try:
+        support = gg.support_of(world, name)
+        p_grasp, _r_tcp, grasp_notes = gg.grasp_pose(
+            item, world.frames, spec, side=side, support=support)
+        p_stand = gg.standoff_point(item, world.frames, spec, p_grasp)
+        hand = world.gripper(side)
+        opening = getattr(hand, "open_gap_m", None)
+        rolls = gg.roll_candidates(item, world.frames, spec, open_gap_m=opening)
+    except FrameError as exc:
+        code = FRAME_STALE if exc.reason == FRAME_STALE else UNKNOWN_FRAME
+        return None, [Unmet(code, f"{name}: {exc.detail}")]
+    return _Meet(item, side, direction, spec, support, p_grasp, p_stand, rolls,
+                 opening, tuple(notes) + tuple(grasp_notes),
+                 world.frames), []
+
+
+def _rolls_in_order(meet: _Meet, world: WorldView) -> Tuple[float, ...]:
+    """``meet.rolls``, with the one the wrist ALREADY holds at the standoff
+    moved first — a Grasp after an Approach continues the posture the
+    Approach chose instead of re-choosing from the top of the list."""
+    arm = world.arm(meet.side)
+    if (arm is None or arm.tool_r is None or arm.tool_p is None
+            or len(meet.rolls) < 2
+            or np.linalg.norm(np.asarray(arm.tool_p) - meet.p_stand) > 0.02):
+        return meet.rolls
+    held = [r for r in meet.rolls
+            if _facing_error(arm.tool_r, meet.r_tcp(r)) <= V.FACING_TOL_RAD]
+    return tuple(held) + tuple(r for r in meet.rolls if r not in held)
+
+
+def _facing_error(measured: R, target: R) -> float:
+    """Angle between two tool orientations, a jaw half turn not counted."""
+    return min(float(np.linalg.norm((measured.inv() * (target * flip)).as_rotvec()))
+               for flip in V._JAW_SYMMETRY)
+
+
+class _AtTheRollTaken(Verifier):
+    """The verifier of whichever candidate roll the arm actually ENDED at.
+
+    The roll is chosen at planning time from :func:`.grasp_geometry.
+    roll_candidates`, which a verifier built from the world before the verb
+    cannot know; the candidates are quarter turns apart and the facing
+    tolerance is 5 deg, so the measured wrist names its candidate
+    unambiguously and that candidate's checks decide.
+    """
+
+    def __init__(self, primitive: str, world0: WorldView, side: str,
+                 options):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.options = tuple(options)
+        self.describes = (self.options[0][1].describes
+                          + " (at the candidate roll the planner took)")
+
+    def measure(self, world1: WorldView):
+        arm = world1.arm(self.side)
+        if arm is None or arm.tool_r is None:
+            return self.options[0][1](world1)
+        _r, chosen = min(self.options,
+                         key=lambda o: _facing_error(arm.tool_r, o[0]))
+        return chosen(world1)
+
+
+def _by_roll(primitive: str, world0: WorldView, meet: _Meet, build) -> Verifier:
+    options = [(meet.r_tcp(r), build(meet.r_tcp(r))) for r in meet.rolls]
+    if len(options) == 1:
+        return options[0][1]
+    return _AtTheRollTaken(primitive, world0, meet.side, options)
+
+
+def _first_roll_that_plans(primitive: Primitive, world: WorldView, kin,
+                           meet: _Meet, waypoints_for, check=None):
+    """Try each roll in order; the first whose path solves (and passes
+    ``check``) wins. ``(roll, waypoints, steps, detours, extra_notes)`` or
+    ``(None, error)`` — the SQUARED roll's refusal when every one failed,
+    with the rolls tried in ``attempted``."""
+    import dataclasses  # noqa: PLC0415
+    first_error = None
+    for roll in _rolls_in_order(meet, world):
+        waypoints = waypoints_for(meet.r_tcp(roll))
+        steps, error, detours = _solve(primitive, world, kin, meet.side,
+                                       waypoints)
+        extra: Tuple[str, ...] = ()
+        if error is None and check is not None:
+            error, extra = check(steps, meet.r_tcp(roll))
+        if error is None:
+            return roll, waypoints, steps, detours, extra
+        if first_error is None:
+            first_error = error
+    if len(meet.rolls) > 1:
+        first_error = dataclasses.replace(
+            first_error, attempted=tuple(f"roll {math.degrees(r):+.0f} deg"
+                                         for r in meet.rolls))
+    return None, first_error
+
+
+def _meet_notes(primitive: Primitive, meet: _Meet, roll: float) -> Tuple[str, ...]:
+    notes: Tuple[str, ...] = ()
+    if getattr(primitive, "side", AUTO) == AUTO:
+        notes += (f"side chosen automatically: {meet.side}",)
+    return notes + meet.notes + _roll_note(roll)
 
 
 # --------------------------------------------------------------------------- #
@@ -517,10 +723,12 @@ def _roll_note(roll_rad: float) -> Tuple[str, ...]:
 class Approach(Primitive):
     """Stand the open hand off an object, ready to travel along a direction.
 
-    The pose is ``object - direction * standoff``, oriented so the tool's
-    approach axis points along ``direction`` and the jaws are square to the
-    object. Nothing is grasped; this is the move that makes the next one a
-    straight line.
+    The pose is the one ``Grasp`` descends from: the finger tips
+    ``standoff_m`` short of the object's silhouette along ``direction``
+    (:func:`.grasp_geometry.standoff_point`), oriented so the tool's approach
+    axis points along ``direction`` and the jaws are square to the object —
+    trying :func:`.grasp_geometry.roll_candidates` in order. Nothing is
+    grasped; this is the move that makes the next one a straight line.
     """
 
     VERB = "approach"
@@ -529,13 +737,9 @@ class Approach(Primitive):
     #: which way the hand will TRAVEL onto the object (default: down onto it)
     direction: Direction = DOWN
     standoff_m: float = DEFAULT_STANDOFF_M
-    #: PLANNER-ONLY (``schema.NOT_MODEL_BINDABLE``): an extra turn about the
-    #: approach axis after the jaws are squared to the object — pi/2 closes
-    #: them across the OTHER horizontal side, which a caller tries when the
-    #: square posture is refused by the guard or IK (d1-2 run6, 2026-09-22: a
-    #: 45x55 mm charger). A model never sets it: shown one (run8) it picked the
-    #: IK-infeasible turn on its own and spent the run on refusals.
-    roll_rad: float = 0.0
+    #: WHERE on the hand the coming grasp makes contact — the standoff is
+    #: measured from the same geometry the grasp will use
+    contact: str = gg.PAD.name
 
     def __post_init__(self) -> None:
         _coerce_direction(self)
@@ -546,12 +750,13 @@ class Approach(Primitive):
             return unmet
         item, p, _r, found = _locate(world, self.object)
         unmet += found
-        unmet += _upright_geometry(world, self.object)
+        unmet += support_geometry_known(world, self.object)
         if p is not None and not unmet:
             # RESOLVE FIRST, then check the hand this verb will actually use.
             side = self.resolve_side(world)
             unmet += _must_be_free(world, side)
-            unmet += _approach_unmet(self.direction, world, side)
+            direction, _notes = _own_frame(self.direction, item, world)
+            unmet += _approach_unmet(direction, world, side)
         return unmet
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
@@ -561,53 +766,49 @@ class Approach(Primitive):
             return None if self.side == AUTO else self.side
         return _resolved_side(self.side, world, p)
 
-    def _geometry(self, world: WorldView):
-        item, p, _r, unmet = _locate(world, self.object)
-        if unmet:
-            return None, None, None, unmet
-        side = _resolved_side(self.side, world, p)
-        d, unmet = _resolve(self.direction, world, side)
-        if unmet:
-            return None, None, None, unmet
-        r_tcp = ap.grasp_orientation(side, d, item, world.frames,
-                                     roll_rad=self.roll_rad)
-        return side, ap.standoff_pose(p, d, self.standoff_m), r_tcp, []
+    def _meet(self, world: WorldView):
+        return _meet(world, self.object, self.side, self.direction,
+                     self.contact, self.standoff_m)
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
-        side, p_stand, r_tcp, _ = self._geometry(world)
-        notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
-        notes += _roll_note(self.roll_rad)
-        waypoints = [Waypoint("standoff", p_stand, r_tcp, allow_via=True)]
-        steps, error, detours = _solve(self, world, kin, side, waypoints)
-        if error is not None:
-            return error
+        meet, unmet = self._meet(world)
+        if unmet:
+            return self._unmet_error(unmet, self.resolve_side(world) or "")
+        found = _first_roll_that_plans(
+            self, world, kin, meet,
+            lambda r: [Waypoint("standoff", meet.p_stand, r, allow_via=True)])
+        if found[0] is None:
+            return found[1]
+        roll, waypoints, steps, detours, _extra = found
         # The OPEN STROKE IS IN THE PLAN. The docstring promised an open hand
         # and the plan emitted joints only, so "approach" left the jaws
         # wherever the last verb put them and the next Grasp descended with a
         # closed hand (R2). The stroke goes first, before the arm moves, and
         # the executor waits for it to finish.
-        all_steps = ((GripStep(side, 0.0, "soft", 0),) + tuple(steps)
+        all_steps = ((GripStep(meet.side, 0.0, "soft", 0),) + tuple(steps)
                      + (SettleStep(SETTLE_S),))
-        return _plan(self, world, kin, side, waypoints, all_steps,
-                     notes + tuple(detours)
+        return _plan(self, world, kin, meet.side, waypoints, all_steps,
+                     _meet_notes(self, meet, roll) + tuple(detours)
                      + ("the jaws are opened before the arm moves, and the "
-                        "stroke is waited for",))
+                        "stroke is waited for",),
+                     reference=meet.spec.reference.name)
 
     def verifier(self, world0: WorldView) -> Verifier:
-        side, p_stand, r_tcp, unmet = self._geometry(world0)
+        meet, unmet = self._meet(world0)
         if unmet:
             return V.Never(self.name(), world0,
                            f"approach cannot be verified: {unmet[0]}")
         # Position AND orientation: the next verb descends along the wrist
         # this one was supposed to establish, so verifying the point alone
         # certifies half of what the step is for (R13).
-        return V.All(self.name(), world0, [
-            V.ToolAt(self.name(), world0, side, p_stand),
-            V.ToolFacing(self.name(), world0, side, r_tcp),
-            V.NotHolding(self.name(), world0, side)])
+        return _by_roll(self.name(), world0, meet, lambda r_tcp: V.All(
+            self.name(), world0, [
+                V.ToolAt(self.name(), world0, meet.side, meet.p_stand),
+                V.ToolFacing(self.name(), world0, meet.side, r_tcp),
+                V.NotHolding(self.name(), world0, meet.side)]))
 
 
 # --------------------------------------------------------------------------- #
@@ -619,10 +820,12 @@ class Grasp(Primitive):
     """Open, travel along a direction onto the object, close on it.
 
     The geometry is ``d1-inference``'s ``topdown.grasp_from_above`` generalised
-    to any direction: hover, straight travel, close. What stayed in
-    d1-inference is the part that needs a camera — the abnormal-descent gate —
-    and the torque verdict is read back here through
-    :class:`~manipulation_kit.world.GripperView`.
+    to any direction and either contact (:mod:`.grasp_geometry`): hover at the
+    standoff, straight travel, close. ``contact="tip"`` takes the object
+    between the finger TIPS rather than the pad centres — how a card lying
+    flat on a table is picked up. What stayed in d1-inference is the part that
+    needs a camera — the abnormal-descent gate — and the torque verdict is
+    read back here through :class:`~manipulation_kit.world.GripperView`.
     """
 
     VERB = "grasp"
@@ -631,171 +834,130 @@ class Grasp(Primitive):
     direction: Direction = DOWN
     standoff_m: float = DEFAULT_STANDOFF_M
     grip: str = "soft"
-    roll_rad: float = 0.0       # planner-only, see Approach.roll_rad
+    #: WHERE on the hand the object is taken: "pad" (the pad centre, default)
+    #: or "tip" (the finger tips — flat things off a surface)
+    contact: str = gg.PAD.name
 
     def __post_init__(self) -> None:
         _coerce_direction(self)
+
+    def _approach(self) -> Approach:
+        return Approach(object=self.object, side=self.side,
+                        direction=self.direction, standoff_m=self.standoff_m,
+                        contact=self.contact)
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
         if unmet:
             return unmet
-        unmet += Approach(object=self.object, side=self.side,
-                          direction=self.direction,
-                          standoff_m=self.standoff_m).preconditions(world)
-        item = world.find(self.object)
-        if item is None or any(u.code in (FRAME_STALE, UNKNOWN_FRAME)
-                               for u in unmet):
+        unmet += self._approach().preconditions(world)
+        if any(u.code in (NO_SUCH_OBJECT, FRAME_STALE, UNKNOWN_FRAME,
+                          BAD_ARGUMENT) for u in unmet):
+            # nothing below can be computed without the object and a
+            # direction that resolves
             return unmet
-        side = self.resolve_side(world)
-        if side is None:
-            return unmet
-        if unmet:
-            # a direction that does not resolve (or points up) has already
-            # said so; nothing below can be computed without it
-            if any(u.code == BAD_ARGUMENT for u in unmet):
-                return unmet
-        try:
-            d = self.direction.resolve(world, side=side)
-            r_tcp = ap.grasp_orientation(side, d, item, world.frames,
-                                         roll_rad=self.roll_rad)
-            width = ap.grasp_width(item, world.frames, r_tcp)
-            flat = (ap.is_descent(d)
-                    and ap.grasps_above_its_top(item, world.frames))
-            tall = item.vertical_extent(world.frames)
-        except FrameError:
-            return unmet
-        if flat:
-            unmet.append(Unmet(
-                OBJECT_TOO_FLAT,
-                f"{self.object} stands {tall * 1000:.0f} mm tall and the pads "
-                f"reach {ap.TIP_BELOW_TOOL_M * 1000:.0f} mm past the tool "
-                f"point, so a top-down grasp would close above it with the "
-                f"tips still on the surface",
-                "come in from the side, or use a different tool",
-                {"height_m": round(tall, 4)}))
-        # The hand in front of us, as its executor measured it; the nominal
-        # description only when nothing measured it.
-        hand = world.gripper(side)
-        opening = getattr(hand, "open_gap_m", None)
-        graspable = ap.graspable_width_m(opening)
-        if width > graspable:
-            # ALONG THE JAW AXIS, not the object's smallest side. A
-            # 100x80x40 mm box passed the old min-extent test on its 40 mm
-            # edge while this grasp closes across 80 mm of it (R9).
-            unmet.append(Unmet(
-                OBJECT_TOO_WIDE,
-                f"{self.object} presents {width * 1000:.0f} mm across the jaw "
-                f"axis of this {self.direction.label()} grasp, and the driven jaws take "
-                f"{graspable * 1000:.0f} mm "
-                f"(opening {(ap.JAW_OPEN_M if opening is None else opening) * 1000:.0f} mm, "
-                f"{ap.JAW_CLEARANCE_M * 1000:.0f} mm clearance per side)",
-                "approach it across a narrower face, or use a different tool",
-                {"presented_width_m": round(width, 4),
-                 "graspable_width_m": round(graspable, 4)}))
+        meet, missing = self._meet(world)
+        if missing or meet is None:
+            return unmet + [u for u in missing if u not in unmet]
+        problems = [gg.fit_problems(meet.item, world.frames,
+                                    meet.spec.with_roll(r), meet.r_tcp(r),
+                                    open_gap_m=meet.open_gap_m,
+                                    support=meet.support)
+                    for r in meet.rolls]
+        if all(problems):
+            # no candidate roll fits: report the SQUARED one, every reason
+            unmet += problems[0]
         return unmet
 
-    def _geometry(self, world: WorldView):
-        item, p, _r, unmet = _locate(world, self.object)
-        if unmet:
-            return None, None, None, None, unmet
-        side = _resolved_side(self.side, world, p)
-        d, unmet = _resolve(self.direction, world, side)
-        if unmet:
-            return None, None, None, None, unmet
-        r_tcp = ap.grasp_orientation(side, d, item, world.frames,
-                                     roll_rad=self.roll_rad)
-        # The tool point is the pad CENTRE and the pads reach 29 mm past it,
-        # so a top-down grasp on the object's centre asks for the finger tips
-        # under the table. ``grasp_point`` lifts it just clear — from the
-        # RESOLVED pose, which is the whole of R1: it used to read ``item.p``
-        # and hand a table-frame coordinate to an IK that reads base frame.
-        p_grasp, _raised = ap.grasp_point(item, d, world.frames)
-        return (side, ap.standoff_pose(p_grasp, d, self.standoff_m),
-                p_grasp, r_tcp, [])
+    def _meet(self, world: WorldView):
+        return _meet(world, self.object, self.side, self.direction,
+                     self.contact, self.standoff_m)
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
-        return Approach(object=self.object, side=self.side,
-                        direction=self.direction,
-                        roll_rad=self.roll_rad).resolve_side(world)
+        return self._approach().resolve_side(world)
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
-        side, p_stand, p_grasp, r_tcp, _ = self._geometry(world)
-        d = self.direction.resolve(world, side=side)
-        waypoints = [
-            # getting to the standoff is free-space transit: a detour is a
-            # better answer than a refusal. THE TOOL IS CHECKED THERE, before
-            # the descent: an arm that starts the 80 mm travel from 25 mm off
-            # to the side arrives 25 mm off to the side, and the descent is
-            # the one leg that may not be re-routed (F17).
-            Waypoint("standoff", p_stand, r_tcp, allow_via=True, arrive=True),
-            # the descent is NOT. Its straightness along the approach axis is
-            # the whole promise of the verb, and a 25 cm clearance hop that
-            # ends on the grasp point has left the corridor (R10). The tool is
-            # checked here too — this is the pose the jaws close on.
-            Waypoint("grasp", p_grasp, r_tcp, allow_via=False, arrive=True)]
-        item = world.find(self.object)
-        raised = ap.grasp_point(item, d, world.frames)[1]
-        p_obj = item.pose_in_base(world.frames)[0]
+        meet, unmet = self._meet(world)
+        if unmet:
+            return self._unmet_error(unmet, self.resolve_side(world) or "")
+        side = meet.side
+        floor, _ = gg.descent_floor(meet.item, world.frames, meet.support)
+        descends = float(meet.d[2]) < -1e-3
+
+        def waypoints_for(r_tcp):
+            return [
+                # getting to the standoff is free-space transit: a detour is
+                # a better answer than a refusal. THE TOOL IS CHECKED THERE,
+                # before the descent: an arm that starts the travel from
+                # 25 mm off to the side arrives 25 mm off to the side, and the
+                # descent is the one leg that may not be re-routed (F17).
+                Waypoint("standoff", meet.p_stand, r_tcp, allow_via=True,
+                         arrive=True),
+                # the descent is NOT. Its straightness along the approach
+                # axis is the whole promise of the verb, and a 25 cm
+                # clearance hop that ends on the grasp point has left the
+                # corridor (R10). The tool is checked here too — this is the
+                # pose the jaws close on.
+                Waypoint("grasp", meet.p_grasp, r_tcp, allow_via=False,
+                         arrive=True)]
+
+        def achieved(steps, r_tcp):
+            # VALIDATE THE ACHIEVED DESCENT, not the ideal waypoint. The path
+            # window is 12 mm and the support margin is 3 mm, so a solver that
+            # plateaus low lands the finger tips in the table while every
+            # waypoint coordinate still reads correct (F5's ten failures in
+            # ten). Measured against the SAME floor the grasp point used.
+            if not descends or not steps:
+                return None, ()
+            p_tool = _achieved_tool(kin, world, side, steps[-1].q)
+            if p_tool is None:
+                return None, ()
+            clearance = gg.achieved_clearance(p_tool, r_tcp, floor)
+            if clearance < ap.MIN_ACHIEVED_CLEARANCE_M:
+                return PlanError(
+                    UNSUPPORTED_GEOMETRY,
+                    f"the {side} arm's SOLVED descent leaves the finger tips "
+                    f"{clearance * 1000:+.1f} mm above what {self.object} "
+                    f"stands on, under the "
+                    f"{ap.MIN_ACHIEVED_CLEARANCE_M * 1000:.0f} mm this plan "
+                    f"has to keep. The waypoint asked for "
+                    f"{ap.SUPPORT_CLEARANCE_M * 1000:.0f} mm; the IK did not "
+                    f"get there, and the fingers would jam on the surface "
+                    f"before the jaws close",
+                    waypoint_index=1, waypoint_label="grasp",
+                    residual_m=float(ap.MIN_ACHIEVED_CLEARANCE_M - clearance),
+                    stage="achieved_clearance",
+                    primitive=self.name(), side=side), ()
+            return None, (f"the solved descent keeps the pad tips "
+                          f"{clearance * 1000:.1f} mm off the surface",)
+
+        found = _first_roll_that_plans(self, world, kin, meet, waypoints_for,
+                                       check=achieved)
+        if found[0] is None:
+            return found[1]
+        roll, waypoints, steps, detours, clearance_notes = found
         # The jaws open BEFORE the arm moves and close only once the tool is on
-        # the object: an open-on-arrival stroke sweeps the pads through whatever
-        # is beside it.
-        steps, error, detours = _solve(self, world, kin, side, waypoints)
-        if error is not None:
-            return error
-        # VALIDATE THE ACHIEVED DESCENT, not the ideal waypoint. The path
-        # window is 12 mm and the support margin is 3 mm, so a solver that
-        # plateaus low lands the pad tips in the table while every waypoint
-        # coordinate still reads correct (R: "validate achieved clearance,
-        # not only ideal waypoint coordinates"; F5's ten failures in ten).
-        if ap.is_descent(d) and steps:
-            achieved = _achieved_tool(kin, world, side, steps[-1].q)
-            if achieved is not None:
-                clearance = ap.achieved_clearance(item, world.frames, achieved)
-                if clearance < ap.MIN_ACHIEVED_CLEARANCE_M:
-                    return PlanError(
-                        UNSUPPORTED_GEOMETRY,
-                        f"the {side} arm's SOLVED descent leaves the pad tips "
-                        f"{clearance * 1000:+.1f} mm above what {self.object} "
-                        f"stands on, under the "
-                        f"{ap.MIN_ACHIEVED_CLEARANCE_M * 1000:.0f} mm this "
-                        f"plan has to keep. The waypoint asked for "
-                        f"{ap.SUPPORT_CLEARANCE_M * 1000:.0f} mm; the IK did "
-                        f"not get there, and the fingers would jam on the "
-                        f"surface before the jaws close",
-                        waypoint_index=1, waypoint_label="grasp",
-                        residual_m=float(ap.MIN_ACHIEVED_CLEARANCE_M - clearance),
-                        stage="achieved_clearance",
-                        primitive=self.name(), side=side)
-                notes_clearance = (f"the solved descent keeps the pad tips "
-                                   f"{clearance * 1000:.1f} mm off the surface",)
-            else:
-                notes_clearance = ()
-        else:
-            notes_clearance = ()
+        # the object: an open-on-arrival stroke sweeps the pads through
+        # whatever is beside it.
         all_steps = ((GripStep(side, 0.0, self.grip, 0),) + tuple(steps)
                      + (GripStep(side, 1.0, self.grip, 1),
                         SettleStep(SETTLE_S)))
-        notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
-        notes += _roll_note(self.roll_rad)
-        if raised:
-            notes += (f"grasping {(p_grasp[2] - float(p_obj[2])) * 1000:.0f} mm "
-                      f"above the object's centre so the pad tips clear what "
-                      f"it is standing on",)
         return _plan(self, world, kin, side, waypoints, all_steps,
-                     notes + tuple(detours) + notes_clearance)
+                     _meet_notes(self, meet, roll) + tuple(detours)
+                     + tuple(clearance_notes),
+                     reference=meet.spec.reference.name)
 
     def verifier(self, world0: WorldView) -> Verifier:
-        side, _stand, _p, r_tcp, unmet = self._geometry(world0)
+        meet, unmet = self._meet(world0)
         if unmet:
             return V.Never(self.name(), world0,
                            f"grasp cannot be verified: {unmet[0]}")
-        item = world0.find(self.object)
-        return V.Holding(self.name(), world0, side, item,
-                         jaw_axis=ap.jaw_axis(r_tcp))
+        return _by_roll(self.name(), world0, meet, lambda r_tcp: V.Holding(
+            self.name(), world0, meet.side, meet.item,
+            jaw_axis=ap.jaw_axis(r_tcp)))
 
 
 # --------------------------------------------------------------------------- #
@@ -906,8 +1068,8 @@ class Carry(Primitive):
         unmet += found
         _dest, _dest_p, _dr, dfound = _locate(world, self.to, "destination")
         unmet += dfound
-        unmet += _upright_geometry(world, self.object)
-        unmet += _upright_geometry(world, self.to, "destination")
+        unmet += support_geometry_known(world, self.object)
+        unmet += support_geometry_known(world, self.to, "destination")
         if unmet:
             return unmet
         _side, held = _holder_of(world, self.object, self.side)

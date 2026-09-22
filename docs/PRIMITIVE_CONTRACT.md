@@ -69,7 +69,9 @@ take, so the pads meet two corners and stall holding nothing.
 
 **The tool point is the pad CENTRE, and the pads reach 29 mm past it.** A
 top-down `Grasp` is therefore raised to keep the finger tips clear of whatever
-the object is standing on (`orientation.grasp_point`, `SUPPORT_CLEARANCE_M` 3 mm)
+the object is standing on — the MEASURED surface under it when one is known,
+its own underside only when not (`grasp_geometry.grasp_pose`,
+`SUPPORT_CLEARANCE_M` 3 mm)
 — descending to a 40 mm cube's centre asks for the tips 9 mm *under the
 table*, which jams the fingers and stops the arm 17 mm high and 19 mm to the
 side. The pads are 58 mm deep, so the raised grasp still has 37 mm of pad

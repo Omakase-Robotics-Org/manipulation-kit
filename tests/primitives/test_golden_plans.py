@@ -1,43 +1,47 @@
-"""Golden plans: the alias directions reproduce the pre-Direction plans.
+"""Golden plans: every verb the example scenes exercise, planned and pinned.
 
-``tests/data/golden_plans/pre_direction_e1dce97.json`` was captured on
-``feat/perceive-head`` @ ``e1dce97`` — before 0.16.0 replaced
-``approach: str`` + ``jaw_turn_deg`` with ``direction: Direction`` +
-``roll_rad`` — by planning every verb the example scenes exercise with the
-OLD API (each approach name x each jaw turn, both arms, the whole
-Approach->Place chain, the corrections) and recording the plans. Each case is
-stored with the arguments it was captured with (``captured_as``) and the
-arguments the NEW API takes for the same request (``args``: the alias with the
-same vector, ``roll_rad = radians(jaw_turn_deg)``).
+``tests/data/golden_plans/plans.json`` holds a set of planning requests —
+every grasp direction for every object, both arms and ``auto``, the whole
+Approach->Place chain, the corrections — in the scenes the examples use, and
+the plan (or the typed refusal) the kit produced for each. This test replays
+every case and requires the waypoints, the joint path (per-waypoint step
+count, last posture and posture sum), the gripper strokes, the notes and the
+refusals to agree.
 
-This test replays every case with the new API and requires the waypoints,
-the joint path (per-waypoint step count, last posture and posture sum), the
-gripper strokes and the refusals to agree to 1e-9. It is the evidence that
-the vocabulary change changed no motion.
+HISTORY. Captured on ``feat/perceive-head`` @ ``e1dce97`` with the OLD API
+(``approach`` x ``jaw_turn_deg``) and replayed identically by 0.16.0 step 2
+(``Direction``): that was the proof the vocabulary change moved nothing. Each
+case still records the old arguments it was first captured with
+(``captured_as``). Step 3 (grasp geometry) then changed the geometry ON
+PURPOSE and regenerated it — the standoff is measured from the object's
+silhouette, the descent floor is the measured support, the roll is the kit's
+one sweep (so the old per-``jaw_turn`` cases collapsed into one each) — and
+added the cases the old set could not pin: a side approach that PLANS (the
+old set's 70 side cases were all refusals, so it could not tell ``left`` from
+``right``), a fingertip grasp, a tilted object, an object declared into its
+table, and a tall cup. The per-number reasons are in that commit.
 
 WHERE 1e-9 HOLDS. The joint path is the output of an iterative IK solve, and
 its last bits depend on the numeric stack it ran on: the same code planned
 with numpy 2.0.2 / scipy 1.13.1 (CI's Python 3.9 job) takes 26 knots where
-the capture took 18 on one chain (case 86), and on another CI runner a nudge
-that the guard refuses at its first knot here walks 15 mm first (case 45).
-Both are knife edges of the solver, not of the vocabulary: e1dce97 itself,
-captured on numpy 2.0.2 / scipy 1.13.1, disagrees with this file on 14 of
-the 229 cases and the new API reproduces THAT capture to 1e-9 as well. So
-the file records the stack it was captured on (``numeric_stack``) and
+the capture took 18 on one chain, and on another CI runner a nudge that the
+guard refuses at its first knot here walks 15 mm first. Both are knife edges
+of the solver, not of the geometry. So the file records the stack it was
+captured on (``numeric_stack``) and
 
 * on that stack every field is compared at 1e-9 (the full proof);
 * elsewhere every verdict, refusal reason, side, stage, label, stroke and
   note must still be IDENTICAL, waypoints agree to ``PORTABLE_TOL`` (a later
   link of a chain starts from the posture the solver reached, so its
-  waypoints inherit the solver's last bits: 7e-5 m on case 86), and the
-  solver's own path is compared by its final posture only, to
-  ``PORTABLE_Q_TOL`` (knot counts, posture sums and a refusal's residual are
-  the solver's, not the plan's). A vocabulary mistake — a mirrored axis, a
-  90 deg roll — moves these by centimetres and quarter turns.
+  waypoints inherit the solver's last bits), and the solver's own path is
+  compared by its final posture only, to ``PORTABLE_Q_TOL`` (knot counts,
+  posture sums and a refusal's residual are the solver's, not the plan's). A
+  geometry mistake — a mirrored axis, a 90 deg roll — moves these by
+  centimetres and quarter turns.
 
-Deliberately updating it (a later step that changes grasp geometry on
-purpose): ``python tests/primitives/test_golden_plans.py --regenerate`` writes
-the current plans into the file; review the diff and say why in the commit.
+Deliberately updating it (a later step that changes geometry on purpose):
+``python tests/primitives/test_golden_plans.py --regenerate`` writes the
+current plans into the file; review the diff and say why in the commit.
 
 The old names map onto aliases BY VECTOR (``alias_mapping`` in the file): the
 old side names said where the hand came FROM, a Direction says where it
@@ -55,7 +59,7 @@ from pathlib import Path
 import pytest
 
 GOLDEN = (Path(__file__).resolve().parents[1] / "data" / "golden_plans"
-          / "pre_direction_e1dce97.json")
+          / "plans.json")
 TOL = 1e-9
 #: off the capture stack: waypoints (m, quaternion components) ...
 PORTABLE_TOL = 1e-3
@@ -63,9 +67,6 @@ PORTABLE_TOL = 1e-3
 PORTABLE_Q_TOL = 1e-2
 #: fields that are the IK solver's path rather than the plan's geometry
 SOLVER_PATH_KEYS = ("n", "q_sum", "residual_m")
-#: notes the new API adds that the old one did not (the planner reporting the
-#: roll it used, since a model no longer sets one)
-NEW_NOTE_PREFIXES = ("jaws rolled ",)
 
 
 # --------------------------------------------------------------------------- #
@@ -86,14 +87,17 @@ def _objects(items):
             extra["interior"] = item["interior"]
         if kind is ContainerView and "rim_height_m" in item:
             extra["rim_height_m"] = item["rim_height_m"]
-        out.append(kind(item["name"], p=item["p"], size=item["size"],
-                        r=R.from_euler("z", float(item.get("yaw_rad", 0.0))),
+        if "euler_xyz_rad" in item:
+            r = R.from_euler("xyz", [float(a) for a in item["euler_xyz_rad"]])
+        else:
+            r = R.from_euler("z", float(item.get("yaw_rad", 0.0)))
+        out.append(kind(item["name"], p=item["p"], size=item["size"], r=r,
                         frame_id=item.get("frame_id", "base"),
                         colour=item.get("colour"), **extra))
     return out
 
 
-def _world(kin, items):
+def _world(kin, items, open_gap_m=None):
     from manipulation_kit.primitives.orientation import tool_from_link7
     from manipulation_kit.world import ArmView, GripperView, WorldView
     arms, grippers = [], []
@@ -101,7 +105,8 @@ def _world(kin, items):
         p, r = tool_from_link7(*kin.ee_pose(side))
         arms.append(ArmView(side, joints=kin.joints(side), tool_p=p, tool_r=r,
                             mode="position"))
-        grippers.append(GripperView(side, 0.0, holding=False, jaw_gap_m=0.04))
+        grippers.append(GripperView(side, 0.0, holding=False, jaw_gap_m=0.04,
+                                    open_gap_m=open_gap_m))
     return WorldView.of(_objects(items), arms=arms, grippers=grippers)
 
 
@@ -144,8 +149,7 @@ def _result(result):
                            "allow_via": bool(w.allow_via),
                            "arrive": bool(w.arrive)} for w in result.waypoints],
             "steps": _steps(result.steps),
-            "notes": [n for n in result.notes
-                      if not n.startswith(NEW_NOTE_PREFIXES)]}
+            "notes": list(result.notes)}
 
 
 def replay(case, kin, world):
@@ -219,12 +223,45 @@ def _load():
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
-def test_alias_directions_reproduce_the_pre_direction_plans(d1_arm):
+def _worlds(kin, golden):
+    """One world per scene, with the hand opening the scene declares (the
+    committed d1-2 scene carries the 60.5 mm d1-2 measures)."""
+    hands = golden.get("scene_hand_open_gap_m", {})
+    return {name: _world(kin, items, hands.get(name))
+            for name, items in golden["scenes"].items()}
+
+
+#: the set may not shrink below this (it is the evidence, not a sample)
+MIN_CASES = 150
+MIN_PLANNED = 60
+
+
+def test_the_golden_set_pins_a_planned_side_approach_both_ways():
+    """The old set could not tell ``left`` from ``right``: every one of its
+    side cases was a refusal, so swapping the two still passed. These cases
+    PLAN, and only with the vector the alias names."""
     golden = _load()
-    worlds = {name: _world(d1_arm, items)
-              for name, items in golden["scenes"].items()}
+    side = [c for c in golden["cases"]
+            if c["verb"] in ("approach", "grasp")
+            and c["args"].get("direction") in ("left", "right")]
+    planned = {(c["args"]["direction"], c["result"].get("side"))
+               for c in side if c["result"]["kind"] == "plan"}
+    assert ("left", "right") in planned and ("right", "left") in planned, planned
+    for case in side:
+        if case["result"]["kind"] != "plan":
+            continue
+        quat = case["result"]["waypoints"][-1]["quat_xyzw"]
+        from scipy.spatial.transform import Rotation as R
+        axis = R.from_quat(quat).as_matrix()[:, 2]
+        want = {"left": (0, 1, 0), "right": (0, -1, 0)}[case["args"]["direction"]]
+        assert axis == pytest.approx(want, abs=1e-6), case["args"]
+
+
+def test_every_golden_case_replays(d1_arm):
+    golden = _load()
+    worlds = _worlds(d1_arm, golden)
     planned = sum(1 for c in golden["cases"] if c["result"]["kind"] != "refusal")
-    assert len(golden["cases"]) >= 200 and planned >= 75, \
+    assert len(golden["cases"]) >= MIN_CASES and planned >= MIN_PLANNED, \
         "the golden set shrank; it is the evidence, not a sample"
     # off the capture stack, only the solver's own path is loosened (above)
     portable = golden.get("numeric_stack") != numeric_stack()
@@ -269,8 +306,7 @@ def _regenerate() -> None:  # pragma: no cover - maintenance entry point
     kin = get_arm_kinematics("d1/arm", quiet=True)
     for side in ("left", "right"):
         kin.set_joints(side, kin.home(side))
-    worlds = {name: _world(kin, items)
-              for name, items in golden["scenes"].items()}
+    worlds = _worlds(kin, golden)
     for case in golden["cases"]:
         case["result"] = rounded(replay(case, kin, worlds[case["scene"]]))
     golden["numeric_stack"] = numeric_stack()

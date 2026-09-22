@@ -29,6 +29,13 @@ Link7, rpy ``(1.5708, -1.5708, 0)``), the gripper's ``base_link`` IS that TCP
 frame, its +z is the approach axis and its x is the jaw-gap axis. The tool
 POINT is the pad centre, 100 mm along +z — MEASURED on d1-3 2026-09-16, which
 is also why it is 100 mm here and 108.5 mm in older CAD-derived code.
+
+WHERE on the hand a grasp makes contact (the pad centre or the fingertips),
+how far the fingers reach past that point, and everything that follows from
+it — the grasp point, the descent floor, the standoff, the fit test and the
+one roll sweep — is :mod:`.grasp_geometry`. Every waypoint is still expressed
+as the pose of the pad centre (:data:`TOOL_Z_M`); a fingertip grasp is
+converted onto it there, once.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ from scipy.spatial.transform import Rotation as R
 
 from ..hands.d1.parallel_gripper.description import (DRIVEN_OPEN_GAP_M,
                                                      PAD_CENTRE_Z_M,
+                                                     PAD_CLEARANCE_PER_SIDE_M,
                                                      PAD_TIP_Z_M)
 from ..world import FrameGraph, ObjectView
 
@@ -51,22 +59,19 @@ TCP_P = np.array([0.0, -0.087, 0.0])
 TCP_R_EULER_XYZ: Tuple[float, float, float] = (1.5708, -1.5708, 0.0)
 TCP_R = R.from_euler("xyz", TCP_R_EULER_XYZ)
 
-#: Jaw pocket along the TCP frame's +z from the flange [m]. The grasp happens
-#: HERE, not at the pad tips (129 mm, the registered TCP) and not at the flange.
+#: The TOOL POINT every waypoint is expressed against, along the TCP frame's
+#: +z from the flange [m]: the pad centre. It is ``grasp_geometry.PAD``'s
+#: ``offset_z_m``; a fingertip grasp (``grasp_geometry.TIP``, 129 mm) is
+#: converted onto this point rather than moving it, so the planner, the
+#: tool-arrival gate and the executors keep ONE tool point.
 TOOL_Z_M = PAD_CENTRE_Z_M
 
-#: Largest gap the DRIVEN gripper reaches (51.96 mm measured on d1-3, against
-#: the 64 mm the mechanism could reach at a higher OPEN_RAD). Planning uses the
-#: driven number: an object sized against the mechanism's travel does not fit
-#: the gripper that is actually on the robot.
-JAW_OPEN_M = DRIVEN_OPEN_GAP_M
-#: clearance per side that a graspable object must leave inside that opening
-JAW_CLEARANCE_M = 0.004
+#: clearance per side a grasped object leaves inside the opening at the PADS
+#: (``grasp_geometry.PAD.clearance_per_side_m``); also the verifiers' grip
+#: width tolerance
+JAW_CLEARANCE_M = PAD_CLEARANCE_PER_SIDE_M
 
-#: How far the pad TIP reaches past the tool point, 29 mm. The tool point is
-#: the pad CENTRE; the fingers keep going.
-TIP_BELOW_TOOL_M = PAD_TIP_Z_M - PAD_CENTRE_Z_M
-#: ...and how much daylight the tips must keep over whatever the object is
+#: How much daylight the finger TIPS must keep over whatever the object is
 #: standing on. MEASURED, 2026-09-19: a top-down grasp that put the tool point
 #: on a 40 mm cube's CENTRE asked for the pad tips 9 mm BELOW the wagon top.
 #: The fingers jammed on the table, the arm stopped 17 mm high and 19 mm off
@@ -107,7 +112,7 @@ PADS_DOWN_WXYZ_BY_SIDE: Dict[str, Tuple[float, float, float, float]] = {
 VERTICAL_COS = 0.9
 
 
-def tool_revision() -> str:
+def tool_revision(reference: Optional[str] = None) -> str:
     """A fingerprint of the TOOL GEOMETRY every waypoint is expressed against.
 
     The tool point is the pad centre and the jaw gap is the driven opening;
@@ -121,9 +126,18 @@ def tool_revision() -> str:
     robot's hand opens to is a measurement published by its executor
     (``HandState.open_gap_m``), and which firmware produced that measurement
     is bound separately (``PlanBinding.firmware_spec``).
+
+    ``reference`` names WHERE on the hand the plan makes contact
+    (``grasp_geometry.GraspReference.name``: ``"pad"`` or ``"tip"``). A grasp
+    plan records it, so a fingertip plan — whose waypoints put the tips, not
+    the pad centres, on the object — cannot be replayed where a pad plan is
+    expected: :meth:`~.types.PlanBinding.drift` compares every field BOTH
+    revisions state. An executor states only the hand (no reference), so it
+    runs either kind of plan for the hand it drives.
     """
-    return (f"pad_centre={PAD_CENTRE_Z_M:.4f};pad_tip={PAD_TIP_Z_M:.4f};"
+    base = (f"pad_centre={PAD_CENTRE_Z_M:.4f};pad_tip={PAD_TIP_Z_M:.4f};"
             f"driven_open={DRIVEN_OPEN_GAP_M:.5f}")
+    return base if reference is None else f"{base};reference={reference}"
 
 
 def _unit(d) -> np.ndarray:
@@ -137,23 +151,6 @@ def _unit(d) -> np.ndarray:
 def is_descent(d_base) -> bool:
     """Does the tool travel DOWN onto the object (so its tips meet the support)?"""
     return float(_unit(d_base)[2]) < -VERTICAL_COS
-
-
-#: The widest object the driven jaws can take, clearance included.
-GRASPABLE_WIDTH_M = JAW_OPEN_M - 2 * JAW_CLEARANCE_M
-
-
-def graspable_width_m(open_gap_m: Optional[float] = None) -> float:
-    """What the jaws can close on, for a hand that opens to ``open_gap_m``.
-
-    ``None`` is the hand description's nominal driven opening
-    (:data:`GRASPABLE_WIDTH_M`); a measured gap — the executor's
-    ``HandState.open_gap_m``, carried on ``GripperView.open_gap_m`` — replaces
-    it. The clearance per side is the same either way.
-    """
-    if open_gap_m is None:
-        return GRASPABLE_WIDTH_M
-    return float(open_gap_m) - 2 * JAW_CLEARANCE_M
 
 
 def jaw_axis(r_tcp: R) -> np.ndarray:
@@ -175,11 +172,6 @@ def grasp_width(obj: ObjectView, frames: FrameGraph, r_tcp: R) -> float:
     the number that says so.
     """
     return obj.extent_along(jaw_axis(r_tcp), frames)
-
-
-def fits_jaws(obj: ObjectView, frames: FrameGraph, r_tcp: R) -> bool:
-    """Can the driven gripper close on this, ALONG THE JAW AXIS it will use?"""
-    return grasp_width(obj, frames, r_tcp) <= GRASPABLE_WIDTH_M
 
 
 def tcp_from_tool(p_tool, r_tcp: R) -> np.ndarray:
@@ -317,71 +309,6 @@ def grasp_orientation(side: str, d_base, obj: Optional[ObjectView] = None,
             if np.linalg.norm(cross) > 1e-6:
                 gap = cross / np.linalg.norm(cross)
     return align_tool(side, d, roll_to=gap, roll_rad=roll_rad)
-
-
-def lowest_top_down_tool_z(obj: ObjectView, frames: FrameGraph) -> float:
-    """The lowest tool-point z a top-down grasp of ``obj`` may command.
-
-    A parallel gripper cannot put its finger tips through the table. The
-    object's own underside IS the table here — it is standing on it — so the
-    constraint needs no surface lookup: tips at ``bottom + SUPPORT_CLEARANCE``,
-    tool point ``TIP_BELOW_TOOL_M`` above that.
-
-    RESOLVED, both halves. The underside comes from the base-frame pose and
-    the vertical extent from the base-frame orientation: an object measured in
-    a table frame that sits 30 mm above the base has its underside 30 mm
-    higher, and a yawed box is not taller (R1/R9).
-    """
-    return obj.bottom_z(frames) + TIP_BELOW_TOOL_M + SUPPORT_CLEARANCE_M
-
-
-def grasp_point(obj: ObjectView, d_base, frames: FrameGraph
-                ) -> Tuple[np.ndarray, bool]:
-    """Where the TOOL POINT goes to grasp ``obj``, and whether it was raised.
-
-    The object's RESOLVED base-frame centre, except for a descent
-    (:func:`is_descent`), where
-    the finger tips would otherwise be driven into whatever the object is
-    standing on: there the point is lifted to :func:`lowest_top_down_tool_z`.
-    The pads are 58 mm deep, so a 40 mm cube grasped 12 mm above its centre
-    still has 37 mm of pad against its side — the grasp does not get worse, it
-    gets possible.
-
-    ``frames`` is not optional: reading ``obj.p`` here produced a base-frame
-    command from a table-frame coordinate — a probe with a 0.30/0.20 m table
-    offset asked the IK for (0.08, 0.05, 0.057) for an object at
-    (0.38, 0.25, 0.05) (R1).
-    """
-    p = np.asarray(obj.pose_in_base(frames)[0], dtype=float).reshape(3).copy()
-    if not is_descent(d_base):
-        return p, False
-    floor = lowest_top_down_tool_z(obj, frames)
-    if floor <= p[2]:
-        return p, False
-    p[2] = floor
-    return p, True
-
-
-def achieved_clearance(obj: ObjectView, frames: FrameGraph, p_tool) -> float:
-    """How far the pad TIPS end up above what ``obj`` stands on, for a solved
-    top-down tool point. Negative means the fingers are in the surface."""
-    tips = float(np.asarray(p_tool, dtype=float)[2]) - TIP_BELOW_TOOL_M
-    return tips - obj.bottom_z(frames)
-
-
-def grasps_above_its_top(obj: ObjectView, frames: FrameGraph) -> bool:
-    """Is this object too FLAT for the fingers to reach beside it at all?
-
-    When the lowest legal tool point is above the object's top face, the pads
-    would close over thin air with the tips still on the table. A refusal is
-    the honest answer; a grasp that cannot touch the object is not.
-    """
-    return lowest_top_down_tool_z(obj, frames) > obj.top_face_z(frames)
-
-
-def standoff_pose(grasp_p, d_base, standoff_m: float) -> np.ndarray:
-    """Where the tool point waits before travelling along ``d_base`` (base)."""
-    return np.asarray(grasp_p, dtype=float) - _unit(d_base) * float(standoff_m)
 
 
 def choose_side(obj_p_base, *, available=("left", "right")) -> str:

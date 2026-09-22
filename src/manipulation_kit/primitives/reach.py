@@ -224,13 +224,16 @@ def _moved(world: WorldView, name: str, delta) -> WorldView:
 
 def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
                direction: Direction = ALIASES["down"], lift_m: float = 0.12,
-               roll_rad: float = 0.0,
+               contact: str = "pad",
                grip: str = "firm") -> ChainPlan:
     """Approach -> Grasp -> Lift -> Carry -> Place, for ONE arm. Nothing moves.
 
     ``direction`` is how the hand travels onto the object (any
-    :class:`~manipulation_kit.world.Direction` or alias); ``roll_rad`` is the
-    planner's turn about the approach axis, passed to both Approach and Grasp.
+    :class:`~manipulation_kit.world.Direction` or alias) and ``contact`` where
+    on the hand it is taken (``"pad"`` / ``"tip"``). There is no roll
+    argument: ``Approach`` and ``Grasp`` each try
+    :func:`.grasp_geometry.roll_candidates` — THE one sweep — and ``Grasp``
+    continues with the roll its ``Approach`` stood at.
 
     Stops at the first refusal: a chain whose ``Grasp`` is refused has no
     posture to plan a ``Carry`` from, and planning one against a world that
@@ -239,9 +242,9 @@ def plan_chain(world: WorldView, kin, *, obj: str, destination: str, side: str,
     links: List[ChainLink] = []
     state = world
     for primitive in (Approach(object=obj, side=side, direction=direction,
-                               roll_rad=roll_rad),
+                               contact=contact),
                       Grasp(object=obj, side=side, direction=direction,
-                            grip=grip, roll_rad=roll_rad),
+                            grip=grip, contact=contact),
                       Lift(object=obj, side=side, height_m=lift_m),
                       Carry(object=obj, to=destination, side=side),
                       Place(object=obj, to=destination, side=side)):
@@ -284,7 +287,7 @@ def _near_hand(world: WorldView, obj: str) -> str:
 
 def choose_side(world: WorldView, kin, *, obj: str, destination: str,
                 direction: Direction = ALIASES["down"], lift_m: float = 0.12,
-                roll_rad: float = 0.0,
+                contact: str = "pad",
                 sides: Sequence[str] = SIDES) -> SideChoice:
     """The hand that can plan the WHOLE task, not the hand nearest the block.
 
@@ -298,7 +301,7 @@ def choose_side(world: WorldView, kin, *, obj: str, destination: str,
     """
     chains = {side: plan_chain(world, kin, obj=obj, destination=destination,
                                side=side, direction=direction, lift_m=lift_m,
-                               roll_rad=roll_rad)
+                               contact=contact)
               for side in sides}
     near = _near_hand(world, obj)
     ordered = sorted(chains.values(),
