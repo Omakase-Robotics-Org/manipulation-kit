@@ -790,7 +790,24 @@ def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
     # The daemon answers /v1/gripper/{side}/set only when the stroke is done;
     # the client default of 2 s is too short for a real close (d1-2, 2026-09-22).
     client = FirmwareClient(robot_url, timeout=20.0)
-    return LiveRobot(FirmwareExecutor(base_url=robot_url, client=client), kin, scene)
+    # The daemon runs the arm at vel_ratio x its full speed, but the kit's
+    # trajectory timestamps assume MAX_JOINT_RATE_DEG_S (140 deg/s). At the
+    # default 0.15 the arm crawls at ~20 deg/s behind a schedule seven times
+    # faster, so every large move "arrives late" and the arrival barrier
+    # fails while the arm is still moving (d1-2 run4, 2026-09-22: "still
+    # moving after 1.5 s, worst joint 18.2 deg/s", tool 190 mm off). Time the
+    # schedule at the speed the arm will actually have.
+    from manipulation_kit.executors.firmware.executor import MAX_JOINT_RATE_DEG_S  # noqa: PLC0415
+    vel_ratio = float(os.environ.get("ASTRA_VEL_RATIO", "0.3"))
+    rate = MAX_JOINT_RATE_DEG_S * vel_ratio
+    arrive_timeout = float(os.environ.get("ASTRA_ARRIVE_TIMEOUT_S", "4.0"))
+    print(f"[astra_loop] firmware executor: vel_ratio {vel_ratio}, schedule "
+          f"{rate:.0f} deg/s, arrive timeout {arrive_timeout}s", file=sys.stderr)
+    return LiveRobot(FirmwareExecutor(base_url=robot_url, client=client,
+                                      vel_ratio=vel_ratio, acc_ratio=vel_ratio,
+                                      max_joint_rate_deg_s=rate,
+                                      arrive_timeout_s=arrive_timeout),
+                     kin, scene)
 
 
 def perceived_scene(source: str, *, trace_path: Optional[Path],
