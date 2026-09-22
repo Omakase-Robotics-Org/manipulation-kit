@@ -122,8 +122,19 @@ class ObjectView:
     colour: Optional[str] = None
     confidence: float = 1.0
     stamp: float = 0.0
+    #: how far the declared box may be off in any direction [m], when the
+    #: producer says; the scene gate (``primitives.clearance``) keeps the arm
+    #: that far away from it. ``None`` = not stated (the gate's default).
+    uncertainty_m: Optional[float] = None
 
     def __post_init__(self) -> None:
+        if self.uncertainty_m is not None:
+            value = float(self.uncertainty_m)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{self.name}.uncertainty_m must be a finite "
+                                 f"non-negative number, got "
+                                 f"{self.uncertainty_m!r}")
+            object.__setattr__(self, "uncertainty_m", value)
         object.__setattr__(self, "p", _vec3(self.p, f"{self.name}.p"))
         size = _vec3(self.size, f"{self.name}.size")
         if np.any(size <= 0.0):
@@ -259,6 +270,8 @@ class ObjectView:
         }
         if self.colour:
             out["colour"] = self.colour
+        if self.uncertainty_m is not None:
+            out["uncertainty_m"] = round(self.uncertainty_m, 4)
         return out
 
     def to_text(self, frames: Optional[FrameGraph] = None) -> str:
