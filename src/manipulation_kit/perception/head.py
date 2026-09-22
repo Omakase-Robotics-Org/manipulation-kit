@@ -128,24 +128,47 @@ class HeadCamera(PinholeCamera):
                    cx: Optional[float] = None, cy: Optional[float] = None,
                    neck_pitch: float = 0.0, neck_yaw: float = 0.0,
                    lift_m: Optional[float] = None,
-                   urdf_path: Optional[str] = None) -> "HeadCamera":
+                   urdf_path: Optional[str] = None,
+                   mount_delta: Any = None) -> "HeadCamera":
         """The head camera of a D1 whose neck JOINTS are where you say.
 
         ``neck_pitch`` is the URDF ``neck_tilt`` joint in radians, MOTOR sign:
         positive looks DOWN. A daemon state is the other sign — use
         :meth:`from_config` or :meth:`from_neck_state` for one.
+
+        ``mount_delta`` is THIS robot's measured mount
+        (:class:`manipulation_kit.description.robot_profile.HeadMountDelta`,
+        from its :class:`~manipulation_kit.description.robot_profile.RobotProfile`):
+        applied on top of the URDF nominal, and the camera then says
+        ``calibrated: true`` — never without it.
         """
         from ..description.head_camera import (  # noqa: PLC0415
             head_camera_pose, nominal_tilt_rad)
 
         neck_pitch = _check_finite("neck_pitch", neck_pitch)
         neck_yaw = _check_finite("neck_yaw", neck_yaw)
-        p, r = head_camera_pose(neck_pitch=neck_pitch, neck_yaw=neck_yaw,
-                                urdf_path=urdf_path)
+        if mount_delta is not None:
+            from ..description.head_camera import (  # noqa: PLC0415
+                measured_head_camera_pose)
+            p, r = measured_head_camera_pose(mount_delta, neck_pitch, neck_yaw,
+                                             urdf_path=urdf_path)
+        else:
+            p, r = head_camera_pose(neck_pitch=neck_pitch, neck_yaw=neck_yaw,
+                                    urdf_path=urdf_path)
+        if mount_delta is not None:
+            frame = (
+                f"CALIBRATED head-camera frame: the URDF nominal corrected by "
+                f"this robot's measured mount ({mount_delta.source or 'robot profile'}"
+                + (f", RMS {mount_delta.rms_px:.1f} px"
+                   if mount_delta.rms_px is not None else "") + ").")
+        else:
+            frame = (
+                f"NOMINAL head-camera frame: vendor geometry plus the head "
+                f"part's {math.degrees(nominal_tilt_rad()):.0f} deg design "
+                f"tilt, lens at the housing's front face. Not a per-robot "
+                f"extrinsic.")
         notes = (
-            f"NOMINAL head-camera frame: vendor geometry plus the head part's "
-            f"{math.degrees(nominal_tilt_rad()):.0f} deg design tilt, lens at "
-            f"the housing's front face. Not a per-robot extrinsic.",
+            frame,
             f"every point is +-{LENS_UNCERTAINTY_M * 1000:.0f} mm of lens "
             f"position and +-{AIM_UNCERTAINTY_DEG:.0f} deg of aim.",
             "the lift does not enter: it sits below `base` and raises the "
@@ -158,6 +181,7 @@ class HeadCamera(PinholeCamera):
                    neck_pitch=neck_pitch, neck_yaw=neck_yaw,
                    lift_m=None if lift_m is None
                    else _check_finite("lift_m", lift_m),
+                   calibrated=mount_delta is not None,
                    notes=notes)
 
     @classmethod
@@ -171,7 +195,8 @@ class HeadCamera(PinholeCamera):
 
     @classmethod
     def from_config(cls, config: HeadCameraConfig, *,
-                    urdf_path: Optional[str] = None) -> "HeadCamera":
+                    urdf_path: Optional[str] = None,
+                    mount_delta: Any = None) -> "HeadCamera":
         """The LIVE head camera, from a typed config. Fails closed."""
         if config.neck is None:
             raise HeadPoseUnknown(
@@ -186,7 +211,7 @@ class HeadCamera(PinholeCamera):
         return cls.from_neck_state(
             config.neck, width=config.width, height=config.height,
             fx=config.fx, fy=config.fy, cx=config.cx, cy=config.cy,
-            lift_m=lift_m, urdf_path=urdf_path)
+            lift_m=lift_m, urdf_path=urdf_path, mount_delta=mount_delta)
 
     @classmethod
     def from_json(cls, block: Mapping[str, Any]) -> "HeadCamera":
@@ -220,8 +245,10 @@ class HeadCamera(PinholeCamera):
         """The camera, for a model's own prompt: all robot facts."""
         axis = self.r.as_matrix()[:, 2]
         down = math.degrees(math.asin(max(-1.0, min(1.0, -axis[2]))))
+        label = ("calibrated mount" if self.calibrated
+                 else "nominal, not calibrated")
         return (
-            f"HEAD CAMERA (nominal, not calibrated): {self.width}x"
+            f"HEAD CAMERA ({label}): {self.width}x"
             f"{self.height}, fx {self.fx:.0f} px, principal point "
             f"({self.cx:.0f}, {self.cy:.0f}). Lens at ({self.p[0]:.3f}, "
             f"{self.p[1]:.3f}, {self.p[2]:.3f}) m in base, looking "

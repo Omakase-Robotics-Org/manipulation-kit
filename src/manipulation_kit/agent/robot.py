@@ -86,8 +86,23 @@ KNOWN_ELSEWHERE: Dict[str, str] = {
 # the scene file — a measurement somebody made, read one way
 # --------------------------------------------------------------------------- #
 
-def load_scene(path: Path) -> Dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def load_scene(path: Path, *, profile: Any = None) -> Dict[str, Any]:
+    """A scene file, with its ``robot`` block resolved against the robot
+    profile it names (``"robot": {"profile": "d1-2"}`` — a committed name, or
+    a path relative to the scene file) or against ``profile``
+    (:class:`~manipulation_kit.description.robot_profile.RobotProfile`; a
+    ``--robot-profile`` flag). The scene's own ``robot`` keys override the
+    profile's."""
+    from ..description.robot_profile import with_profile  # noqa: PLC0415
+    path = Path(path)
+    scene = json.loads(path.read_text(encoding="utf-8"))
+    return with_profile(scene, profile, relative_to=path.parent)
+
+
+def _robot_block(scene: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """``scene["robot"]`` with any profile it names folded in."""
+    from ..description.robot_profile import scene_robot_block  # noqa: PLC0415
+    return scene_robot_block(scene)
 
 
 def objects_from(scene: Dict[str, Any]) -> List[ObjectView]:
@@ -152,7 +167,7 @@ def hand_open_gap_m(scene: Optional[Dict[str, Any]]) -> Optional[float]:
     mirror); on hardware the executor publishes the daemon's own ``open_rad``
     as ``HandState.open_gap_m`` and that wins. ``None`` = nominal.
     """
-    value = ((scene or {}).get("robot") or {}).get("hand", {}).get("open_gap_m")
+    value = (_robot_block(scene).get("hand") or {}).get("open_gap_m")
     if value is None:
         return None
     gap = float(value)
@@ -176,35 +191,67 @@ def with_declared_hand(world: WorldView,
 
 
 WRIST_INTRINSICS = ("fx", "fy", "cx", "cy", "width", "height")
+#: the lens-model keys a wrist block may add (``WristIntrinsics``)
+WRIST_LENS_KEYS = ("model", "k", "valid_radius_px")
 
 
-def wrist_camera_from_scene(scene: Optional[Dict[str, Any]], *,
-                            measured_only: bool = False
-                            ) -> Optional[Dict[str, float]]:
-    """The wrist lens intrinsics a scene records, ``robot.wrist_camera``.
-
-    The mount is the kit's (:mod:`manipulation_kit.perception.wrist`); the
-    focal length is the stream's and is NOT defaulted anywhere — without it
-    there is no wrist camera model, and a policy that requires a look before a
-    stroke refuses to start rather than grasping blind.
-
-    A block marked ``"measured": false`` is a PLACEHOLDER (the d1-2 scene's:
-    nobody has calibrated that fisheye). It lets the kinematic mirror dry-run
-    the look policy; with ``measured_only`` (hardware) it is no camera model
-    at all, so a live run stops with ``look_unavailable`` instead of
-    projecting through invented numbers.
-    """
-    block = ((scene or {}).get("robot") or {}).get("wrist_camera")
-    if not block:
-        return None
-    if measured_only and block.get("measured", True) is False:
-        return None
+def _wrist_kwargs(block: Mapping[str, Any]) -> Dict[str, Any]:
     missing = [k for k in WRIST_INTRINSICS if k not in block]
     if missing:
         raise ValueError(f"scene robot.wrist_camera needs {list(WRIST_INTRINSICS)}"
                          f"; missing {missing}")
-    return {k: (int(block[k]) if k in ("width", "height") else float(block[k]))
-            for k in WRIST_INTRINSICS}
+    out: Dict[str, Any] = {k: (int(block[k]) if k in ("width", "height")
+                               else float(block[k])) for k in WRIST_INTRINSICS}
+    out["model"] = str(block.get("model", "pinhole"))
+    if out["model"] == "fisheye":
+        out["k"] = tuple(float(c) for c in block["k"])
+    if block.get("valid_radius_px") is not None:
+        out["valid_radius_px"] = float(block["valid_radius_px"])
+    return out
+
+
+def per_side_wrist(intrinsics: Optional[Mapping[str, Any]]
+                   ) -> Dict[str, Dict[str, Any]]:
+    """Wrist intrinsics as ``{side: kwargs}``: a per-side mapping as it is,
+    a single flat block (one lens model for both hands) copied to each."""
+    if not intrinsics:
+        return {}
+    if "fx" in intrinsics:
+        return {side: dict(intrinsics) for side in SIDES}
+    return {side: dict(block) for side, block in intrinsics.items()
+            if side in SIDES and block}
+
+
+def wrist_camera_from_scene(scene: Optional[Dict[str, Any]], *,
+                            measured_only: bool = False
+                            ) -> Optional[Dict[str, Dict[str, Any]]]:
+    """The wrist lens intrinsics a scene (or the robot profile it names)
+    records, ``robot.wrist_camera``, as ``{side: kwargs}`` for
+    :meth:`manipulation_kit.perception.WristCamera.from_flange`.
+
+    The block is either per side (``{"left": {...}, "right": {...}}`` — what
+    a :class:`~manipulation_kit.description.robot_profile.RobotProfile`
+    carries, fisheye ``model``/``k``/``valid_radius_px`` included) or one flat
+    block for both hands. The mount is the kit's
+    (:mod:`manipulation_kit.perception.wrist`); the focal length is the
+    stream's and is NOT defaulted anywhere — without it there is no wrist
+    camera model, and a policy that requires a look before a stroke refuses
+    to start rather than grasping blind.
+
+    A block marked ``"measured": false`` is a PLACEHOLDER. It lets the
+    kinematic mirror dry-run the look policy; with ``measured_only``
+    (hardware) it is no camera model at all, so a live run stops with
+    ``look_unavailable`` instead of projecting through invented numbers.
+    """
+    block = _robot_block(scene).get("wrist_camera")
+    if not block:
+        return None
+    out: Dict[str, Dict[str, Any]] = {}
+    for side, one in per_side_wrist(block).items():
+        if measured_only and one.get("measured", True) is False:
+            continue
+        out[side] = _wrist_kwargs(one)
+    return out or None
 
 
 def head_camera_from_scene(scene: Optional[Dict[str, Any]]):
@@ -500,9 +547,12 @@ class LiveRobot:
         self.source = source
         self.kin = kin
         self.head_camera = head_camera
-        self.wrist_intrinsics = (None if wrist_intrinsics is None
-                                 else dict(wrist_intrinsics))
+        #: side -> WristCamera.from_flange kwargs (a flat block = both hands)
+        self.wrist_intrinsics: Dict[str, Dict[str, Any]] = per_side_wrist(
+            wrist_intrinsics)
         self.perceiver = perceiver
+        #: the RobotProfile this robot was built with (``from_flag(profile=)``)
+        self.profile: Any = None
         self.name = name
         self._closing = tuple(closing)
         self._entered: List[Any] = []
@@ -548,13 +598,13 @@ class LiveRobot:
             world = world if world is not None else self.world()
             for side in SIDES:
                 arm = world.arm(side)
-                if arm is None:
+                if arm is None or side not in self.wrist_intrinsics:
                     continue
                 saved = np.array(self.kin.joints(side), dtype=float)
                 try:
                     self.kin.set_joints(side, arm.joints)
                     out[f"{side}_wrist"] = WristCamera.from_kin(
-                        self.kin, side, **self.wrist_intrinsics)
+                        self.kin, side, **self.wrist_intrinsics[side])
                 finally:
                     self.kin.set_joints(side, saved)
         return out
@@ -594,22 +644,31 @@ class LiveRobot:
         ``Executor`` class, wrapped with a :class:`SceneSource` — directly.
         The factory gets ``kin``, ``policy`` (the RESOLVED one: its
         ``vel_ratio`` and timeouts configure the executor), ``scene``,
-        ``url`` and any ``options``. Raises :class:`UnknownExecutor` with the
+        ``url`` and any ``options``. ``profile=`` (a
+        :class:`~manipulation_kit.description.robot_profile.RobotProfile`) is
+        folded into the scene's ``robot`` block first, so the hand gap and
+        the MEASURED wrist lenses reach every executor the same way. Raises :class:`UnknownExecutor` with the
         registered names and what to install.
         """
         factory = (_load_attr(executor_class) if executor_class
                    else executor_factory(name))
+        profile = options.pop("profile", None)
+        if profile is not None:
+            # the robot's measured numbers, under whatever the scene restates
+            from ..description.robot_profile import with_profile  # noqa: PLC0415
+            scene = with_profile(scene, profile)
         kin = kin if kin is not None else _default_kin()
         policy = policy if policy is not None else OperatorPolicy()
         built = factory(kin=kin, policy=policy, scene=scene, url=url,
                         **options)
-        if isinstance(built, LiveRobot):
-            return built
-        # an Executor, not a robot: give it the declared scene as its world
-        return cls(built, SceneSource.from_scene(built, kin, scene), kin,
-                   head_camera=head_camera_from_scene(scene),
-                   wrist_intrinsics=wrist_camera_from_scene(scene),
-                   name=name or str(executor_class))
+        if not isinstance(built, LiveRobot):
+            # an Executor, not a robot: give it the declared scene as its world
+            built = cls(built, SceneSource.from_scene(built, kin, scene), kin,
+                        head_camera=head_camera_from_scene(scene),
+                        wrist_intrinsics=wrist_camera_from_scene(scene),
+                        name=name or str(executor_class))
+        built.profile = profile
+        return built
 
     @classmethod
     def firmware(cls, url: str = DEFAULT_URL, *, kin: Any = None,
@@ -619,10 +678,15 @@ class LiveRobot:
         """A real D1 through d1-firmwared, configured by ``policy`` (its
         ``vel_ratio`` for velocity AND acceleration, its arrival timeout, its
         stroke timeout or — ``None`` — the daemon document's)."""
+        profile = options.pop("profile", None)
+        if profile is not None:
+            from ..description.robot_profile import with_profile  # noqa: PLC0415
+            scene = with_profile(scene, profile)
         robot = _firmware(kin=kin if kin is not None else _default_kin(),
                           policy=policy or OperatorPolicy(), scene=scene,
                           url=url, **options)
         robot.perceiver = perceiver
+        robot.profile = profile
         return robot
 
 
@@ -800,6 +864,6 @@ __all__ = ["DEFAULT_URL", "ENTRY_POINT_GROUP", "ExecutorFactory",
            "KNOWN_ELSEWHERE", "KinematicMirror", "LiveRobot", "SceneSource",
            "UnknownExecutor", "WorldSource", "associate", "executor_factory",
            "frames_from", "hand_open_gap_m", "head_camera_from_scene",
-           "load_scene", "objects_from", "register_executor",
+           "load_scene", "objects_from", "per_side_wrist", "register_executor",
            "registered_executors", "unregister_executor", "with_declared_hand",
            "wrist_camera_from_scene"]

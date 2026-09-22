@@ -74,6 +74,11 @@ BASE_LINK = "dual_base"
 CAMERA_LINK = "head_camera_link"
 OPTICAL_LINK = "head_camera_optical_frame"
 
+#: the link the camera housing is bolted to; a MEASURED mount
+#: (:class:`~manipulation_kit.description.robot_profile.HeadMountDelta`) is
+#: expressed in it
+HEAD_LINK = "head_link"
+
 #: URDF joint names this module actuates. Everything else in the chain is
 #: fixed geometry.
 PAN_JOINT = "neck_pan"
@@ -133,6 +138,22 @@ def head_camera_pose(neck_pitch: float = 0.0, neck_yaw: float = 0.0,
     q = {TILT_JOINT: float(neck_pitch), PAN_JOINT: float(neck_yaw)}
     return _relative(model, BASE_LINK,
                      OPTICAL_LINK if optical else CAMERA_LINK, q)
+
+
+def measured_head_camera_pose(mount, neck_pitch: float = 0.0,
+                              neck_yaw: float = 0.0, *,
+                              urdf_path: Optional[str] = None
+                              ) -> Tuple[np.ndarray, R]:
+    """The head camera's OPTICAL pose in :data:`BASE_LINK` for a robot whose
+    mount was MEASURED: ``base <- head_link`` from the URDF at these neck
+    joints, then the measured ``head_link <- optical``
+    (``mount.head_link_to_optical()``). Absolute, so it does not move when the
+    URDF's nominal camera frame does."""
+    model = _model(urdf_path)
+    q = {TILT_JOINT: float(neck_pitch), PAN_JOINT: float(neck_yaw)}
+    p_head, r_head = _relative(model, BASE_LINK, HEAD_LINK, q)
+    p_opt, r_opt = mount.head_link_to_optical()
+    return p_head + r_head.apply(p_opt), r_head * r_opt
 
 
 def neck_joints_from_state(state: Any) -> Tuple[float, float]:

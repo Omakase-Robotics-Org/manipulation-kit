@@ -223,14 +223,16 @@ def test_the_scene_source_keeps_contacts_until_the_scene_is_restated(d1_arm):
 
 
 # --------------------------------------------------------------------------- #
-# step 7: the d1-2 wrist placeholder dry-runs, and is refused on hardware
+# step 7 -> step 9: the d1-2 wrist placeholder is gone; the profile's
+# MEASURED fisheyes reach hardware, and a placeholder still never would
 # --------------------------------------------------------------------------- #
 
-def test_the_d1_2_wrist_placeholder_is_for_the_mirror_only():
+def test_the_d1_2_wrists_are_measured_and_reach_hardware():
     scene = json.loads(D1_2_SCENE.read_text(encoding="utf-8"))
-    block = scene["robot"]["wrist_camera"]
-    assert block["measured"] is False and "NOT MEASURED" in block["_source"]
+    assert scene["robot"] == {"profile": "d1-2"}
+    measured = wrist_camera_from_scene(scene, measured_only=True)
+    assert set(measured) == {"left", "right"}
+    assert all(block["model"] == "fisheye" for block in measured.values())
+    scene["robot"] = {"wrist_camera": dict(measured["left"], measured=False)}
     assert wrist_camera_from_scene(scene) is not None          # the mirror
     assert wrist_camera_from_scene(scene, measured_only=True) is None
-    scene["robot"]["wrist_camera"]["measured"] = True
-    assert wrist_camera_from_scene(scene, measured_only=True) is not None
