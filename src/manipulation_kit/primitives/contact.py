@@ -261,12 +261,19 @@ def _upward(direction: Direction, d: np.ndarray) -> List[Unmet]:
     return []
 
 
+#: the rolls a Probe tries about its direction, in order: the wrist's own,
+#: then the quarter turns, then the half turn
+PROBE_ROLLS_RAD: Tuple[float, ...] = ((0.0,) + gg.QUARTER_TURNS_RAD
+                                      + (math.pi,))
+
+
 def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
                   d: np.ndarray, p_standoff, standoff_label: str,
                   standoff_via: bool, standoff_arrive: bool,
                   travel_m: float, criterion: ContactCriterion,
                   speed_m_s: float, hold_s: float, retract: bool,
-                  notes: Sequence[str], roll_to=None) -> Any:
+                  notes: Sequence[str], roll_to=None,
+                  roll_rad: float = 0.0) -> Any:
     """Standoff, then the contact leg — solved, split and wrapped.
 
     The standoff's joint steps stay ordinary :class:`JointStep`\\ s. The
@@ -278,7 +285,7 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
     # allows: a probe is about the fingertips, not the roll, and turning the
     # wrist half a revolution in place is how a posture next to the body
     # becomes a guard refusal.
-    r_tool = ap.align_tool(side, d, roll_to=roll_to)
+    r_tool = ap.align_tool(side, d, roll_to=roll_to, roll_rad=roll_rad)
     p_standoff = np.asarray(p_standoff, dtype=float)
     waypoints = [
         Waypoint(standoff_label, p_standoff, r_tool, allow_via=standoff_via,
@@ -408,13 +415,32 @@ class Probe(Primitive):
             f"{PROBE_SPEED_M_S * 1000:.0f} mm/s, stopping at a "
             f"{self.contact_nm:.1f} Nm joint-torque rise (position control, "
             f"measured, never commanded)")
-        return _contact_plan(
-            self, world, kin, side, d=d, p_standoff=p_tool,
-            standoff_label="probe_start", standoff_via=False,
-            standoff_arrive=False, travel_m=self.max_travel_m,
-            criterion=ContactCriterion(joint_torque_nm=self.contact_nm),
-            speed_m_s=PROBE_SPEED_M_S, hold_s=0.0, retract=False, notes=notes,
-            roll_to=r_tool.as_matrix()[:, 0])
+        # THE ROLL IS THE PLANNER'S, tried in order — the same sweep Grasp
+        # and Approach make (grasp_geometry.QUARTER_TURNS_RAD). The wrist's
+        # current jaw axis comes first (a probe is about the fingertips, and
+        # the smallest turn is the likeliest to stay clear of the body), but
+        # it is not the only answer: turning a TILTED hand to fingertips-down
+        # while keeping its roll can need a J7 past its limit. On d1-2
+        # (2026-09-22) every Probe from a real posture was refused that way
+        # (ik_fail, 0.25-1.2 rad residual) while a quarter turn plans.
+        first = None
+        for roll in PROBE_ROLLS_RAD:
+            plan = _contact_plan(
+                self, world, kin, side, d=d, p_standoff=p_tool,
+                standoff_label="probe_start", standoff_via=False,
+                standoff_arrive=False, travel_m=self.max_travel_m,
+                criterion=ContactCriterion(joint_torque_nm=self.contact_nm),
+                speed_m_s=PROBE_SPEED_M_S, hold_s=0.0, retract=False,
+                notes=notes + ([] if roll == 0.0 else [
+                    f"jaws rolled {math.degrees(roll):+.0f} deg about the "
+                    f"probe direction (planner choice: the wrist's own roll "
+                    f"did not plan)"]),
+                roll_to=r_tool.as_matrix()[:, 0], roll_rad=roll)
+            if getattr(plan, "ok", False):
+                return plan
+            if first is None:
+                first = plan
+        return first
 
     def verifier(self, world0: WorldView) -> Verifier:
         side = self._side(world0)
