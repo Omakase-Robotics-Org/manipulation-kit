@@ -32,7 +32,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from ..world import ContainerView, SurfaceView, WorldView
-from .types import Plan, PlanError, Primitive
+from ..world.direction import Direction
+from .types import GRASP_DIRECTIONS, Plan, PlanError, Primitive
 from .verbs import (Approach, Carry, GoHome, Grasp, Lift, Nudge, NUDGE_GRID_M,
                     Place, Release, Retreat)
 
@@ -85,7 +86,13 @@ class Refused:
 
 
 def arguments(primitive: Primitive) -> Dict[str, Any]:
-    return {name: getattr(primitive, name) for name in primitive.arguments()}
+    """The bound arguments, JSON-ready: a direction is written the way a model
+    writes one (its alias, else ``{axis, frame}``)."""
+    out: Dict[str, Any] = {}
+    for name in primitive.arguments():
+        value = getattr(primitive, name)
+        out[name] = value.as_argument() if isinstance(value, Direction) else value
+    return out
 
 
 def label_for(primitive: Primitive) -> str:
@@ -94,7 +101,7 @@ def label_for(primitive: Primitive) -> str:
     args = arguments(primitive)
     if verb in ("approach", "grasp"):
         return (f"{verb} {args['object']} with the {args['side']} hand, "
-                f"{args['approach'].replace('_', ' ')}")
+                f"travelling {primitive.direction.label().replace('_', ' ')}")
     if verb == "lift":
         return f"lift {args['object']} by {args['height_m'] * 100:.0f} cm"
     if verb in ("carry", "place"):
@@ -157,7 +164,7 @@ def why_nothing(refused: Sequence[Refused], limit: int = 6) -> str:
 # --------------------------------------------------------------------------- #
 
 def candidates_for(world: WorldView, *,
-                   approaches: Sequence[str] = ("top_down", "front"),
+                   directions: Sequence[str] = GRASP_DIRECTIONS,
                    nudge_frame: str = "base",
                    corrections: bool = True) -> List[Primitive]:
     """Everything worth TRYING in this world, before any of it is checked.
@@ -192,9 +199,9 @@ def candidates_for(world: WorldView, *,
         held = gripper.held_object if gripper.holding else None
         if not gripper.holding:
             for name in graspable:
-                for how in approaches:
-                    task.append(Approach(object=name, side=side, approach=how))
-                    task.append(Grasp(object=name, side=side, approach=how))
+                for how in directions:
+                    task.append(Approach(object=name, side=side, direction=how))
+                    task.append(Grasp(object=name, side=side, direction=how))
         elif held:
             task.append(Lift(object=held, side=side))
             for name in destinations:

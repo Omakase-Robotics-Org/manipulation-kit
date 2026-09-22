@@ -86,6 +86,71 @@ loud reason, not a legacy path kept alive beside the new one.
   uses, so `--dry-run --executor kinematic --scene d1-2_tape_cup.json` reaches
   `goal_verified` with no environment variable.
 
+### BREAKING: a direction is a value, not one of four words (redesign step 2)
+
+`approach: str` (`"top_down"`, `"front"`, `"side_left"`, `"side_right"`) and
+`jaw_turn_deg` are **deleted** from every verb. There is no compatibility
+shim: a call that still says `approach=` is a `TypeError` from Python and a
+`bad_argument` refusal from `decode`.
+
+* **`manipulation_kit.world.Direction(v, frame)`** — a unit vector and the
+  frame it is expressed in: `"base"`, `"tool"` (the hand's own TCP frame) or
+  `"object:<name>"` (that object's axes). `resolve(world, side=)` returns the
+  base-frame vector and raises `FrameError` for a frame that does not resolve;
+  it never falls back to base. `ALIASES` names `down`, `up`, `forward`,
+  `backward`, `left`, `right`, `along_tool`; `parse_direction()` takes an
+  alias, `[x, y, z]` or `{"axis": [...], "frame": ...}`; `toward()` builds
+  "toward the cup".
+* **Verbs:** `Approach`/`Grasp` take `direction` (default `down`);
+  `Retreat` takes `direction` (default `-along_tool`, i.e. tool -z — the axis
+  that was hardcoded); `Lift` takes `direction` (default `up`; it must rise).
+  `Nudge` keeps `dx/dy/dz/dyaw`; its frames are the shared names
+  (`world.direction.TOOL`/`BASE`) and its yaw is applied by the same roll
+  function.
+* **Migrating an old approach name — map BY VECTOR.** A `Direction` is the
+  way the hand TRAVELS; the old side names said where it came FROM:
+
+  | old `approach=` | new `direction=` | vector (base) |
+  |---|---|---|
+  | `top_down` | `down` | (0, 0, -1) |
+  | `front` | `forward` | (+1, 0, 0) |
+  | `side_left` | **`right`** | (0, -1, 0) |
+  | `side_right` | **`left`** | (0, +1, 0) |
+
+  `side_left` came in from the robot's left and travelled toward -y, so it is
+  `right`. Mapping by name (`side_left -> left`) reverses the approach.
+* **`jaw_turn_deg` -> `roll_rad`** (radians, `roll_rad = radians(jaw_turn_deg)`),
+  a PLANNER-ONLY field on `Approach`/`Grasp` and a keyword of
+  `reach.plan_chain`/`reach.choose_side` (whose `approach=` is now
+  `direction=`). The plan's notes say which roll was used.
+* **`primitives/approach.py` is now `primitives/orientation.py`.**
+  `align_tool(side, d_base, *, roll_to, roll_rad)` is the only place a
+  quaternion is produced; `grasp_orientation(side, d_base, obj, frames,
+  roll_rad=)` (was `approach, ..., dyaw_rad=`), `grasp_point(obj, d_base,
+  frames)` and `standoff_pose(p, d_base, standoff_m)` take a resolved
+  base-frame vector. Deleted: `APPROACHES`, `TOP_DOWN`, `FRONT`, `SIDE_LEFT`,
+  `SIDE_RIGHT`, `APPROACH_DIRECTION`, `APPROACH_DOC`, `check_approach`,
+  `direction()`.
+* **One model allowlist.** `schema.NOT_MODEL_BINDABLE` is
+  `("policy", "roll_rad")`, and `decode(..., model_bindable_only=True)` (the
+  default) now REFUSES those fields from a model instead of honouring them
+  (`policy` used to be hidden from the schema but still accepted — Astra review
+  5). Pass `model_bindable_only=False` from trusted Python. The example's
+  `PLANNER_ONLY_ARGS`/`_hide_planner_args` and its inbound `pop()` are gone.
+* **Schema:** `direction` is exported as
+  `oneOf[enum of aliases, {axis: [x,y,z], frame}]`; its domain is
+  `{"kind": "direction", "aliases": [...], "free": true}`.
+  `schema.direction_doc()` is the prompt text, generated from the aliases.
+* **One search order:** `types.GRASP_DIRECTIONS = ("down", "forward", "left",
+  "right")` replaces the four hand-written orderings (prompt, example chain
+  chooser, `ASTRA_APPROACH_ALLOW` default, `offer.candidates_for`).
+  `candidates_for(approaches=)` is now `directions=` and defaults to all four
+  (it was `("top_down", "front")`).
+* **Unchanged motion.** Every plan the example scenes produce — 392 cases,
+  each verb, each old approach and jaw turn, both arms, the whole
+  Approach->Place chain — is identical to the last float with the alias of the
+  same vector (`tests/primitives/test_golden_plans.py`).
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO

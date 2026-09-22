@@ -40,6 +40,7 @@ from scipy.spatial.transform import Rotation as R
 
 from ..arms import sides
 from ..world import WorldView
+from ..world.direction import BASE as _BASE, TOOL as _TOOL
 
 # --------------------------------------------------------------------------- #
 # vocabulary
@@ -57,14 +58,13 @@ BOTH = "both"
 SIDE_CHOICES: Tuple[str, ...] = SIDES + (AUTO,)
 GOHOME_SIDE_CHOICES: Tuple[str, ...] = SIDES + (AUTO, BOTH)
 
-#: The named approach set. This is the WHOLE of the orientation vocabulary a
-#: model gets: it names one of these four, and the kit derives the quaternion
-#: from it plus the object's principal axis. See :mod:`.approach` for why.
-TOP_DOWN = "top_down"
-FRONT = "front"
-SIDE_LEFT = "side_left"
-SIDE_RIGHT = "side_right"
-APPROACHES: Tuple[str, ...] = (TOP_DOWN, FRONT, SIDE_LEFT, SIDE_RIGHT)
+#: The grasp directions a planner TRIES, in order, when it is choosing one —
+#: aliases of :data:`manipulation_kit.world.ALIASES` (the way the tool travels
+#: onto the object). ONE constant, so the prompt, the example's hand chooser
+#: and the offer generator cannot disagree about the set or its order again.
+#: It is a search order, not the vocabulary: a verb takes any
+#: :class:`~manipulation_kit.world.Direction`.
+GRASP_DIRECTIONS: Tuple[str, ...] = ("down", "forward", "left", "right")
 
 #: firmware ``GripPreset`` — the presets own the stop torque (d1-firmware #55),
 #: which is why a number is not offered here.
@@ -76,8 +76,9 @@ GRIPS: Tuple[str, ...] = ("soft", "firm", "strong")
 NUDGE_GRID_M: Tuple[float, ...] = (0.010, 0.030, 0.050)
 #: the only rotation a model may ask for, about the approach axis
 NUDGE_MAX_YAW_RAD = math.radians(15.0)
-#: ``Nudge`` frames: the tool's own axes, or the robot base
-NUDGE_FRAMES: Tuple[str, ...] = ("tool", "base")
+#: ``Nudge`` frames: the tool's own axes, or the robot base — the same frame
+#: names a :class:`~manipulation_kit.world.Direction` uses
+NUDGE_FRAMES: Tuple[str, ...] = (_TOOL, _BASE)
 
 # --------------------------------------------------------------------------- #
 # refusal reasons
@@ -320,7 +321,7 @@ class PlanBinding:
     @classmethod
     def of(cls, world, kin=None, *, joint_tol_rad: float = 0.05,
            max_age_s: float = float("nan")) -> "PlanBinding":
-        from .approach import tool_revision  # noqa: PLC0415 - cycle at import
+        from .orientation import tool_revision  # noqa: PLC0415 - cycle at import
         q0 = {side: tuple(float(v) for v in arm.joints)
               for side, arm in world.arms.items()}
         gate = getattr(kin, "gate", None)

@@ -22,7 +22,7 @@ import pytest
 
 from manipulation_kit.primitives import Carry, Grasp, Lift, Place
 from manipulation_kit.primitives import verbs
-from manipulation_kit.primitives.approach import tool_from_link7
+from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.primitives.types import (JointStep, PRECONDITION_UNMET,
                                                UNREACHABLE_DESTINATION)
 from manipulation_kit.world import (ArmView, ContainerView, GripperView,
@@ -107,7 +107,7 @@ def after_a_real_grasp_and_lift(kin, destination, *, side="right", lift_m=0.12):
         ObjectView("cube", p=CUBE_P, size=(CUBE,) * 3, colour="red"),
         destination,
         SurfaceView("wagon_top", p=WAGON_TOP, size=(0.4, 0.6, 0.002))])
-    grasp = Grasp(object="cube", side=side, approach="top_down",
+    grasp = Grasp(object="cube", side=side, direction="down",
                   grip="firm").plan(world, kin)
     assert grasp.ok, str(grasp)
     q0 = world.arm(side).joints

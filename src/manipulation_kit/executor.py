@@ -30,7 +30,7 @@ from typing import (Any, Dict, List, Mapping, Optional, Protocol, Sequence,
 
 import numpy as np
 
-from .primitives.approach import link7_from_tool, tool_from_link7, tool_revision
+from .primitives.orientation import link7_from_tool, tool_from_link7, tool_revision
 from .primitives.types import (GripStep, JointStep, Plan, SettleStep, Waypoint)
 
 #: wire layout — see the module docstring
@@ -454,7 +454,7 @@ ARRIVE_TOL_M = 0.005
 #: plane, and :data:`ARRIVE_TOL_M` is the slack the pads have. ALONG it, the
 #: tool point is the pad CENTRE of a 58 mm deep pad, so 10 mm still leaves two
 #: thirds of the pad on the object — and the last millimetres of a descent are
-#: taken up by CONTACT, deliberately: ``approach.SUPPORT_CLEARANCE_M`` stops
+#: taken up by CONTACT, deliberately: ``orientation.SUPPORT_CLEARANCE_M`` stops
 #: the fingertips 3 mm above what the object stands on and a position-
 #: controlled arm parks a few mm high when they touch. MEASURED on blocks-eval
 #: (2026-09-21), grasps whose jaws closed correctly sat 3.8-4.4 mm short along
@@ -472,7 +472,7 @@ ARRIVE_TOL_ALONG_M = 0.010
 #: correction to re-solve to a tolerance the solver does not have. Above: a
 #: parallel gripper is forgiving in roll until the object's PRESENTED width
 #: grows past the jaws, which for a 40 mm cube in a 43.96 mm opening happens
-#: at 11.7 deg (``approach.grasp_orientation``). 5 deg sits clear of the
+#: at 11.7 deg (``orientation.grasp_orientation``). 5 deg sits clear of the
 #: solver's noise and well inside where the geometry bites.
 #:
 #: (The 2 deg this was first written with was below IK_ROT_TOL: measured on
@@ -872,7 +872,7 @@ class ToolMiss:
         p_cmd = np.asarray(p_cmd, dtype=float)
         p_meas = np.asarray(p_meas, dtype=float)
         delta = p_meas - p_cmd
-        #: the TCP frame's +z is the approach axis (see primitives.approach)
+        #: the TCP frame's +z is the approach axis (see primitives.orientation)
         axis = np.asarray(r_cmd.as_matrix()[:, 2], dtype=float)
         along = float(np.dot(delta, axis))
         return cls(float(np.linalg.norm(delta)),
@@ -1942,5 +1942,5 @@ class KinematicExecutor:
                             detail="a kinematic stroke completes at once")
 
     def tool_pose(self, side: str):
-        from .primitives.approach import tool_from_link7
+        from .primitives.orientation import tool_from_link7
         return tool_from_link7(*self.kin.ee_pose(side))

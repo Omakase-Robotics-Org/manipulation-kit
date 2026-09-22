@@ -642,7 +642,7 @@ def test_the_measured_scene_picks_the_right_arm_and_says_what_stops_it(
                                table_z=0.166, objects=MASK_OBJECTS)
     world = _world_from(scene, d1_arm)
     choice = choose_side(world, d1_arm, obj="charger", destination="cup",
-                         approach="top_down")
+                         direction="down")
     assert choice.side == "right"
     assert not choice.reachable
     sentence = choice.chains["right"].sentence()

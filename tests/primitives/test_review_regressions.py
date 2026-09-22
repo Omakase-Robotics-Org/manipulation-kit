@@ -16,17 +16,22 @@ import math
 
 import numpy as np
 import pytest
+
+from manipulation_kit.world.direction import ALIASES
 from scipy.spatial.transform import Rotation as R
 
 from manipulation_kit.primitives import (Approach, Carry, Grasp, Lift, Nudge,
                                          Place, Pour, Release, Retreat)
-from manipulation_kit.primitives import approach as ap
+from manipulation_kit.primitives import orientation as ap
 from manipulation_kit.primitives.types import (BAD_ARGUMENT, GRIPPER_UNKNOWN,
                                                NOT_HOLDING, OBJECT_TOO_WIDE,
                                                PRECONDITION_UNMET, Verdict)
 from manipulation_kit.world import (ArmView, ContainerView, Frame, FrameGraph,
                                     GripperView, ObjectView, SurfaceView,
                                     WorldView)
+
+#: the base-frame "down" vector the orientation helpers take
+DOWN = ALIASES["down"].vector()
 
 REACHABLE = (0.38, 0.25, 0.05)
 
@@ -216,10 +221,10 @@ def test_a_yawed_cube_is_measured_across_the_jaws_it_will_close_with(d1_arm):
     frames = FrameGraph()
     cube = ObjectView("cube", p=(0.4, 0.1, 0.2), size=(0.04, 0.04, 0.04),
                       r=R.from_euler("z", math.radians(25.0)))
-    r_tcp = ap.grasp_orientation("left", "top_down", cube, frames)
+    r_tcp = ap.grasp_orientation("left", DOWN, cube, frames)
     assert ap.grasp_width(cube, frames, r_tcp) == pytest.approx(0.04, abs=1e-6)
     # ...and a BASE-aligned jaw set would see 53.2 mm of it
-    square = ap.grasp_orientation("left", "top_down")
+    square = ap.grasp_orientation("left", DOWN)
     assert ap.grasp_width(cube, frames, square) > 0.05
 
 
@@ -303,7 +308,7 @@ def test_a_constrained_leg_is_refused_instead_of_routed_around(d1_arm, observe):
 
     world = observe(d1_arm, block_p=REACHABLE)
     hard = np.array([0.10, 0.45, 0.55])
-    r = ap.grasp_orientation("left", "top_down")
+    r = ap.grasp_orientation("left", DOWN)
     with Kin(d1_arm, world) as kin:
         free_steps, free_error, notes = solve_path(
             kin, "left", [Waypoint("free", hard, r, allow_via=True)],

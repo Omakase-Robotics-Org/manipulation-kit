@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Tuple
 
 from manipulation_kit.arms import get_arm_kinematics
-from manipulation_kit.primitives.approach import tool_from_link7
+from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.world import (ArmView, ContainerView, GripperView,
                                     ObjectView, SurfaceView, WorldView)
 

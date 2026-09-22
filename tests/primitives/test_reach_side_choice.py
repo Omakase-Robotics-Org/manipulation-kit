@@ -26,7 +26,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from manipulation_kit.primitives.approach import tool_from_link7
+from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.primitives.types import UNREACHABLE_DESTINATION
 from manipulation_kit.world import (ArmView, ContainerView, GripperView,
                                     ObjectView, SurfaceView, WorldView)

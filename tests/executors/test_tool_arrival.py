@@ -395,7 +395,7 @@ def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
     stops; it does not command the same pose deeper, which is how ten grasps
     out of ten jammed their fingers on the table.
     """
-    from manipulation_kit.primitives.approach import link7_from_tool
+    from manipulation_kit.primitives.orientation import link7_from_tool
 
     world = observe(d1_arm, block_p=REACHABLE)
     plan = _grasp(world, d1_arm)

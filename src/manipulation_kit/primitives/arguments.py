@@ -31,8 +31,8 @@ import math
 from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .approach import APPROACH_DOC
-from .types import (APPROACHES, BAD_ARGUMENT, GRIPS, NUDGE_FRAMES,
+from ..world.direction import ALIASES, Direction
+from .types import (BAD_ARGUMENT, GRIPS, NUDGE_FRAMES,
                     NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, SIDE_CHOICES, Unmet)
 
 #: What an argument NAMES in the world. Roles narrow both the schema and the
@@ -50,7 +50,7 @@ class Argument:
     """One argument: its type, its domain, its units and what it means."""
 
     name: str
-    kind: str                       # enum | name | number | string
+    kind: str                       # enum | name | number | string | bool | direction
     doc: str = ""
     values: Tuple[str, ...] = ()    # kind == enum
     minimum: float = float("-inf")  # kind == number
@@ -69,6 +69,10 @@ class Argument:
                     "maximum": float(self.maximum), "unit": self.unit}
         if self.kind == "bool":
             return {"kind": "boolean"}
+        if self.kind == "direction":
+            # a named alias OR a free vector in a named frame
+            return {"kind": "direction", "aliases": list(ALIASES),
+                    "free": True}
         return {"kind": "string"}
 
     def check(self, value: Any) -> List[Unmet]:
@@ -77,6 +81,12 @@ class Argument:
             if value not in self.values:
                 return [_bad(self.name, f"must be one of "
                                         f"{list(self.values)}, got {value!r}")]
+            return []
+        if self.kind == "direction":
+            if not isinstance(value, Direction):
+                return [_bad(self.name, f"must be a Direction (an alias of "
+                                        f"{sorted(ALIASES)} or "
+                                        f"{{axis, frame}}), got {value!r}")]
             return []
         if self.kind in ("name", "string"):
             if not isinstance(value, str):
@@ -132,8 +142,11 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
              role=ROLE_VESSEL),
     _enum("side", SIDE_CHOICES,
           "which hand; 'auto' lets the robot pick, and the plan says which"),
-    _enum("approach", APPROACHES,
-          "; ".join(f"{k}: {v}" for k, v in APPROACH_DOC.items())),
+    Argument("direction", "direction",
+             "which way the hand TRAVELS: a named direction ("
+             + ", ".join(ALIASES) + ") or {axis: [x, y, z], frame: "
+             "base|tool|object:<name>}. The wrist orientation is derived from "
+             "it; you never give one"),
     _enum("grip", GRIPS,
           "how hard to hold: the preset owns the stop torque, so there is no "
           "number here"),
@@ -141,16 +154,18 @@ ARGUMENTS: Dict[str, Argument] = {a.name: a for a in (
           "'tool' = along the hand's own axes, 'base' = along the robot's"),
     _number("standoff_m", 0.02, 0.30, "m",
             "how far off the object to wait before closing on it"),
-    _number("jaw_turn_deg", -90.0, 90.0, "deg",
-            "0 (default): the jaws close across the object's long side; 90: the "
-            "hand is turned a quarter turn about the approach axis so they close "
-            "across the other horizontal side (used when the 0 posture is "
-            "refused by the guard or IK and the other side still fits)"),
-    _number("height_m", 0.01, 0.40, "m", "how far straight up"),
+    _number("roll_rad", -math.pi / 2, math.pi / 2, "rad",
+            "PLANNER CHOICE, not a model argument: an extra turn of the hand "
+            "about the approach axis after the jaws are squared to the object "
+            "(0 = across its long side, +-pi/2 = across the other side). Not "
+            "offered to a model — see "
+            "manipulation_kit.primitives.schema.NOT_MODEL_BINDABLE"),
+    _number("height_m", 0.01, 0.40, "m", "how far to lift, along its direction"),
     _number("clearance_m", 0.0, 0.40, "m",
             "how far above the destination (carry: transit height above the "
             "rim; place: how far above its floor the object is let go)"),
-    _number("distance_m", 0.01, 0.40, "m", "how far straight back"),
+    _number("distance_m", 0.01, 0.40, "m",
+            "how far to back out, along its direction"),
     _number("tilt_deg", 15.0, 120.0, "deg", "how far to tip the source"),
     _number("dx", -max(NUDGE_GRID_M), max(NUDGE_GRID_M), "m",
             f"correction along the frame's x, snapped to "

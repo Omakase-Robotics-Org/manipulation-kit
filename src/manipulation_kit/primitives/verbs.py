@@ -1,8 +1,10 @@
 """The nine kinematic verbs, plus the Pour contract a learned executor fills.
 
 Each is a frozen dataclass whose fields are exactly what a model binds: names,
-one of a handful of enumerated choices, and — in ``Nudge`` alone — numbers. The
-orientation is never a field; :mod:`.approach` derives it.
+one of a handful of enumerated choices, a :class:`~manipulation_kit.world.Direction`
+(which way the hand travels), and — in ``Nudge`` alone — correction numbers.
+The orientation is never a field; :func:`.orientation.align_tool` derives it.
+The one planner-only field, ``roll_rad``, is in ``schema.NOT_MODEL_BINDABLE``.
 
 Reading order, because they compose: ``Approach`` stands off, ``Grasp``
 descends and closes, ``Lift`` raises the object, ``Carry`` takes it over the
@@ -22,7 +24,8 @@ from scipy.spatial.transform import Rotation as R
 
 from ..world import (UPRIGHT_TOL_RAD as _UPRIGHT_TOL_RAD, ContainerView,
                      FrameError, ObjectView, SurfaceView, WorldView)
-from . import approach as ap
+from ..world.direction import ALIASES, Direction, frame_rotation, parse_direction
+from . import orientation as ap
 from . import verifiers as V
 from .arguments import check_arguments
 from .planning import IncompleteObservation, Kin, joint_ramp, solve_path
@@ -31,7 +34,7 @@ from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     LEARNED_POLICY_REQUIRED, NO_FIT, NO_MOTION, NO_SUCH_OBJECT,
                     NOT_HOLDING, NUDGE_GRID_M, NUDGE_MAX_YAW_RAD, OBJECT_TILTED,
                     OBJECT_TOO_FLAT, OBJECT_TOO_WIDE, PlanBinding, PlanError,
-                    Plan, Primitive, SIDES, TOP_DOWN,
+                    Plan, Primitive, SIDES, BAD_ARGUMENT,
                     UNREACHABLE_DESTINATION, UNKNOWN_FRAME,
                     UNSUPPORTED_GEOMETRY, Unmet,
                     Verifier, GripStep, SettleStep, Waypoint)
@@ -336,7 +339,7 @@ def _hang_below_tool(world: WorldView, name: str, p_tool) -> float:
 
     MEASURED off the world rather than assumed, because the tool point is the
     pad CENTRE and a top-down grasp sits it ABOVE the object's centre (F6,
-    :func:`~.approach.grasp_point`): "the object's half height" is only the
+    :func:`~.orientation.grasp_point`): "the object's half height" is only the
     right number when the two coincide, and it silently under-states the hang
     by 12 mm on a 40 mm cube. With the tool at the object's centre this
     reduces to exactly ``height / 2``, which is the form the rule is stated in.
@@ -438,31 +441,104 @@ def _unreachable_destination(primitive: Primitive, side: str,
 
 
 # --------------------------------------------------------------------------- #
+# directions
+# --------------------------------------------------------------------------- #
+
+#: the default direction of each verb that has one
+DOWN = ALIASES["down"]
+UP = ALIASES["up"]
+#: straight back out along the hand's own approach axis
+OUT_ALONG_TOOL = ALIASES["along_tool"].opposite()
+#: the least vertical component a LIFT direction must have: a lift rises
+LIFT_MIN_RISE = 0.5
+
+
+def _coerce_direction(primitive: Primitive, name: str = "direction") -> None:
+    """Let a Python caller write ``direction="down"`` or ``[0, 0, -1]``.
+
+    A value that does not parse is LEFT AS IT IS, so ``check_arguments``
+    reports it as a typed ``bad_argument`` rather than the constructor
+    raising.
+    """
+    value = getattr(primitive, name)
+    if isinstance(value, Direction):
+        return
+    try:
+        object.__setattr__(primitive, name, parse_direction(value))
+    except (TypeError, ValueError):
+        pass
+
+
+def _resolve(direction: Direction, world: WorldView, side: Optional[str], *,
+             tool_r=None) -> Tuple[Optional[np.ndarray], List[Unmet]]:
+    """``direction`` in BASE for ``side``, or the typed reason it will not
+    resolve. An unknown frame is a refusal, never a silent base."""
+    try:
+        return direction.resolve(world, side=side, tool_r=tool_r), []
+    except FrameError as exc:
+        code = FRAME_STALE if exc.reason == FRAME_STALE else UNKNOWN_FRAME
+        return None, [Unmet(code, f"direction {direction.label()!r} is "
+                                  f"expressed in {exc.frame_id!r}, which does "
+                                  f"not resolve: {exc.detail}",
+                            "use a base-frame direction, or name a frame "
+                            "the world holds")]
+
+
+def _approach_unmet(direction: Direction, world: WorldView,
+                    side: Optional[str]) -> List[Unmet]:
+    """Can the hand travel ``direction`` onto an object at all?"""
+    d, unmet = _resolve(direction, world, side)
+    if unmet or d is None:
+        return unmet
+    if float(d[2]) > ap.VERTICAL_COS:
+        return [Unmet(BAD_ARGUMENT,
+                      f"direction {direction.label()!r} travels UP onto the "
+                      f"object, i.e. from underneath it, and no hand here "
+                      f"reaches that way",
+                      "use down or a horizontal direction",
+                      {"argument": "direction",
+                       "axis_base": [round(float(c), 3) for c in d]})]
+    return []
+
+
+def _roll_note(roll_rad: float) -> Tuple[str, ...]:
+    """The planner reports the roll it used, since the model never sets one."""
+    if not roll_rad:
+        return ()
+    return (f"jaws rolled {math.degrees(roll_rad):+.0f} deg about the approach "
+            f"axis (planner choice)",)
+
+
+# --------------------------------------------------------------------------- #
 # Approach
 # --------------------------------------------------------------------------- #
 
 @dataclass(frozen=True)
 class Approach(Primitive):
-    """Stand the open hand off an object along a named approach axis.
+    """Stand the open hand off an object, ready to travel along a direction.
 
-    The pose is ``object + (-direction) * standoff``, oriented so the tool's
-    approach axis points at the object and the jaws are square to it. Nothing
-    is grasped; this is the move that makes the next one a straight line.
+    The pose is ``object - direction * standoff``, oriented so the tool's
+    approach axis points along ``direction`` and the jaws are square to the
+    object. Nothing is grasped; this is the move that makes the next one a
+    straight line.
     """
 
     VERB = "approach"
     object: str = ""
     side: str = AUTO
-    approach: str = TOP_DOWN
+    #: which way the hand will TRAVEL onto the object (default: down onto it)
+    direction: Direction = DOWN
     standoff_m: float = DEFAULT_STANDOFF_M
-    #: 0 squares the jaws across the object's long axis (the default grasp);
-    #: 90 turns the hand a quarter turn about the approach axis so the jaws
-    #: close across the OTHER horizontal side. The planner does not choose this
-    #: by itself: a caller falls back to 90 when the 0 posture is refused by
-    #: the guard or IK and the other side still fits the jaws (d1-2 run6,
-    #: 2026-09-22: a 45x55 mm charger, jaws-across-x wrist posture rejected,
-    #: jaws-across-y fine).
-    jaw_turn_deg: float = 0.0
+    #: PLANNER-ONLY (``schema.NOT_MODEL_BINDABLE``): an extra turn about the
+    #: approach axis after the jaws are squared to the object — pi/2 closes
+    #: them across the OTHER horizontal side, which a caller tries when the
+    #: square posture is refused by the guard or IK (d1-2 run6, 2026-09-22: a
+    #: 45x55 mm charger). A model never sets it: shown one (run8) it picked the
+    #: IK-infeasible turn on its own and spent the run on refusals.
+    roll_rad: float = 0.0
+
+    def __post_init__(self) -> None:
+        _coerce_direction(self)
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
@@ -473,7 +549,9 @@ class Approach(Primitive):
         unmet += _upright_geometry(world, self.object)
         if p is not None and not unmet:
             # RESOLVE FIRST, then check the hand this verb will actually use.
-            unmet += _must_be_free(world, self.resolve_side(world))
+            side = self.resolve_side(world)
+            unmet += _must_be_free(world, side)
+            unmet += _approach_unmet(self.direction, world, side)
         return unmet
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
@@ -488,9 +566,12 @@ class Approach(Primitive):
         if unmet:
             return None, None, None, unmet
         side = _resolved_side(self.side, world, p)
-        r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
-                                      dyaw_rad=math.radians(self.jaw_turn_deg))
-        return side, ap.standoff_pose(p, self.approach, self.standoff_m), r_tcp, []
+        d, unmet = _resolve(self.direction, world, side)
+        if unmet:
+            return None, None, None, unmet
+        r_tcp = ap.grasp_orientation(side, d, item, world.frames,
+                                     roll_rad=self.roll_rad)
+        return side, ap.standoff_pose(p, d, self.standoff_m), r_tcp, []
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
@@ -498,6 +579,7 @@ class Approach(Primitive):
             return self._unmet_error(unmet, self.resolve_side(world) or "")
         side, p_stand, r_tcp, _ = self._geometry(world)
         notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
+        notes += _roll_note(self.roll_rad)
         waypoints = [Waypoint("standoff", p_stand, r_tcp, allow_via=True)]
         steps, error, detours = _solve(self, world, kin, side, waypoints)
         if error is not None:
@@ -534,10 +616,10 @@ class Approach(Primitive):
 
 @dataclass(frozen=True)
 class Grasp(Primitive):
-    """Open, descend along the approach axis, close on the object.
+    """Open, travel along a direction onto the object, close on it.
 
     The geometry is ``d1-inference``'s ``topdown.grasp_from_above`` generalised
-    to the approach set: hover, straight travel, close. What stayed in
+    to any direction: hover, straight travel, close. What stayed in
     d1-inference is the part that needs a camera — the abnormal-descent gate —
     and the torque verdict is read back here through
     :class:`~manipulation_kit.world.GripperView`.
@@ -546,17 +628,20 @@ class Grasp(Primitive):
     VERB = "grasp"
     object: str = ""
     side: str = AUTO
-    approach: str = TOP_DOWN
+    direction: Direction = DOWN
     standoff_m: float = DEFAULT_STANDOFF_M
     grip: str = "soft"
-    jaw_turn_deg: float = 0.0   # see Approach.jaw_turn_deg
+    roll_rad: float = 0.0       # planner-only, see Approach.roll_rad
+
+    def __post_init__(self) -> None:
+        _coerce_direction(self)
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
         if unmet:
             return unmet
         unmet += Approach(object=self.object, side=self.side,
-                          approach=self.approach,
+                          direction=self.direction,
                           standoff_m=self.standoff_m).preconditions(world)
         item = world.find(self.object)
         if item is None or any(u.code in (FRAME_STALE, UNKNOWN_FRAME)
@@ -565,11 +650,17 @@ class Grasp(Primitive):
         side = self.resolve_side(world)
         if side is None:
             return unmet
+        if unmet:
+            # a direction that does not resolve (or points up) has already
+            # said so; nothing below can be computed without it
+            if any(u.code == BAD_ARGUMENT for u in unmet):
+                return unmet
         try:
-            r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
-                                      dyaw_rad=math.radians(self.jaw_turn_deg))
+            d = self.direction.resolve(world, side=side)
+            r_tcp = ap.grasp_orientation(side, d, item, world.frames,
+                                         roll_rad=self.roll_rad)
             width = ap.grasp_width(item, world.frames, r_tcp)
-            flat = (self.approach == TOP_DOWN
+            flat = (ap.is_descent(d)
                     and ap.grasps_above_its_top(item, world.frames))
             tall = item.vertical_extent(world.frames)
         except FrameError:
@@ -595,7 +686,7 @@ class Grasp(Primitive):
             unmet.append(Unmet(
                 OBJECT_TOO_WIDE,
                 f"{self.object} presents {width * 1000:.0f} mm across the jaw "
-                f"axis of this {self.approach} grasp, and the driven jaws take "
+                f"axis of this {self.direction.label()} grasp, and the driven jaws take "
                 f"{graspable * 1000:.0f} mm "
                 f"(opening {(ap.JAW_OPEN_M if opening is None else opening) * 1000:.0f} mm, "
                 f"{ap.JAW_CLEARANCE_M * 1000:.0f} mm clearance per side)",
@@ -609,27 +700,31 @@ class Grasp(Primitive):
         if unmet:
             return None, None, None, None, unmet
         side = _resolved_side(self.side, world, p)
-        r_tcp = ap.grasp_orientation(side, self.approach, item, world.frames,
-                                      dyaw_rad=math.radians(self.jaw_turn_deg))
+        d, unmet = _resolve(self.direction, world, side)
+        if unmet:
+            return None, None, None, None, unmet
+        r_tcp = ap.grasp_orientation(side, d, item, world.frames,
+                                     roll_rad=self.roll_rad)
         # The tool point is the pad CENTRE and the pads reach 29 mm past it,
         # so a top-down grasp on the object's centre asks for the finger tips
         # under the table. ``grasp_point`` lifts it just clear — from the
         # RESOLVED pose, which is the whole of R1: it used to read ``item.p``
         # and hand a table-frame coordinate to an IK that reads base frame.
-        p_grasp, _raised = ap.grasp_point(item, self.approach, world.frames)
-        return (side, ap.standoff_pose(p_grasp, self.approach, self.standoff_m),
+        p_grasp, _raised = ap.grasp_point(item, d, world.frames)
+        return (side, ap.standoff_pose(p_grasp, d, self.standoff_m),
                 p_grasp, r_tcp, [])
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
         return Approach(object=self.object, side=self.side,
-                        approach=self.approach,
-                        jaw_turn_deg=self.jaw_turn_deg).resolve_side(world)
+                        direction=self.direction,
+                        roll_rad=self.roll_rad).resolve_side(world)
 
     def plan(self, world: WorldView, kin) -> Any:
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
         side, p_stand, p_grasp, r_tcp, _ = self._geometry(world)
+        d = self.direction.resolve(world, side=side)
         waypoints = [
             # getting to the standoff is free-space transit: a detour is a
             # better answer than a refusal. THE TOOL IS CHECKED THERE, before
@@ -643,7 +738,7 @@ class Grasp(Primitive):
             # checked here too — this is the pose the jaws close on.
             Waypoint("grasp", p_grasp, r_tcp, allow_via=False, arrive=True)]
         item = world.find(self.object)
-        raised = ap.grasp_point(item, self.approach, world.frames)[1]
+        raised = ap.grasp_point(item, d, world.frames)[1]
         p_obj = item.pose_in_base(world.frames)[0]
         # The jaws open BEFORE the arm moves and close only once the tool is on
         # the object: an open-on-arrival stroke sweeps the pads through whatever
@@ -656,7 +751,7 @@ class Grasp(Primitive):
         # plateaus low lands the pad tips in the table while every waypoint
         # coordinate still reads correct (R: "validate achieved clearance,
         # not only ideal waypoint coordinates"; F5's ten failures in ten).
-        if self.approach == TOP_DOWN and steps:
+        if ap.is_descent(d) and steps:
             achieved = _achieved_tool(kin, world, side, steps[-1].q)
             if achieved is not None:
                 clearance = ap.achieved_clearance(item, world.frames, achieved)
@@ -685,6 +780,7 @@ class Grasp(Primitive):
                      + (GripStep(side, 1.0, self.grip, 1),
                         SettleStep(SETTLE_S)))
         notes = () if self.side != AUTO else (f"side chosen automatically: {side}",)
+        notes += _roll_note(self.roll_rad)
         if raised:
             notes += (f"grasping {(p_grasp[2] - float(p_obj[2])) * 1000:.0f} mm "
                       f"above the object's centre so the pad tips clear what "
@@ -708,12 +804,18 @@ class Grasp(Primitive):
 
 @dataclass(frozen=True)
 class Lift(Primitive):
-    """Raise the held object straight up, orientation unchanged."""
+    """Raise the held object along a rising direction (default straight up),
+    orientation unchanged."""
 
     VERB = "lift"
     object: str = ""
     side: str = AUTO
     height_m: float = DEFAULT_LIFT_M
+    #: which way the object travels; it must RISE (base z >= 0.5 of it)
+    direction: Direction = UP
+
+    def __post_init__(self) -> None:
+        _coerce_direction(self)
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
@@ -726,8 +828,20 @@ class Lift(Primitive):
         # THE HOLD CHECK RUNS EVEN WHEN NO HAND HOLDS ANYTHING. It used to be
         # skipped exactly then, and planning went on to ask the kinematics for
         # ``tool_pose(None)`` (R3).
-        _side, held = _holder_of(world, self.object, self.side)
-        return unmet + held
+        side, held = _holder_of(world, self.object, self.side)
+        unmet += held
+        if not unmet:
+            d, bad = _resolve(self.direction, world, side)
+            unmet += bad
+            if d is not None and float(d[2]) < LIFT_MIN_RISE:
+                unmet.append(Unmet(
+                    BAD_ARGUMENT,
+                    f"a lift rises, and direction {self.direction.label()!r} "
+                    f"climbs only {float(d[2]):.2f} of its length",
+                    "use carry or nudge to move it sideways",
+                    {"argument": "direction",
+                     "axis_base": [round(float(c), 3) for c in d]}))
+        return unmet
 
     def _side(self, world: WorldView) -> Optional[str]:
         return _holder_of(world, self.object, self.side)[0]
@@ -742,8 +856,9 @@ class Lift(Primitive):
                 p_tool, r_tool = borrowed.tool_pose(side)
         except IncompleteObservation as exc:
             return _incomplete(self, side, exc)
-        goal = p_tool + np.array([0.0, 0.0, float(self.height_m)])
-        # STRAIGHT UP. A lift that routes through a 25 cm clearance point, or
+        d, _bad = _resolve(self.direction, world, side, tool_r=r_tool)
+        goal = p_tool + d * float(self.height_m)
+        # STRAIGHT ALONG IT. A lift that routes through a 25 cm clearance point, or
         # through READY, is not a lift of a held object — it is a swing with
         # something in the hand, and the orientation promise goes with it.
         return _plan_for(self, world, kin, side,
@@ -755,7 +870,13 @@ class Lift(Primitive):
         if side is None:
             return V.Never(self.name(), world0,
                            "no hand is holding anything, so no lift can be measured")
-        return V.ObjectRose(self.name(), world0, side, self.object, self.height_m)
+        try:
+            rise = float(self.direction.resolve(world0, side=side)[2])
+        except FrameError as exc:
+            return V.Never(self.name(), world0,
+                           f"the lift direction does not resolve: {exc}")
+        return V.ObjectRose(self.name(), world0, side, self.object,
+                            self.height_m * rise)
 
 
 # --------------------------------------------------------------------------- #
@@ -1150,7 +1271,10 @@ class Nudge(Primitive):
     vision-driven model — Shu's own reason for wanting 6-DoF. Translation
     survives because it is well conditioned and its feedback is legible.
     Rotation does not: the only turn on offer is ``dyaw``, clamped to +-15 deg
-    ABOUT THE APPROACH AXIS, the one rotation with an obvious visual meaning.
+    ABOUT THE APPROACH AXIS, the one rotation with an obvious visual meaning —
+    the same roll :func:`.orientation.align_tool` calls ``roll_rad``, applied
+    by the same function (:func:`.orientation.roll_tool`). ``frame`` uses the
+    shared frame names of :class:`~manipulation_kit.world.Direction`.
 
     Everything is snapped and clamped on construction-of-the-plan, not
     rejected: a model asking for 23 mm gets 30 mm and is TOLD so in the plan's
@@ -1163,7 +1287,7 @@ class Nudge(Primitive):
     dy: float = 0.0
     dz: float = 0.0
     dyaw: float = 0.0            # radians, about the approach axis
-    frame: str = "tool"          # tool | base
+    frame: str = "tool"          # tool | base (world.direction.TOOL / BASE)
 
     def snapped(self) -> Tuple[np.ndarray, float]:
         delta = np.array([snap(self.dx), snap(self.dy), snap(self.dz)])
@@ -1222,9 +1346,9 @@ class Nudge(Primitive):
                 p_tool, r_tool = borrowed.tool_pose(side)
         except IncompleteObservation as exc:
             return _incomplete(self, side, exc)
-        world_delta = r_tool.apply(delta) if self.frame == "tool" else delta
-        r_goal = (R.from_rotvec(r_tool.as_matrix()[:, 2] * dyaw) * r_tool
-                  if dyaw else r_tool)
+        rot = frame_rotation(self.frame, world, side=side, tool_r=r_tool)
+        world_delta = delta if rot is None else rot.apply(delta)
+        r_goal = ap.roll_tool(r_tool, dyaw)
         notes = []
         asked = np.array([self.dx, self.dy, self.dz])
         if not np.allclose(asked, delta, atol=1e-9):
@@ -1286,15 +1410,21 @@ class Nudge(Primitive):
 
 @dataclass(frozen=True)
 class Retreat(Primitive):
-    """Back the hand straight out along its own approach axis.
+    """Back the hand straight out — by default along its own approach axis.
 
     Straight back, not up: a hand inside a container that rises first lifts the
-    container with it.
+    container with it. ``direction`` defaults to ``-along_tool`` (tool -z), the
+    axis that used to be hardcoded; any other direction is a straight move
+    along it.
     """
 
     VERB = "retreat"
     side: str = AUTO
     distance_m: float = 0.10
+    direction: Direction = OUT_ALONG_TOOL
+
+    def __post_init__(self) -> None:
+        _coerce_direction(self)
 
     def preconditions(self, world: WorldView) -> List[Unmet]:
         unmet = check_arguments(self)
@@ -1303,6 +1433,8 @@ class Retreat(Primitive):
         side = self._side(world)
         if side is None or world.arm(side) is None:
             unmet.append(Unmet(ARM_UNKNOWN, "name which hand to retreat"))
+        elif self.direction.frame != "tool":
+            unmet += _resolve(self.direction, world, side)[1]
         return unmet
 
     def _side(self, world: WorldView) -> Optional[str]:
@@ -1320,7 +1452,10 @@ class Retreat(Primitive):
                 p_tool, r_tool = borrowed.tool_pose(side)
         except IncompleteObservation as exc:
             return _incomplete(self, side, exc)
-        back = -r_tool.as_matrix()[:, 2] * float(self.distance_m)
+        d, bad = _resolve(self.direction, world, side, tool_r=r_tool)
+        if bad:
+            return self._unmet_error(bad, side)
+        back = d * float(self.distance_m)
         # STRAIGHT BACK. A hand inside a container that is allowed to detour
         # up and out lifts the container with it (R10).
         return _plan_for(self, world, kin, side,
@@ -1334,7 +1469,12 @@ class Retreat(Primitive):
         if arm is None or arm.tool_p is None or arm.tool_r is None:
             return V.Never(self.name(), world0,
                            "no tool pose reported, so a retreat cannot be measured")
-        back = -arm.tool_r.as_matrix()[:, 2] * float(self.distance_m)
+        try:
+            back = (self.direction.resolve(world0, side=side, tool_r=arm.tool_r)
+                    * float(self.distance_m))
+        except FrameError as exc:
+            return V.Never(self.name(), world0,
+                           f"the retreat direction does not resolve: {exc}")
         # Deliberately TIGHTER than the scaled default (0.4 x 100 mm = 40 mm):
         # backing out of a container is a clearance move, and 30 mm is the
         # clearance that matters.

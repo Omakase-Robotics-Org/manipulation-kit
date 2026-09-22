@@ -77,7 +77,7 @@ def _observe(kin, *, block_p=(0.38, 0.25, 0.05), box_p=(0.33, 0.34, 0.03),
     verifier against a world no producer emits. ``gap`` / ``stalled`` override
     them per side for the tests that are about exactly that.
     """
-    from manipulation_kit.primitives.approach import tool_from_link7
+    from manipulation_kit.primitives.orientation import tool_from_link7
     from manipulation_kit.world import (ArmView, ContainerView, GripperView,
                                         ObjectView, SurfaceView, WorldView)
     closed = closed or {}
