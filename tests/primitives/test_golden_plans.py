@@ -43,10 +43,11 @@ THE SCENE GATE (0.16.0, step 5) is switched off for that proof: it is a
 proof about the VOCABULARY, and the gate is a new check that refuses some of
 these plans on purpose. A second test replays every case with the gate on and
 requires every case to be unchanged EXCEPT the ones listed, by number, in
-:data:`SCENE_REFUSED` — each a horizontal approach whose arm comes within
-11-15 mm of a declared table or box, inside the 15 mm a declared obstacle
-requires (10 mm margin + 5 mm sampling allowance). Those become
-``guard_reject`` refusals naming the obstacle. No top-down case changes.
+:data:`SCENE_REFUSED` — each a side-on approach whose arm comes within
+12-15 mm of a declared table or shelf, inside the 15 mm a declared obstacle
+requires (10 mm margin + 5 mm sampling allowance), or whose standoff posture
+is refused by the body guard with every route around it refused by the
+table. Those become refusals naming the obstacle. No top-down case changes.
 
 Deliberately updating it (a later step that changes grasp geometry on
 purpose): ``python tests/primitives/test_golden_plans.py --regenerate`` writes
@@ -78,24 +79,30 @@ PORTABLE_Q_TOL = 1e-2
 SOLVER_PATH_KEYS = ("n", "q_sum", "residual_m")
 
 #: The cases the scene gate (0.16.0, step 5) changes, BY NUMBER, and the
-#: obstacle each refusal must name. Measured on the capture stack: all are
-#: ``direction: forward`` (for a chain, its approach link), all were plans
-#: at e1dce97, and in every one the arm's closest link (Link4 = forearm,
-#: Link7 = wrist) comes 11-15 mm from the named obstacle — inside the 15 mm
-#: a declared, uncertainty-free obstacle requires. The body guard cannot see
-#: a table; this is run 5's horizontal approach, refused with a number.
+#: obstacle each refusal must name — re-derived on the capture stack from the
+#: phase-B golden (steps 3+4+5+7 merged; ``plans.json``, 163 cases). Every
+#: one is a SIDE-ON approach (``forward``, or ``left``/``right`` at the shelf)
+#: that was a plan with the gate off; no top-down case changes. Each is a
+#: ``guard_reject`` naming the obstacle, except where noted.
 SCENE_REFUSED = {
-    # demo: table top z 0.01, block at z 0.05; box (container) beside it
-    2: "box", 3: "table", 4: "table", 6: "box", 10: "box", 32: "box",
-    36: "box",
-    # tabletop: the same table, forearm 11-13 mm above it
-    53: "table", 54: "table", 55: "table", 57: "table", 61: "table",
-    83: "table", 87: "table",
-    # d1-2_tape_cup: wrist 13 mm from the wagon top's edge
-    103: "table", 104: "table", 105: "table", 134: "table",
-    # yawed: forearm 13-15 mm above the table
-    151: "table", 152: "table", 154: "table", 184: "table",
+    # demo / tabletop, forward onto red_block: the posture at the (step-3,
+    # silhouette-measured) standoff is refused by the body guard, and every
+    # route around it is refused by the table — the refusal names both
+    1: "table", 3: "table", 5: "table", 13: "table", 17: "table",
+    32: "table", 34: "table", 36: "table", 44: "table", 48: "table",
+    # d1-2_tape_cup, forward onto the cube: the wrist (Link7) passes 12 mm
+    # from the wagon top on the way to 'grasp' (the cup refuses the other roll)
+    70: "table", 74: "table", 77: "table",
+    # yawed, forward onto the block: forearm (Link4) 13 mm from the table
+    93: "table", 95: "table", 109: "table",
+    # side_shelf: the forearm passes 14-15 mm from the shelf (0-1 mm inside
+    # its 15 mm — knife-edge). 140/142: the squared roll's own failure is an
+    # IK miss at the standoff; the quarter turn was the shelf's, and the
+    # refusal carries obstacle:shelf in ``attempted``
+    140: "shelf", 142: "shelf", 144: "shelf",
 }
+#: the listed cases whose refusal reason is not ``guard_reject``
+SCENE_REFUSED_REASON = {140: "ik_fail", 142: "ik_fail"}
 
 
 # --------------------------------------------------------------------------- #
@@ -312,21 +319,20 @@ def test_every_golden_case_replays(d1_arm, monkeypatch):
 
 
 def _scene_refusal(case, kin, world):
-    """The PlanError a listed case now ends in (a chain: its first link)."""
+    """The PlanError a listed case now ends in (a chain: its refused link)."""
     from manipulation_kit.primitives import reach
     from manipulation_kit.primitives.verbs import BY_VERB
     args = dict(case["args"])
     if case["verb"] == "chain":
         links = reach.plan_chain(world, kin, **args).links
-        assert len(links) == 1, [link.verb for link in links]
-        return links[0].result
+        return links[-1].result
     return BY_VERB[case["verb"]](**args).plan(world, kin)
 
 
 def test_the_scene_gate_changes_only_the_listed_cases(d1_arm):
     """With the gate ON: every case as captured, except :data:`SCENE_REFUSED`,
-    each of which is now a ``guard_reject`` naming its obstacle with a
-    positive penetration depth."""
+    each of which is now a refusal (:data:`SCENE_REFUSED_REASON`, else
+    ``guard_reject``) naming its obstacle."""
     from manipulation_kit.primitives.types import GUARD_REJECT
     golden = _load()
     worlds = _worlds(d1_arm, golden)
@@ -337,18 +343,20 @@ def test_the_scene_gate_changes_only_the_listed_cases(d1_arm):
         if index in SCENE_REFUSED:
             error = _scene_refusal(case, d1_arm, world)
             name = SCENE_REFUSED[index]
-            if (getattr(error, "ok", True) or error.reason != GUARD_REJECT
+            reason = SCENE_REFUSED_REASON.get(index, GUARD_REJECT)
+            if (getattr(error, "ok", True) or error.reason != reason
                     or f"obstacle:{name}" not in error.attempted
-                    or f"{name!r}" not in error.detail):
-                # Off the capture stack a knife-edge case (151/154/184 are
-                # 0.09 mm inside the envelope here) may plan on the solver's
+                    or (reason == GUARD_REJECT
+                        and f"{name!r}" not in error.detail)):
+                # Off the capture stack a knife-edge case (140/142/144 are
+                # 0-1 mm inside the envelope here) may plan on the solver's
                 # other path; then it must be the captured plan.
                 errors = []
                 if portable:
                     _close(case["result"], replay(case, d1_arm, world),
                            f"case {index}", errors, portable=True)
                 if not portable or errors:
-                    failures.append(f"case {index}: expected a guard_reject "
+                    failures.append(f"case {index}: expected a {reason} "
                                     f"naming {name!r}, got {error}")
             continue
         errors = []
