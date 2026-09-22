@@ -10,8 +10,8 @@ What is worth pinning about them, and what these check:
 
 * they are OFFERED, every turn, alongside the motion verbs;
 * ``declare_scene`` goes through the SAME reader a hand-written scene file
-  does (``live.objects_from``), so a model cannot declare something a person
-  could not have written;
+  does (``manipulation_kit.agent.robot.objects_from``), so a model cannot
+  declare something a person could not have written;
 * a declaration that arrives at turn 0 into an EMPTY scene makes the arm
   choice possible, which it was not before;
 * ``locate`` is exact, carries the uncertainty the nominal head mount has,
@@ -34,8 +34,17 @@ import pytest
 
 @pytest.fixture
 def loop_module(agent_examples):
+    """The example, and — since step 7 — the kit's tools the loop offers."""
+    import types
+
     import astra_loop
-    return astra_loop
+    from manipulation_kit.agent import tools
+    module = types.SimpleNamespace(**vars(astra_loop))
+    for name in ("DECLARE_SCHEMA", "LOCATE_SCHEMA", "scene_tools",
+                 "apply_declare_scene", "apply_locate"):
+        setattr(module, name, getattr(tools, name))
+    module.camera_from_scene = astra_loop.head_camera_from_scene
+    return module
 
 
 @pytest.fixture
@@ -58,7 +67,7 @@ def _world(scene, kin):
     import dataclasses
     import time
 
-    from live import frames_from, objects_from
+    from manipulation_kit.agent.robot import frames_from, objects_from
     from scene import demo_scene
     world, _ = demo_scene()
     return dataclasses.replace(world, objects=tuple(objects_from(scene)),
@@ -66,8 +75,10 @@ def _world(scene, kin):
 
 
 def _robot(loop_module, kin, scene):
-    return loop_module.build_robot("kinematic", kin, "http://unused", scene,
-                                   world0=_world(scene, kin), obj="cup")
+    from manipulation_kit.agent import LiveRobot
+    from scene import DEMO_WRIST_CAMERA
+    return LiveRobot.from_flag("kinematic", kin=kin, scene=scene,
+                               wrist_intrinsics=DEMO_WRIST_CAMERA)
 
 
 DECLARED = {"objects": [
@@ -285,7 +296,6 @@ def test_the_loop_starts_with_an_empty_scene_and_the_model_fills_it_in(
     model = _Declaring()
     trace = loop_module.loop(model, robot, task="put the charger in the cup",
                              max_turns=6, trace_path=tmp_path / "t.jsonl",
-                             world0=_world(scene, d1_arm), kin=d1_arm,
                              obj="charger", destination="cup", camera=camera)
     assert trace.stop != "unreachable_task"
     names = [(r.choice or {}).get("name") for r in trace.records]
@@ -298,9 +308,10 @@ def test_the_loop_starts_with_an_empty_scene_and_the_model_fills_it_in(
     assert first["tool"] == "locate" and "m in base" in first["answer"]
     second = trace.records[1].observation_after
     assert "the right arm" in second["answer"] or "arm" in second["answer"]
-    # ...and the motion verbs then ran against the declared scene
+    # ...and the motion verbs then ran against the declared scene: the grasp
+    # was answered — with the wrist look the policy requires before a stroke
     assert "grasp" in names
-    assert trace.records[2].verdict is not None
+    assert trace.records[2].look is not None
 
 
 def test_a_model_that_stops_without_declaring_has_not_succeeded(loop_module,
@@ -314,8 +325,7 @@ def test_a_model_that_stops_without_declaring_has_not_succeeded(loop_module,
 
     scene = _empty_scene()
     trace = loop_module.loop(Quits(), _robot(loop_module, d1_arm, scene),
-                             max_turns=3, world0=_world(scene, d1_arm),
-                             kin=d1_arm, obj="charger", destination="cup",
+                             max_turns=3, obj="charger", destination="cup",
                              camera=camera)
     assert trace.stop == "model_stopped"
     assert "without declaring" in trace.stop_detail
@@ -331,8 +341,7 @@ def test_a_motion_verb_before_anything_is_declared_is_answered_not_crashed_on(
 
     scene = _empty_scene()
     trace = loop_module.loop(Impatient(), _robot(loop_module, d1_arm, scene),
-                             max_turns=2, world0=_world(scene, d1_arm),
-                             kin=d1_arm, obj="charger", destination="cup",
+                             max_turns=2, obj="charger", destination="cup",
                              camera=camera)
     assert len(trace.records) == 2
     assert all(r.verdict is None for r in trace.records)
@@ -351,8 +360,8 @@ def test_the_model_is_told_the_camera_and_both_tool_points(loop_module,
 
     scene = _empty_scene()
     loop_module.loop(Listening(), _robot(loop_module, d1_arm, scene),
-                     max_turns=1, world0=_world(scene, d1_arm), kin=d1_arm,
-                     obj="charger", destination="cup", camera=camera)
+                     max_turns=1, obj="charger", destination="cup",
+                     camera=camera)
     text = "\n".join(seen["first"])
     assert "HEAD CAMERA" in text and "fx 606" in text
     assert "Lens at" in text
@@ -413,9 +422,9 @@ def test_a_missing_frame_is_a_message_not_a_traceback(loop_module):
     assert "no such frame" in str(caught.value)
 
 
-def test_snapshot_mode_needs_the_hook_and_the_trace(loop_module, monkeypatch):
-    monkeypatch.delenv("ASTRA_SNAPSHOT_CMD", raising=False)
+def test_snapshot_mode_needs_the_hook_and_the_trace(loop_module):
     with pytest.raises(SystemExit) as caught:
         loop_module.perceived_scene("snapshot", trace_path=None, obj="a",
                                     destination="b")
     assert "--trace" in str(caught.value)
+    assert "--snapshot-cmd" in str(caught.value)

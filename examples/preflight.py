@@ -104,7 +104,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("lease: released")
 
     if args.scene is not None:
-        from live import objects_from
+        from manipulation_kit.agent.robot import objects_from
         scene = json.loads(args.scene.read_text(encoding="utf-8"))
         for item in objects_from(scene):
             print(f"scene: {item.to_text()}")

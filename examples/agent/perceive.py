@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -170,8 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "leaves the things to the loop's own model. "
                              "'astra' is a separate box-detector call; "
                              "'mask' is a colour fallback kept for the tests")
-    parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL",
-                                                          "gpt-6-astra"))
+    parser.add_argument("--model", default="gpt-6-astra",
+                        help="the detector model for --detector astra")
     parser.add_argument("--out", type=Path, default=None,
                         help="write the scene here as well as printing it")
     parser.add_argument("--debug", type=Path, default=None,

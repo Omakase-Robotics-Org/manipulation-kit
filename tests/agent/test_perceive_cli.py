@@ -112,7 +112,7 @@ def _world_from(scene, kin):
     import dataclasses
     import time
 
-    from live import frames_from, objects_from
+    from manipulation_kit.agent.robot import frames_from, objects_from
     from scene import demo_scene
     world, _ = demo_scene()
     return dataclasses.replace(world, objects=tuple(objects_from(scene)),
@@ -122,7 +122,7 @@ def _world_from(scene, kin):
 def test_the_scene_loads_through_the_loops_own_reader(perceive, camera_module,
                                                       frames, tmp_path,
                                                       d1_arm):
-    from live import load_scene, objects_from
+    from manipulation_kit.agent.robot import load_scene, objects_from
     _, _, _, scene = _scene_of(perceive, camera_module, frames, "D",
                                table_z=0.166, objects=MASK_OBJECTS)
     path = tmp_path / "perceived.json"

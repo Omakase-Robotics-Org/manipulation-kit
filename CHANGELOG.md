@@ -219,6 +219,71 @@ Tests: `tests/agent/test_perceive.py` moved to `tests/perception/test_perceive.p
 scene-reader tests are `tests/agent/test_perceive_cli.py`; new
 `tests/perception/test_perception_interface.py`.
 
+### `manipulation_kit.agent` (redesign step 7) — the loop is a kit module
+
+- **NEW `manipulation_kit.agent`**: `OperatorPolicy` (`policy.py`), the
+  provider-independent loop `run()` (`loop.py`), `LiveRobot` /
+  `KinematicMirror` / `SceneSource` and the `--executor` registry
+  (`robot.py`), the `declare_scene` / `locate` observation tools (`tools.py`)
+  and `DecisionRecord` / `DecisionTrace` (`trace.py`). `examples/agent/live.py`,
+  `mirror.py` and `trace.py` are **gone** (moved, not copied); import from
+  `manipulation_kit.agent`.
+- **BREAKING: all eight `ASTRA_*` environment variables are deleted.**
+  `ASTRA_GRIP_CAP` → `OperatorPolicy.max_grip`, `ASTRA_APPROACH_ALLOW` →
+  `allowed_directions`, `ASTRA_VEL_RATIO` → `vel_ratio`,
+  `ASTRA_ARRIVE_TIMEOUT_S` → `arrive_timeout_s`; `ASTRA_SNAPSHOT_CMD` →
+  `astra_loop.py --snapshot-cmd "CMD {turn} {out_dir}"` (`examples/agent/
+  snapshot.py`: exit code checked, frames must be fresh, each camera
+  labelled, failure stops the loop); `ASTRA_MAX_OUTPUT_TOKENS` /
+  `ASTRA_REASONING` / `ASTRA_DEBUG` → `--max-output-tokens` / `--reasoning` /
+  `--debug`. The real model is `--model NAME` (the OpenAI SDK reads
+  `OPENAI_API_KEY` itself); without it the scripted stub runs.
+- **`OperatorPolicy`**: `max_grip`, `allowed_directions`, `vel_ratio`,
+  `arrive_timeout_s`, `stroke_timeout_s` (`None` = the executor's own bound —
+  on firmware the daemon document's), `look_before_stroke`,
+  `max_nudges_per_target`, `max_turns`, and for step 4's contact verbs
+  `max_contact_nm` (4.0) / `max_force_nm` (6.0). `clamp(call)` is the ONE home
+  of the caps (lowered, reported by `notes()`) and the refusals (direction,
+  look, nudge budget) — kit `Unmet`s, sent back as a kit `PlanError`, not the
+  hand-rolled `approach_disabled` dict. `to_json`/`from_json`, and CLI flags
+  generated from the fields (`--max-grip`, `--no-look-before-stroke`, ...,
+  `--policy FILE`). The timeouts are resolved once and the same numbers reach
+  the executor's constructor and every `run()` (L13, Astra review 12).
+- **Look before the stroke** (`look_before_stroke=True`, the default): a
+  `grasp` the hand has not looked at from its current posture is answered
+  with a wrist look (`WristCamera.project_object`) instead of run; `locate` on
+  a wrist camera re-measures the object there and nudges the hand by the
+  difference. A robot without wrist intrinsics (`scene["robot"]
+  ["wrist_camera"]`) **refuses to start** (`look_unavailable`) unless the
+  operator turns the rule off.
+- **Held objects ride the tool** (`world/attach.py`: `grasp_transform`,
+  `with_attached`, `attached`, `released`; review 11). `ObjectView.provenance`
+  = `observed | declared | attached | predicted` (scene-file objects are
+  `declared`). `SceneSource` associates the object between the pads when the
+  gripper starts holding, publishes its attached pose, and leaves it
+  `predicted` where the hand let go. `robot.expect()` is gone. `ObjectRose`
+  therefore measures a real rise; `ObjectOver` / `ObjectClears` / `ObjectIn`
+  say "inferred, not sighted" and turn a negative verdict on an inferred
+  pose into UNKNOWN (`ObjectIn` is never TRUE on one). `reach.plan_chain`
+  uses the same rule (`_grasped` returns `(world, grasp)`; `_moved(world,
+  grasp)`), which moves the five chain cases' `Place` waypoints by up to
+  0.36 mm — the golden file is regenerated for exactly those five.
+- **`--executor NAME`** is resolved through a registry: `firmware`,
+  `kinematic` built in; `register_executor(name, factory)`; the
+  `manipulation_kit.executors` entry-point group (how d1-isaaclab provides
+  `isaac` without the kit importing it); `--executor-class module:factory`.
+  An unknown name fails with the available names and what to install.
+  `LiveRobot` is a context manager (the example's `ExitStack` is gone).
+- The example's operator gates, its two candidate sweeps (the arm choice is
+  `reach.choose_side`, `TODO(step3)` for `roll_candidates()`), the jaw-turn
+  fallback, the dead `isinstance` and the shadowed `turn` are deleted; the
+  `controller_fault` stop is the loop's. The prompt quotes no kit number —
+  `agent.robot_facts()` generates the jaw capacity, nudge grid and
+  directions. `DecisionRecord` gains `effective` (the call as it ran, beside
+  the verbatim `choice`), `look`, `error` and `contacts`; every turn is
+  recorded however it ends; the message history is written atomically and
+  earlier photos are not resent.
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO

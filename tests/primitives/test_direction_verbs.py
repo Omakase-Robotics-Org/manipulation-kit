@@ -185,8 +185,11 @@ def test_the_direction_prompt_text_is_generated_from_the_aliases(agent_examples)
     for name, d in ALIASES.items():
         assert f"  {d.label()}: " in text, name
     import astra_loop
+    # the loop hands the model the kit-generated ROBOT FACTS (step 7): the
+    # direction lines are in them, not quoted in the example's prompt
+    from manipulation_kit.agent import robot_facts
     for line in text.splitlines():
-        assert line.strip() in astra_loop.SYSTEM
+        assert line.strip() in robot_facts()
     for old in ("top_down", "side_left", "side_right"):
         assert old not in astra_loop.SYSTEM
     assert not hasattr(astra_loop, "PLANNER_ONLY_ARGS")

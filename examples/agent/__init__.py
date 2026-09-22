@@ -12,21 +12,19 @@ meeting a model. They live in ``manipulation_kit.primitives.{offer,schema,
 arguments,reach}`` and they add no dependency: the package still installs as
 numpy + scipy.
 
-What is left here is genuinely about a model:
+What moved INTO the wheel on 2026-09-22 (redesign step 7): the loop itself,
+the operator policy, the robot adapters and the decision trace —
+``manipulation_kit.agent``. What is left here is genuinely about a model:
 
-``astra_loop.py`` a runnable function-calling loop — the prompt, the provider
-                  client, the scripted stand-in, the message bookkeeping, and
-                  the three stop reasons
+``astra_loop.py`` the prompt, the OpenAI client, the scripted stand-in and
+                  ``main()`` over ``manipulation_kit.agent.run``
+``snapshot.py``   the camera-grab contract: fresh, labelled frames or a stop
+``detector.py``   a model as the box detector for ``perceive.py``
+``perceive.py``   one head frame -> a scene file, over ``manipulation_kit.perception``
 ``menu.py``       the Jev-style typed-choice RENDERER: ranking, the cap, the
                   wait/rescan/stop answers, the question itself
 ``jev_menu.py``   print one such request
-``mirror.py``     the demo robot: a KinematicExecutor plus a scene the block
-                  moves in
-``live.py``       a real D1: the firmware transport plus a measured scene file
-                  turned into a WorldView
 ``scene.py``      the small shared scene the examples compare against
-``trace.py``      one JSONL record per decision, the model's claim beside the
-                  measurement
 
 Run them from a checkout with the kit installed::
 

@@ -27,12 +27,11 @@ to it, which is what keeps one vocabulary instead of one per consumer.
 | `offer.py` | the gate: plan every candidate through the real IK and the real guard, return what survives **and every refusal with its reason**. An unreachable option never becomes a word in the prompt | — |
 | `chain.py` | the task planner's one question: plan the WHOLE pick-and-place (Approach → Grasp → Lift → Carry → Place) for **both** arms before anything moves, and grasp with the arm that can deliver. The near hand is only the tie-break | — |
 | `schema.py` | one definition set, two exports: `tool_schemas()` (JSON Schema, for Astra-style function calling) and `choice_menu()` (already-bound options, for Jev-style typed answers). A test asserts they do not drift | — |
-| `trace.py` | one JSONL record per decision: offers, refusals, the model's claim, and the **measured** verdict beside it | — |
-| `astra_loop.py` | observe → offer → tool call → execute → verify, with two stop conditions. Runs a scripted stub when `OPENAI_API_KEY` is unset | `openai` only for a real run |
+| `astra_loop.py` | the prompt, the OpenAI client, a scripted stand-in and `main()` over `manipulation_kit.agent` (the loop, `OperatorPolicy`, `LiveRobot`, the trace). `--executor firmware\|kinematic\|isaac`; runs the scripted stub unless `--model` is given | `openai` only for a real run |
 | `jev_menu.py` | the same offer rendered as a typed-choice request | — |
 | `perceive.py` | **one head frame → a scene file**, a thin CLI over `manipulation_kit.perception`. The only calibration it takes is the ROBOT's: head-camera intrinsics and the camera pose from the neck joints. No table width, no far-edge x, no table height | `pillow` (or OpenCV); `openai` only for `--detector astra` |
 | `detector.py` | `AstraDetector`: a model as the box detector for `perceive.py --detector astra` — the prompt, the call and a strict parse, nothing else. The camera model, plane fit and measurement it feeds are `manipulation_kit.perception` | `openai` |
-| `live.py` | a real D1 as the loop's robot: firmware transport plus a scene | `manipulation-kit[firmware]` |
+| `snapshot.py` | the camera-grab contract: run `--snapshot-cmd`, check its exit code, require fresh frames, label each camera — or stop the loop | — |
 
 ```sh
 python examples/agent/astra_loop.py --dry-run

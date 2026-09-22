@@ -9,10 +9,11 @@ model says moves the robot until the kit's own gate has re-derived it.
    GET /v1/gripper/{a,b}/state│                          │
                               ▼                          ▼
                    FirmwareExecutor.state()  ──►  LiveRobot.world()  ──►  WorldView
-                   (joints, closedness, holding)  + FK tool point per arm     │
-                                                  + held_object bookkeeping  │
-                                                    (robot.expect(side, obj)) │
-   $ASTRA_SNAPSHOT_CMD ──► turnN_{base_0,right_wrist_0,left_wrist_0}_rgb.jpg ┤
+                   (joints, closedness, holding)  (agent.robot.SceneSource)   │
+                                                  + FK tool point per arm     │
+                                                  + held object ATTACHED to   │
+                                                    the tool (world.attach)   │
+   --snapshot-cmd (snapshot.py) ──► turnN_{base_0,right_wrist_0,left_wrist_0}_rgb.jpg ┤
                                                                               ▼
                              messages += user: [WorldView.to_text(), images…]
                                                                               │
@@ -52,7 +53,7 @@ model says moves the robot until the kit's own gate has re-derived it.
 - **Text**: `WorldView.to_text()` — every object with kind, base-frame position (m), size, yaw,
   container interior; both arms (joints, tool point, stationary); both grippers (closedness,
   holding, held_object); the frames block. Base frame = torso platform, +x forward, +y robot-left.
-- **Images** (when `ASTRA_SNAPSHOT_CMD` is set): the head camera and both wrist cameras of the
+- **Images** (when `--snapshot-cmd` is given): the head camera and both wrist cameras of the
   same turn, as JPEG `input_image` parts (~390 input tokens each). The system prompt tells the
   model the text positions are ±1–2 cm and to prefer the photo when they disagree.
 - **Tool results**: the previous call's transport outcome and the kit's measured verdict, tagged
@@ -77,7 +78,9 @@ model says moves the robot until the kit's own gate has re-derived it.
 
 ## Known gaps (2026-09-22, d1-2)
 - Object poses come from a measured scene file; perception (`perceive.py`) is in progress.
-- `LiveRobot` cannot see WHAT the jaws hold — `held_object` is the loop's bookkeeping via `expect()`.
+- `LiveRobot` cannot see WHAT the jaws hold — the object between the pads at the stroke is
+  associated by position, and its pose is then INFERRED from the tool (`provenance="attached"`,
+  `"predicted"` once released) until a sighting replaces it.
 - The daemon refused one descent with "runtime speed exceeds 350 deg/s" although the kit times
   segments at ≤140 deg/s; cause open (settling arm at trajectory start suspected).
 - Gripper hold on a rigid object wound up to −4.2 Nm and faulted (d1-firmwared hold controller).
