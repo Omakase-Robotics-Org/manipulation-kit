@@ -122,29 +122,33 @@ The robot half of the observation — both arms, their tool poses, both grippers
 — is filled in from live state by
 [`examples/agent/live.py`](examples/agent/live.py); you supply only the things.
 
-#### …or measure it from one photograph
+#### …or do not measure it at all
 
 [`examples/agent/perceive.py`](examples/agent/perceive.py) writes that same
-file from **one head frame**, given two priors: the rectangular table top's
-**width** and the camera's **fx**. No ArUco board, no marker on the objects,
-and with `--anchor camera` no table height either — the perpendicular distance
-from the camera centre to the fitted plane does not depend on the camera's aim,
-so the height comes out of the fit.
+file from **one head frame**, and the only calibration that goes into it is
+**this robot's**: the head camera's intrinsics and the pose of its lens in
+`base`, which `manipulation_kit.description.head_camera` reads out of the
+committed URDF for the neck joints you give it. No table width, no far-edge x,
+no table height, no marker, no tape on anything.
 
 ```sh
 pip install -e '.[perceive]'
 python examples/agent/perceive.py --image turn0_base_0_rgb.jpg \
-    --table-width 0.60 --anchor camera --neck-pitch 0.52 --lift 0.205 \
-    --objects charger:object,cup:container --detector mask \
+    --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 \
     --out examples/agent/scenes/live.json --debug /tmp/fit.png
 ```
 
-Look at the debug PNG before believing the JSON: a plane fit that latched onto
-the floor still produces a tidy file. Every number it writes carries a
-`confidence` below 1 and a `measurement` block saying what was seen; the two it
-cannot see at all — an object's extent along the unseen horizontal axis, and a
-container's interior — are called out in the 0.15.0 entry of
-[`CHANGELOG.md`](CHANGELOG.md) with what happened when they were believed.
+That writes the camera and the table and **no things**: the loop's own model is
+the detector, and it declares them with `declare_scene` while looking at the
+same frame ([`examples/agent/astra_loop.py`](examples/agent/astra_loop.py),
+`--perceive`).
+
+One camera cannot measure the HEIGHT of the plane it is looking at — twice as
+far and twice as big is the same picture — so that number is `declared`,
+`known-length` (`--table-width`, optional) or `provisional`, it is named in the
+file, and everything that depends on it scales with it. Look at the debug PNG
+before believing the JSON: a plane fit that latched onto the floor still
+produces a tidy file.
 
 ### 4. Offer: what can it actually do right now?
 

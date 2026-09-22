@@ -30,41 +30,51 @@ to it, which is what keeps one vocabulary instead of one per consumer.
 | `trace.py` | one JSONL record per decision: offers, refusals, the model's claim, and the **measured** verdict beside it | — |
 | `astra_loop.py` | observe → offer → tool call → execute → verify, with two stop conditions. Runs a scripted stub when `OPENAI_API_KEY` is unset | `openai` only for a real run |
 | `jev_menu.py` | the same offer rendered as a typed-choice request | — |
-| `perceive.py` | **one head frame → a measured scene file.** Priors: the table top's width and the camera's `fx`. No ArUco, no tape on the objects, and with `--anchor camera` no table height either — that is measured | `pillow` (or OpenCV); `openai` only for `--detector astra` |
-| `live.py` | a real D1 as the loop's robot: firmware transport plus a scene file | `manipulation-kit[firmware]` |
+| `perceive.py` | **one head frame → a scene file.** The only calibration it takes is the ROBOT's: head-camera intrinsics and the camera pose from the neck joints. No table width, no far-edge x, no table height | `pillow` (or OpenCV); `openai` only for `--detector astra` |
+| `camera.py` | the head camera as a model: pixel ↔ base-frame point, with the uncertainty the nominal mount actually carries | — |
+| `live.py` | a real D1 as the loop's robot: firmware transport plus a scene | `manipulation-kit[firmware]` |
 
 ```sh
 python examples/agent/astra_loop.py --dry-run
 python examples/agent/jev_menu.py
 python examples/agent/offer.py
 
-# measure a scene from one frame instead of writing one by hand
+# a scene from one frame, with NO scene number at all
 pip install -e '.[perceive]'
-python examples/agent/perceive.py --image head.jpg --table-width 0.60 \
-    --anchor camera --neck-pitch 0.52 --lift 0.205 \
-    --objects charger:object,cup:container --detector mask \
+python examples/agent/perceive.py --image head.jpg \
+    --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 \
     --out examples/agent/scenes/live.json --debug /tmp/fit.png
 
-# ...or let the loop do it before turn 0
+# ...and the loop doing it for itself, then declaring the things
 python examples/agent/astra_loop.py --perceive head.jpg --object charger \
     --destination cup --trace /tmp/run/trace.jsonl \
-    --perceive-opts "--table-width 0.60 --anchor camera --neck-pitch 0.52"
+    --perceive-opts "--neck-pitch 0.52 --lift 0.205"
 ```
 
-### What `perceive.py` measures, and what it cannot
+### The model is the detector
 
-The plane, the table's height and depth, each object's footprint and height —
-all from the fit, all carrying a `confidence` below 1 and a `measurement`
-block saying which parts were seen. What it cannot get from one silhouette is
-an object's extent along the UNSEEN horizontal axis (so the measured width is
-written on both, and yaw is 0) and a container's interior (85 % of the
-outside, flagged `interior_measured: false`, which `Place` then refuses to
-drop into — by design). Both want a second viewpoint or a tape. When you have the tape, `--size
-NAME=LX,LY,LZ` and `--interior NAME=LX,LY,LZ` declare them, and the file keeps
-what the frame said beside what you declared. See the 0.15.0 entry in
-[`../CHANGELOG.md`](../CHANGELOG.md).
+`perceive.py`'s default (`--detector model`) finds **nothing**. It writes the
+camera, the table and no things, and the loop's own model — looking at the same
+frame — declares them with two tools `astra_loop.py` adds beside the motion
+verbs:
 
-The contract these render is [`../docs/PRIMITIVE_CONTRACT.md`](../docs/PRIMITIVE_CONTRACT.md).
+| tool | what it does |
+|---|---|
+| `declare_scene(objects=[…])` | the model says where things are, in base metres. Same reader a hand-written scene file goes through, so it cannot declare something a person could not have written |
+| `locate(u, v)` | a pixel it picked → a base-frame point on the current table plane, with its uncertainty. Exact geometry, so the model is not doing projective maths in its head |
 
-The gesture CSV format and the record → preview → play workflow are documented
-in [`../docs/GESTURES.md`](../docs/GESTURES.md).
+### What one camera cannot do
+
+**Measure the height of the plane it is looking at.** Twice as far and twice as
+big is the same picture. So the height is `declared` (by the model, or
+`--table-z`), `known-length` (`--table-width`, the one optional scene number,
+solved in closed form), or `provisional` — and in the last case every object
+measured against it carries `confidence` 0.2 and says so. Everything else in
+the fit is scale-free, so one declared number fixes the whole scene at once.
+
+Also unmeasurable from one silhouette: an object's extent along the axis you
+cannot see (the width is written on both horizontal axes and yaw is 0), and a
+container's interior (85 % of the outside, flagged `interior_measured: false`,
+which `Place` then refuses to drop into — by design). `--size` and `--interior`
+declare them when you have a tape; the file keeps what the frame said beside
+what you declared. See the 0.15.0 entry in [`../CHANGELOG.md`](../CHANGELOG.md).

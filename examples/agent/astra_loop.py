@@ -33,12 +33,30 @@ Three stop reasons, never conflated:
     python examples/agent/astra_loop.py --dry-run     # scripted, no key needed
     OPENAI_API_KEY=... OPENAI_MODEL=gpt-5 python examples/agent/astra_loop.py
 
-WHERE THE THINGS ARE. ``--scene`` reads a file somebody measured; ``--perceive``
-MEASURES one from a head frame before turn 0 (``examples/agent/perceive.py``)
-and writes it beside the trace as ``scene_perceived.json``. They are mutually
-exclusive, because two answers to "where is everything" is one too many. Once,
-before turn zero — see :func:`perceived_scene` for why re-perceiving mid-run is
-not a small change.
+WHERE THE THINGS ARE, and the model is the one who says. ``--scene`` reads a
+file somebody measured with a tape. ``--perceive`` runs
+``examples/agent/perceive.py`` on one head frame before turn 0, which supplies
+the CAMERA and the table and deliberately no things — and then the model
+declares them itself, with two tools this file adds beside the motion verbs:
+
+``declare_scene``  "the cup is here, this big", in base metres, from the
+                   photographs. Same reader a hand-written scene file goes
+                   through, so it cannot declare something a person could not
+                   have written.
+``locate``         a pixel it picked -> a base-frame point on the current
+                   table plane, with the uncertainty the nominal head mount
+                   carries. Exact geometry, so the model is not doing
+                   projective maths in its head.
+
+Neither moves anything, so neither goes through the motion gate. ``--scene``
+and ``--perceive`` are mutually exclusive, because two answers to "where is
+everything" is one too many; and perceiving happens ONCE, before turn zero —
+see :func:`perceived_scene` for why re-perceiving mid-run is not a small
+change.
+
+NO PER-SCENE CALIBRATION reaches any of this: what ``perceive.py`` takes is
+this robot's camera intrinsics and neck angles, and what the model gets is
+that camera, its own two tool points in the same base metres, and the picture.
 
 `openai` is NOT a dependency of this repository: ``pip install openai`` before
 using ``--model openai``.
@@ -53,6 +71,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+
+import numpy as np
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -71,11 +91,36 @@ DEFAULT_TASK = "put the red block in the box"
 SYSTEM = """You drive a D1 humanoid's two arms through a fixed set of verbs.
 Each observation may carry two photos: the head camera (scene from above the
 torso) and the right wrist camera (looking along the right hand past its jaws).
-Use them to judge what the text cannot: whether the object stands or has
-tipped, whether the jaws straddle it, whether it is inside the container.
-Object positions in the text come from a measured scene and can be off by
-1-2 cm; when a photo contradicts the text, say which and act on the photo
-(nudge, re-approach with a smaller standoff, release and retry).
+
+YOU ARE THE DETECTOR. Nothing on this robot measures where the things are.
+There is no marker on anything, nobody has measured the table, and the scene
+text starts empty or provisional. Your first job is to look at the head photo
+and say, in metres in the robot's base frame, where each thing the task needs
+is and how big it is — `declare_scene`. Re-declare whenever a photo disagrees
+with the text.
+
+How to get metres out of a photograph, and you are given everything you need:
+- the HEAD CAMERA block gives its intrinsics and where its lens is in base,
+  so a pixel is a known ray;
+- `locate(u, v)` walks that ray to the table plane for you and returns the
+  base-frame point with its uncertainty. USE IT. Pick the pixel where the
+  object TOUCHES the table — the bottom of its silhouette, in the middle —
+  and let the function do the projection. Do not estimate a position by eye
+  when you can measure it;
+- both arms' TOOL POINTS are in the observation text in the same base metres,
+  and both hands are usually somewhere in the head photo. They are your scale
+  reference and your sanity check: if `locate` says an object is where you can
+  see a hand is not, one of you is wrong;
+- the table's height is the ONE thing a single camera cannot measure (twice as
+  far and twice as big is the same picture). If the text says the height is
+  `provisional`, everything derived from it is a guess in proportion — say so
+  and declare a better one from what you can see: known objects have known
+  sizes, and a cup you can see is about 110 mm tall.
+
+`confidence` below 1 is expected and is not a reason to refuse to answer.
+Declare your best estimate, then FIX IT BY MEASURING: approach, look at the
+wrist photo, and `nudge` — nudges are exactly what an uncertain declaration
+is for, and a 10 mm one costs nothing.
 
 Rules that are not negotiable, because the robot enforces them anyway:
 - You never give an orientation. Name an approach (top_down, front, side_left,
@@ -89,6 +134,182 @@ Rules that are not negotiable, because the robot enforces them anyway:
 - You do not decide whether the task is done. A measurement does.
 
 Call exactly one tool per turn."""
+
+
+# --------------------------------------------------------------------------- #
+# the two tools that are about the OBSERVATION, not about moving
+# --------------------------------------------------------------------------- #
+#
+# The kit owns the verbs and refuses to own the observation: nothing in
+# manipulation_kit opens a camera, and the scene file was somebody with a tape
+# measure. These two are the third option — the MODEL is the detector, and it
+# is looking at the same frame the loop is.
+#
+#   declare_scene   "the cup is here, this big". The model's own measurement,
+#                   in base metres, from the photograph plus the camera model
+#                   plus the robot's own hands at known positions IN that
+#                   photograph, which is the scale reference a single view
+#                   otherwise does not have.
+#   locate          the deterministic half. A pixel the model picked, turned
+#                   into a base-frame point ON THE CURRENT TABLE PLANE by
+#                   examples/agent/camera.py, with the uncertainty the nominal
+#                   head mount actually carries. The model should not be doing
+#                   projective geometry in its head when a function can.
+#
+# Neither moves anything, so neither goes through the motion gate; both are
+# answered inside the loop and reported back correlated with the call.
+
+SCENE_TOOLS = ("declare_scene", "locate")
+
+#: What a declared object may say. Deliberately the SAME fields a scene file
+#: carries, so "the model measured it" and "a person measured it" produce the
+#: same kind of thing and are read by the same code (``live.objects_from``).
+DECLARE_SCHEMA = {
+    "name": "declare_scene",
+    "description": (
+        "Say where the things are, in the robot's base frame, from the "
+        "photographs. Replaces objects of the same name; anything you do not "
+        "name is left alone. Use it on the first turn, and again whenever a "
+        "photo shows something is not where the text says."),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "objects": {
+                "type": "array", "minItems": 1, "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string",
+                                 "description": "how you will refer to it"},
+                        "kind": {"type": "string",
+                                 "enum": ["object", "container", "surface"]},
+                        "p": {"type": "array", "minItems": 3, "maxItems": 3,
+                              "items": {"type": "number"},
+                              "description": "the CENTRE in base metres "
+                                             "(+x forward, +y robot-left, "
+                                             "+z up), not the bottom"},
+                        "size": {"type": "array", "minItems": 3, "maxItems": 3,
+                                 "items": {"type": "number", "exclusiveMinimum": 0},
+                                 "description": "full extent in metres along "
+                                                "the object's own axes"},
+                        "yaw_rad": {"type": "number"},
+                        "confidence": {"type": "number", "minimum": 0.0,
+                                       "maximum": 1.0,
+                                       "description": "how sure you are. "
+                                                      "Below 1 is expected "
+                                                      "and is not a reason to "
+                                                      "refuse to answer"},
+                        # A container's INSIDE is a separate measurement from
+                        # its outside, and `Place` refuses to drop into an
+                        # interior nobody stated (it defaults to 90% of the
+                        # outside and flags itself a guess). So a model that
+                        # can see into a cup has to be able to say what it
+                        # sees, or the verb is unreachable for every scene it
+                        # declares.
+                        "interior": {
+                            "type": "array", "minItems": 3, "maxItems": 3,
+                            "items": {"type": "number", "exclusiveMinimum": 0},
+                            "description": "containers only: the usable INNER "
+                                           "extent in metres. Leave it out if "
+                                           "you cannot see inside — then "
+                                           "`place` will refuse, which is the "
+                                           "correct answer and not a bug"},
+                    },
+                    "required": ["name", "kind", "p", "size"],
+                    "additionalProperties": False}}},
+        "required": ["objects"], "additionalProperties": False}}
+
+LOCATE_SCHEMA = {
+    "name": "locate",
+    "description": (
+        "Turn a pixel you picked in the HEAD photo into a point in the "
+        "robot's base frame, on the table plane. Exact geometry, no guessing "
+        "- use it instead of estimating a position by eye, and check what it "
+        "says against what you were about to declare."),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "u": {"type": "number", "description": "pixel x, 0 at the left"},
+            "v": {"type": "number", "description": "pixel y, 0 at the top"},
+            "camera": {"type": "string", "enum": ["head"], "default": "head"}},
+        "required": ["u", "v"], "additionalProperties": False}}
+
+
+def scene_tools(camera=None) -> List[Dict[str, Any]]:
+    """The observation tools available right now.
+
+    ``locate`` is offered only when a camera model exists, because without one
+    it would have to invent a projection — and a tool that sometimes answers
+    from geometry and sometimes from nothing is worse than a missing tool.
+    """
+    return [DECLARE_SCHEMA] + ([LOCATE_SCHEMA] if camera is not None else [])
+
+
+def apply_declare_scene(robot, arguments: Dict[str, Any]) -> str:
+    """Decode a ``declare_scene`` call and hand it to the robot adapter.
+
+    Validation is ``live.objects_from``'s — the same reader a hand-written
+    scene file goes through — so a model cannot declare something a person
+    could not have written, and a zero size or a two-element position is
+    refused with the reader's own message rather than crashing four verbs
+    later.
+    """
+    from live import objects_from  # noqa: PLC0415
+    if not hasattr(robot, "declare"):
+        return ("this robot cannot take a declared scene (no `declare`); run "
+                "with --scene or --perceive")
+    items = []
+    for item in arguments.get("objects") or []:
+        item = dict(item)
+        if "interior" in item:
+            # Stated by the model = stated. The flag is what `Place` reads,
+            # and the alternative is a container that can never be placed into.
+            item["interior_measured"] = True
+        items.append(item)
+    try:
+        views = objects_from({"objects": items})
+    except (KeyError, ValueError, TypeError) as exc:
+        return f"that scene is malformed and nothing was changed: {exc}"
+    robot.declare(views)
+    lines = [f"{v.name!r} ({v.kind}) at ({v.p[0]:.3f}, {v.p[1]:.3f}, "
+             f"{v.p[2]:.3f}) m, {v.size[0]*1000:.0f}x{v.size[1]*1000:.0f}x"
+             f"{v.size[2]*1000:.0f} mm" for v in views]
+    return ("recorded, and the next observation is measured against it: "
+            + "; ".join(lines))
+
+
+def apply_locate(camera, world, arguments: Dict[str, Any]) -> str:
+    """Answer a ``locate`` call from the camera model and the current plane."""
+    from camera import NotOnThePlane  # noqa: PLC0415
+    if camera is None:
+        return ("there is no camera model in this run, so a pixel cannot be "
+                "turned into a position")
+    plane_z, source = table_plane_z(world)
+    if plane_z is None:
+        return ("there is no table in the scene yet, so a pixel has no plane "
+                "to land on. Declare the surface first with declare_scene "
+                "(kind 'surface'), then ask again")
+    try:
+        located = camera.locate(float(arguments["u"]), float(arguments["v"]),
+                                plane_z=plane_z, plane_source=source)
+    except NotOnThePlane as exc:
+        return str(exc)
+    except (KeyError, TypeError, ValueError) as exc:
+        return f"that pixel is not usable: {exc}"
+    return located.to_text()
+
+
+def table_plane_z(world) -> "tuple":
+    """The z of the top of the highest SURFACE in the world, and where it
+    came from. ``(None, "")`` when nobody has said there is a table."""
+    from manipulation_kit.world import SurfaceView  # noqa: PLC0415
+    tops = [(float(o.p[2]) + float(o.size[2]) / 2.0, o)
+            for o in world.objects if isinstance(o, SurfaceView)]
+    if not tops:
+        return None, ""
+    z, surface = max(tops, key=lambda pair: pair[0])
+    return z, (f"the top of {surface.name!r}, confidence "
+               f"{surface.confidence:.1f}")
 
 
 @dataclass
@@ -107,12 +328,24 @@ class ScriptedModel:
     simulation findings do and do not support.
     """
 
-    def __init__(self, obj: str = "red_block", to: str = "box"):
+    def __init__(self, obj: str = "red_block", to: str = "box",
+                 declare: Optional[List[Dict[str, Any]]] = None):
+        #: SCRIPTED FICTION, and the only way this stand-in can play the
+        #: zero-shot path: it cannot see, so when the scene has no things in
+        #: it (``--perceive``'s default, where the MODEL is the detector) it
+        #: declares the two it was handed and gets on with the script. A real
+        #: model reads the photograph. Nothing here is a measurement.
+        self.declare = declare
         self.script: List[Dict[str, Any]] = [
             {"name": "grasp", "arguments": {"object": obj, "side": "left",
                                             "approach": "top_down"}},
+            # A shorter hop when the things were declared onto a perceived
+            # table: that table is 0.17 m up, and 0.10 m of lift from there
+            # puts the tool outside the arm's envelope — a real reach fact,
+            # and not one the stub should spend its script discovering.
             {"name": "lift", "arguments": {"object": obj, "side": "left",
-                                           "height_m": 0.1}},
+                                           "height_m": 0.05 if declare
+                                           else 0.1}},
             {"name": "carry", "arguments": {"object": obj, "to": to,
                                             "side": "left"}},
             {"name": "place", "arguments": {"object": obj, "to": to,
@@ -127,6 +360,13 @@ class ScriptedModel:
                 call["arguments"]["side"] = side
 
     def __call__(self, messages, tools) -> Dict[str, Any]:
+        if self.declare is not None:
+            names = {t["name"] for t in tools}
+            payload, self.declare = self.declare, None
+            if "declare_scene" in names:
+                return {"name": "declare_scene", "claimed": "",
+                        "call_id": "scripted-declare",
+                        "arguments": {"objects": payload}}
         if self.turn >= len(self.script):
             return {"name": None, "arguments": {}, "claimed": "done"}
         call = self.script[self.turn]
@@ -178,14 +418,50 @@ class OpenAIModel:
                 "claimed": ""}
 
 
-def build_model(dry_run: bool, obj: str = "red_block", to: str = "box"):
+def build_model(dry_run: bool, obj: str = "red_block", to: str = "box",
+                declare: Optional[List[Dict[str, Any]]] = None):
     key = os.environ.get("OPENAI_API_KEY")
     if dry_run or not key:
         if not dry_run:
             print("[astra_loop] no OPENAI_API_KEY; running the scripted stub",
                   file=sys.stderr)
-        return ScriptedModel(obj, to)
+        return ScriptedModel(obj, to, declare=declare)
     return OpenAIModel(os.environ.get("OPENAI_MODEL", "gpt-6-astra"), key)
+
+
+def two_things_on(world, *, obj: str, destination: str
+                  ) -> Optional[List[Dict[str, Any]]]:
+    """Two objects on the widest surface in ``world``, for the STUB only.
+
+    ``--perceive --dry-run`` has a real table and no things, and the scripted
+    stand-in cannot see. Rather than have it stop at turn zero for want of a
+    detector, it is handed a plausible pair to declare so that the LOOP —
+    which is the thing the stub exists to exercise — runs end to end. These
+    are not measurements of anything and the trace says ``scripted-declare``.
+    ``None`` when there is no surface, or when the things are already there.
+    """
+    from manipulation_kit.world import SurfaceView  # noqa: PLC0415
+    from scene import BLOCK_P, BOX_P  # noqa: PLC0415
+    surfaces = [o for o in world.objects if isinstance(o, SurfaceView)]
+    if not surfaces or any(o.name in (obj, destination) for o in world.objects):
+        return None
+    table = max(surfaces, key=lambda s: float(s.size[0]) * float(s.size[1]))
+    top = float(table.p[2]) + float(table.size[2]) / 2.0
+    # The demo scene's own x/y — inside the measured reachable envelope, which
+    # a point picked off an arbitrary table is not — at the height of the
+    # table that WAS perceived. Fiction with a real z.
+    return [
+        {"name": obj, "kind": "object",
+         "p": [BLOCK_P[0], BLOCK_P[1], top + 0.025],
+         "size": [0.045, 0.02, 0.05], "confidence": 0.3},
+        # A SHALLOW container: a 110 mm cup standing on a 0.17 m wagon puts
+        # its rim at the top of this arm's envelope, and the stub would spend
+        # its whole script on a reach refusal that is about the furniture
+        # rather than about the loop.
+        {"name": destination, "kind": "container",
+         "p": [BOX_P[0], BOX_P[1], top + 0.03],
+         "size": [0.12, 0.12, 0.06], "interior": [0.10, 0.10, 0.05],
+         "confidence": 0.3}]
 
 
 def _say(messages: List[Dict[str, Any]], call_id: str, text: str) -> None:
@@ -257,36 +533,62 @@ def _observation(text: str, frames) -> Any:
     return parts
 
 
-def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
-         trace_path: Optional[Path] = None, goal=None, world0=None, kin=None,
-         obj: str = "red_block", destination: str = "box") -> DecisionTrace:
-    if world0 is None or kin is None:
-        demo_world, demo_kin = demo_scene()
-        world0 = demo_world if world0 is None else world0
-        kin = demo_kin if kin is None else kin
-    robot = robot if robot is not None else MirrorRobot(kin)
-    # WHICH HAND — decided before anything moves, by planning the whole chain
-    # (Approach, Grasp, Lift, Carry, Place) for BOTH arms and taking the one
-    # that can DELIVER. The near hand is only the tie-break; see
-    # manipulation_kit.primitives.reach for what that cost on the blocks-eval
-    # wagon (2026-09-19, F10).
-    # Flat or awkward objects refuse a top-down grasp (object_too_flat); try
-    # the approach directions in order and keep the first reachable chain.
+def plan_the_hand(world, kin, *, obj: str, destination: str):
+    """WHICH HAND — by planning the whole chain for BOTH arms.
+
+    (Approach, Grasp, Lift, Carry, Place), and take the one that can DELIVER;
+    the near hand is only the tie-break. See
+    ``manipulation_kit.primitives.reach`` for what that cost on the
+    blocks-eval wagon (2026-09-19, F10). Flat or awkward objects refuse a
+    top-down grasp (``object_too_flat``), so the approach directions are tried
+    in order and the first reachable chain wins.
+
+    ``None`` when the scene does not contain both names yet, which is now a
+    normal state: with ``--perceive`` the model declares the things on turn 0
+    and there is nothing to plan for until it has.
+    """
+    names = {o.name for o in world.objects}
+    if obj not in names or destination not in names:
+        return None
     hand = None
     for approach in ("top_down", "front", "side_right", "side_left"):
-        candidate = choose_side(world0, kin, obj=obj, destination=destination,
+        candidate = choose_side(world, kin, obj=obj, destination=destination,
                                 approach=approach)
         if hand is None or (candidate.reachable and not hand.reachable):
             hand = candidate
         if hand.reachable:
             break
-    if goal is None:
+    return hand
+
+
+def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
+         trace_path: Optional[Path] = None, goal=None, world0=None, kin=None,
+         obj: str = "red_block", destination: str = "box",
+         camera=None) -> DecisionTrace:
+    if world0 is None or kin is None:
+        demo_world, demo_kin = demo_scene()
+        world0 = demo_world if world0 is None else world0
+        kin = demo_kin if kin is None else kin
+    robot = robot if robot is not None else MirrorRobot(kin)
+    hand = plan_the_hand(world0, kin, obj=obj, destination=destination)
+    if hand is not None and goal is None:
         goal = Place(object=obj, to=destination, side=hand.side)
     trace = DecisionTrace(trace_path)
     trace.task = task
     messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM},
                                       {"role": "user", "content": f"TASK: {task}"}]
-    if not hand.reachable:
+    if camera is not None:
+        messages.append({"role": "user", "content": camera.to_text()})
+    if hand is None:
+        # NOT AN ERROR. The scene has not been declared yet; the model is
+        # about to do that from the photographs, and the arm choice is made
+        # the first turn both names exist.
+        messages.append({"role": "user", "content": (
+            f"The scene does not contain {obj!r} and {destination!r} yet. "
+            f"Look at the photographs and call declare_scene with where they "
+            f"are, in base metres; use locate on the pixel where each one "
+            f"touches the table rather than estimating by eye. Then act.")})
+    elif not hand.reachable:
         # F10/F12: an impossible task is refused at turn zero rather than
         # discovered three verbs in. The old loop computed this and ignored it.
         record = DecisionRecord(iteration=0, world=world0.to_json())
@@ -297,7 +599,7 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         trace.stop = Stop("unreachable_task", hand.reason).reason
         return trace
 
-    if isinstance(model, ScriptedModel):
+    if isinstance(model, ScriptedModel) and hand is not None:
         model.use_side(hand.side)
     stop = Stop("max_turns", f"{max_turns} turns without a measured goal")
     for turn in range(max_turns):
@@ -305,7 +607,11 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         frames = _snapshot(trace_path, turn)
         messages.append({"role": "user",
                          "content": _observation(world.to_text(), frames)})
-        tools = tool_schemas(world)      # REFRESHED: the names narrow as the
+        # REFRESHED every turn: the motion verbs' name enums narrow as the
+        # world changes, and the OBSERVATION tools travel with them so a model
+        # that has just been told "that is not where you said" can answer with
+        # a measurement instead of another guess.
+        tools = tool_schemas(world) + scene_tools(camera)
         record = DecisionRecord(iteration=turn, world=world.to_json())
         record.task = task
 
@@ -322,7 +628,17 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         if not call["name"]:
             # The model stopped. That is a claim about the task, and the task
             # verifier is what decides — the old loop broke here without
-            # checking the goal at all, contrary to its own docstring.
+            # checking the goal at all, contrary to its own docstring. With
+            # nothing declared there is no verifier to ask, and "I stopped
+            # before saying where anything was" is not a measured success.
+            if goal is None:
+                record.stop = "model_stopped"
+                trace.write(record)
+                _dump_messages(trace_path, messages)
+                stop = Stop("model_stopped",
+                            f"the model stopped without declaring {obj!r} and "
+                            f"{destination!r}; nothing was ever planned")
+                break
             goal_report = goal.verifier(world)(robot.world())
             record.goal_verdict = goal_report.to_json()
             record.stop = "model_stopped"
@@ -331,6 +647,43 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
             stop = Stop("goal_verified" if goal_report.verdict == "true"
                         else "model_stopped", goal_report.reason)
             break
+
+        if call["name"] in SCENE_TOOLS:
+            # OBSERVATION, not motion: nothing moves, so there is nothing for
+            # the motion gate to check. The world is re-read afterwards and
+            # the arm choice is (re)made, because a scene that has just
+            # appeared is the thing the whole plan depends on.
+            if call["name"] == "declare_scene":
+                answer = apply_declare_scene(robot, call["arguments"])
+                world0 = robot.world()
+                hand = plan_the_hand(world0, kin, obj=obj,
+                                     destination=destination)
+                if hand is not None:
+                    if goal is None:
+                        goal = Place(object=obj, to=destination,
+                                     side=hand.side)
+                    if isinstance(model, ScriptedModel):
+                        model.use_side(hand.side)
+                    answer += (f". Planning the whole chain says the "
+                               f"{hand.side} arm"
+                               + ("" if hand.reachable
+                                  else f", and nothing reaches yet: "
+                                       f"{hand.reason}"))
+            else:
+                answer = apply_locate(camera, world, call["arguments"])
+            record.observation_after = {"tool": call["name"], "answer": answer}
+            _say(messages, call_id, answer)
+            trace.write(record)
+            _dump_messages(trace_path, messages)
+            continue
+
+        if goal is None:
+            _say(messages, call_id,
+                 f"nothing can be planned until {obj!r} and {destination!r} "
+                 f"are in the scene. Call declare_scene first.")
+            trace.write(record)
+            _dump_messages(trace_path, messages)
+            continue
 
         # THE GATE, on the BOUND call. A model may ask for anything; decode
         # checks the arguments against the kit's own table and the guard
@@ -467,6 +820,32 @@ def perceived_scene(source: str, *, trace_path: Optional[Path],
     return scene
 
 
+def camera_from_scene(scene: Optional[Dict[str, Any]]):
+    """The head-camera model a perceived scene recorded, or ``None``.
+
+    The camera travels IN the scene file rather than being a second set of
+    loop flags, so the pose ``locate`` projects through is provably the one
+    the frame was perceived with — a neck that has moved since then is a
+    different camera, and re-typing its angle on two command lines is how
+    those two quietly stop matching.
+    """
+    block = (scene or {}).get("_perceive", {}).get("camera")
+    if not block:
+        return None
+    from camera import HeadCamera  # noqa: PLC0415
+    from scipy.spatial.transform import Rotation  # noqa: PLC0415
+    width, height = block["image"]
+    return HeadCamera(fx=block["fx"], cx=block["cx"], cy=block["cy"],
+                      width=width, height=height,
+                      p=np.asarray(block["p_base"], dtype=float),
+                      r=Rotation.from_quat(block["quat_xyzw"]),
+                      neck_pitch=block.get("neck_pitch_rad", 0.0),
+                      neck_yaw=block.get("neck_yaw_rad", 0.0),
+                      lift_m=block.get("lift_m"),
+                      calibrated=bool(block.get("calibrated", False)),
+                      notes=tuple(block.get("notes", ())))
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--task", default=DEFAULT_TASK)
@@ -488,9 +867,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "perceives from turn0_base_0_rgb.jpg. Once, "
                              "before turn zero — not per turn.")
     parser.add_argument("--perceive-opts", default="",
-                        help="flags passed verbatim to perceive.py, e.g. "
-                             "\"--table-width 0.60 --anchor camera "
-                             "--neck-pitch 0.52\"")
+                        help="flags passed verbatim to perceive.py — the "
+                             "ROBOT's own numbers, e.g. "
+                             "\"--neck-pitch 0.52 --lift 0.205 --fx 606\"")
     parser.add_argument("--object", default="red_block",
                         help="the scene object to move (default red_block)")
     parser.add_argument("--destination", default="box",
@@ -519,12 +898,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from live import frames_from, objects_from  # noqa: PLC0415
         world0 = _dc.replace(_world, objects=tuple(objects_from(scene)),
                              frames=frames_from(scene, now=_time.time()))
+    camera = camera_from_scene(scene)
     robot = build_robot(args.executor, kin, args.robot, scene,
                         world0=world0, obj=args.object)
-    trace = loop(build_model(args.dry_run, args.object, args.destination), robot, task=args.task,
+    stub_scene = (two_things_on(world0, obj=args.object,
+                                destination=args.destination)
+                  if (args.dry_run or not os.environ.get("OPENAI_API_KEY"))
+                  and world0 is not None else None)
+    trace = loop(build_model(args.dry_run, args.object, args.destination,
+                             declare=stub_scene), robot, task=args.task,
                  max_turns=args.max_turns, trace_path=args.trace,
                  world0=world0, kin=kin, obj=args.object,
-                 destination=args.destination)
+                 destination=args.destination, camera=camera)
     for record in trace.records:
         name = (record.choice or {}).get("name") or "(no call)"
         verdict = (record.verdict or {}).get("verdict", "-")

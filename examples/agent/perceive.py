@@ -1,97 +1,90 @@
-"""One head frame -> a MEASURED scene, with no tape measure on the table.
+"""One head frame -> a scene, with NO per-scene calibration anywhere in it.
 
-``--scene`` is the first-hour path: you measure the table and the objects by
-hand and the loop consumes the file. It works — d1-2 run2 (2026-09-22) made
-two real grasps off a hand-made scene — and it does not scale, because every
-one of those numbers is a person with a ruler and every one of them is stale
-the moment the wagon is nudged.
+The first version of this file took the table's width and the x of its far
+edge as inputs. Shu's answer on reading it (2026-09-22) was
+「中途半端にこっちでシーンごとの calib をするのは消したい」, and he is right:
+those are measurements of *the furniture*, they go stale the moment the wagon
+is nudged, and a pipeline that needs them has just moved the tape measure
+rather than put it away.
 
-This is the same file, MEASURED from one photograph. The only priors are
+So the rule this file now obeys:
 
-  * ONE known length on the table plane — the rectangular top's WIDTH
-    (``--table-width``); any known edge would do, and
-  * the camera's focal length in pixels (``--fx``).
+  * ROBOT-specific calibration is allowed. The head camera's intrinsics
+    (``--fx``/``--cx``/``--cy``), the neck joints, the lift, and the pose of
+    the lens in ``base`` that ``manipulation_kit.description.head_camera``
+    reads out of the committed URDF. Those belong to the machine and are the
+    same tomorrow.
+  * SCENE-specific numbers are not inputs. No table width, no far-edge x, no
+    table height, no marker, no tape on anything.
 
-No ArUco board, no marker on the objects, no table height, no depth camera.
-Shu's phrasing on 2026-09-22 was "テーブルとかの高さとか知らずにできるべき", and
-the table height is the interesting one: it comes out of the fit rather than
-out of a constant, which is what makes this zero-shot rather than
-pre-measured-in-a-different-place.
+WHAT THAT LEAVES, AND WHAT IT COSTS
+-----------------------------------
+``examples/agent/camera.py`` turns a pixel into a RAY in ``base`` exactly, from
+robot facts alone. A ray plus a HORIZONTAL PLANE AT A KNOWN HEIGHT is a point,
+and everything here is that one operation. The catch, stated once and inherited
+everywhere: **one camera cannot measure the height of the plane it is looking
+at.** Twice as far and twice as big is the same picture. The scale has to come
+from outside the geometry, and there are exactly three honest places it can
+come from:
 
-HOW THE PLANE IS RECOVERED, in one paragraph
---------------------------------------------
-Mask the table top (it is the bright, low-saturation region; the JP wagon top
-renders near-white/pink). Fit three straight lines to the largest blob: the
-FAR edge, and the two SIDE edges. The side edges are parallel ON THE TABLE, so
-where they meet in the IMAGE is their vanishing point ``v``, and
-``D = normalise(K^-1 v)`` is their 3-D direction. Back-project the two far
-corners as rays ``r1``, ``r2`` and solve the two ranges ``d1``, ``d2`` that
-make ``E = d2 r2 - d1 r1`` perpendicular to ``D`` and exactly
-``--table-width`` long — one known length, two unknowns, one constraint each.
-That fixes the far edge in metres, and ``n = E x D`` is the plane's normal.
-Everything else is a ray-plane intersection.
+``declared``      somebody, or something, says so. In the loop that something
+                  is the MODEL: ``astra_loop``'s ``declare_scene`` tool, called
+                  on turn 0 while it looks at the same frame, with the robot's
+                  own hands at known base-frame positions in it for scale.
+``known-length``  ``--table-width`` — OPTIONAL, and the only scene number this
+                  file still accepts. It solves the height in closed form.
+``provisional``   nobody has said. The plane goes at the z of the arms' HOME
+                  tool points — a robot fact, not a measurement of anything in
+                  front of the camera — flagged ``provisional`` in every
+                  object it touches, with ``confidence`` dropped to 0.2.
 
-The table is then a rectangle in plane coordinates: ``across`` from the
-image-left far corner along the far edge, ``depth`` toward the camera. The
-NEAR edge is fitted the same way when it is inside the frame, so the table's
-depth is measured too rather than assumed.
+The rest of the fit is scale-free and therefore always available: masking the
+top, fitting the far edge and the two side edges, and projecting those lines
+onto the plane gives the table's RECTANGLE — where it is, how big, which way
+it is turned — correct in proportion for whatever the height turns out to be.
+Get the height right and the whole thing snaps into place; that is why a single
+declared number from the model fixes everything at once.
 
-WHERE THAT PLANE SITS ON THE ROBOT -- ``--anchor``
---------------------------------------------------
-The fit lives in CAMERA coordinates. Turning it into a ``base`` pose needs the
-camera pose, and there are two honest ways to get one:
+``level_correction_deg`` falls out for free and is worth reading: it is how far
+the nominal camera aim is from seeing the fitted top as horizontal, it needs no
+known length, and it is large when the neck angle you passed is wrong or its
+sign is.
 
-``--anchor far-edge-x=0.76[,centre-y=0.0]``
-    You know where the table's far edge is in front of the robot (a single
-    measurement that survives the objects being moved around). ``--table-z``
-    is then REQUIRED, because nothing in this mode measures height.
-    This is what Shu did by hand on 2026-09-22.
+THE THINGS ON THE TABLE
+-----------------------
+``--detector model`` (the default) finds NOTHING here on purpose. The loop's
+own model is shown the frame and declares the objects itself; this file gives
+it the camera, the plane and the table. ``--detector astra`` is a separate
+box-detector call kept for comparison, and ``--detector mask`` is a two-colour
+fallback that needs no key and exists so the geometry has something to be
+tested against with no network.
 
-``--anchor camera``
-    The zero-shot one. The camera pose comes from the kit's own model
-    (``manipulation_kit.description.head_camera``, new in this change) given
-    the neck joints and, for a floor-relative report, the lift. THE TABLE
-    HEIGHT IS THEN MEASURED: the perpendicular distance from the camera
-    centre to the fitted plane does not depend on the camera's orientation at
-    all, so ``table_z = camera_z_in_base - distance`` is as good as the
-    camera's HEIGHT, which is the best-known part of a nominal mount.
-
-    The camera's ORIENTATION is the worst-known part (the frame is nominal
-    geometry plus a design tilt, uncalibrated, and the neck's motor zero moves
-    after a home), so this mode does not trust it blindly: with
-    ``--assume-level`` (the default) the fitted plane is taken to be
-    horizontal — it is a wagon on a floor — and the camera rotation is
-    corrected by the MINIMAL rotation that makes it so. The correction is
-    reported as ``level_correction_deg`` and is a direct measurement of how
-    far the nominal aim is off. Everything this mode writes is stamped
-    ``calibrated: false``.
+Whatever produces them, the geometry is the same: the bottom of a silhouette
+is where the object meets the plane, moved half a footprint back because that
+bottom is the footprint's NEAR edge; the height comes from intersecting the ray
+through the top with the vertical above the footprint; a cylinder is measured
+at its widest slice and a box at its contact patch.
 
 WHAT IS NOT MEASURED, AND SAYS SO
 ---------------------------------
-Every number in the output carries a ``confidence`` below 1 and a note when it
-was inferred rather than seen: a container's interior (a rim thickness is not
-visible from above-and-in-front), an object's extent along the unseen
-horizontal axis, and yaw — an axis-aligned bounding box carries no
-orientation, so yaw is 0 and the footprint width is written on BOTH horizontal
-axes, which makes that 0 harmless rather than a quiet lie.
+Every number carries a ``confidence`` below 1 and a note when it was inferred
+rather than seen: the plane's height (above), a container's interior (85 % of
+the outside; ``Place`` refuses to drop into a guessed one, by design), an
+object's extent along the unseen horizontal axis, and yaw — an axis-aligned
+silhouette carries no orientation, so yaw is 0 and the width is written on BOTH
+horizontal axes, which makes that 0 harmless rather than a quiet lie.
 
-    # the exact shape of the thing, with no key and no robot:
-    python examples/agent/perceive.py --image head.jpg --table-width 0.60 \
-        --anchor far-edge-x=0.76 --table-z 0.166 \
-        --objects charger:object,cup:container --detector mask \
-        --out scenes/live.json --debug /tmp/perceived.png
+    # the default: nothing but the robot's own numbers
+    python examples/agent/perceive.py --image head.jpg \
+        --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 \
+        --out scenes/live.json --debug /tmp/fit.png
 
-    # zero-shot, on the robot, with the neck where the daemon says it is:
-    python examples/agent/perceive.py --image turn0_base_0_rgb.jpg \
-        --table-width 0.60 --anchor camera --neck-pitch 0.52 --lift 0.205 \
-        --objects charger:object,cup:container --detector astra
-
-``--detector mask`` is the colour fallback (white / brown, the two things on
-the d1-2 wagon) and needs nothing but numpy, scipy and an image decoder.
-``--detector astra`` is one Responses-API call with the frame attached; the
-``openai`` package is imported lazily and is not a dependency of anything
-here.
+    # ...and the same frame with the optional known length, for comparison
+    python examples/agent/perceive.py --image head.jpg --neck-pitch 0.52 \
+        --table-width 0.60 --objects charger:object,cup:container \
+        --detector mask
 """
+
 
 from __future__ import annotations
 
@@ -107,13 +100,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy import ndimage
-from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-#: The d1 head camera at 640x480. A focal length is a property of the stream,
-#: not of the robot, so it is a default and not a constant.
-DEFAULT_FX = 606.0
+#: Re-exported so ``--fx``'s default and ``camera.py``'s are one number.
+from camera import DEFAULT_FX  # noqa: E402,F401  (after the sys.path insert)
 
 #: Table-top mask thresholds, OpenCV HSV ranges (S and V in 0..255). The JP
 #: wagon top is a bright, almost unsaturated pink; the brick wall behind it and
@@ -469,10 +460,11 @@ class TablePlane:
     def camera_distance_m(self) -> float:
         """Perpendicular distance from the camera centre to the table top.
 
-        Orientation-free, which is the whole reason ``--anchor camera`` can
-        MEASURE a table height off an uncalibrated mount: rotating the camera
-        does not move this number, and the camera's height above the base is
-        the part of a nominal frame that is actually reliable.
+        Orientation-free: rotating the camera does not move it. That is what
+        makes it a usable cross-check against ``camera.p[2] - table_z`` when a
+        known length HAS fixed the scale, and it is also why it cannot supply
+        the scale itself — it is a distance in whatever units the fit was
+        solved in.
         """
         return float(abs(self.P1 @ self.n))
 
@@ -480,11 +472,6 @@ class TablePlane:
     def up(self) -> np.ndarray:
         """Plane normal pointing from the table toward the camera."""
         return self.n if (self.P1 @ self.n) < 0 else -self.n
-
-    def corners_plane(self) -> Dict[str, Tuple[float, float]]:
-        depth = self.depth_m if self.depth_m is not None else 0.0
-        return {"far_left": (0.0, 0.0), "far_right": (self.width_m, 0.0),
-                "near_left": (0.0, depth), "near_right": (self.width_m, depth)}
 
 
 def _edge_points(mask: np.ndarray, *, band: Tuple[float, float] = (0.25, 0.75),
@@ -660,116 +647,137 @@ def fit_table_plane(image_rgb: np.ndarray, *, fx: float = DEFAULT_FX,
 
 
 # --------------------------------------------------------------------------- #
-# where the plane sits on the robot
+# the table in BASE: a horizontal plane at a height somebody is accountable for
 # --------------------------------------------------------------------------- #
 
+#: Where a table's height can come from, worst to best. The string travels
+#: with every number derived from it, into the scene file and into the text
+#: the model reads, because "0.166" and "0.166, guessed" plan the same and
+#: fail differently.
+HEIGHT_SOURCES = ("provisional", "known-length", "declared")
+
+
 @dataclass
-class Anchor:
-    """A camera -> ``base`` transform, and how much to believe it."""
+class TableInBase:
+    """The plane the loop actually uses: horizontal, at ``z``, in ``base``.
 
-    p: np.ndarray                  # camera origin in base
-    r: R                           # camera (optical) rotation in base
-    mode: str
-    calibrated: bool
+    ``z`` is the ONLY thing a single view cannot supply (see
+    ``examples/agent/camera.py``), so it arrives with a ``source`` and an
+    uncertainty and never without them. Everything else here — the rectangle's
+    centre, extent and yaw — IS measured, by projecting the fitted edge lines
+    onto that plane through the robot's own camera model.
+    """
+
+    z: float
+    source: str
+    uncertainty_m: float
+    corners: Optional[np.ndarray] = None        # 4x3 base, far-L far-R near-R near-L
+    depth_measured: bool = False
     notes: List[str] = field(default_factory=list)
-    level_correction_deg: Optional[float] = None
-    implied_neck_pitch: Optional[float] = None
-    table_z: Optional[float] = None
 
-    def to_base(self, p_cam) -> np.ndarray:
-        return self.p + self.r.apply(np.asarray(p_cam, dtype=float))
+    @property
+    def centre(self) -> Optional[np.ndarray]:
+        return None if self.corners is None else self.corners.mean(axis=0)
+
+    def extent(self) -> Optional[Tuple[float, float, float]]:
+        """``(depth, width, yaw)`` of the rectangle, metres and radians."""
+        if self.corners is None:
+            return None
+        far = self.corners[1] - self.corners[0]          # image-left -> right
+        side = self.corners[3] - self.corners[0]         # far -> near
+        width = float(np.linalg.norm(far[:2]))
+        depth = float(np.linalg.norm(side[:2]))
+        # ``size`` is (length, width, thickness) along the object's OWN axes,
+        # and its length axis is the DEPTH one, so the yaw is the angle of
+        # near->far: a wagon squarely in front of the robot reads 0, not 180.
+        yaw = float(math.atan2(-side[1], -side[0]))
+        return depth, width, (yaw + math.pi) % (2 * math.pi) - math.pi
 
     def to_json(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
-            "mode": self.mode, "calibrated": self.calibrated,
-            "camera_p_base": [round(float(v), 4) for v in self.p],
-            "camera_quat_xyzw": [round(float(v), 5) for v in self.r.as_quat()],
+            "z": round(float(self.z), 4),
+            "height_source": self.source,
+            "height_uncertainty_m": round(float(self.uncertainty_m), 4),
+            "depth_measured": bool(self.depth_measured),
             "notes": list(self.notes)}
-        if self.level_correction_deg is not None:
-            out["level_correction_deg"] = round(self.level_correction_deg, 2)
-        if self.implied_neck_pitch is not None:
-            out["neck_pitch_that_levels_rad"] = round(self.implied_neck_pitch, 4)
+        if self.corners is not None:
+            out["corners_base"] = [[round(float(v), 4) for v in c]
+                                   for c in self.corners]
         return out
 
 
-def anchor_far_edge(plane: TablePlane, *, far_edge_x: float,
-                    centre_y: float = 0.0, table_z: float) -> Anchor:
-    """Pin the plane by the table's far-edge x in ``base``.
+def project_corners(plane: TablePlane, camera, table_z: float,
+                    *, source: str = "provisional") -> TableInBase:
+    """The fitted edge pixels, put on the horizontal plane at ``table_z``.
 
-    The plane's own axes are ``across`` (image-left far corner -> image-right
-    along the far edge), ``depth`` (toward the camera) and ``up``. In ``base``
-    those are ``-y``, ``-x`` and ``+z``: the robot looks along ``+x``, its
-    ``+y`` is its own left, and image-left IS robot-left.
+    This is the half of the fit that survives having no known length: the far
+    and side edges say WHERE the rectangle is and which way it is turned, and
+    the camera model turns those pixels into base-frame metres as soon as a
+    height exists. Get the height wrong by 10 % and the rectangle is 10 % too
+    big and 10 % too far away — wrong together, and correctable by one number.
     """
-    across = plane.E / plane.width_m
-    toward = -plane.D
-    up = plane.up
-    cam_axes = np.column_stack([across, toward, up])
-    base_axes = np.column_stack([(0.0, -1.0, 0.0), (-1.0, 0.0, 0.0),
-                                 (0.0, 0.0, 1.0)])
-    rotation = base_axes @ cam_axes.T
-    if abs(np.linalg.det(rotation) - 1.0) > 1e-6:
-        raise PlaneFitError("degenerate", f"the plane axes are not a rotation "
-                                          f"(det {np.linalg.det(rotation):.4f})")
-    origin = np.array([float(far_edge_x),
-                       float(centre_y) + plane.width_m / 2.0, float(table_z)])
-    # base = origin + rotation @ (P - P1)  =>  the camera sits where P = 0 maps
-    p = origin + rotation @ (-plane.P1)
-    return Anchor(p=p, r=R.from_matrix(rotation), mode="far-edge-x",
-                  calibrated=False, table_z=float(table_z),
-                  notes=["the table height came from --table-z, not from this "
-                         "frame; --anchor camera measures it instead"])
+    height, width = plane.shape
+    far_left, far_right = plane.far_px
+    if plane.near_px is not None:
+        near_left, near_right = plane.near_px
+        depth_measured = True
+    else:
+        # The top runs out of the bottom of the frame. Its near edge is the
+        # frame's, which is not a measurement of the table — say so.
+        near_left = np.array([far_left[0], float(height - 1)])
+        near_right = np.array([far_right[0], float(height - 1)])
+        depth_measured = False
+    corners = []
+    for pixel in (far_left, far_right, near_right, near_left):
+        corners.append(camera.locate(pixel[0], pixel[1], plane_z=table_z,
+                                     plane_source=source).p)
+    notes = []
+    if not depth_measured:
+        notes.append("the near edge is outside the frame, so the table's "
+                     "DEPTH is the frame's edge and not the table's")
+    return TableInBase(z=float(table_z), source=source,
+                       uncertainty_m=0.0, corners=np.array(corners),
+                       depth_measured=depth_measured, notes=notes)
 
 
-def anchor_camera(plane: TablePlane, *, neck_pitch: float = 0.0,
-                  neck_yaw: float = 0.0, assume_level: bool = True,
-                  urdf_path: Optional[str] = None) -> Anchor:
-    """The camera pose from the kit's own head-camera frame.
+def table_z_from_known_length(plane: TablePlane, camera, length_m: float,
+                              *, start_z: Optional[float] = None) -> float:
+    """Solve the plane height that makes the far edge ``length_m`` long.
 
-    See the module docstring for why the height that comes out of this is a
-    measurement and the aim that goes into it is not.
+    OPTIONAL REFINEMENT, and the only place in this file a scene number is
+    allowed in at all. It is closed form, not a search: the projection of a
+    fixed image line onto a horizontal plane scales linearly with the camera's
+    height above that plane, so one evaluation gives the constant.
+
+        width(z) = width(z0) * (cam_z - z) / (cam_z - z0)
+
+    Pass ``--table-width`` if you happen to know one edge of the table. Do not
+    go and measure one: the point of this file is that you should not have to.
     """
-    from manipulation_kit.description.head_camera import (  # noqa: PLC0415
-        head_camera_pose, nominal_tilt_rad)
+    cam_z = float(camera.p[2])
+    z0 = float(cam_z - 0.5 if start_z is None else start_z)
+    if abs(cam_z - z0) < 1e-6:
+        raise PlaneFitError("degenerate", "the camera is on the plane")
+    reference = project_corners(plane, camera, z0).extent()
+    if reference is None or reference[1] < 1e-6:
+        raise PlaneFitError("degenerate",
+                            "the far edge projects to nothing; no length to "
+                            "scale")
+    return cam_z - (cam_z - z0) * float(length_m) / reference[1]
 
-    p, rotation = head_camera_pose(neck_pitch=neck_pitch, neck_yaw=neck_yaw,
-                                   urdf_path=urdf_path)
-    notes = [
-        "the head camera frame is NOMINAL geometry (design tilt "
-        f"{math.degrees(nominal_tilt_rad()):.0f} deg, lens placed at the "
-        "housing's front face), not a calibrated extrinsic",
-        "lift does not enter: the lift joint is below `base`, so it raises "
-        "the base and the camera together"]
-    correction = None
-    if assume_level:
-        normal = rotation.apply(plane.up)
-        axis = np.cross(normal, (0.0, 0.0, 1.0))
-        sine = float(np.linalg.norm(axis))
-        cosine = float(normal @ np.array([0.0, 0.0, 1.0]))
-        angle = math.atan2(sine, cosine)
-        if sine > 1e-9:
-            rotation = R.from_rotvec(axis / sine * angle) * rotation
-        correction = math.degrees(angle)
-        notes.append(
-            f"--assume-level: the fitted top was taken to be horizontal and "
-            f"the nominal camera aim was rotated {correction:.1f} deg to make "
-            f"it so; that angle IS the nominal mount's error plus the neck's "
-            f"zero offset for this frame")
-    table_z = float(p[2]) - plane.camera_distance_m
-    implied = neck_pitch_that_levels(plane, neck_yaw=neck_yaw,
-                                     urdf_path=urdf_path)
-    if implied is not None:
-        notes.append(
-            f"the fitted top is level at neck_tilt = {implied:+.3f} rad "
-            f"({math.degrees(implied):+.1f} deg, motor sign, positive looks "
-            f"down). If you do not know what the neck was doing when this "
-            f"frame was taken, that is the table's own answer — and if you DO "
-            f"know it and it disagrees, the difference is the uncalibrated "
-            f"mount")
-    return Anchor(p=np.asarray(p, dtype=float), r=rotation, mode="camera",
-                  calibrated=False, notes=notes,
-                  level_correction_deg=correction, table_z=table_z,
-                  implied_neck_pitch=implied)
+
+def level_correction_deg(plane: TablePlane, camera) -> float:
+    """How far the NOMINAL camera aim is from seeing this top as horizontal.
+
+    A diagnostic, and a good one: it is a scale-free measurement, so it works
+    with no known length at all. Large means the neck angle you passed is
+    wrong, the sign of it is wrong, or the mount is further off than its
+    2-3 deg of documented slop. It cannot tell you WHICH.
+    """
+    normal = camera.r.apply(plane.up)
+    return math.degrees(math.atan2(
+        float(np.linalg.norm(np.cross(normal, (0.0, 0.0, 1.0)))),
+        float(normal[2])))
 
 
 def neck_pitch_that_levels(plane: TablePlane, *, neck_yaw: float = 0.0,
@@ -780,36 +788,32 @@ def neck_pitch_that_levels(plane: TablePlane, *, neck_yaw: float = 0.0,
     horizontal — the table telling you where the head was pointing.
 
     It is a diagnostic, not a calibration: it folds the mount's real error and
-    the neck's zero offset into one number, and it cannot separate them. What
-    it is good for is a frame whose neck angle nobody wrote down, and for
+    the neck's zero offset into one number and cannot separate them. What it
+    is good for is a frame whose neck angle nobody wrote down, and for
     noticing that the two disagree. ``None`` when no angle inside the joint's
     own limits does it.
     """
-    from manipulation_kit.description.head_camera import (  # noqa: PLC0415
-        head_camera_pose)
+    from camera import HeadCamera  # noqa: PLC0415
 
-    def tilt_error(pitch: float) -> float:
-        _, rot = head_camera_pose(neck_pitch=pitch, neck_yaw=neck_yaw,
-                                  urdf_path=urdf_path)
-        normal = rot.apply(plane.up)
-        return math.atan2(float(np.linalg.norm(np.cross(normal, (0, 0, 1.0)))),
-                          float(normal[2]))
+    height, width = plane.shape
+
+    def error(pitch: float) -> float:
+        camera = HeadCamera.from_robot(width=width, height=height,
+                                       fx=plane.fx, neck_pitch=pitch,
+                                       neck_yaw=neck_yaw, urdf_path=urdf_path)
+        return abs(level_correction_deg(plane, camera))
 
     lo, hi = bounds
-    # The error is monotone in the tilt over the joint's range (one joint, one
-    # axis), so a bisection on its DERIVATIVE-free sign is not available —
-    # minimise instead, with a golden section, and refuse if the minimum is
-    # not actually zero.
     phi = (math.sqrt(5.0) - 1.0) / 2.0
     a, b = lo, hi
     for _ in range(60):
         c, d = b - phi * (b - a), a + phi * (b - a)
-        if tilt_error(c) < tilt_error(d):
+        if error(c) < error(d):
             b = d
         else:
             a = c
     best = (a + b) / 2.0
-    if tilt_error(best) > math.radians(1.0) or not lo < best < hi:
+    if error(best) > 1.0 or not lo < best < hi:
         return None
     return float(best)
 
@@ -1143,40 +1147,69 @@ def _jpeg_base64(rgb: np.ndarray) -> str:
 # pixels -> a scene file the loop consumes
 # --------------------------------------------------------------------------- #
 
-def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
+
+# --------------------------------------------------------------------------- #
+# pixels -> a scene file the loop consumes
+# --------------------------------------------------------------------------- #
+
+def height_above(camera, base_point: np.ndarray, u: float, v: float) -> float:
+    """How high above ``base_point`` the pixel ``(u, v)`` is.
+
+    ASSUMING it sits on the vertical line through ``base_point`` — which is
+    what a single view has: the top of an upright cup is above its base, so
+    the ray through the rim and the vertical through the footprint meet at the
+    rim's height. Exact for a symmetric upright object, wrong in proportion to
+    how far the point really is off that axis, which is why what it produces
+    is reported with a confidence below 1 and never as a measurement of a
+    leaning object.
+    """
+    ray = camera.ray(u, v)
+    matrix = np.column_stack([np.array([0.0, 0.0, 1.0]), -ray])
+    solution, *_ = np.linalg.lstsq(
+        matrix, np.asarray(camera.p, dtype=float) - np.asarray(base_point,
+                                                               dtype=float),
+        rcond=None)
+    return float(solution[0])
+
+
+def measure(detection: Detection, camera, table: TableInBase, *,
             interior: Optional[Sequence[float]] = None,
             size: Optional[Sequence[float]] = None) -> Dict[str, Any]:
     """One detection -> one scene object, in ``base`` metres.
 
     Four measurements, and what each one is worth:
 
-    FOOTPRINT WIDTH, on the plane, between the two ends of the contact band
-    (or the bounding box's bottom corners when the detector gave no band).
-    This one is real: both ends lie ON the surface whose geometry was just
-    solved.
-
-    FOOTPRINT CENTRE. The contact band's bottom row is the NEAR edge of the
-    footprint, not its middle — the near side of a cup's base is a radius
-    closer to the camera than the base's centre. So the centre is moved half a
-    footprint back, along the plane, away from the camera. Without that the
-    cup landed 26 mm in front of itself, which is most of a gripper's
+    FOOTPRINT CENTRE. The bottom of a silhouette is where the object meets the
+    table — ``camera.locate`` puts that pixel on the plane — but it is the
+    footprint's NEAR edge, not its middle, because the near side of a cup's
+    base is a radius closer to the camera than the base's centre. So the point
+    is moved half a footprint away from the camera, along the plane. Without
+    that the cup landed 26 mm in front of itself, which is most of a gripper's
     tolerance.
 
-    HEIGHT, by intersecting the ray through the TOP of the silhouette with the
-    vertical line through the footprint. The obvious "pixel extent times range
-    over fx" over-reports by the same fifth a rim does, for the same reason:
-    the top of the object is nearer the camera than its base.
+    FOOTPRINT WIDTH, between the two ends of the contact band (or the bounding
+    box's bottom corners when the detector gave no band), both lifted onto the
+    plane. Real: both ends lie ON the surface.
 
-    WIDTH, at the height where the silhouette is WIDEST and on a plane lifted
-    to that height — a cup's rim, not its base. Measuring a rim against the
-    table top made a 95 mm cup 110 mm wide, and 85% of the wrong one is an
-    interior a 50 mm charger does not fit into.
+    HEIGHT, by intersecting the ray through the TOP of the silhouette with the
+    vertical through the footprint's far side. "Pixel extent times range over
+    fx" over-reports by a fifth, because the top of the object is nearer the
+    camera than its base.
+
+    WIDTH, at the height where the silhouette is WIDEST, on a plane lifted to
+    that height — a cup's rim, not its base. Measuring a rim against the table
+    top made a 95 mm cup 110 mm wide, and 85 % of the wrong one is an interior
+    a 50 mm charger does not fit into.
 
     UNSEEN HORIZONTAL EXTENT: there isn't one. A single view gives one
     silhouette, so the width is written on BOTH horizontal axes and yaw is
     0 — a square footprint is rotation-invariant, which makes that zero
     harmless instead of an invented orientation. ``size_y_measured: false``
     says so in the file.
+
+    EVERY ONE OF THESE INHERITS THE PLANE'S HEIGHT. If ``table.source`` is
+    ``provisional``, so is all of this, in proportion — which is exactly why
+    the loop's first move is to let the model declare the scene instead.
     """
     x0, y0, x1, y1 = detection.bbox
     base_u, base_v = detection.base_px
@@ -1184,73 +1217,84 @@ def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
         left_u, right_u, contact_v = detection.contact_px
     else:
         left_u, right_u, contact_v = x0, x1, base_v
-    footprint = float(np.linalg.norm(plane.point(right_u, contact_v)
-                                     - plane.point(left_u, contact_v)))
-    across, depth = plane.to_plane(base_u, base_v)
-    centre_depth = max(depth - footprint / 2.0, 0.0)
-    contact = _plane_point(plane, across, centre_depth)
-    range_m = float(np.linalg.norm(contact))
 
-    # The TOP of the silhouette is the object's FAR top edge (the back of a
-    # cup's rim), not a point above its centre — so the ray is intersected
-    # with the vertical through the far side of the footprint. Through the
-    # centre instead it overshot the cup by 18 mm, which is a sixth of a cup.
-    far = _plane_point(plane, across, max(centre_depth - footprint / 2.0, 0.0))
+    def on_plane(u, v, lift=0.0):
+        return camera.locate(u, v, plane_z=table.z + lift,
+                             plane_source=table.source).p
+
+    edge = on_plane(base_u, base_v)
+    footprint = float(np.linalg.norm(on_plane(right_u, contact_v)[:2]
+                                     - on_plane(left_u, contact_v)[:2]))
+    # The bottom of a silhouette is the footprint's NEAR edge. Its centre is
+    # half a footprint FURTHER AWAY from the camera, along the plane, and its
+    # far side another half beyond that — which is where the TOP of the
+    # silhouette stands. (Signs matter here more than anywhere else in the
+    # file: this ray is at ~45 deg, so 47 mm of horizontal error in the base
+    # point is 41 mm of height error.)
+    away = edge[:2] - np.asarray(camera.p, dtype=float)[:2]
+    norm = float(np.linalg.norm(away))
+    step = away / norm * (footprint / 2.0) if norm > 1e-6 else np.zeros(2)
+    contact = np.array(edge, dtype=float)
+    contact[:2] = contact[:2] + step
+    far_side = np.array(contact, dtype=float)
+    far_side[:2] = far_side[:2] + step
+
     top_u, top_v = detection.top_px or ((x0 + x1) / 2.0, y0)
-    height = plane.height_above(far, top_u, top_v)
-    if not (0.0 < height < 2.0):        # a ray that never meets the vertical
-        height = float((base_v - y0) * range_m / plane.fx)
+    height = height_above(camera, far_side, top_u, top_v)
+    if not (0.0 < height < 2.0):
+        raise PlaneFitError(
+            "degenerate",
+            f"{detection.name}: the ray through the top of the silhouette "
+            f"does not meet the vertical above its footprint (height "
+            f"{height:.3f} m). The neck angle or the plane height is wrong.")
 
     # WIDTH depends on the shape, and honestly so. A cylinder's silhouette is
-    # its diameter from every angle, so its widest row IS the measurement —
-    # a cup's rim, 100 mm above the base and therefore measured on a plane
-    # lifted to that height. A BOX seen from a corner shows two faces at once
-    # and its silhouette is WIDER than it is (the d1-2 charger: 64 mm of
-    # silhouette for a 50 mm footprint), so for anything not a cylinder the
-    # contact width is the better number and the silhouette is only recorded.
-    slice_h = 0.0
-    width = footprint
+    # its diameter from every angle, so its widest row IS the measurement.
+    # A BOX seen from a corner shows two faces at once and its silhouette is
+    # WIDER than it is (the d1-2 charger: 64 mm of silhouette for a 50 mm
+    # footprint), so for anything not a cylinder the contact width is the
+    # better number and the silhouette is only recorded.
     if detection.widest_px is not None:
         wide_l, wide_r, wide_v = detection.widest_px
-        slice_h = min(max(plane.height_above(contact, (wide_l + wide_r) / 2.0,
-                                             wide_v), 0.0), height)
+        slice_h = min(max(height_above(camera, contact,
+                                       (wide_l + wide_r) / 2.0, wide_v), 0.0),
+                      height)
         silhouette = float(np.linalg.norm(
-            plane.point(wide_r, wide_v, slice_h)
-            - plane.point(wide_l, wide_v, slice_h)))
+            on_plane(wide_r, wide_v, slice_h)[:2]
+            - on_plane(wide_l, wide_v, slice_h)[:2]))
     else:
         slice_h = height / 2.0
-        silhouette = float(np.linalg.norm(plane.point(x1, base_v, slice_h)
-                                          - plane.point(x0, base_v, slice_h)))
-    if detection.shape == "cylinder":
-        width = max(width, silhouette)
+        silhouette = float(np.linalg.norm(on_plane(x1, base_v, slice_h)[:2]
+                                          - on_plane(x0, base_v, slice_h)[:2]))
+    width = max(footprint, silhouette) if detection.shape == "cylinder" \
+        else footprint
 
     notes = list(detection.notes)
     notes.append("yaw is 0 and the width is written on BOTH horizontal axes: "
                  "one view gives one silhouette, so a nonzero yaw here would "
                  "be invented")
-    notes.append(f"the footprint centre is {footprint/2*1000:.0f} mm behind "
-                 f"the bottom of the silhouette, which is the footprint's "
-                 f"NEAR edge, not its middle")
-    if height <= 0.005 or width <= 0.005:
-        notes.append(f"suspiciously small ({width*1000:.0f} x "
-                     f"{height*1000:.0f} mm); check the footprint pixel")
+    notes.append(f"the footprint centre is {footprint / 2 * 1000:.0f} mm "
+                 f"behind the bottom of the silhouette, which is the "
+                 f"footprint's NEAR edge, not its middle")
+    notes.append(f"the table height this is measured against is "
+                 f"{table.source} (z = {table.z:.3f} m)")
     measured_size = [round(width, 4), round(width, 4), round(height, 4)]
     if size is not None:
-        # The one number a single view cannot produce (see the docstring) and
-        # the one Shu's hand-made run2 file carried: the charger's 20 mm
-        # depth. Declaring it does not touch WHERE the object was measured to
-        # be — only how big it is said to be — and the file records both.
         height = float(size[2])
         width = max(float(size[0]), float(size[1]))
-    p = anchor.to_base(contact + plane.up * (height / 2.0))
+    centre = np.array(contact, dtype=float)
+    centre[2] = table.z + height / 2.0
+    confidence = min(detection.confidence, 0.8)
+    if table.source == "provisional":
+        confidence = min(confidence, 0.2)
     item: Dict[str, Any] = {
         "name": detection.name, "kind": detection.kind,
         "frame_id": "base",
-        "p": [round(float(v), 4) for v in p],
+        "p": [round(float(v), 4) for v in centre],
         "size": ([round(float(v), 4) for v in size] if size is not None
                  else measured_size),
         "yaw_rad": 0.0,
-        "confidence": round(min(detection.confidence, 0.8), 2),
+        "confidence": round(confidence, 2),
         "measurement": {
             "source": detection.source,
             "bbox_px": [round(v, 1) for v in detection.bbox],
@@ -1262,11 +1306,8 @@ def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
             "footprint_width_m": round(footprint, 4),
             "silhouette_width_m": round(silhouette, 4),
             "widest_slice_height_m": round(float(slice_h), 4),
-            "footprint_plane_m": [round(float(across), 4),
-                                  round(float(centre_depth), 4)],
-            "silhouette_edge_plane_m": [round(float(across), 4),
-                                        round(float(depth), 4)],
-            "range_m": round(range_m, 4),
+            "table_z_m": round(float(table.z), 4),
+            "table_height_source": table.source,
             "upright": bool(detection.upright),
             "shape": detection.shape,
             "size_y_measured": size is not None,
@@ -1274,7 +1315,7 @@ def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
             "yaw_measured": False,
             "notes": notes}}
     if size is not None:
-        item["confidence"] = round(min(detection.confidence + 0.2, 0.9), 2)
+        item["confidence"] = round(min(confidence + 0.2, 0.9), 2)
         item["measurement"]["notes"].append(
             f"size declared on the command line (--size "
             f"{detection.name}={','.join(format(float(v), 'g') for v in size)}"
@@ -1288,8 +1329,8 @@ def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
             item["interior_measured"] = True
             item["measurement"]["interior_measured"] = True
             item["measurement"]["notes"].append(
-                "interior declared MEASURED on the command line "
-                "(--interior); nothing in this frame checked it")
+                "interior declared on the command line (--interior); nothing "
+                "in this frame checked it")
         else:
             interior_h = max(height - RIM_DROP_M, 0.005)
             item["interior"] = [round(width * INTERIOR_FRACTION, 4),
@@ -1299,16 +1340,14 @@ def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
             # THE FLAG THE KIT READS, not just a note. `Place` refuses a
             # placement into a container whose interior is a guess, and a
             # perceived interior IS a guess: a wall thickness is not visible
-            # from one view above and in front. Saying so in a comment while
-            # letting `ContainerView` default to `interior_measured=True`
-            # would be the quiet version of lying.
+            # from one view above and in front.
             item["interior_measured"] = False
             item["measurement"]["interior_measured"] = False
             item["measurement"]["notes"].append(
                 f"interior = {INTERIOR_FRACTION:g} x the measured outside in "
-                f"xy and {RIM_DROP_M*1000:.0f} mm below the rim in z. "
+                f"xy and {RIM_DROP_M * 1000:.0f} mm below the rim in z. "
                 f"manipulation_kit's Place REFUSES a placement into an "
-                f"estimated interior: measure this cup once and pass "
+                f"estimated interior: measure this once and pass "
                 f"--interior {detection.name}=0.08,0.08,0.10")
     if not detection.upright:
         item["measurement"]["notes"].append(
@@ -1317,93 +1356,96 @@ def measure(detection: Detection, plane: TablePlane, anchor: Anchor, *,
     return item
 
 
-def build_scene(plane: TablePlane, anchor: Anchor,
-                detections: Sequence[Detection], *, table_name: str = "table",
+def table_object(table: TableInBase, camera, *, name: str = "table",
+                 thickness_m: float = 0.02,
+                 depth_m: Optional[float] = None) -> Dict[str, Any]:
+    """The fitted top as a ``SurfaceView`` item."""
+    extent = table.extent()
+    if extent is None:
+        raise PlaneFitError("no_table", "no fitted rectangle to place")
+    depth, width, yaw = extent
+    centre = table.centre
+    if depth_m is not None:
+        depth = float(depth_m)
+    return {
+        "name": name, "kind": "surface", "frame_id": "base",
+        "p": [round(float(centre[0]), 4), round(float(centre[1]), 4),
+              round(float(table.z) - thickness_m / 2.0, 4)],
+        "size": [round(float(depth), 4), round(float(width), 4), thickness_m],
+        "yaw_rad": round(float(yaw), 4),
+        "confidence": 0.2 if table.source == "provisional" else 0.6,
+        "measurement": {
+            "top_z_base_m": round(float(table.z), 4),
+            "table_height_source": table.source,
+            "height_uncertainty_m": round(float(table.uncertainty_m), 4),
+            "depth_measured": table.depth_measured,
+            "corners_base": [[round(float(v), 4) for v in c]
+                             for c in table.corners],
+            "notes": list(table.notes)}}
+
+
+def build_scene(camera, table: TableInBase,
+                detections: Sequence[Detection] = (), *,
+                table_name: str = "table",
                 table_depth_m: Optional[float] = None,
-                table_thickness_m: float = 0.02,
                 interiors: Optional[Dict[str, Sequence[float]]] = None,
                 sizes: Optional[Dict[str, Sequence[float]]] = None,
-                source_image: Optional[str] = None) -> Dict[str, Any]:
-    """The ``--scene`` file ``examples/agent/live.py`` loads, measured."""
-    depth = table_depth_m if table_depth_m is not None else plane.depth_m
-    depth_note = "measured from the fitted near edge"
-    if table_depth_m is not None:
-        depth_note = "given on the command line (--table-depth)"
-    elif depth is None:
-        depth = 0.40
-        depth_note = ("ASSUMED: the near edge is outside the frame, so the "
-                      "table's depth was not measured. Pass --table-depth, or "
-                      "retake the frame with the whole top visible")
-    top_z = anchor.to_base(plane.P1)[2]
-    corners = {
-        name: [round(float(v), 4)
-               for v in anchor.to_base(_plane_point(plane, across, along))]
-        for name, (across, along) in
-        (("far_left", (0.0, 0.0)), ("far_right", (plane.width_m, 0.0)),
-         ("near_left", (0.0, depth)), ("near_right", (plane.width_m, depth)))}
-    centre = np.mean([corners["far_left"], corners["far_right"],
-                      corners["near_left"], corners["near_right"]], axis=0)
-    table = {
-        "name": table_name, "kind": "surface", "frame_id": "base",
-        "p": [round(float(centre[0]), 4), round(float(centre[1]), 4),
-              round(float(top_z) - table_thickness_m / 2.0, 4)],
-        "size": [round(float(depth), 4), round(plane.width_m, 4),
-                 table_thickness_m],
-        "yaw_rad": 0.0,
-        "confidence": 0.6,
-        "measurement": {
-            "top_z_base_m": round(float(top_z), 4),
-            "width_m": "PRIOR (--table-width); the one known length",
-            "depth_m": depth_note,
-            "corners_base": corners,
-            "camera_to_top_m": round(plane.camera_distance_m, 4),
-            "far_corner_px": [[round(float(v), 1) for v in plane.far_px[0]],
-                              [round(float(v), 1) for v in plane.far_px[1]]],
-            "near_corner_px": (None if plane.near_px is None else
-                               [[round(float(v), 1) for v in plane.near_px[0]],
-                                [round(float(v), 1) for v in plane.near_px[1]]]),
-            "fit": dict(plane.quality)}}
+                source_image: Optional[str] = None,
+                diagnostics: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The ``--scene`` file ``examples/agent/live.py`` loads.
+
+    With no detector it contains the CAMERA and the table and no things, which
+    is the default and is not an empty file: it is everything the model needs
+    to fill in the things itself (``astra_loop``'s ``declare_scene`` and
+    ``locate``).
+    """
+    objects: List[Dict[str, Any]] = []
+    if table.corners is not None:
+        objects.append(table_object(table, camera, name=table_name,
+                                    depth_m=table_depth_m))
+    for detection in detections:
+        objects.append(measure(detection, camera, table,
+                               interior=(interiors or {}).get(detection.name),
+                               size=(sizes or {}).get(detection.name)))
     readme = [
-        "MEASURED FROM ONE HEAD FRAME by examples/agent/perceive.py. Priors: "
-        f"the table top's width ({plane.width_m:.3f} m) and fx "
-        f"({plane.fx:.1f} px). Nothing else was measured by hand.",
-        f"anchor: {anchor.mode}; calibrated: {str(anchor.calibrated).lower()}. "
-        "Nothing in this file is a calibrated extrinsic.",
+        "MEASURED FROM ONE HEAD FRAME by examples/agent/perceive.py. The only "
+        "calibration in it is ROBOT-specific: the head camera's intrinsics "
+        "and its pose in `base` from the neck joints and the kit's own "
+        "head-camera frame. No scene was measured to produce this.",
+        f"table height: {table.source} (z = {table.z:.3f} m, "
+        f"+-{table.uncertainty_m * 1000:.0f} mm). ONE CAMERA CANNOT MEASURE "
+        f"THE HEIGHT OF THE PLANE IT IS LOOKING AT — twice as far and twice "
+        f"as big is the same picture — so this number came from outside the "
+        f"geometry and everything in the file scales with it.",
         "base = dual_base (torso platform), +x forward, +y robot LEFT, +z up.",
+        "Nothing here is a calibrated extrinsic; the head-camera frame is "
+        "nominal geometry plus the head part's design tilt.",
         "Every object carries `confidence` and a `measurement` block saying "
         "what was seen and what was assumed. Read them before trusting a "
         "number to a millimetre.",
-    ] + [f"anchor note: {note}" for note in anchor.notes]
+    ] + [f"table note: {note}" for note in table.notes]
     if source_image:
         readme.insert(1, f"source frame: {source_image}")
     return {"_README": readme,
-            "_perceive": {"anchor": anchor.to_json(),
-                          "fx": plane.fx, "table_width_m": plane.width_m,
-                          "image": source_image},
+            "_perceive": {"camera": camera.to_json(),
+                          "table": table.to_json(),
+                          "image": source_image,
+                          "diagnostics": dict(diagnostics or {})},
             "frames": [],
-            "objects": [table] + [
-                measure(d, plane, anchor,
-                        interior=(interiors or {}).get(d.name),
-                        size=(sizes or {}).get(d.name))
-                for d in detections]}
-
-
-def _plane_point(plane: TablePlane, across: float, along: float) -> np.ndarray:
-    """A point on the table from plane coordinates, in camera coordinates."""
-    return plane.P1 + (plane.E / plane.width_m) * across + (-plane.D) * along
+            "objects": objects}
 
 
 # --------------------------------------------------------------------------- #
 # the debug frame
 # --------------------------------------------------------------------------- #
 
-def debug_image(image_rgb: np.ndarray, plane: TablePlane,
+def debug_image(image_rgb: np.ndarray, plane: Optional[TablePlane],
                 detections: Sequence[Detection]) -> np.ndarray:
     """The frame with the fit drawn on it. Look at this before believing the
     numbers: a plane fit that latched onto the floor still produces a tidy
     JSON file."""
     out = np.array(image_rgb, dtype=np.uint8, copy=True)
-    height, width = plane.shape
+    height, width = out.shape[:2]
 
     def dot(u, v, colour, radius=4):
         u, v = int(round(u)), int(round(v))
@@ -1418,18 +1460,19 @@ def debug_image(image_rgb: np.ndarray, plane: TablePlane,
             if 0 <= int(v) < height and 0 <= int(u) < width:
                 dot(u, v, colour, radius=1)
 
-    c1, c2 = plane.far_px
-    segment(c1, c2, (0, 200, 255))
-    if plane.near_px is not None:
-        n1, n2 = plane.near_px
-        segment(n1, n2, (0, 200, 255))
-        segment(c1, n1, (0, 160, 255))
-        segment(c2, n2, (0, 160, 255))
-    for corner in (c1, c2) + (plane.near_px or ()):
-        dot(corner[0], corner[1], (0, 255, 0), radius=5)
+    if plane is not None:
+        c1, c2 = plane.far_px
+        segment(c1, c2, (0, 200, 255))
+        if plane.near_px is not None:
+            n1, n2 = plane.near_px
+            segment(n1, n2, (0, 200, 255))
+            segment(c1, n1, (0, 160, 255))
+            segment(c2, n2, (0, 160, 255))
+        for corner in (c1, c2) + (plane.near_px or ()):
+            dot(corner[0], corner[1], (0, 255, 0), radius=5)
     for detection in detections:
         x0, y0, x1, y1 = detection.bbox
-        for pair in ((( x0, y0), (x1, y0)), ((x1, y0), (x1, y1)),
+        for pair in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)),
                      ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
             segment(pair[0], pair[1], (255, 0, 0))
         dot(detection.base_px[0], detection.base_px[1], (255, 0, 255), radius=5)
@@ -1450,34 +1493,11 @@ def write_png(path, rgb: np.ndarray) -> None:
 # CLI
 # --------------------------------------------------------------------------- #
 
-def read_fx(path) -> float:
-    """``fx`` out of an intrinsics JSON, in the shapes that turn up.
-
-    d1-inference writes ``{"fx": ..., "fy": ...}``; a ROS camera_info dump
-    writes ``{"K": [...9]}`` or ``{"camera_matrix": {"data": [...9]}}``. Only
-    ``fx`` is used — the principal point is taken at the image centre, which
-    is what the plane fit assumes and what these frames support.
-    """
-    blob = json.loads(Path(path).read_text(encoding="utf-8"))
-    for key in ("fx", "focal_length_px"):
-        if isinstance(blob.get(key), (int, float)):
-            return float(blob[key])
-    for key in ("K", "camera_matrix", "intrinsic_matrix"):
-        value = blob.get(key)
-        if isinstance(value, dict):
-            value = value.get("data")
-        if isinstance(value, list) and value:
-            flat = np.asarray(value, dtype=float).ravel()
-            if flat.size >= 1:
-                return float(flat[0])
-    raise SystemExit(f"{path}: no fx, K or camera_matrix in this file")
-
-
 def parse_extents(specs: Sequence[str], flag: str) -> Dict[str, List[float]]:
     """``["cup=0.08,0.08,0.10"]`` -> ``{"cup": [0.08, 0.08, 0.10]}``.
 
-    Shared by ``--interior`` and ``--size``, which are the two escape hatches
-    for the two things one view cannot see.
+    Shared by ``--interior`` and ``--size``, the two escape hatches for the
+    two things one view cannot see.
     """
     out: Dict[str, List[float]] = {}
     for spec in specs or ():
@@ -1496,83 +1516,67 @@ def parse_extents(specs: Sequence[str], flag: str) -> Dict[str, List[float]]:
     return out
 
 
-def parse_anchor(spec: str) -> Dict[str, Any]:
-    """``camera`` or ``far-edge-x=0.76[,centre-y=0.0]``."""
-    spec = spec.strip()
-    if spec == "camera":
-        return {"mode": "camera"}
-    out: Dict[str, Any] = {"mode": "far-edge-x"}
-    for token in spec.split(","):
-        if "=" not in token:
-            raise SystemExit(f"--anchor: {token!r} is not key=value")
-        key, value = token.split("=", 1)
-        key = key.strip().replace("_", "-")
-        if key not in ("far-edge-x", "centre-y", "center-y"):
-            raise SystemExit(f"--anchor: unknown key {key!r}; use "
-                             f"far-edge-x=<m>[,centre-y=<m>] or 'camera'")
-        out["centre_y" if key.endswith("-y") else "far_edge_x"] = float(value)
-    if "far_edge_x" not in out:
-        raise SystemExit("--anchor far-edge-x=<m> needs the x")
-    out.setdefault("centre_y", 0.0)
-    return out
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="perceive.py", description=__doc__.splitlines()[0],
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--image", type=Path, required=True,
                         help="one head-camera frame (jpg/png)")
-    parser.add_argument("--table-width", type=float, default=0.60,
-                        help="the ONE prior: the table top's width, metres")
-    parser.add_argument("--fx", type=float, default=DEFAULT_FX,
-                        help="focal length in pixels; principal point is "
-                             "taken at the image centre")
-    parser.add_argument("--intrinsics", type=Path, default=None,
-                        help="read fx from a camera JSON instead of --fx")
-    parser.add_argument("--anchor", default="camera",
-                        help="'camera' (zero-shot, measures the table height) "
-                             "or far-edge-x=<m>[,centre-y=<m>]")
-    parser.add_argument("--table-z", type=float, default=None,
-                        help="table-top z in base; REQUIRED by "
-                             "--anchor far-edge-x, ignored by --anchor camera")
-    parser.add_argument("--table-depth", type=float, default=None,
-                        help="override the measured near-to-far depth, metres")
-    parser.add_argument("--table-name", default="table")
-    parser.add_argument("--interior", action="append", default=[],
-                        metavar="NAME=LX,LY,LZ",
-                        help="declare a container's interior as MEASURED "
-                             "(metres). Without it a perceived interior is an "
-                             "estimate and manipulation_kit's Place refuses "
-                             "to put anything in it, which is the rule and "
-                             "not a bug. Repeatable.")
-    parser.add_argument("--size", action="append", default=[],
-                        metavar="NAME=LX,LY,LZ",
-                        help="declare an object's size as MEASURED (metres), "
-                             "overriding the fit. The escape hatch for the "
-                             "extent along the axis a single view cannot see "
-                             "— the d1-2 charger is 50 mm of silhouette and "
-                             "20 mm of charger. Repeatable.")
-    parser.add_argument("--neck-pitch", type=float, default=0.0,
-                        help="URDF neck_tilt, radians, POSITIVE LOOKS DOWN "
-                             "(= -pitch from GET /v1/neck/state)")
-    parser.add_argument("--neck-yaw", type=float, default=0.0,
-                        help="URDF neck_pan, radians (GET /v1/neck/state)")
-    parser.add_argument("--lift", type=float, default=None,
-                        help="slider height_m; does NOT move the camera in "
-                             "base, only reports the table's floor height")
-    parser.add_argument("--assume-level", dest="assume_level",
-                        action="store_true", default=True,
-                        help="--anchor camera: take the top to be horizontal "
-                             "and correct the nominal aim to match")
-    parser.add_argument("--no-assume-level", dest="assume_level",
-                        action="store_false",
-                        help="trust the nominal camera aim as it is")
+    robot = parser.add_argument_group(
+        "the robot's own calibration — the only kind allowed here")
+    robot.add_argument("--fx", type=float, default=DEFAULT_FX,
+                       help="focal length in pixels")
+    robot.add_argument("--cx", type=float, default=None,
+                       help="principal point x (default: the image centre)")
+    robot.add_argument("--cy", type=float, default=None,
+                       help="principal point y (default: the image centre)")
+    robot.add_argument("--intrinsics", type=Path, default=None,
+                       help="read fx/cx/cy from a camera JSON instead")
+    robot.add_argument("--neck-pitch", type=float, default=0.0,
+                       help="URDF neck_tilt, radians, POSITIVE LOOKS DOWN "
+                            "(= -pitch from GET /v1/neck/state)")
+    robot.add_argument("--neck-yaw", type=float, default=0.0,
+                       help="URDF neck_pan, radians (GET /v1/neck/state)")
+    robot.add_argument("--lift", type=float, default=None,
+                       help="slider height_m; does NOT move the camera in "
+                            "base, only reports the table's floor height")
+    scene = parser.add_argument_group(
+        "OPTIONAL scene numbers — you should not need any of these")
+    scene.add_argument("--table-width", type=float, default=None,
+                       help="a known length across the table's far edge. "
+                            "Refines the plane HEIGHT, which one camera "
+                            "cannot measure. Without it the height is "
+                            "provisional and the model is expected to "
+                            "declare it (astra_loop's declare_scene)")
+    scene.add_argument("--table-z", type=float, default=None,
+                       help="declare the table-top z in base outright")
+    scene.add_argument("--table-depth", type=float, default=None,
+                       help="override the near-to-far depth, metres")
+    scene.add_argument("--table-name", default="table")
+    scene.add_argument("--interior", action="append", default=[],
+                       metavar="NAME=LX,LY,LZ",
+                       help="declare a container's interior as MEASURED "
+                            "(metres). Without it a perceived interior is an "
+                            "estimate and manipulation_kit's Place refuses to "
+                            "put anything in it, which is the rule and not a "
+                            "bug. Repeatable.")
+    scene.add_argument("--size", action="append", default=[],
+                       metavar="NAME=LX,LY,LZ",
+                       help="declare an object's size as MEASURED (metres). "
+                            "The escape hatch for the extent along the axis a "
+                            "single view cannot see. Repeatable.")
     parser.add_argument("--objects", default="",
-                        help="name:kind[:colour] list, e.g. "
+                        help="name:kind[:colour] list for --detector "
+                             "astra|mask, e.g. "
                              "'charger:object:white,cup:container:brown'")
-    parser.add_argument("--detector", choices=("astra", "mask"),
-                        default="mask")
+    parser.add_argument("--detector", choices=("model", "astra", "mask"),
+                        default="model",
+                        help="'model' (the default) detects NOTHING here and "
+                             "leaves the things to the loop's own model, "
+                             "which declares them with declare_scene while "
+                             "looking at the same frame. 'astra' is a "
+                             "separate box-detector call; 'mask' is a colour "
+                             "fallback kept for the tests")
     parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL",
                                                           "gpt-6-astra"))
     parser.add_argument("--out", type=Path, default=None,
@@ -1584,42 +1588,72 @@ def build_parser() -> argparse.ArgumentParser:
 
 def perceive(args: argparse.Namespace) -> Dict[str, Any]:
     """The whole pipeline, as a function, so the loop can call it."""
-    fx = read_fx(args.intrinsics) if args.intrinsics else args.fx
+    from camera import (PROVISIONAL_UNCERTAINTY_M, HeadCamera,  # noqa: PLC0415
+                        provisional_table_z, read_intrinsics)
+
+    intrinsics = {"fx": args.fx, "cx": args.cx, "cy": args.cy}
+    if args.intrinsics is not None:
+        intrinsics.update(read_intrinsics(args.intrinsics))
     image = load_image(args.image)
-    plane = fit_table_plane(image, fx=fx, table_width_m=args.table_width)
-    spec = parse_anchor(args.anchor)
-    if spec["mode"] == "camera":
-        anchor = anchor_camera(plane, neck_pitch=args.neck_pitch,
-                               neck_yaw=args.neck_yaw,
-                               assume_level=args.assume_level)
+    height, width = image.shape[:2]
+    camera = HeadCamera.from_robot(
+        width=width, height=height, fx=intrinsics["fx"],
+        cx=intrinsics.get("cx"), cy=intrinsics.get("cy"),
+        neck_pitch=args.neck_pitch, neck_yaw=args.neck_yaw, lift_m=args.lift)
+
+    plane = fit_table_plane(image, fx=intrinsics["fx"])
+    diagnostics = {
+        "level_correction_deg": round(level_correction_deg(plane, camera), 2),
+        "edge_fit": dict(plane.quality)}
+    implied = neck_pitch_that_levels(plane, neck_yaw=args.neck_yaw)
+    if implied is not None:
+        diagnostics["neck_pitch_that_levels_rad"] = round(implied, 4)
+
+    if args.table_z is not None:
+        table_z, source = float(args.table_z), "declared"
+        uncertainty = 0.005
+    elif args.table_width is not None:
+        table_z = table_z_from_known_length(plane, camera, args.table_width)
+        source, uncertainty = "known-length", 0.02
     else:
-        if args.table_z is None:
-            raise SystemExit(
-                "--anchor far-edge-x measures no height: pass --table-z <m> "
-                "(the table top's z in base), or use --anchor camera, which "
-                "measures it from the fit")
-        anchor = anchor_far_edge(plane, far_edge_x=spec["far_edge_x"],
-                                 centre_y=spec["centre_y"],
-                                 table_z=args.table_z)
+        table_z = provisional_table_z()
+        source, uncertainty = "provisional", PROVISIONAL_UNCERTAINTY_M
+    table = project_corners(plane, camera, table_z, source=source)
+    table.uncertainty_m = uncertainty
+    if source == "provisional":
+        table.notes.insert(0, (
+            "PROVISIONAL HEIGHT: nobody has measured this table. It is the z "
+            "of the arms' HOME tool points — a robot fact, not a measurement "
+            "of what is in front of the camera — and every distance in this "
+            "file scales with it. The loop's model is expected to replace it "
+            "with declare_scene on turn 0."))
+    elif source == "known-length":
+        table.notes.insert(0, (
+            f"height solved from --table-width {args.table_width:.3f} m "
+            f"across the far edge; that is the one scene number this file "
+            f"accepts and it is optional"))
+
     requested = _requested(args.objects) if args.objects else []
-    if not requested:
-        detections: List[Detection] = []
-    elif args.detector == "mask":
+    detections: List[Detection] = []
+    if requested and args.detector == "mask":
         detections = detect_objects_mask(image, plane, requested)
-    else:
+    elif requested and args.detector == "astra":
         detections = detect_objects(image, requested, model=args.model)
-    scene = build_scene(plane, anchor, detections,
+    elif requested:
+        diagnostics["objects_left_to_the_model"] = [i["name"]
+                                                    for i in requested]
+
+    scene = build_scene(camera, table, detections,
                         table_name=args.table_name,
                         table_depth_m=args.table_depth,
                         interiors=parse_extents(args.interior, "--interior"),
                         sizes=parse_extents(args.size, "--size"),
-                        source_image=str(args.image))
-    if args.lift is not None:
-        from manipulation_kit.description.head_camera import (  # noqa: PLC0415
-            floor_to_base_m)
-        top_z = scene["objects"][0]["measurement"]["top_z_base_m"]
+                        source_image=str(args.image),
+                        diagnostics=diagnostics)
+    floor = camera.floor_z()
+    if floor is not None:
         scene["_perceive"]["table_height_above_floor_m"] = round(
-            top_z + floor_to_base_m(args.lift), 4)
+            float(table.z) - floor, 4)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(scene, indent=1) + "\n",
@@ -1639,16 +1673,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               file=sys.stderr)
         return 2
     print(json.dumps(scene, indent=1))
-    table = scene["objects"][0]
-    print(f"\ntable top z = {table['measurement']['top_z_base_m']:+.3f} m in "
-          f"base, {table['size'][0]:.3f} deep x {table['size'][1]:.3f} wide "
-          f"({table['measurement']['depth_m']})", file=sys.stderr)
-    for item in scene["objects"][1:]:
+    table = scene["_perceive"]["table"]
+    print(f"\ntable top z = {table['z']:+.3f} m in base "
+          f"({table['height_source']}, +-{table['height_uncertainty_m']*1000:.0f} mm)",
+          file=sys.stderr)
+    for item in scene["objects"]:
         print(f"{item['name']:>12}  p {np.round(item['p'], 3)}  size "
               f"{np.round(item['size'], 3)}  confidence {item['confidence']}",
               file=sys.stderr)
+    print(f"level correction {scene['_perceive']['diagnostics']['level_correction_deg']:+.1f} deg",
+          file=sys.stderr)
     if args.out:
-        print(f"\nwrote {args.out}", file=sys.stderr)
+        print(f"wrote {args.out}", file=sys.stderr)
     return 0
 
 

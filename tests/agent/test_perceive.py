@@ -1,14 +1,20 @@
-"""``examples/agent/perceive.py``: one head frame -> a measured scene.
+"""``examples/agent/perceive.py``: one head frame -> a scene, no scene calib.
 
-Five real frames of the d1-2 JP wagon are in ``tests/data/perceive`` and the
+Five real frames of the d1-2 JP wagon are in ``tests/data/perceive``, and the
 numbers below are not round: they are what a throw-away OpenCV script produced
 on the night the loop's first hand-made scene was written (2026-09-22), plus
 what Shu then measured with a tape. A rewrite that quietly moves a corner by
 20 px or a cup by 4 cm still produces a tidy JSON file, so the corners, the
 depths and the footprints are all pinned.
 
-No network, no Isaac, no robot. The Astra detector is exercised against a
-canned reply through a fake client; the mask fallback runs for real.
+THE RULE THESE ENFORCE, more than any single number: the only calibration that
+goes in is the ROBOT's — intrinsics and the camera pose from the neck joints.
+``--table-width`` is optional and nothing else about the furniture is an input
+at all. The default path is checked with no scene number whatsoever.
+
+No network, no Isaac, no robot. The Astra box detector is exercised against a
+canned reply through a fake client; the mask fallback runs for real and is now
+kept mainly so the geometry has something to be tested against.
 """
 
 from __future__ import annotations
@@ -56,10 +62,43 @@ def frames(agent_examples):
     return agent_examples.parents[1] / "tests" / "data" / "perceive"
 
 
+@pytest.fixture
+def camera_module(agent_examples):
+    import camera as module
+    return module
+
+
 def _fit(perceive, frames, key, **kwargs):
     image = perceive.load_image(frames / FRAMES[key])
     return image, perceive.fit_table_plane(image, table_width_m=TRUE_WIDTH_M,
                                            **kwargs)
+
+
+def _camera(camera_module, plane, *, neck_pitch=0.512, **kwargs):
+    height, width = plane.shape
+    return camera_module.HeadCamera.from_robot(
+        width=width, height=height, fx=plane.fx, neck_pitch=neck_pitch,
+        **kwargs)
+
+
+def _scene_of(perceive, camera_module, frames, key, *, table_width=None,
+              table_z=None, objects=(), neck_pitch=0.512, **kwargs):
+    """Perceive one frame the way the CLI does, in-process."""
+    image, plane = _fit(perceive, frames, key)
+    camera = _camera(camera_module, plane, neck_pitch=neck_pitch)
+    if table_z is not None:
+        z, source = float(table_z), "declared"
+    elif table_width is not None:
+        z = perceive.table_z_from_known_length(plane, camera, table_width)
+        source = "known-length"
+    else:
+        z, source = camera_module.provisional_table_z(), "provisional"
+    table = perceive.project_corners(plane, camera, z, source=source)
+    detections = []
+    if objects:
+        detections = perceive.detect_objects_mask(image, plane, list(objects))
+    return camera, plane, table, perceive.build_scene(camera, table,
+                                                      detections, **kwargs)
 
 
 # --------------------------------------------------------------------------- #
@@ -164,12 +203,114 @@ def test_a_frame_with_no_table_says_so(perceive):
     assert caught.value.reason == "no_table"
 
 
+
+
+# --------------------------------------------------------------------------- #
+# the camera model: pixels <-> base metres, from robot facts alone
+# --------------------------------------------------------------------------- #
+
+def test_a_pixel_round_trips_through_the_camera_model(camera_module):
+    """The whole of ``locate``: ray, plane, point, and back to the pixel."""
+    camera = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                                 neck_pitch=0.45)
+    for u, v in ((320, 400), (120, 300), (560, 470), (240, 260)):
+        located = camera.locate(u, v, plane_z=0.166)
+        assert located.p[2] == pytest.approx(0.166)
+        back = camera.project(located.p)
+        assert back[0] == pytest.approx(u, abs=1e-6)
+        assert back[1] == pytest.approx(v, abs=1e-6)
+
+
+def test_the_camera_pose_is_the_kits_head_camera_frame(camera_module):
+    """No second copy of the geometry: it is the URDF's, through the kit."""
+    from manipulation_kit.description.head_camera import head_camera_pose
+    camera = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                                 neck_pitch=0.3, neck_yaw=0.1)
+    p, r = head_camera_pose(neck_pitch=0.3, neck_yaw=0.1)
+    assert np.allclose(camera.p, p)
+    assert np.allclose(camera.r.as_quat(), r.as_quat())
+    assert camera.calibrated is False
+
+
+def test_the_neck_state_sign_is_flipped_once(camera_module):
+    a = camera_module.HeadCamera.from_neck_state({"pitch": -0.3, "yaw": 0.1},
+                                                 width=64, height=48)
+    b = camera_module.HeadCamera.from_robot(width=64, height=48,
+                                            neck_pitch=0.3, neck_yaw=0.1)
+    assert np.allclose(a.p, b.p) and np.allclose(a.r.as_quat(), b.r.as_quat())
+
+
+def test_looking_down_moves_the_intersection_toward_the_robot(camera_module):
+    near = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                               neck_pitch=0.60)
+    far = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                              neck_pitch=0.10)
+    assert (near.locate(320, 240, plane_z=0.166).p[0]
+            < far.locate(320, 240, plane_z=0.166).p[0])
+
+
+def test_a_pixel_above_the_horizon_is_refused_not_extrapolated(camera_module):
+    """A ray that climbs never meets the table, and the intersection behind
+    the camera is a perfectly plausible-looking number."""
+    camera = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                                 neck_pitch=0.0)
+    with pytest.raises(camera_module.NotOnThePlane):
+        camera.locate(320, 0, plane_z=0.166)
+
+
+def test_the_uncertainty_grows_toward_the_horizon(camera_module):
+    """It is PROPAGATED from the mount's documented slop, not quoted. A flat
+    number would have hidden that a pixel near the far edge is worth half as
+    much as one under the robot's nose."""
+    camera = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                                 neck_pitch=0.512)
+    near = camera.locate(320, 460, plane_z=0.166)
+    far = camera.locate(320, 200, plane_z=0.166)
+    assert 0.01 < near.uncertainty_m < far.uncertainty_m
+    assert far.uncertainty_m > 1.5 * near.uncertainty_m
+    assert "+-" in near.to_text() and "base" in near.to_text()
+    # ...and with the neck level, the bottom of the frame is a grazing ray
+    # and says so: half a metre of table for one pixel of aim.
+    level = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                                neck_pitch=0.0)
+    grazing = level.locate(320, 280, plane_z=0.166)
+    assert grazing.grazing and grazing.uncertainty_m > 0.2
+    assert "GRAZING" in grazing.to_text()
+
+
+def test_the_lift_moves_the_floor_and_not_the_camera(camera_module):
+    low = camera_module.HeadCamera.from_robot(width=64, height=48, lift_m=0.0)
+    high = camera_module.HeadCamera.from_robot(width=64, height=48,
+                                               lift_m=0.30)
+    assert np.allclose(low.p, high.p)
+    assert high.floor_z() == pytest.approx(low.floor_z() - 0.30)
+    assert camera_module.HeadCamera.from_robot(width=64,
+                                               height=48).floor_z() is None
+
+
+def test_intrinsics_are_read_in_the_layouts_that_turn_up(camera_module,
+                                                         tmp_path):
+    direct = tmp_path / "a.json"
+    direct.write_text(json.dumps({"fx": 612.5, "ppx": 317.0, "ppy": 241.0}))
+    assert camera_module.read_intrinsics(direct) == pytest.approx(
+        {"fx": 612.5, "cx": 317.0, "cy": 241.0})
+    ros = tmp_path / "b.json"
+    ros.write_text(json.dumps({"camera_matrix": {"data": [
+        608.0, 0, 319.0, 0, 608.0, 239.0, 0, 0, 1]}}))
+    assert camera_module.read_intrinsics(ros)["fx"] == pytest.approx(608.0)
+    assert camera_module.read_intrinsics(ros)["cx"] == pytest.approx(319.0)
+    empty = tmp_path / "c.json"
+    empty.write_text("{}")
+    with pytest.raises(ValueError):
+        camera_module.read_intrinsics(empty)
+
+
 # --------------------------------------------------------------------------- #
 # the geometry, against a camera whose answer is known exactly
 # --------------------------------------------------------------------------- #
 
 def _synthetic(perceive, *, fx=600.0, shape=(480, 640), width_m=0.6,
-               depth_m=0.45, pitch_deg=25.0, height_m=0.55):
+               pitch_deg=25.0, height_m=0.55):
     """A camera looking down at a rectangle, and the pixels it would see.
 
     Built forwards — place the table, project it — so that recovering it
@@ -178,12 +319,10 @@ def _synthetic(perceive, *, fx=600.0, shape=(480, 640), width_m=0.6,
     height, width = shape
     K = np.array([[fx, 0.0, width / 2.0], [0.0, fx, height / 2.0],
                   [0.0, 0.0, 1.0]])
-    # camera at the origin, optical +z forward, +y image-down; the table is
-    # below and in front, tipped by the camera's pitch.
     tilt = R.from_euler("x", pitch_deg, degrees=True)
     across = tilt.apply([1.0, 0.0, 0.0])          # far edge, image-left -> right
     away = tilt.apply([0.0, 0.0, 1.0])            # side edges, away from camera
-    up = np.cross(across, away)          # out of the table, toward the camera
+    up = np.cross(across, away)                   # out of the table
     up = up / np.linalg.norm(up)
     far_left = (tilt.apply([0.0, height_m, 0.0]) - across * (width_m / 2.0)
                 + away * 0.85)
@@ -192,16 +331,19 @@ def _synthetic(perceive, *, fx=600.0, shape=(480, 640), width_m=0.6,
         pixel = K @ np.asarray(point, dtype=float)
         return pixel[:2] / pixel[2]
 
-    c1 = project(far_left)
-    c2 = project(far_left + across * width_m)
-    vanish = project(away * 1e6)
-    return dict(K=K, fx=fx, shape=shape, width_m=width_m, depth_m=depth_m,
-                across=across, away=away, up=up, far_left=far_left,
-                c1=c1, c2=c2, vanish=vanish, project=project)
+    return dict(K=K, fx=fx, shape=shape, width_m=width_m, across=across,
+                away=away, up=up, far_left=far_left, project=project,
+                c1=project(far_left),
+                c2=project(far_left + across * width_m),
+                vanish=project(away * 1e6))
 
 
 def test_the_metric_solve_recovers_a_camera_it_was_given(perceive):
-    """Three pixel observations plus one known length -> the plane, to 1 mm."""
+    """Three pixel observations plus one known length -> the plane, to 1 mm.
+
+    This is the OPTIONAL path (``--table-width``); it is kept and tested
+    because the closed-form height solve is derived from it.
+    """
     truth = _synthetic(perceive)
     plane = perceive.solve_plane(truth["c1"], truth["c2"], truth["vanish"],
                                  fx=truth["fx"], shape=truth["shape"],
@@ -227,88 +369,189 @@ def test_to_plane_round_trips_known_points_to_under_a_millimetre(perceive):
             assert abs(got_depth - depth_m) < 1e-3
 
 
-def test_a_lifted_slice_and_a_height_round_trip_too(perceive):
-    """The rim of a cup: a point 100 mm above the table, measured there."""
-    truth = _synthetic(perceive)
-    plane = perceive.solve_plane(truth["c1"], truth["c2"], truth["vanish"],
-                                 fx=truth["fx"], shape=truth["shape"],
-                                 table_width_m=truth["width_m"])
-    base = truth["far_left"] + truth["across"] * 0.30 - truth["away"] * 0.20
-    top = base + truth["up"] * 0.10
-    u, v = truth["project"](top)
-    assert abs(plane.height_above(base, u, v) - 0.10) < 1e-3
-    assert np.allclose(plane.point(u, v, 0.10), top, atol=1e-3)
-
-
 def test_the_camera_distance_does_not_depend_on_the_camera_aim(perceive):
-    """The claim ``--anchor camera`` rests on: rotating the camera cannot move
+    """Why a known length fixes the height: rotating the camera cannot move
     the perpendicular distance from its centre to the table."""
-    truth = _synthetic(perceive, pitch_deg=25.0)
-    other = _synthetic(perceive, pitch_deg=40.0)
-    a = perceive.solve_plane(truth["c1"], truth["c2"], truth["vanish"],
-                             fx=truth["fx"], shape=truth["shape"],
-                             table_width_m=truth["width_m"])
-    b = perceive.solve_plane(other["c1"], other["c2"], other["vanish"],
-                             fx=other["fx"], shape=other["shape"],
-                             table_width_m=other["width_m"])
-    assert abs(a.camera_distance_m - b.camera_distance_m) < 1e-6
+    a = _synthetic(perceive, pitch_deg=25.0)
+    b = _synthetic(perceive, pitch_deg=40.0)
+    first = perceive.solve_plane(a["c1"], a["c2"], a["vanish"], fx=a["fx"],
+                                 shape=a["shape"], table_width_m=a["width_m"])
+    second = perceive.solve_plane(b["c1"], b["c2"], b["vanish"], fx=b["fx"],
+                                  shape=b["shape"], table_width_m=b["width_m"])
+    assert abs(first.camera_distance_m - second.camera_distance_m) < 1e-6
+
+
+def test_a_height_above_a_base_point_round_trips(perceive, camera_module):
+    """A cup's rim: a point 100 mm above a point on the plane, recovered."""
+    camera = camera_module.HeadCamera.from_robot(width=640, height=480,
+                                                 neck_pitch=0.45)
+    base = camera.locate(360, 380, plane_z=0.150).p
+    for lift in (0.02, 0.10, 0.25):
+        u, v = camera.project(base + np.array([0.0, 0.0, lift]))
+        assert perceive.height_above(camera, base, u, v) == pytest.approx(
+            lift, abs=1e-6)
 
 
 # --------------------------------------------------------------------------- #
-# the mask detector, on the frame the live run started from
+# the height: the one thing one camera cannot measure
 # --------------------------------------------------------------------------- #
 
-#: (across, depth) in plane metres of each footprint on frame D, from the
-#: numbers Shu used for run2. He quoted them to +-2 cm.
-FRAME_D_FOOTPRINTS = {"charger": (0.47, 0.376), "cup": (0.44, 0.26)}
+def test_the_default_path_takes_no_scene_number_at_all(perceive,
+                                                       camera_module, frames):
+    """The rule, as a test. Nothing about the furniture goes in."""
+    args = perceive.build_parser().parse_args(
+        ["--image", str(frames / FRAMES["D"]), "--neck-pitch", "0.512"])
+    assert args.table_width is None and args.table_z is None
+    assert args.detector == "model"
+    scene = perceive.perceive(args)
+    assert scene["_perceive"]["table"]["height_source"] == "provisional"
+    assert scene["_perceive"]["camera"]["calibrated"] is False
+    # the table IS there, in the right shape, at a height nobody measured
+    table = scene["objects"][0]
+    assert table["kind"] == "surface"
+    assert table["confidence"] <= 0.2
+    assert "PROVISIONAL" in " ".join(table["measurement"]["notes"])
+    # ...and nothing was detected: the model does that
+    assert len(scene["objects"]) == 1
 
 
-def test_the_mask_detector_finds_both_footprints_on_frame_d(perceive, frames):
+def test_a_known_length_fixes_the_height_in_closed_form(perceive,
+                                                        camera_module, frames):
+    """``--table-width``: the one optional scene number, and what it buys.
+
+    Shu's tape says the wagon top is 0.166 m above ``base``. The nominal head
+    mount puts it ~14 mm low, consistently, on every frame — that is the lens
+    position inside a 90 mm housing, and it is a BIAS, not noise.
+    """
     image, plane = _fit(perceive, frames, "D")
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"},
-        {"name": "cup", "kind": "container", "colour": "brown"}])
-    found = {d.name: d for d in detections}
-    assert set(found) == {"charger", "cup"}
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    for name, (across, depth) in FRAME_D_FOOTPRINTS.items():
-        item = perceive.measure(found[name], plane, anchor)
-        got_across, got_depth = item["measurement"]["footprint_plane_m"]
-        assert abs(got_across - across) < 0.03, f"{name} across {got_across}"
-        assert abs(got_depth - depth) < 0.03, f"{name} depth {got_depth}"
+    camera = _camera(camera_module, plane)
+    z = perceive.table_z_from_known_length(plane, camera, TRUE_WIDTH_M)
+    assert abs(z - 0.166) < 0.03, z
+    table = perceive.project_corners(plane, camera, z, source="known-length")
+    depth, width, yaw = table.extent()
+    assert width == pytest.approx(TRUE_WIDTH_M, abs=0.002)
+    assert depth == pytest.approx(TRUE_DEPTH_M, abs=0.015)
+    assert abs(yaw) < math.radians(5.0)
+
+
+@pytest.mark.parametrize("key", ["A", "B", "C", "D", "E"])
+def test_the_known_length_height_is_the_same_on_every_frame(perceive,
+                                                            camera_module,
+                                                            frames, key):
+    image, plane = _fit(perceive, frames, key)
+    pitch = perceive.neck_pitch_that_levels(plane)
+    camera = _camera(camera_module, plane, neck_pitch=pitch)
+    z = perceive.table_z_from_known_length(plane, camera, TRUE_WIDTH_M)
+    assert 0.14 < z < 0.17, f"frame {key}: {z}"
+
+
+def test_the_whole_scene_scales_with_the_height_and_only_with_it(
+        perceive, camera_module, frames):
+    """The consequence of "one camera cannot measure the plane's height",
+    made explicit: get it wrong by 10 % and everything is wrong by 10 %,
+    TOGETHER — which is why one declared number from the model fixes it."""
+    image, plane = _fit(perceive, frames, "D")
+    camera = _camera(camera_module, plane)
+    cam_z = float(camera.p[2])
+    a = perceive.project_corners(plane, camera, 0.166).extent()
+    b = perceive.project_corners(plane, camera, 0.066).extent()
+    ratio = (cam_z - 0.066) / (cam_z - 0.166)
+    assert b[0] / a[0] == pytest.approx(ratio, rel=1e-6)
+    assert b[1] / a[1] == pytest.approx(ratio, rel=1e-6)
+
+
+def test_the_level_correction_is_a_scale_free_diagnostic(perceive,
+                                                         camera_module,
+                                                         frames):
+    """It needs no length at all, and it is what tells you the neck angle you
+    passed is wrong — including its sign."""
+    image, plane = _fit(perceive, frames, "D")
+    right = _camera(camera_module, plane, neck_pitch=0.512)
+    assert abs(perceive.level_correction_deg(plane, right)) < 1.0
+    wrong_sign = _camera(camera_module, plane, neck_pitch=-0.512)
+    assert abs(perceive.level_correction_deg(plane, wrong_sign)) > 40.0
+    assert perceive.neck_pitch_that_levels(plane) == pytest.approx(0.512,
+                                                                   abs=0.02)
+
+
+def test_a_declared_height_is_used_as_given(perceive, frames):
+    args = perceive.build_parser().parse_args(
+        ["--image", str(frames / FRAMES["D"]), "--neck-pitch", "0.512",
+         "--table-z", "0.166"])
+    scene = perceive.perceive(args)
+    assert scene["_perceive"]["table"]["height_source"] == "declared"
+    assert scene["objects"][0]["measurement"]["top_z_base_m"] == pytest.approx(
+        0.166, abs=1e-6)
+
+
+# --------------------------------------------------------------------------- #
+# the mask detector: no longer the point, still the thing the geometry is
+# checked against with no network
+# --------------------------------------------------------------------------- #
+
+#: What Shu used for run2, from frame D, quoted to +-20 mm. The scene there
+#: was pinned by a tape on the far edge; here only the height is declared and
+#: the rest comes from the robot's own camera pose, so the agreement is the
+#: measurement of BOTH.
+FRAME_D_BASE = {"charger": (0.416, -0.207), "cup": (0.517, -0.165)}
+
+MASK_OBJECTS = ({"name": "charger", "kind": "object", "colour": "white"},
+                {"name": "cup", "kind": "container", "colour": "brown"})
+
+
+def test_the_mask_detector_finds_both_things_on_frame_d(perceive,
+                                                        camera_module, frames):
+    camera, plane, table, scene = _scene_of(
+        perceive, camera_module, frames, "D", table_z=0.166,
+        objects=MASK_OBJECTS)
+    by_name = {o["name"]: o for o in scene["objects"]}
+    assert set(by_name) == {"table", "charger", "cup"}
+    for name, (x, y) in FRAME_D_BASE.items():
+        p = by_name[name]["p"]
+        assert abs(p[0] - x) < 0.02, f"{name} x {p[0]}"
+        assert abs(p[1] - y) < 0.02, f"{name} y {p[1]}"
 
 
 def test_the_detector_searches_the_table_and_not_the_room(perceive, frames):
     """There is a white printer and a white wall socket behind the wagon; the
     script this came from fitted its colour windows around them by hand."""
     image, plane = _fit(perceive, frames, "D")
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"}])
-    x0, y0, x1, y1 = detections[0].bbox
-    inside = perceive._table_polygon_mask(plane)
-    assert inside[int(y1) - 2, int((x0 + x1) / 2)], "the blob is off the table"
+    detection = perceive.detect_objects_mask(image, plane, [MASK_OBJECTS[0]])[0]
+    x0, y0, x1, y1 = detection.bbox
+    assert perceive._table_polygon_mask(plane)[int(y1) - 2,
+                                               int((x0 + x1) / 2)]
     assert y0 > plane.far_px[0][1], "the blob is above the far edge"
 
 
-def test_a_cup_is_measured_at_its_rim_and_a_box_at_its_footprint(perceive,
-                                                                 frames):
+def test_a_cup_is_measured_at_its_rim_and_a_box_at_its_footprint(
+        perceive, camera_module, frames):
     """The two shapes are measured differently ON PURPOSE (see ``measure``):
     a cylinder's silhouette is its diameter, a box's is wider than it is."""
-    image, plane = _fit(perceive, frames, "D")
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    found = {d.name: d for d in perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"},
-        {"name": "cup", "kind": "container", "colour": "brown"}])}
-    cup = perceive.measure(found["cup"], plane, anchor)
-    charger = perceive.measure(found["charger"], plane, anchor)
-    # a 110 mm paper cup, 90 mm across the rim; a charger 50 x 50 mm
-    assert 0.09 < cup["size"][0] < 0.115
-    assert 0.10 < cup["size"][2] < 0.125
+    _, _, _, scene = _scene_of(perceive, camera_module, frames, "D",
+                               table_z=0.166, objects=MASK_OBJECTS)
+    by_name = {o["name"]: o for o in scene["objects"]}
+    cup, charger = by_name["cup"], by_name["charger"]
+    # a 110 mm paper cup, 90 mm across the rim; a charger about 45 mm square
+    assert 0.085 < cup["size"][0] < 0.115
+    assert 0.09 < cup["size"][2] < 0.125
     assert 0.04 < charger["size"][0] < 0.06
-    assert 0.03 < charger["size"][2] < 0.06
     assert cup["measurement"]["silhouette_width_m"] >= cup["size"][0]
-    # the box is NOT measured at its silhouette, which is wider than it is
     assert charger["size"][0] < charger["measurement"]["silhouette_width_m"]
+
+
+def test_a_provisional_height_drags_every_confidence_down_with_it(
+        perceive, camera_module, frames):
+    """The honest consequence of not knowing the scale, in the one field a
+    model reads: everything measured against a guessed plane is a guess."""
+    _, _, _, guessed = _scene_of(perceive, camera_module, frames, "D",
+                                 objects=MASK_OBJECTS)
+    _, _, _, known = _scene_of(perceive, camera_module, frames, "D",
+                               table_z=0.166, objects=MASK_OBJECTS)
+    for item in guessed["objects"]:
+        assert item["confidence"] <= 0.2, item["name"]
+        assert item["measurement"].get("table_height_source",
+                                       "provisional") == "provisional"
+    assert max(o["confidence"] for o in known["objects"]) > 0.2
 
 
 def test_an_unknown_colour_is_refused_rather_than_guessed(perceive, frames):
@@ -322,84 +565,8 @@ def test_an_unknown_colour_is_refused_rather_than_guessed(perceive, frames):
 
 
 # --------------------------------------------------------------------------- #
-# anchors
-# --------------------------------------------------------------------------- #
-
-def test_the_far_edge_anchor_reproduces_the_hand_measured_scene(perceive,
-                                                                frames):
-    """Shu's hand-made run2 scene: far edge x 0.76, top z 0.166, cup at
-    (0.50, -0.14), charger at (0.38, -0.17), all quoted +-2 cm."""
-    image, plane = _fit(perceive, frames, "D")
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, centre_y=0.0,
-                                      table_z=0.166)
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"},
-        {"name": "cup", "kind": "container", "colour": "brown"}])
-    scene = perceive.build_scene(plane, anchor, detections)
-    by_name = {o["name"]: o for o in scene["objects"]}
-    assert by_name["table"]["measurement"]["top_z_base_m"] == pytest.approx(
-        0.166, abs=1e-6)
-    for name, (x, y) in (("cup", (0.50, -0.14)), ("charger", (0.38, -0.17))):
-        p = by_name[name]["p"]
-        assert abs(p[0] - x) < 0.02, f"{name} x {p[0]}"
-        assert abs(p[1] - y) < 0.02, f"{name} y {p[1]}"
-
-
-def test_the_camera_anchor_measures_a_table_height_nobody_typed(perceive,
-                                                                frames):
-    """The zero-shot claim. Shu's tape: the wagon top is 0.884 m off the floor
-    and 0.166 m above ``base`` with the column at 0.205.
-
-    The neck angle for these frames was not written down, so the fit's own
-    answer (``neck_pitch_that_levels_rad``) is used — which is the workflow
-    the mode documents when the daemon's neck state is not to hand.
-    """
-    from manipulation_kit.description.head_camera import floor_to_base_m
-
-    _, plane = _fit(perceive, frames, "D")
-    pitch = perceive.neck_pitch_that_levels(plane)
-    assert pitch is not None and -0.35 < pitch < 0.65
-    anchor = perceive.anchor_camera(plane, neck_pitch=pitch)
-    assert anchor.calibrated is False
-    assert abs(anchor.level_correction_deg) < 1.0
-    assert abs(anchor.table_z - 0.166) < 0.03, anchor.table_z
-    floor = anchor.table_z + floor_to_base_m(0.205)
-    assert abs(floor - 0.884) < 0.03, floor
-
-
-def test_the_far_edge_anchor_demands_the_height_it_cannot_measure(perceive,
-                                                                  frames):
-    parser = perceive.build_parser()
-    args = parser.parse_args(["--image", str(frames / FRAMES["D"]),
-                              "--anchor", "far-edge-x=0.76"])
-    with pytest.raises(SystemExit) as caught:
-        perceive.perceive(args)
-    assert "--table-z" in str(caught.value)
-
-
-def test_the_anchor_spec_is_parsed_or_refused(perceive):
-    assert perceive.parse_anchor("camera") == {"mode": "camera"}
-    got = perceive.parse_anchor("far-edge-x=0.76,centre-y=-0.03")
-    assert got["far_edge_x"] == pytest.approx(0.76)
-    assert got["centre_y"] == pytest.approx(-0.03)
-    for bad in ("far-edge-x", "centre-y=0.0", "elbow=1"):
-        with pytest.raises(SystemExit):
-            perceive.parse_anchor(bad)
-
-
-# --------------------------------------------------------------------------- #
 # the scene file, and the loop that has to consume it
 # --------------------------------------------------------------------------- #
-
-@pytest.fixture
-def frame_d_scene(perceive, frames):
-    image, plane = _fit(perceive, frames, "D")
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"},
-        {"name": "cup", "kind": "container", "colour": "brown"}])
-    return perceive.build_scene(plane, anchor, detections)
-
 
 def _world_from(scene, kin):
     import dataclasses
@@ -412,151 +579,134 @@ def _world_from(scene, kin):
                                frames=frames_from(scene, now=time.time()))
 
 
-def test_the_scene_loads_through_the_loops_own_reader(perceive, frame_d_scene,
-                                                      tmp_path, d1_arm):
+def test_the_scene_loads_through_the_loops_own_reader(perceive, camera_module,
+                                                      frames, tmp_path,
+                                                      d1_arm):
     from live import load_scene, objects_from
+    _, _, _, scene = _scene_of(perceive, camera_module, frames, "D",
+                               table_z=0.166, objects=MASK_OBJECTS)
     path = tmp_path / "perceived.json"
-    path.write_text(json.dumps(frame_d_scene, indent=1), encoding="utf-8")
+    path.write_text(json.dumps(scene, indent=1), encoding="utf-8")
     objects = objects_from(load_scene(path))
     assert {o.name for o in objects} == {"table", "charger", "cup"}
     cup = next(o for o in objects if o.name == "cup")
     # A PERCEIVED interior is a guess, and the flag the kit reads has to say
     # so — `Place` refuses to drop into a guessed interior.
     assert cup.interior_measured is False
+    # ...and the confidence SURVIVES the file, into the text a model reads.
+    assert cup.confidence < 1.0
+    assert "confidence" in cup.to_text()
+
+
+def test_a_low_confidence_object_still_plans_an_approach_and_a_grasp(
+        perceive, camera_module, frames, d1_arm):
+    """Checked against the kit rather than assumed: NOTHING in
+    ``manipulation_kit`` gates on ``ObjectView.confidence`` (it is carried and
+    reported and never compared), so a declaration the model is only 30 %
+    sure of is plannable, which is what makes declare-then-nudge possible.
+    If that ever changes, this fails and the relaxation has to be argued for.
+    """
+    import dataclasses
+
+    from manipulation_kit.primitives import Approach, Grasp
+    from manipulation_kit.primitives.offer import check
+    _, _, _, scene = _scene_of(perceive, camera_module, frames, "D",
+                               table_z=0.166, objects=MASK_OBJECTS)
+    for item in scene["objects"]:
+        item["confidence"] = 0.3
+        if item["name"] == "charger":
+            # the tape's size, so this test is about CONFIDENCE and not about
+            # the two extents a single view cannot see (tested separately)
+            item["size"] = [0.045, 0.02, 0.05]
+    world = _world_from(scene, d1_arm)
+    assert all(o.confidence == pytest.approx(0.3) for o in world.objects)
+    for verb in (Approach(object="charger", side="right"),
+                 Grasp(object="charger", side="right")):
+        plan = check(verb, world, d1_arm)
+        assert plan.ok, f"{verb.name()} refused at confidence 0.3: {plan}"
+    assert dataclasses.is_dataclass(world.objects[0])
 
 
 def test_the_measured_scene_picks_the_right_arm_and_says_what_stops_it(
-        perceive, frame_d_scene, d1_arm):
+        perceive, camera_module, frames, d1_arm):
     """The honest outcome, pinned.
 
     Frame D's charger MEASURES 50 mm across its footprint and the driven jaws
-    take 44 mm, so the chain that Shu's hand-made scene planned does not plan
-    off the measurement — his file declared the charger 20 mm across y, which
-    is a number a single view cannot produce. The right arm is still the one
-    chosen and still the one that gets furthest, and the refusal is
-    ``object_too_wide`` with both numbers in it.
+    take 44 mm, so the chain Shu's hand-made scene planned does not plan off
+    the measurement — his file declared the charger 20 mm across y, which is a
+    number a single view cannot produce. The right arm is still the one
+    chosen, and the refusal is ``object_too_wide`` with both numbers in it.
     """
     from manipulation_kit.primitives.reach import choose_side
-    world = _world_from(frame_d_scene, d1_arm)
+    _, _, _, scene = _scene_of(perceive, camera_module, frames, "D",
+                               table_z=0.166, objects=MASK_OBJECTS)
+    world = _world_from(scene, d1_arm)
     choice = choose_side(world, d1_arm, obj="charger", destination="cup",
                          approach="top_down")
     assert choice.side == "right"
     assert not choice.reachable
-    right = choice.chains["right"]
-    assert right.planned >= 1
-    assert "object_too_wide" in right.sentence()
-    assert "50 mm" in right.sentence() and "44 mm" in right.sentence()
+    sentence = choice.chains["right"].sentence()
+    assert "object_too_wide" in sentence
+    assert "44 mm" in sentence
 
 
-def test_the_geometry_is_right_and_only_the_two_unseeable_numbers_are_not(
-        perceive, frame_d_scene, d1_arm):
-    """The other half of the previous test, and the one that says the PLANE is
-    good: put back exactly the two things a single view cannot see — the
-    charger's depth (Shu's tape: 20 mm) and the cup's real interior — and the
-    right arm plans Approach, Grasp, Lift, Carry and Place off the perceived
-    positions, heights and table."""
-    import copy
-
-    from manipulation_kit.primitives.reach import choose_side
-    scene = copy.deepcopy(frame_d_scene)
-    for item in scene["objects"]:
-        if item["name"] == "charger":
-            item["size"] = [item["size"][0], 0.02, item["size"][2]]
-        if item["name"] == "cup":
-            item["interior_measured"] = True
-    world = _world_from(scene, d1_arm)
-    choice = choose_side(world, d1_arm, obj="charger", destination="cup",
-                         approach="top_down")
-    assert choice.reachable, choice.reason
-    assert choice.side == "right"
+def test_the_two_escape_hatches_are_parsed_or_refused(perceive):
+    got = perceive.parse_extents(["cup=0.08,0.08,0.10"], "--interior")
+    assert got == {"cup": [0.08, 0.08, 0.10]}
+    for bad in (["cup"], ["cup=0.08,0.08"], ["cup=a,b,c"], ["cup=0,1,1"]):
+        with pytest.raises(SystemExit):
+            perceive.parse_extents(bad, "--size")
 
 
-def test_the_zero_shot_anchor_also_plans_a_chain(perceive, frames, d1_arm):
-    """``--anchor camera`` with the two declared numbers, end to end.
-
-    Nothing here was measured by hand except the wagon's width, the two
-    extents a single view cannot see, and fx. The table height, the far edge's
-    distance and both objects come out of the picture — and the right arm
-    plans the whole chain off them.
-
-    It plans a DIFFERENT approach from the far-edge anchor (front, not
-    top_down), which is the 2-3 cm the nominal head-camera mount is off: this
-    anchor puts the wagon ~20 mm further away and ~30 mm to the right. Pinned
-    so that a calibration that closes that gap is visible here as a change.
-    """
-    from manipulation_kit.primitives.reach import choose_side
+def test_a_declared_size_and_interior_say_they_were_declared(perceive,
+                                                             camera_module,
+                                                             frames):
     image, plane = _fit(perceive, frames, "D")
-    anchor = perceive.anchor_camera(
-        plane, neck_pitch=perceive.neck_pitch_that_levels(plane))
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"},
-        {"name": "cup", "kind": "container", "colour": "brown"}])
-    scene = perceive.build_scene(plane, anchor, detections,
-                                 interiors={"cup": [0.085, 0.085, 0.10]},
-                                 sizes={"charger": [0.045, 0.02, 0.05]})
-    world = _world_from(scene, d1_arm)
-    plans = [a for a in ("top_down", "front", "side_right", "side_left")
-             if choose_side(world, d1_arm, obj="charger", destination="cup",
-                            approach=a).reachable]
-    assert plans, "no approach plans off the zero-shot anchor"
-    assert choose_side(world, d1_arm, obj="charger", destination="cup",
-                       approach=plans[0]).side == "right"
-
-
-def test_a_declared_size_says_it_was_declared(perceive, frames):
-    """The escape hatch records what the FRAME said as well as what you did."""
-    image, plane = _fit(perceive, frames, "D")
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "charger", "kind": "object", "colour": "white"}])
-    scene = perceive.build_scene(plane, anchor, detections,
-                                 sizes={"charger": [0.045, 0.02, 0.05]})
-    charger = next(o for o in scene["objects"] if o["name"] == "charger")
-    assert charger["size"] == [0.045, 0.02, 0.05]
-    assert charger["measurement"]["size_y_measured"] is True
-    measured = charger["measurement"]["size_measured_m"]
-    assert 0.045 < measured[0] < 0.06, measured
-    assert any("--size" in n for n in charger["measurement"]["notes"])
-
-
-def test_a_declared_interior_is_marked_measured(perceive, frames):
-    image, plane = _fit(perceive, frames, "D")
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    detections = perceive.detect_objects_mask(image, plane, [
-        {"name": "cup", "kind": "container", "colour": "brown"}])
-    scene = perceive.build_scene(plane, anchor, detections,
+    camera = _camera(camera_module, plane)
+    table = perceive.project_corners(plane, camera, 0.166, source="declared")
+    detections = perceive.detect_objects_mask(image, plane, list(MASK_OBJECTS))
+    scene = perceive.build_scene(camera, table, detections,
+                                 sizes={"charger": [0.045, 0.02, 0.05]},
                                  interiors={"cup": [0.08, 0.08, 0.10]})
-    cup = next(o for o in scene["objects"] if o["name"] == "cup")
-    assert cup["interior"] == [0.08, 0.08, 0.1]
-    assert cup["interior_measured"] is True
+    by_name = {o["name"]: o for o in scene["objects"]}
+    assert by_name["charger"]["size"] == [0.045, 0.02, 0.05]
+    assert by_name["charger"]["measurement"]["size_y_measured"] is True
+    assert 0.045 < by_name["charger"]["measurement"]["size_measured_m"][0] < 0.06
+    assert by_name["cup"]["interior_measured"] is True
 
 
 def test_every_perceived_number_carries_its_uncertainty(perceive,
-                                                        frame_d_scene):
-    for item in frame_d_scene["objects"]:
+                                                        camera_module, frames):
+    _, _, _, scene = _scene_of(perceive, camera_module, frames, "D",
+                               table_z=0.166, objects=MASK_OBJECTS)
+    for item in scene["objects"]:
         assert item["confidence"] < 1.0, item["name"]
         assert item["measurement"], item["name"]
-    cup = next(o for o in frame_d_scene["objects"] if o["name"] == "cup")
+    cup = next(o for o in scene["objects"] if o["name"] == "cup")
     assert cup["measurement"]["interior_measured"] is False
     assert cup["measurement"]["size_y_measured"] is False
     assert cup["measurement"]["yaw_measured"] is False
     assert cup["yaw_rad"] == 0.0
+    assert scene["_perceive"]["camera"]["calibrated"] is False
 
 
 def test_an_unmeasured_depth_is_declared_rather_than_defaulted(perceive,
+                                                               camera_module,
                                                                frames):
-    """Frame B's near edge is out of shot, so the 0.40 m in the file is an
-    assumption and the file has to say which one."""
-    image, plane = _fit(perceive, frames, "B")
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    scene = perceive.build_scene(plane, anchor, [])
-    table = scene["objects"][0]
-    assert table["size"][0] == pytest.approx(0.40)
-    assert "ASSUMED" in table["measurement"]["depth_m"]
+    """Frame B's near edge is out of shot, so the table's depth is the image
+    border's and the file has to say which."""
+    _, _, table, scene = _scene_of(perceive, camera_module, frames, "B",
+                                   table_z=0.166)
+    assert table.depth_measured is False
+    assert any("near edge is outside the frame" in note
+               for note in scene["objects"][0]["measurement"]["notes"])
+    _, _, deep, _ = _scene_of(perceive, camera_module, frames, "D",
+                              table_z=0.166)
+    assert deep.depth_measured is True
 
 
 # --------------------------------------------------------------------------- #
-# the Astra detector: the prompt and the parse, with no network
+# the Astra box detector: kept for comparison, exercised with no network
 # --------------------------------------------------------------------------- #
 
 class _FakeResponse:
@@ -585,15 +735,16 @@ GOOD_REPLY = json.dumps({"objects": [
     {"name": "charger", "bbox": [502, 387, 570, 438], "base_px": [536, 438],
      "upright": False, "shape": "box", "kind": "object", "confidence": 0.7}]})
 
+BOTH = [{"name": "cup", "kind": "container", "colour": None},
+        {"name": "charger", "kind": "object", "colour": None}]
+
 
 def test_the_astra_detector_sends_the_frame_and_parses_the_reply(perceive,
                                                                  frames):
     image = perceive.load_image(frames / FRAMES["D"])
     client = _FakeClient(GOOD_REPLY)
     found = {d.name: d for d in perceive.detect_objects(
-        image, [{"name": "cup", "kind": "container", "colour": None},
-                {"name": "charger", "kind": "object", "colour": None}],
-        model="gpt-6-astra", client=client)}
+        image, BOTH, model="gpt-6-astra", client=client)}
     assert set(found) == {"cup", "charger"}
     assert found["cup"].shape == "cylinder" and found["cup"].kind == "container"
     assert found["charger"].upright is False
@@ -615,30 +766,23 @@ def test_the_astra_detector_sends_the_frame_and_parses_the_reply(perceive,
 def test_a_fenced_or_chatty_reply_is_still_read(perceive, frames):
     image = perceive.load_image(frames / FRAMES["D"])
     chatty = "Sure! Here is the JSON:\n```json\n" + GOOD_REPLY + "\n```\n"
-    found = perceive.detect_objects(
-        image, [{"name": "cup", "kind": "container", "colour": None},
-                {"name": "charger", "kind": "object", "colour": None}],
-        client=_FakeClient(chatty))
+    found = perceive.detect_objects(image, BOTH, client=_FakeClient(chatty))
     assert {d.name for d in found} == {"cup", "charger"}
 
 
 def test_the_detector_retries_once_and_then_stops(perceive, frames):
     image = perceive.load_image(frames / FRAMES["D"])
     client = _FakeClient("not json at all", GOOD_REPLY)
-    found = perceive.detect_objects(
-        image, [{"name": "cup", "kind": "container", "colour": None},
-                {"name": "charger", "kind": "object", "colour": None}],
-        client=client)
+    found = perceive.detect_objects(image, BOTH, client=client)
     assert len(client.calls) == 2
     assert {d.name for d in found} == {"cup", "charger"}
     # the failure is FED BACK, not silently retried with the same prompt
-    retried = client.calls[1]["input"]
-    assert any("not usable" in str(m.get("content", "")) for m in retried)
+    assert any("not usable" in str(m.get("content", ""))
+               for m in client.calls[1]["input"])
 
     hopeless = _FakeClient("still not json")
     with pytest.raises(ValueError):
-        perceive.detect_objects(image, [{"name": "cup", "kind": "container",
-                                         "colour": None}], client=hopeless)
+        perceive.detect_objects(image, BOTH[:1], client=hopeless)
     assert len(hopeless.calls) == 2
 
 
@@ -647,37 +791,37 @@ def test_a_reply_that_omits_a_requested_object_is_an_error(perceive, frames):
     partial = json.dumps({"objects": [
         {"name": "cup", "bbox": [440, 245, 535, 350], "base_px": [487, 349]}]})
     with pytest.raises(ValueError) as caught:
-        perceive.detect_objects(
-            image, [{"name": "cup", "kind": "container", "colour": None},
-                    {"name": "charger", "kind": "object", "colour": None}],
-            client=_FakeClient(partial))
+        perceive.detect_objects(image, BOTH, client=_FakeClient(partial))
     assert "charger" in str(caught.value)
 
 
 def test_a_bbox_that_is_not_four_numbers_is_not_recovered_from(perceive):
     with pytest.raises(ValueError):
         perceive._parse_astra(json.dumps({"objects": [
-            {"name": "cup", "bbox": [1, 2, 3]}]}),
-            [{"name": "cup", "kind": "container", "colour": None}])
+            {"name": "cup", "bbox": [1, 2, 3]}]}), BOTH[:1])
 
 
 def test_an_astra_detection_measures_through_the_same_geometry(perceive,
+                                                               camera_module,
                                                                frames):
     """A bbox with no contact band still produces a scene object — measured a
     little worse, and saying so."""
     image, plane = _fit(perceive, frames, "D")
-    found = perceive.detect_objects(
-        image, [{"name": "cup", "kind": "container", "colour": None}],
-        client=_FakeClient(GOOD_REPLY))
-    anchor = perceive.anchor_far_edge(plane, far_edge_x=0.76, table_z=0.166)
-    item = perceive.measure(found[0], plane, anchor)
+    camera = _camera(camera_module, plane)
+    table = perceive.project_corners(plane, camera, 0.166, source="declared")
+    found = perceive.detect_objects(image, BOTH[:1],
+                                    client=_FakeClient(GOOD_REPLY))
+    item = perceive.measure(found[0], camera, table)
     assert item["measurement"]["contact_band_px"] is None
-    assert abs(item["p"][0] - 0.50) < 0.03
-    assert abs(item["p"][1] + 0.14) < 0.03
+    # ...and measured a little worse: a bbox's bottom corners are a cup's rim
+    # and its far side, so the footprint it implies is too wide and the centre
+    # it implies drifts. 40 mm here against the mask detector's 17 mm.
+    assert abs(item["p"][0] - 0.517) < 0.04
+    assert abs(item["p"][1] + 0.165) < 0.04
 
 
 # --------------------------------------------------------------------------- #
-# the CLI, end to end
+# the CLI
 # --------------------------------------------------------------------------- #
 
 def test_the_cli_writes_a_scene_and_a_debug_frame(perceive, frames, tmp_path,
@@ -685,15 +829,17 @@ def test_the_cli_writes_a_scene_and_a_debug_frame(perceive, frames, tmp_path,
     out = tmp_path / "scenes" / "live.json"
     debug = tmp_path / "fit.png"
     code = perceive.main([
-        "--image", str(frames / FRAMES["D"]), "--table-width", "0.60",
-        "--fx", "606", "--anchor", "far-edge-x=0.76", "--table-z", "0.166",
+        "--image", str(frames / FRAMES["D"]), "--neck-pitch", "0.512",
+        "--lift", "0.205", "--fx", "606",
         "--objects", "charger:object,cup:container", "--detector", "mask",
-        "--out", str(out), "--debug", str(debug)])
+        "--table-z", "0.166", "--out", str(out), "--debug", str(debug)])
     assert code == 0
     assert debug.is_file() and debug.stat().st_size > 1000
     scene = json.loads(out.read_text(encoding="utf-8"))
     assert [o["name"] for o in scene["objects"]] == ["table", "charger", "cup"]
-    assert scene["_perceive"]["anchor"]["calibrated"] is False
+    assert scene["_perceive"]["camera"]["calibrated"] is False
+    assert scene["_perceive"]["table_height_above_floor_m"] == pytest.approx(
+        0.884, abs=0.005)
     printed = capsys.readouterr()
     assert json.loads(printed.out)["objects"]
     assert "table top z" in printed.err
@@ -703,15 +849,7 @@ def test_the_cli_reports_a_refused_fit_rather_than_a_traceback(perceive,
                                                                tmp_path):
     blank = tmp_path / "blank.png"
     perceive.write_png(blank, np.zeros((64, 64, 3), dtype=np.uint8))
-    assert perceive.main(["--image", str(blank), "--anchor", "camera"]) == 2
-
-
-def test_the_two_escape_hatches_are_parsed_or_refused(perceive):
-    got = perceive.parse_extents(["cup=0.08,0.08,0.10"], "--interior")
-    assert got == {"cup": [0.08, 0.08, 0.10]}
-    for bad in (["cup"], ["cup=0.08,0.08"], ["cup=a,b,c"], ["cup=0,1,1"]):
-        with pytest.raises(SystemExit):
-            perceive.parse_extents(bad, "--size")
+    assert perceive.main(["--image", str(blank)]) == 2
 
 
 def test_the_object_spec_takes_kinds_and_colours(perceive):
@@ -723,85 +861,14 @@ def test_the_object_spec_takes_kinds_and_colours(perceive):
         perceive._requested("cup:saucer")
 
 
-def test_fx_comes_from_an_intrinsics_file_when_one_is_given(perceive,
-                                                            tmp_path):
-    direct = tmp_path / "a.json"
-    direct.write_text(json.dumps({"fx": 612.5, "fy": 612.5}))
-    assert perceive.read_fx(direct) == pytest.approx(612.5)
-    ros = tmp_path / "b.json"
-    ros.write_text(json.dumps({"camera_matrix": {"data": [
-        608.0, 0, 320, 0, 608.0, 240, 0, 0, 1]}}))
-    assert perceive.read_fx(ros) == pytest.approx(608.0)
-    with pytest.raises(SystemExit):
-        empty = tmp_path / "c.json"
-        empty.write_text("{}")
-        perceive.read_fx(empty)
-
-
-# --------------------------------------------------------------------------- #
-# the loop's --perceive hook
-# --------------------------------------------------------------------------- #
-
-def test_the_loop_perceives_a_scene_and_keeps_it_beside_the_trace(
-        agent_examples, frames, tmp_path, perceive):
-    import astra_loop
-    scene = astra_loop.perceived_scene(
-        str(frames / FRAMES["D"]), trace_path=tmp_path / "trace.jsonl",
-        obj="charger", destination="cup",
-        options="--table-width 0.60 --anchor far-edge-x=0.76 --table-z 0.166 "
-                "--detector mask")
-    assert [o["name"] for o in scene["objects"]] == ["table", "charger", "cup"]
-    written = json.loads((tmp_path / "scene_perceived.json").read_text())
-    assert written == scene
-
-
-def test_scene_and_perceive_are_mutually_exclusive(agent_examples, frames,
-                                                   perceive):
-    import astra_loop
-    with pytest.raises(SystemExit):
-        astra_loop.main(["--scene", str(frames / FRAMES["D"]),
-                         "--perceive", str(frames / FRAMES["D"]),
-                         "--dry-run"])
-
-
-def test_a_missing_frame_is_a_message_not_a_traceback(agent_examples, perceive):
-    import astra_loop
-    with pytest.raises(SystemExit) as caught:
-        astra_loop.perceived_scene("/no/such/frame.jpg", trace_path=None,
-                                   obj="a", destination="b")
-    assert "no such frame" in str(caught.value)
-
-
-def test_snapshot_mode_needs_the_hook_and_the_trace(agent_examples,
-                                                    monkeypatch, perceive):
-    import astra_loop
-    monkeypatch.delenv("ASTRA_SNAPSHOT_CMD", raising=False)
-    with pytest.raises(SystemExit) as caught:
-        astra_loop.perceived_scene("snapshot", trace_path=None, obj="a",
-                                   destination="b")
-    assert "--trace" in str(caught.value)
-
-
-def test_the_loop_runs_a_whole_scripted_task_off_a_perceived_scene(
-        agent_examples, frames, tmp_path, perceive, d1_arm):
-    """End to end with no robot: perceive frame D, hand the file to the loop,
-    and let the scripted model play the chain on the kinematic mirror.
-
-    The two numbers a single view cannot see are supplied the way a user would
-    supply them — ``--interior`` on the command line, and the charger's depth
-    edited into the file — which is also the documented workaround."""
-    import astra_loop
-    scene = astra_loop.perceived_scene(
-        str(frames / FRAMES["D"]), trace_path=tmp_path / "t.jsonl",
-        obj="charger", destination="cup",
-        options="--table-width 0.60 --anchor far-edge-x=0.76 --table-z 0.166 "
-                "--detector mask --interior cup=0.085,0.085,0.10")
-    for item in scene["objects"]:
-        if item["name"] == "charger":
-            item["size"] = [item["size"][0], 0.02, item["size"][2]]
-    path = tmp_path / "edited.json"
-    path.write_text(json.dumps(scene), encoding="utf-8")
-    code = astra_loop.main(["--scene", str(path), "--object", "charger",
-                            "--destination", "cup", "--dry-run",
-                            "--task", "put the charger in the cup"])
-    assert code == 0
+def test_the_default_detector_leaves_the_things_to_the_model(perceive,
+                                                             frames, capsys):
+    """``--detector model`` names them and finds none: the loop's own model
+    is the detector, looking at this same frame."""
+    args = perceive.build_parser().parse_args(
+        ["--image", str(frames / FRAMES["D"]), "--neck-pitch", "0.512",
+         "--objects", "charger:object,cup:container"])
+    scene = perceive.perceive(args)
+    assert [o["name"] for o in scene["objects"]] == ["table"]
+    assert scene["_perceive"]["diagnostics"]["objects_left_to_the_model"] == [
+        "charger", "cup"]

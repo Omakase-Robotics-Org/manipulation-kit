@@ -8,104 +8,171 @@ loud reason, not a legacy path kept alive beside the new one.
 
 ## 0.15.0 — 2026-09-22
 
-**A head frame is now an observation.** `--scene` — the documented first-hour
-path — is a file somebody measured with a tape, and it made two real grasps on
-d1-2 on 2026-09-22. It also does not scale: every number in it is a person with
-a ruler, and all of them are stale the moment the wagon is nudged. Shu's ask
-that day was 「テーブルとかの高さとか知らずにできるべき」— no ArUco board, no
-tape on the objects, not even the table's height.
+**A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO
+IT.** The first cut of this work took the table's width and the x of its far
+edge as inputs. Shu's answer on reading it was
+「中途半端にこっちでシーンごとの calib をするのは消したい」, and he is right:
+those are measurements of the furniture, they are stale the moment the wagon is
+nudged, and a pipeline that needs them has moved the tape measure rather than
+put it away.
 
-`examples/agent/perceive.py` does that from ONE frame with two priors: the
-rectangular table top's **width**, and the camera's **fx**. It masks the top,
-fits the far edge and the two side edges, takes the side edges' vanishing point
-as their 3-D direction, and solves the two corner ranges that make the far edge
-perpendicular to it and exactly the known width long. From there everything is
-a ray–plane intersection: the near edge (so the table's DEPTH is measured too
-when it is in frame), each object's footprint, each object's height.
+The rule now, and it is the whole change:
 
-Validated against the five frames now in `tests/data/perceive/`: far corners
-within 1.3 px of what `cv2.fitLine(DIST_HUBER)` produced on the night, the
-near edge 8 mm off a 400 mm tape on both frames that show it, and the two
-objects on the run2 start frame within 17 mm of the positions Shu used for the
-run he quoted to ±20 mm.
+* **ROBOT-specific calibration is allowed** — the head camera's intrinsics, the
+  neck joints, the lift, and the pose of the lens in `base` that the kit reads
+  out of its own URDF. Those belong to the machine.
+* **SCENE-specific numbers are not inputs.** No table width, no far-edge x, no
+  table height, no marker, no tape on anything. `--table-width` survives as an
+  OPTIONAL refinement and is the only one left.
+
+### What one camera can and cannot do
+
+A pixel is a RAY in `base`, exactly, from robot facts alone; a ray plus a
+horizontal plane at a known height is a point. **The height is the one thing a
+single camera cannot measure** — twice as far and twice as big is the same
+picture. So the scale comes from outside the geometry, from exactly three
+places, and every number that depends on it says which:
+
+`declared` — the MODEL says so, from the photograph, with the robot's own
+hands at known base-frame positions in it for scale. `known-length` —
+`--table-width`, optional, solved in closed form. `provisional` — nobody has
+said; the plane goes at the z of the arms' HOME tool points (a robot fact, not
+a measurement of anything in front of the camera) and every object measured
+against it drops to `confidence` 0.2.
+
+Everything else in the fit is scale-free and always available: masking the
+top, fitting the far and side edges, and projecting those lines onto the plane
+gives the table's rectangle — where it is, how big, which way it is turned —
+correct in proportion for whatever the height turns out to be. Which is why
+one declared number from the model fixes the whole scene at once.
 
 ### Added
 
-* **`manipulation_kit.description.head_camera`** — the one thing in this
-  change that is inside the wheel. The head camera has had a FRAME here since
-  the whole-body URDF gained cameras (`head_camera_link` on the neck-tilt
-  link, plus its ROS optical child); what it did not have is a way to ASK for
-  it. `head_camera_pose(neck_pitch, neck_yaw)` reads the committed URDF
-  through this package's own parser and returns the pose in `base`, so it
-  cannot drift from the asset. Also `pose_from_neck_state()` (the daemon
-  reports LOGICAL pitch, which is the negative of the URDF joint — one flip,
-  in one place) and `floor_to_base_m(lift)`.
+* **`manipulation_kit.description.head_camera`** — the one part inside the
+  wheel. The head camera has had a FRAME here since the whole-body URDF gained
+  cameras (`head_camera_link` on the neck-tilt link, plus its ROS optical
+  child); what it did not have is a way to ASK for it.
+  `head_camera_pose(neck_pitch, neck_yaw)` reads the committed URDF through
+  this package's own parser, so it cannot drift from the asset. Also
+  `pose_from_neck_state()` — the daemon reports LOGICAL pitch, the negative of
+  the URDF joint, and that flip now happens in one place — and
+  `floor_to_base_m(lift)`.
 
-  NOMINAL, not calibrated, and it says so everywhere: it is vendor geometry
-  plus the head part's design tilt, the lens is placed at the housing's front
-  face, and the d1-3 ArUco fit sits ~2.5 deg off it. Everything built on it is
-  stamped `calibrated: false`.
+  NOMINAL, not calibrated: vendor geometry plus the head part's design tilt,
+  the lens at the housing's front face, the d1-3 ArUco fit ~2.5 deg off it.
+  Everything built on it is stamped `calibrated: false`.
 
-  **The lift does not move the camera in `base`.** `lift` sits BELOW
-  `dual_base`, so the column raises the base and the camera together. A
-  consumer "correcting" for it is wrong by up to 300 mm.
+  **The lift does not move the camera in `base`** — it sits BELOW `dual_base`
+  and raises the base and the camera together. A consumer "correcting" for it
+  is wrong by up to 300 mm.
 
-* **`examples/agent/perceive.py`** — the plane fit, two anchors, two
-  detectors, a scene writer and a debug PNG. `--anchor far-edge-x=<m>` is what
-  Shu did by hand and needs `--table-z`; `--anchor camera` is the zero-shot
-  one and MEASURES the height, because the perpendicular distance from the
-  camera centre to the plane does not depend on the camera's aim — only on its
-  height, which is the reliable half of a nominal mount. What the aim IS gets
-  measured too: with `--assume-level` the top is taken to be horizontal (it is
-  a wagon on a floor) and the correction needed to make the nominal frame
-  agree is reported as `level_correction_deg`, along with the `neck_tilt` that
-  would make it zero.
+* **`examples/agent/camera.py`** — the head camera as a model: pixel to ray to
+  base-frame point, and the inverse. Its `locate()` PROPAGATES the mount's two
+  documented unknowns (±20 mm of lens position, ±3 deg of aim) into a
+  per-pixel uncertainty rather than quoting a flat number, so a pixel near the
+  far edge reports the 70 mm it is worth and a grazing one says `GRAZING`.
 
-  `--detector astra` is one Responses-API call with the frame attached
-  (`openai` imported lazily, still not a dependency); `--detector mask` is a
-  colour fallback that needs no key.
+* **`examples/agent/perceive.py`** — the plane fit, the height policy above,
+  two optional detectors, a scene writer and a debug PNG. The default
+  (`--detector model`) detects NOTHING: it writes the camera, the table and no
+  things, because the loop's own model is the detector.
+  `level_correction_deg` falls out for free and is the diagnostic worth
+  reading — scale-free, and large when the neck angle you passed is wrong or
+  its sign is.
 
-* **`examples/agent/astra_loop.py --perceive <frame|snapshot>`** — measure the
-  scene before turn 0 instead of reading one. `snapshot` reuses the existing
-  `$ASTRA_SNAPSHOT_CMD` hook and perceives from `turn0_base_0_rgb.jpg`; the
-  result is written beside the trace as `scene_perceived.json`. Mutually
-  exclusive with `--scene`. **Once, before turn zero** — re-perceiving every
-  turn is deliberately out of scope: the object moves while the loop holds it,
-  so a fresh scene would have to be reconciled with the gripper's
-  `held_object` rather than replacing the old one.
+* **`astra_loop.py`: two tools that are about the OBSERVATION, not about
+  moving.**
+
+  `declare_scene(objects=[{name, kind, p, size, yaw_rad, confidence,
+  interior}])` — the model says where things are, in base metres, from the
+  photographs. It goes through the SAME reader a hand-written scene file does
+  (`live.objects_from`), so a model cannot declare something a person could
+  not have written. `interior` is there because `Place` refuses to drop into
+  an interior nobody stated, and a model that can see into a cup has to be
+  able to say what it sees.
+
+  `locate(u, v, camera='head')` — the deterministic half. A pixel the model
+  picked, turned into a base-frame point on the current table plane, with its
+  uncertainty. The model should not be doing projective geometry in its head
+  when a function can.
+
+  Neither moves anything, so neither goes through the motion gate; both are
+  answered inside the loop and reported back correlated with the call. The
+  prompt now tells the model it IS the detector, hands it the camera block,
+  and points at both arms' tool points — already in the world text, in the
+  same base metres, and usually visible in the head photo — as its scale
+  reference.
+
+* **`astra_loop.py --perceive <frame|snapshot>`** — measure the scene before
+  turn 0 instead of reading one. `snapshot` reuses the existing
+  `$ASTRA_SNAPSHOT_CMD` hook; the result is written beside the trace as
+  `scene_perceived.json`, and the CAMERA travels in that file rather than as a
+  second set of loop flags (a neck that has moved since the frame was taken is
+  a different camera). Mutually exclusive with `--scene`. **Once, before turn
+  zero** — re-perceiving every turn is deliberately out of scope: the object
+  moves while the loop holds it, so a fresh scene would have to be reconciled
+  with the gripper's `held_object` rather than replacing the old one.
 
 ### Changed
 
-* **`examples/agent/live.py`: a scene file can now say its container's
-  interior is an ESTIMATE.** `objects_from` reads `interior_measured` and
-  passes it to `ContainerView`, which only cleared that flag for the interior
-  it invents itself — so a file that GAVE an interior was believed
-  unconditionally. A perceived interior is a number *and* a guess (85 % of the
-  measured outside; a wall thickness is not visible from one view above and in
-  front) and `Place` refuses to drop into a guessed interior, which it cannot
-  do if the file cannot say so. Pass `--interior cup=0.08,0.08,0.10` to
-  perceive.py to declare one measured, and `--size charger=0.045,0.02,0.05`
-  for the other one. Both record what the FRAME measured beside what you
-  declared, so the file never loses the disagreement.
+* **The loop no longer refuses at turn zero when the scene is empty.** The arm
+  choice used to be made before anything moved and `unreachable_task` returned
+  if the object was not in the scene — which is now every run that has not
+  measured the furniture first. It is made the first turn both names exist,
+  and a model that stops before declaring anything gets `model_stopped` with
+  the reason, not a measured success.
+
+* **`ObjectView.to_text` prints a `confidence` below 1.** The field has been on
+  `WorldView` since the beginning and never reached the text, so a producer
+  that said "0.3, I am guessing" had the one honest thing about its number
+  erased on the way to the only consumer that could act on it. Nothing in the
+  kit GATES on confidence — checked — so it is information, not a permission,
+  and a 0.3 declaration still plans an Approach and a Grasp. A confidence of 1
+  prints nothing, so no existing text changes.
+
+* **The scripted stub declares, when there is nothing to act on.**
+  `--perceive --dry-run` hands the loop a real table and no things, and the
+  stand-in cannot see; rather than stop at turn zero for want of a detector it
+  declares a plausible pair (at the demo scene's own reachable x/y, at the
+  PERCEIVED table's height) so the loop itself stays runnable with no key.
+  Fiction, labelled `scripted-declare` in the trace.
+
+* **`examples/agent/live.py`**: `objects_from` now carries `confidence`
+  through from the file, and reads `interior_measured` — `ContainerView` only
+  clears that flag for the interior it invents itself, so a file that GAVE an
+  interior was believed unconditionally, measured or not.
+  `LiveRobot.declare()` / `SceneMirrorRobot.declare()` are what
+  `declare_scene` writes into, and `SceneMirrorRobot` no longer refuses to be
+  built when the tracked object is not in the scene yet.
+
+### Validated
+
+Five real frames of the d1-2 JP wagon, in `tests/data/perceive/`. Far corners
+within 1.3 px of what `cv2.fitLine(DIST_HUBER)` produced on the night; the
+near edge 8 mm off a 400 mm tape on both frames that show it, and refused (not
+invented from the image border) on the two that clip it; `--table-width 0.60`
+solves the height to 0.150-0.153 m on all five against a tape's 0.166 — a
+consistent ~14 mm low, which is the lens position inside a 90 mm housing and
+is a BIAS, not noise. With the height declared, the two objects on the run2
+frame land within 20 mm of the positions Shu used for that run.
 
 ### What this does NOT do
 
-Two numbers a single view cannot produce, both found by running it:
+* **It does not measure the plane's height, ever**, and nothing in it pretends
+  to. See above.
+* **The extent along the unseen horizontal axis.** One view gives one
+  silhouette, so the width is written on BOTH horizontal axes and yaw is 0 (a
+  square footprint is rotation-invariant, which makes that zero harmless
+  rather than invented). On the run2 frame the charger measures 50 mm across
+  its footprint and the driven jaws take 44 mm, so the chain Shu's hand-made
+  file planned does not plan off the measurement — his file declared the
+  charger 20 mm across y, which is a tape measurement, not a picture. Both
+  halves are pinned in `tests/agent/test_perceive.py`, and `--size` /
+  `declare_scene` are how you put it back.
+* **A container's interior**, as above.
 
-* **the unseen horizontal extent.** One view gives one silhouette, so the
-  width is written on BOTH horizontal axes and yaw is 0 (a square footprint is
-  rotation-invariant, which makes that zero harmless rather than invented).
-  On the run2 frame the charger measures **50 mm** across its footprint and
-  the driven jaws take **44 mm**, so the chain Shu's hand-made file planned
-  does not plan off the measurement — his file declared the charger 20 mm
-  across y, which is a tape measurement, not a picture. Put that one number
-  back and the right arm plans Approach → Grasp → Lift → Carry → Place off the
-  perceived positions, heights and table; both halves are pinned in
-  `tests/agent/test_perceive.py`.
-* **a container's interior**, as above.
-
-Neither is a bug to be fixed by better fitting. They want a second viewpoint,
-a depth camera, or a tape.
+Neither of the last two is a bug to be fixed by better fitting. They want a
+second viewpoint, a depth camera, or a tape.
 
 ## 0.14.1 — 2026-09-21
 

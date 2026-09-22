@@ -66,20 +66,51 @@ class MirrorRobot:
 
 
 class SceneMirrorRobot(MirrorRobot):
-    """``MirrorRobot`` over a MEASURED scene (``--scene``): the observed world is
-    the scene's objects, with the named object following a closed hand."""
+    """``MirrorRobot`` over a MEASURED scene (``--scene`` / ``--perceive``):
+    the observed world is the scene's objects, with the named object following
+    a closed hand.
+
+    THE OBJECT MAY NOT BE THERE YET. Since ``--perceive``'s default leaves the
+    things to the model — which declares them with ``declare_scene`` on turn 0
+    — the tracked object arrives after construction, and refusing to build
+    without it would make the zero-shot path impossible to start. It is picked
+    up the first time it appears.
+    """
 
     def __init__(self, kin, world0, obj: str):
         self.OBJECT = obj
         self.world0 = world0
         target = [o for o in world0.objects if o.name == obj]
-        if not target:
-            raise ValueError(f"{obj!r} is not in the scene")
-        super().__init__(kin, block_p=target[0].p)
+        super().__init__(kin, block_p=target[0].p if target
+                         else (0.0, 0.0, 0.0))
+        self.tracking = bool(target)
+
+    def declare(self, objects) -> None:
+        """Replace or add scene objects, by name. The model's own measurement.
+
+        Names are matched exactly and everything else about the world — the
+        arms, the grippers, the frames — is untouched: this is an OBSERVATION
+        of the things, not a new world.
+        """
+        import dataclasses as _dc  # noqa: PLC0415
+        incoming = {o.name: o for o in objects}
+        kept = [incoming.pop(o.name, o) for o in self.world0.objects]
+        self.world0 = _dc.replace(self.world0,
+                                  objects=tuple(kept) + tuple(incoming.values()))
+        target = [o for o in self.world0.objects if o.name == self.OBJECT]
+        if target and not self.tracking:
+            self.block = np.array(target[0].p, dtype=float)
+            self.tracking = True
+        elif target and not any(self.executor.held.get(s) == self.OBJECT
+                                for s in ("left", "right")):
+            # Not in a hand: believe the new measurement over the old one.
+            self.block = np.array(target[0].p, dtype=float)
 
     def world(self):
         import dataclasses as _dc  # noqa: PLC0415
         base = super().world()
-        objects = tuple(_dc.replace(o, p=self.block.copy()) if o.name == self.OBJECT else o
-                        for o in self.world0.objects)
+        objects = tuple(
+            _dc.replace(o, p=self.block.copy())
+            if (o.name == self.OBJECT and self.tracking) else o
+            for o in self.world0.objects)
         return _dc.replace(base, objects=objects, frames=self.world0.frames)

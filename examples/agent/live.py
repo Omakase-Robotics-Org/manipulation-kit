@@ -55,6 +55,10 @@ def objects_from(scene: Dict[str, Any]) -> List[ObjectView]:
             else R.from_euler("z", float(item.get("yaw_rad", 0.0))),
             frame_id=item.get("frame_id", "base"),
             colour=item.get("colour"), stamp=float(item.get("stamp", 0.0)),
+            # A perceived or model-declared object arrives with a confidence
+            # below 1 and it has to SURVIVE the file, or the one honest thing
+            # about the number is the thing that gets dropped on the way in.
+            confidence=float(item.get("confidence", 1.0)),
             **extra))
     return out
 
@@ -93,6 +97,37 @@ class LiveRobot:
     def expect(self, side: str, name: Optional[str]) -> None:
         """Record what the next stroke on ``side`` is closing on."""
         self.held[side] = name
+
+    def declare(self, objects) -> None:
+        """Replace or add scene objects, by name — the loop's ``declare_scene``.
+
+        The scene file is the THINGS half of the observation and nothing in
+        the kit can supply it, so a model that has looked at the frame and
+        said where something is has produced the only measurement there is.
+        Stored back into the same dict the file was read from, so a run's
+        ``scene_perceived.json`` and the world the plan was built in stay the
+        same shape.
+        """
+        incoming = {}
+        for view in objects:
+            item = {"name": view.name, "kind": view.kind,
+                    "frame_id": view.frame_id,
+                    "p": [float(v) for v in view.p],
+                    "size": [float(v) for v in view.size],
+                    "quat_xyzw": [float(v) for v in view.r.as_quat()],
+                    "confidence": float(view.confidence)}
+            interior = getattr(view, "interior", None)
+            if interior is not None:
+                item["interior"] = [float(v) for v in interior]
+                item["interior_measured"] = bool(
+                    getattr(view, "interior_measured", False))
+            rim = getattr(view, "rim_height_m", None)
+            if rim is not None:
+                item["rim_height_m"] = float(rim)
+            incoming[view.name] = item
+        objects_json = list(self.scene.get("objects", ()))
+        merged = [incoming.pop(o.get("name"), o) for o in objects_json]
+        self.scene["objects"] = merged + list(incoming.values())
 
     def world(self) -> WorldView:
         state = self.executor.state()

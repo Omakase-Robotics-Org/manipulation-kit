@@ -286,10 +286,18 @@ class ObjectView:
         else:
             note = f" in {self.frame_id}"
         yaw = math.degrees(self.r.as_euler("xyz")[2])
+        # A confidence below 1 is printed and a confidence of 1 is not. The
+        # field has been here since the first WorldView and never reached the
+        # text, so a producer that said "0.3, I am guessing" (a detector, or a
+        # model declaring what it sees) had that erased on the way to the only
+        # consumer that could act on it. Nothing in the kit GATES on it —
+        # checked, 2026-09-22 — so it is information, not a permission.
+        doubt = "" if self.confidence >= 1.0 else \
+            f", confidence {self.confidence:.2f}"
         return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "
                 f"{where[1]:.3f}, {where[2]:.3f}) m base{note}, "
                 f"{self.size[0] * 1000:.0f}x{self.size[1] * 1000:.0f}x"
-                f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg")
+                f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg{doubt}")
 
 
 @dataclass(frozen=True)
