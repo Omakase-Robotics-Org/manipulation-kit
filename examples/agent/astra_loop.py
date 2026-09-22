@@ -89,8 +89,10 @@ from trace import DecisionRecord, DecisionTrace  # noqa: E402
 DEFAULT_TASK = "put the red block in the box"
 
 SYSTEM = """You drive a D1 humanoid's two arms through a fixed set of verbs.
-Each observation may carry two photos: the head camera (scene from above the
-torso) and the right wrist camera (looking along the right hand past its jaws).
+Each observation may carry three photos: the head camera (scene from above the
+torso) and both wrist cameras (each looking along its hand past the jaws).
+Use them to judge what the text cannot: whether the object stands or has
+tipped, whether the jaws straddle it, whether it is inside the container.
 
 YOU ARE THE DETECTOR. Nothing on this robot measures where the things are.
 There is no marker on anything, nobody has measured the table, and the scene
@@ -514,7 +516,8 @@ def _snapshot(trace_path: Optional[Path], turn: int) -> None:
     # The model is shown the head and the RIGHT wrist frame of this turn (the
     # left wrist sees nothing useful while the right hand works). Attach in a
     # fixed order so the trace is comparable turn to turn.
-    wanted = (f"turn{turn}_base_0_rgb.jpg", f"turn{turn}_right_wrist_0_rgb.jpg")
+    wanted = (f"turn{turn}_base_0_rgb.jpg", f"turn{turn}_right_wrist_0_rgb.jpg",
+              f"turn{turn}_left_wrist_0_rgb.jpg")
     return [out / name for name in wanted if (out / name).exists()]
 
 
@@ -688,6 +691,17 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
         # THE GATE, on the BOUND call. A model may ask for anything; decode
         # checks the arguments against the kit's own table and the guard
         # decides the rest. This is the step PR #17 was missing.
+        # Operator cap on the grip preset (d1-2 2026-09-22: `firm` preload on a
+        # rigid body wound the hold up to -4.2 Nm and faulted the motor;
+        # d1-firmware #89). ASTRA_GRIP_CAP=soft rewrites firmer requests.
+        cap = os.environ.get("ASTRA_GRIP_CAP")
+        if cap and call["arguments"].get("grip") not in (None, cap):
+            asked = call["arguments"]["grip"]
+            order = ("soft", "firm", "strong")
+            if asked in order and cap in order and order.index(asked) > order.index(cap):
+                call["arguments"]["grip"] = cap
+                _say(messages, call_id,
+                     f"note: grip {asked!r} is capped to {cap!r} on this robot tonight")
         primitive = decode(call["name"], call["arguments"], world)
         if not isinstance(primitive, object) or getattr(primitive, "ok", None) is False:
             record.refused = [primitive.to_json()]
