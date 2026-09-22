@@ -30,8 +30,8 @@ to it, which is what keeps one vocabulary instead of one per consumer.
 | `trace.py` | one JSONL record per decision: offers, refusals, the model's claim, and the **measured** verdict beside it | — |
 | `astra_loop.py` | observe → offer → tool call → execute → verify, with two stop conditions. Runs a scripted stub when `OPENAI_API_KEY` is unset | `openai` only for a real run |
 | `jev_menu.py` | the same offer rendered as a typed-choice request | — |
-| `perceive.py` | **one head frame → a scene file.** The only calibration it takes is the ROBOT's: head-camera intrinsics and the camera pose from the neck joints. No table width, no far-edge x, no table height | `pillow` (or OpenCV); `openai` only for `--detector astra` |
-| `camera.py` | the head camera as a model: pixel ↔ base-frame point, with the uncertainty the nominal mount actually carries | — |
+| `perceive.py` | **one head frame → a scene file**, a thin CLI over `manipulation_kit.perception`. The only calibration it takes is the ROBOT's: head-camera intrinsics and the camera pose from the neck joints. No table width, no far-edge x, no table height | `pillow` (or OpenCV); `openai` only for `--detector astra` |
+| `detector.py` | `AstraDetector`: a model as the box detector for `perceive.py --detector astra` — the prompt, the call and a strict parse, nothing else. The camera model, plane fit and measurement it feeds are `manipulation_kit.perception` | `openai` |
 | `live.py` | a real D1 as the loop's robot: firmware transport plus a scene | `manipulation-kit[firmware]` |
 
 ```sh
@@ -40,7 +40,7 @@ python examples/agent/jev_menu.py
 python examples/agent/offer.py
 
 # a scene from one frame, with NO scene number at all
-pip install -e '.[perceive]'
+pip install -e '.[perception]'
 python examples/agent/perceive.py --image head.jpg \
     --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 \
     --out examples/agent/scenes/live.json --debug /tmp/fit.png

@@ -6,6 +6,76 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.16.0 — unreleased
+
+### Step 6: `manipulation_kit.perception` — perception is a kit interface
+
+**BREAKING for anyone importing the example modules.** `examples/agent/camera.py`
+is gone (moved, history kept, to `manipulation_kit.perception.camera`), and the
+library half of `examples/agent/perceive.py` — plane fit, height policy,
+measurement, scene file, the colour-mask fallback — is now
+`manipulation_kit.perception.{plane,measure}`. `perceive.py` is a thin CLI
+(decode, flags, pick a detector) and the Astra box detector is
+`examples/agent/detector.py` (`AstraDetector`, a `Perceiver`). The extra is
+renamed `perceive` → **`perception`** (`pip install -e '.[perception]'`); it
+still only carries `pillow`, and nothing under `manipulation_kit` decodes an
+image.
+
+* **`Perceiver` protocol** (`perception/protocol.py`): `cameras()`,
+  `locate(camera, u, v, plane=)`, `declare(objects, support=)`,
+  `attached(side)`. `ScenePerceiver` is the reference implementation; a
+  customer with another camera stack implements four methods instead of forking
+  the example.
+* **`Located.kind`** — `"contact"` (a surface point: for the bottom of a
+  silhouette, the object's NEAR edge) or `"centre"`. `contact_to_centre()`
+  performs the footprint-centre + half-height conversion that a prompt
+  sentence used to ask the model to do (Astra review 7); the loop's `locate`
+  tool takes an optional `size`/`yaw_rad` and returns the centre.
+* **Uncertainty in independent parts** (Astra review 8). `locate` reports
+  `mount_uncertainty_m` (lens position and aim as INDEPENDENT unknowns — every
+  combination, not six samples that moved both along one axis; values are
+  larger than 0.15.0's by design) and `height_uncertainty_m` (the plane moved
+  by `plane_uncertainty_m`), and `uncertainty_m` is their `hypot`.
+* **`SurfaceView.plane_source` / `height_uncertainty_m`** — a perceived
+  table's height provenance now reaches the world (scene files carry them as
+  top-level fields; `live.objects_from` passes them through) and a pixel
+  located on it inherits them.
+* **One interior fraction:** `world.views.INTERIOR_FRACTION = 0.9`.
+  Perception used 0.85 while the view (and the operator's preflight text) said
+  90 %; perceived interiors are now 0.9 × the measured outside.
+* **One neck sign flip:** `description.head_camera.neck_joints_from_state()`
+  (accepts a `NeckState`-like object or a `/v1/neck/state` body). The two other
+  copies (`camera.py`, `astra_loop.py`) are gone.
+* **`HeadCameraConfig`** (fx, fy, cx, cy, width, height, neck, lift) and
+  `HeadCamera.from_config()`, which FAILS CLOSED on a missing or moving neck;
+  `read_head_state(executor)` uses the executor's `neck_state()` /
+  `lift_state()` (step 1). `astra_loop.py`'s `robot_camera_opts` — a raw
+  `urllib` read of `/v1/neck/state` + `/v1/slider/state`, a hand-negated pitch
+  and a whitespace re-parse of a flag string (Astra review 9) — is deleted.
+  A live neck state plus a `--neck-pitch` flag is refused as two answers.
+* **Declared objects are lifted onto their support by a kit rule**
+  (`lift_onto_support`, via `SurfaceView.top_z(frames)`), replacing
+  `astra_loop.py`'s open-coded `p[2] + size[2]/2`, which ignored the surface's
+  frame and rotation (L5/L15). Only surfaces the object is over are
+  candidates; an object over none is left as declared and the note says so.
+* **Refusals:** non-finite pixels/planes are `ValueError`; a plane ABOVE the
+  lens (intersection behind the camera) is `NotOnThePlane`, as a ray above
+  the horizon already was (Astra review 9).
+* **`WristCamera`** (`perception/wrist.py`) — the plate mount the kit already
+  had (`CAMERA_MOUNT_XYZ_M`, `CAMERA_TILT_RAD`, `CAMERA_ARM_YAW_RAD`) composed
+  with the arm's FK; `project_object()` says whether an object is in the wrist
+  frame and where (what step 7's look-before-the-stroke needs). Intrinsics are
+  not defaulted.
+* The mask detector's refusals and `requested_objects()` raise `ValueError`
+  (a library does not `SystemExit`); the CLI converts them.
+* `examples/preflight.py` prints the pad-centre and driven-opening numbers
+  and the interior fraction from the kit instead of prose.
+
+Tests: `tests/agent/test_perceive.py` moved to `tests/perception/test_perceive.py`
+(kit side, plus PR #21's Validated table pinned row by row); the CLI, Astra and
+scene-reader tests are `tests/agent/test_perceive_cli.py`; new
+`tests/perception/test_perception_interface.py`.
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO
