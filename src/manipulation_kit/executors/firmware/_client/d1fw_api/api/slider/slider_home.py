@@ -74,7 +74,20 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | SliderHomeResponse200]:
-    """Run the slider's homing sequence
+    """Move the torso lift to 0 m of the current origin
+
+     Move the torso lift to 0 m of the current origin (an absolute move, not the drive's homing routine).
+    It is exactly `slider/set_height` with `height_m` 0 and the default speed, and like an unwaited move
+    it returns as soon as the drive has accepted the target — poll `GET /v1/slider/state` for arrival.
+
+    This verb does NOT re-reference the drive. Homing, which seeks the mechanical stop and re-zeroes the
+    position counter there, moves whatever origin the robot was commissioned with. That procedure is
+    `slider/set_zero`, which is gated off by default and is not reachable from this verb.
+
+    Refused with `409` while `slider/state` reports `zero_reference: "unknown"` — a move to 0 m of an
+    origin the drive cannot vouch for is exactly how the lift reaches its mechanical stop. It is refused
+    the same way when a recorded unit calibration puts its lower bound above 0 m: on such a robot there
+    is no 0 m to go to, and the refusal names that layer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -97,7 +110,20 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | SliderHomeResponse200 | None:
-    """Run the slider's homing sequence
+    """Move the torso lift to 0 m of the current origin
+
+     Move the torso lift to 0 m of the current origin (an absolute move, not the drive's homing routine).
+    It is exactly `slider/set_height` with `height_m` 0 and the default speed, and like an unwaited move
+    it returns as soon as the drive has accepted the target — poll `GET /v1/slider/state` for arrival.
+
+    This verb does NOT re-reference the drive. Homing, which seeks the mechanical stop and re-zeroes the
+    position counter there, moves whatever origin the robot was commissioned with. That procedure is
+    `slider/set_zero`, which is gated off by default and is not reachable from this verb.
+
+    Refused with `409` while `slider/state` reports `zero_reference: "unknown"` — a move to 0 m of an
+    origin the drive cannot vouch for is exactly how the lift reaches its mechanical stop. It is refused
+    the same way when a recorded unit calibration puts its lower bound above 0 m: on such a robot there
+    is no 0 m to go to, and the refusal names that layer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -116,7 +142,20 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | SliderHomeResponse200]:
-    """Run the slider's homing sequence
+    """Move the torso lift to 0 m of the current origin
+
+     Move the torso lift to 0 m of the current origin (an absolute move, not the drive's homing routine).
+    It is exactly `slider/set_height` with `height_m` 0 and the default speed, and like an unwaited move
+    it returns as soon as the drive has accepted the target — poll `GET /v1/slider/state` for arrival.
+
+    This verb does NOT re-reference the drive. Homing, which seeks the mechanical stop and re-zeroes the
+    position counter there, moves whatever origin the robot was commissioned with. That procedure is
+    `slider/set_zero`, which is gated off by default and is not reachable from this verb.
+
+    Refused with `409` while `slider/state` reports `zero_reference: "unknown"` — a move to 0 m of an
+    origin the drive cannot vouch for is exactly how the lift reaches its mechanical stop. It is refused
+    the same way when a recorded unit calibration puts its lower bound above 0 m: on such a robot there
+    is no 0 m to go to, and the refusal names that layer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,7 +176,20 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | SliderHomeResponse200 | None:
-    """Run the slider's homing sequence
+    """Move the torso lift to 0 m of the current origin
+
+     Move the torso lift to 0 m of the current origin (an absolute move, not the drive's homing routine).
+    It is exactly `slider/set_height` with `height_m` 0 and the default speed, and like an unwaited move
+    it returns as soon as the drive has accepted the target — poll `GET /v1/slider/state` for arrival.
+
+    This verb does NOT re-reference the drive. Homing, which seeks the mechanical stop and re-zeroes the
+    position counter there, moves whatever origin the robot was commissioned with. That procedure is
+    `slider/set_zero`, which is gated off by default and is not reachable from this verb.
+
+    Refused with `409` while `slider/state` reports `zero_reference: "unknown"` — a move to 0 m of an
+    origin the drive cannot vouch for is exactly how the lift reaches its mechanical stop. It is refused
+    the same way when a recorded unit calibration puts its lower bound above 0 m: on such a robot there
+    is no 0 m to go to, and the refusal names that layer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

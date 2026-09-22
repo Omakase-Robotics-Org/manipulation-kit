@@ -15,11 +15,12 @@ T = TypeVar("T", bound="GripRequest")
 
 @_attrs_define
 class GripRequest:
-    """How hard a closing stroke holds what it meets.
+    """How hard a closing stroke squeezes and holds what it meets.
 
     At most one of the two fields is given: a named [`GripPreset`], or an
-    explicit standing preload in motor radians. Neither means the backend's
-    configured default. Carried by [`GripperTarget`] and by a bare `close`.
+    explicit standing preload in motor radians (which keeps the `firm`
+    preset's stop torque). Neither means the backend's configured default,
+    `firm`. Carried by [`GripperTarget`] and by a bare `close`.
 
         Attributes:
             grip (GripPreset | None | Unset):

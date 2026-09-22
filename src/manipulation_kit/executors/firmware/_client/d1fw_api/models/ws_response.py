@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.error_kind import ErrorKind
 from ..models.ws_status import WsStatus
 from ..types import UNSET, Unset
 
@@ -26,14 +27,24 @@ class WsResponse:
             data (Any): The operation's result on success, null on error.  This is the same
                 payload as the REST envelope's `data` for the same method.
             status (WsStatus): The `status` field of a [`WsResponse`].
+            code (int | None | Unset): The mobile base's own numeric response code, when the failure came
+                from the base. Null on a failure raised by the daemon itself, and
+                absent from a success frame, which carries the three fields it has
+                always carried.
+
+                The same field the REST failure envelope carries, so a consumer that
+                speaks both frontends branches on one vocabulary.
             id (int | None | Unset): The `id` of the request this answers, or null when the frame could not
                 be parsed far enough to recover one.
+            kind (ErrorKind | None | Unset):
             message (None | str | Unset): The failure reason on error, null on success.
     """
 
     data: Any
     status: WsStatus
+    code: int | None | Unset = UNSET
     id: int | None | Unset = UNSET
+    kind: ErrorKind | None | Unset = UNSET
     message: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -42,11 +53,25 @@ class WsResponse:
 
         status = self.status.value
 
+        code: int | None | Unset
+        if isinstance(self.code, Unset):
+            code = UNSET
+        else:
+            code = self.code
+
         id: int | None | Unset
         if isinstance(self.id, Unset):
             id = UNSET
         else:
             id = self.id
+
+        kind: None | str | Unset
+        if isinstance(self.kind, Unset):
+            kind = UNSET
+        elif isinstance(self.kind, ErrorKind):
+            kind = self.kind.value
+        else:
+            kind = self.kind
 
         message: None | str | Unset
         if isinstance(self.message, Unset):
@@ -62,8 +87,12 @@ class WsResponse:
                 "status": status,
             }
         )
+        if code is not UNSET:
+            field_dict["code"] = code
         if id is not UNSET:
             field_dict["id"] = id
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if message is not UNSET:
             field_dict["message"] = message
 
@@ -76,6 +105,15 @@ class WsResponse:
 
         status = WsStatus(d.pop("status"))
 
+        def _parse_code(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        code = _parse_code(d.pop("code", UNSET))
+
         def _parse_id(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -84,6 +122,23 @@ class WsResponse:
             return cast(int | None | Unset, data)
 
         id = _parse_id(d.pop("id", UNSET))
+
+        def _parse_kind(data: object) -> ErrorKind | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                kind_type_1 = ErrorKind(data)
+
+                return kind_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(ErrorKind | None | Unset, data)
+
+        kind = _parse_kind(d.pop("kind", UNSET))
 
         def _parse_message(data: object) -> None | str | Unset:
             if data is None:
@@ -97,7 +152,9 @@ class WsResponse:
         ws_response = cls(
             data=data,
             status=status,
+            code=code,
             id=id,
+            kind=kind,
             message=message,
         )
 

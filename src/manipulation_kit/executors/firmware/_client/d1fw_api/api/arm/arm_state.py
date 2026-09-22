@@ -83,6 +83,9 @@ def sync_detailed(
 ) -> Response[ArmStateResponse200 | ErrorEnvelope]:
     """Read one arm's feedback and command echo
 
+     `advisory` is additive and absent unless this arm's state earns one; see `Advisory`. It is the same
+    value `/v1/state` carries in its arm slots and `/v1/arm/{side}/preflight` reports.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
 
@@ -112,6 +115,9 @@ def sync(
 ) -> ArmStateResponse200 | ErrorEnvelope | None:
     """Read one arm's feedback and command echo
 
+     `advisory` is additive and absent unless this arm's state earns one; see `Advisory`. It is the same
+    value `/v1/state` carries in its arm slots and `/v1/arm/{side}/preflight` reports.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
 
@@ -135,6 +141,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[ArmStateResponse200 | ErrorEnvelope]:
     """Read one arm's feedback and command echo
+
+     `advisory` is additive and absent unless this arm's state earns one; see `Advisory`. It is the same
+    value `/v1/state` carries in its arm slots and `/v1/arm/{side}/preflight` reports.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
@@ -162,6 +171,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> ArmStateResponse200 | ErrorEnvelope | None:
     """Read one arm's feedback and command echo
+
+     `advisory` is additive and absent unless this arm's state earns one; see `Advisory`. It is the same
+    value `/v1/state` carries in its arm slots and `/v1/arm/{side}/preflight` reports.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.

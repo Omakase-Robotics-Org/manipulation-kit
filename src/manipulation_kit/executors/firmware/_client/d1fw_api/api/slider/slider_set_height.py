@@ -85,13 +85,44 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SliderMove,
 ) -> Response[ErrorEnvelope | SliderSetHeightResponse200]:
-    """Move the torso lift to an absolute height
+    """Move the torso lift to an absolute height, or by one small commissioning step
 
-     `height_m` is metres above the lower stop. With `wait: true` the call blocks until the slider
-    reports arrival, which is the slowest call in this API; size the client timeout accordingly.
+     Exactly one of `height_m` and `delta_m` is sent; neither and both are `400`.
+
+    `height_m` is metres above the drive's origin. With `wait: true` the call blocks until the slider
+    reports arrival, which is the slowest call in this API; size the client timeout accordingly. It is
+    refused with `409` while `slider/state` reports `zero_reference: "unknown"`: the height is measured
+    from the drive's origin, and a drive that cannot vouch for its origin would take this move somewhere
+    other than where it names. The refusal carries an `advisory` naming the way out. It is refused with
+    `400` when it falls outside the effective range in `slider/state.travel_limits`, and the message
+    names WHICH layer refused it -- the model ceiling `[slider] travel_max_m`, or this unit's recorded
+    calibration.
+
+    `delta_m` is a small RELATIVE amount in metres from wherever the carriage stands, negative for down.
+    It depends on no origin, so it is the one move a lift with `zero_reference: "unknown"` can be given
+    -- which is how a carriage is walked down onto its mechanical stop before `slider/set_zero`. It is
+    admitted only on a daemon started with `[slider] commissioning = true` (otherwise `409` with an
+    `advisory`), capped at 0.01 m per call (`400` above that, never silently clamped), and always runs
+    at a fixed low speed, so sending `speed_ratio` with it is a `400` rather than a value quietly
+    ignored. The slider soft-kill latch and `slider/stop` apply to it exactly as to any move.
 
     Args:
-        body (SliderMove): A requested slider height.
+        body (SliderMove): A requested slider move: one absolute height, or one small relative
+            amount.
+
+            Exactly one of `height_m` and `delta_m` is given. Neither and both are
+            both rejected with `400` rather than resolved by a precedence rule: a
+            caller that sent two targets did not mean one of them, and a caller that
+            sent none named no move at all.
+
+            `delta_m` is the commissioning form. It is admitted only on a daemon
+            started with `[slider] commissioning = true`, it is capped at
+            [`crate::safety::SLIDER_COMMISSIONING_STEP_MAX_M`] per call, and it runs
+            at a fixed low speed — so `speed_ratio` may not be sent with it. It is on
+            this verb rather than on a new one because on the LD2-RS's wire the two
+            are the same PR path write with a different mode word (`0x0041` instead
+            of `0x0001`), so a separate verb would have been a second name for one
+            operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -117,13 +148,44 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SliderMove,
 ) -> ErrorEnvelope | SliderSetHeightResponse200 | None:
-    """Move the torso lift to an absolute height
+    """Move the torso lift to an absolute height, or by one small commissioning step
 
-     `height_m` is metres above the lower stop. With `wait: true` the call blocks until the slider
-    reports arrival, which is the slowest call in this API; size the client timeout accordingly.
+     Exactly one of `height_m` and `delta_m` is sent; neither and both are `400`.
+
+    `height_m` is metres above the drive's origin. With `wait: true` the call blocks until the slider
+    reports arrival, which is the slowest call in this API; size the client timeout accordingly. It is
+    refused with `409` while `slider/state` reports `zero_reference: "unknown"`: the height is measured
+    from the drive's origin, and a drive that cannot vouch for its origin would take this move somewhere
+    other than where it names. The refusal carries an `advisory` naming the way out. It is refused with
+    `400` when it falls outside the effective range in `slider/state.travel_limits`, and the message
+    names WHICH layer refused it -- the model ceiling `[slider] travel_max_m`, or this unit's recorded
+    calibration.
+
+    `delta_m` is a small RELATIVE amount in metres from wherever the carriage stands, negative for down.
+    It depends on no origin, so it is the one move a lift with `zero_reference: "unknown"` can be given
+    -- which is how a carriage is walked down onto its mechanical stop before `slider/set_zero`. It is
+    admitted only on a daemon started with `[slider] commissioning = true` (otherwise `409` with an
+    `advisory`), capped at 0.01 m per call (`400` above that, never silently clamped), and always runs
+    at a fixed low speed, so sending `speed_ratio` with it is a `400` rather than a value quietly
+    ignored. The slider soft-kill latch and `slider/stop` apply to it exactly as to any move.
 
     Args:
-        body (SliderMove): A requested slider height.
+        body (SliderMove): A requested slider move: one absolute height, or one small relative
+            amount.
+
+            Exactly one of `height_m` and `delta_m` is given. Neither and both are
+            both rejected with `400` rather than resolved by a precedence rule: a
+            caller that sent two targets did not mean one of them, and a caller that
+            sent none named no move at all.
+
+            `delta_m` is the commissioning form. It is admitted only on a daemon
+            started with `[slider] commissioning = true`, it is capped at
+            [`crate::safety::SLIDER_COMMISSIONING_STEP_MAX_M`] per call, and it runs
+            at a fixed low speed — so `speed_ratio` may not be sent with it. It is on
+            this verb rather than on a new one because on the LD2-RS's wire the two
+            are the same PR path write with a different mode word (`0x0041` instead
+            of `0x0001`), so a separate verb would have been a second name for one
+            operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,13 +206,44 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SliderMove,
 ) -> Response[ErrorEnvelope | SliderSetHeightResponse200]:
-    """Move the torso lift to an absolute height
+    """Move the torso lift to an absolute height, or by one small commissioning step
 
-     `height_m` is metres above the lower stop. With `wait: true` the call blocks until the slider
-    reports arrival, which is the slowest call in this API; size the client timeout accordingly.
+     Exactly one of `height_m` and `delta_m` is sent; neither and both are `400`.
+
+    `height_m` is metres above the drive's origin. With `wait: true` the call blocks until the slider
+    reports arrival, which is the slowest call in this API; size the client timeout accordingly. It is
+    refused with `409` while `slider/state` reports `zero_reference: "unknown"`: the height is measured
+    from the drive's origin, and a drive that cannot vouch for its origin would take this move somewhere
+    other than where it names. The refusal carries an `advisory` naming the way out. It is refused with
+    `400` when it falls outside the effective range in `slider/state.travel_limits`, and the message
+    names WHICH layer refused it -- the model ceiling `[slider] travel_max_m`, or this unit's recorded
+    calibration.
+
+    `delta_m` is a small RELATIVE amount in metres from wherever the carriage stands, negative for down.
+    It depends on no origin, so it is the one move a lift with `zero_reference: "unknown"` can be given
+    -- which is how a carriage is walked down onto its mechanical stop before `slider/set_zero`. It is
+    admitted only on a daemon started with `[slider] commissioning = true` (otherwise `409` with an
+    `advisory`), capped at 0.01 m per call (`400` above that, never silently clamped), and always runs
+    at a fixed low speed, so sending `speed_ratio` with it is a `400` rather than a value quietly
+    ignored. The slider soft-kill latch and `slider/stop` apply to it exactly as to any move.
 
     Args:
-        body (SliderMove): A requested slider height.
+        body (SliderMove): A requested slider move: one absolute height, or one small relative
+            amount.
+
+            Exactly one of `height_m` and `delta_m` is given. Neither and both are
+            both rejected with `400` rather than resolved by a precedence rule: a
+            caller that sent two targets did not mean one of them, and a caller that
+            sent none named no move at all.
+
+            `delta_m` is the commissioning form. It is admitted only on a daemon
+            started with `[slider] commissioning = true`, it is capped at
+            [`crate::safety::SLIDER_COMMISSIONING_STEP_MAX_M`] per call, and it runs
+            at a fixed low speed — so `speed_ratio` may not be sent with it. It is on
+            this verb rather than on a new one because on the LD2-RS's wire the two
+            are the same PR path write with a different mode word (`0x0041` instead
+            of `0x0001`), so a separate verb would have been a second name for one
+            operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,13 +267,44 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SliderMove,
 ) -> ErrorEnvelope | SliderSetHeightResponse200 | None:
-    """Move the torso lift to an absolute height
+    """Move the torso lift to an absolute height, or by one small commissioning step
 
-     `height_m` is metres above the lower stop. With `wait: true` the call blocks until the slider
-    reports arrival, which is the slowest call in this API; size the client timeout accordingly.
+     Exactly one of `height_m` and `delta_m` is sent; neither and both are `400`.
+
+    `height_m` is metres above the drive's origin. With `wait: true` the call blocks until the slider
+    reports arrival, which is the slowest call in this API; size the client timeout accordingly. It is
+    refused with `409` while `slider/state` reports `zero_reference: "unknown"`: the height is measured
+    from the drive's origin, and a drive that cannot vouch for its origin would take this move somewhere
+    other than where it names. The refusal carries an `advisory` naming the way out. It is refused with
+    `400` when it falls outside the effective range in `slider/state.travel_limits`, and the message
+    names WHICH layer refused it -- the model ceiling `[slider] travel_max_m`, or this unit's recorded
+    calibration.
+
+    `delta_m` is a small RELATIVE amount in metres from wherever the carriage stands, negative for down.
+    It depends on no origin, so it is the one move a lift with `zero_reference: "unknown"` can be given
+    -- which is how a carriage is walked down onto its mechanical stop before `slider/set_zero`. It is
+    admitted only on a daemon started with `[slider] commissioning = true` (otherwise `409` with an
+    `advisory`), capped at 0.01 m per call (`400` above that, never silently clamped), and always runs
+    at a fixed low speed, so sending `speed_ratio` with it is a `400` rather than a value quietly
+    ignored. The slider soft-kill latch and `slider/stop` apply to it exactly as to any move.
 
     Args:
-        body (SliderMove): A requested slider height.
+        body (SliderMove): A requested slider move: one absolute height, or one small relative
+            amount.
+
+            Exactly one of `height_m` and `delta_m` is given. Neither and both are
+            both rejected with `400` rather than resolved by a precedence rule: a
+            caller that sent two targets did not mean one of them, and a caller that
+            sent none named no move at all.
+
+            `delta_m` is the commissioning form. It is admitted only on a daemon
+            started with `[slider] commissioning = true`, it is capped at
+            [`crate::safety::SLIDER_COMMISSIONING_STEP_MAX_M`] per call, and it runs
+            at a fixed low speed — so `speed_ratio` may not be sent with it. It is on
+            this verb rather than on a new one because on the LD2-RS's wire the two
+            are the same PR path write with a different mode word (`0x0041` instead
+            of `0x0001`), so a separate verb would have been a second name for one
+            operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

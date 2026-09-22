@@ -16,6 +16,15 @@ class NeckState:
 
     Attributes:
         enabled (bool): Whether the neck motors are enabled.
+        moving (bool): Whether either neck axis is moving.
+
+            The backend's own answer, taken from the same feedback frames as the
+            velocities beside it: an axis is moving when its measured velocity
+            exceeds what the motor's feedback can express, which is the wire's
+            resolution rather than a chosen threshold. A neck creeping below that
+            resolution reads `false`; nothing on this wire can tell it apart from
+            a standing motor. See [`crate::Motion`], which folds this into the
+            whole-robot answer.
         pitch (float): Current pitch in radians.
         pitch_torque (float): Measured pitch torque in newton-metres.
         pitch_velocity (float): Current pitch velocity in radians per second.
@@ -25,6 +34,7 @@ class NeckState:
     """
 
     enabled: bool
+    moving: bool
     pitch: float
     pitch_torque: float
     pitch_velocity: float
@@ -35,6 +45,8 @@ class NeckState:
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
+
+        moving = self.moving
 
         pitch = self.pitch
 
@@ -53,6 +65,7 @@ class NeckState:
         field_dict.update(
             {
                 "enabled": enabled,
+                "moving": moving,
                 "pitch": pitch,
                 "pitch_torque": pitch_torque,
                 "pitch_velocity": pitch_velocity,
@@ -69,6 +82,8 @@ class NeckState:
         d = dict(src_dict)
         enabled = d.pop("enabled")
 
+        moving = d.pop("moving")
+
         pitch = d.pop("pitch")
 
         pitch_torque = d.pop("pitch_torque")
@@ -83,6 +98,7 @@ class NeckState:
 
         neck_state = cls(
             enabled=enabled,
+            moving=moving,
             pitch=pitch,
             pitch_torque=pitch_torque,
             pitch_velocity=pitch_velocity,

@@ -15,7 +15,7 @@ class LockCtrlRequest:
     """`POST /v1/chassis/lock_ctrl`.
 
     Attributes:
-        unlock (bool): `true` unlocks vendor control, `false` locks it.
+        unlock (bool): `true` releases drive motors for manual pushing; `false` engages them.
     """
 
     unlock: bool

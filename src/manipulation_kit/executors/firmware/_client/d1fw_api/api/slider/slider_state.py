@@ -79,6 +79,20 @@ def sync_detailed(
      A direct read of the slider controller over its serial link (about 100-200 ms). An unreadable slider
     is an error envelope (`502`), unlike the `/v1/state` slot which degrades in place.
 
+    `travel_limits` publishes every layer that constrains travel and the `effective` range they come to
+    together, which is the range `set_height` admits: `model` is `[0, travel_max_m]` from the daemon's
+    configuration, and `unit` is this robot's bench calibration or `null` when none has been recorded. A
+    layer only ever narrows.
+
+    `zero_verification` is separate from `zero_reference` and additive to it. `zero_reference` asks
+    whether the drive can vouch for its origin right now; this asks whether the origin this daemon last
+    wrote has been read back after a power cycle, which is the only evidence that the drive persisted it
+    rather than holding it in RAM. `unrecorded` means this daemon has no record of setting one and is
+    not a fault.
+
+    `advisory` is additive and absent unless the origin earns one; a commissioned and verified lift
+    never carries one. Nothing on the advisory path writes to the drive.
+
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
@@ -105,6 +119,20 @@ def sync(
      A direct read of the slider controller over its serial link (about 100-200 ms). An unreadable slider
     is an error envelope (`502`), unlike the `/v1/state` slot which degrades in place.
 
+    `travel_limits` publishes every layer that constrains travel and the `effective` range they come to
+    together, which is the range `set_height` admits: `model` is `[0, travel_max_m]` from the daemon's
+    configuration, and `unit` is this robot's bench calibration or `null` when none has been recorded. A
+    layer only ever narrows.
+
+    `zero_verification` is separate from `zero_reference` and additive to it. `zero_reference` asks
+    whether the drive can vouch for its origin right now; this asks whether the origin this daemon last
+    wrote has been read back after a power cycle, which is the only evidence that the drive persisted it
+    rather than holding it in RAM. `unrecorded` means this daemon has no record of setting one and is
+    not a fault.
+
+    `advisory` is additive and absent unless the origin earns one; a commissioned and verified lift
+    never carries one. Nothing on the advisory path writes to the drive.
+
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
@@ -126,6 +154,20 @@ async def asyncio_detailed(
 
      A direct read of the slider controller over its serial link (about 100-200 ms). An unreadable slider
     is an error envelope (`502`), unlike the `/v1/state` slot which degrades in place.
+
+    `travel_limits` publishes every layer that constrains travel and the `effective` range they come to
+    together, which is the range `set_height` admits: `model` is `[0, travel_max_m]` from the daemon's
+    configuration, and `unit` is this robot's bench calibration or `null` when none has been recorded. A
+    layer only ever narrows.
+
+    `zero_verification` is separate from `zero_reference` and additive to it. `zero_reference` asks
+    whether the drive can vouch for its origin right now; this asks whether the origin this daemon last
+    wrote has been read back after a power cycle, which is the only evidence that the drive persisted it
+    rather than holding it in RAM. `unrecorded` means this daemon has no record of setting one and is
+    not a fault.
+
+    `advisory` is additive and absent unless the origin earns one; a commissioned and verified lift
+    never carries one. Nothing on the advisory path writes to the drive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,6 +192,20 @@ async def asyncio(
 
      A direct read of the slider controller over its serial link (about 100-200 ms). An unreadable slider
     is an error envelope (`502`), unlike the `/v1/state` slot which degrades in place.
+
+    `travel_limits` publishes every layer that constrains travel and the `effective` range they come to
+    together, which is the range `set_height` admits: `model` is `[0, travel_max_m]` from the daemon's
+    configuration, and `unit` is this robot's bench calibration or `null` when none has been recorded. A
+    layer only ever narrows.
+
+    `zero_verification` is separate from `zero_reference` and additive to it. `zero_reference` asks
+    whether the drive can vouch for its origin right now; this asks whether the origin this daemon last
+    wrote has been read back after a power cycle, which is the only evidence that the drive persisted it
+    rather than holding it in RAM. `unrecorded` means this daemon has no record of setting one and is
+    not a fault.
+
+    `advisory` is additive and absent unless the origin earns one; a commissioned and verified lift
+    never carries one. Nothing on the advisory path writes to the drive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

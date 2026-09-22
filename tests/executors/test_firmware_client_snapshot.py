@@ -104,3 +104,22 @@ def test_the_bundled_client_is_a_real_tree_not_an_empty_directory():
     assert len(files) == ensure.snapshot()["files"], (
         "SNAPSHOT.json counts a different number of generated files than the "
         "tree holds — a partial commit")
+
+
+#: sha256 of the OpenAPI document d1-firmwared 0.3.0 served on d1-2 at
+#: ``GET /openapi.json`` on 2026-09-22 — the daemon the kit is driven against.
+D1_2_SPEC_SHA256 = ("388bcd087a2426a8a8c61ca767439cfed6e094f8bc9e059029ed6c62"
+                    "002cf275")
+
+
+def test_the_bundled_client_matches_the_d1_2_document(spec_document):
+    """The snapshot is the d1-2 daemon's own document, not an older one.
+
+    A bundled client generated from an older spec is what made every connect
+    to d1-2 regenerate (or, without a generator, fall back to a client that
+    provably did not match). The hash is computed from the file on disk, so a
+    hand-edited ``SNAPSHOT.json`` cannot satisfy this.
+    """
+    assert ensure.bundled_spec_sha256() == D1_2_SPEC_SHA256
+    assert ensure.snapshot()["spec_sha256"] == D1_2_SPEC_SHA256
+    assert spec_document["info"]["version"] == "0.3.0"

@@ -6,6 +6,18 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.16.0 — unreleased
+
+### Executor state (redesign step 1)
+
+- **The bundled d1-firmwared client is regenerated from the document the
+  daemon on d1-2 actually serves** (d1-firmwared 0.3.0, `GET /openapi.json`,
+  sha256 `388bcd08…`, 116 paths). The previous snapshot was spec `a66b5a65…`
+  (0.1.0), so every connect to d1-2 either regenerated into `~/.cache` or, on
+  a machine without the generator, fell back to a client that provably did
+  not match. `tests/executors/test_firmware_client_snapshot.py` now pins the
+  d1-2 hash.
+
 ## 0.15.0 — 2026-09-22
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO

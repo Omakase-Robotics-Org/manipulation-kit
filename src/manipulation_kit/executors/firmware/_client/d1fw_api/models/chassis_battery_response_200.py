@@ -25,6 +25,13 @@ class ChassisBatteryResponse200:
     """
     Attributes:
         data (ChassisBattery): `GET /v1/chassis/battery`.
+
+            The single number this route has always returned, plus the reading it was
+            taken from: which transport supplied it, and the per-pack detail when that
+            transport reports any.  The two mobile-base firmware generations read the
+            battery over different transports, so a consumer that must tell "no
+            reading" from "a reading of zero" reads `source` and `percent` rather than
+            `battery_percent` alone.
         message (None): Always null on success.
         status (Literal['ok']):
     """

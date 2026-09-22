@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.arm_lease import ArmLease
     from ..models.arm_state import ArmState
     from ..models.slot_error import SlotError
 
@@ -17,7 +20,7 @@ T = TypeVar("T", bound="ArmSlots")
 
 @_attrs_define
 class ArmSlots:
-    """The two arms' slots, keyed by side.
+    """The two arms' slots, keyed by side, and the operator lease over both.
 
     Attributes:
         a (ArmState | SlotError):
@@ -26,13 +29,16 @@ class ArmSlots:
         b (ArmState | SlotError):
             Either the device's own state or, when that device could not be
             read, a [`SlotError`] naming the failure.
+        lease (ArmLease | None | Unset):
     """
 
     a: ArmState | SlotError
     b: ArmState | SlotError
+    lease: ArmLease | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.arm_lease import ArmLease
         from ..models.arm_state import ArmState
 
         a: dict[str, Any]
@@ -47,6 +53,14 @@ class ArmSlots:
         else:
             b = self.b.to_dict()
 
+        lease: dict[str, Any] | None | Unset
+        if isinstance(self.lease, Unset):
+            lease = UNSET
+        elif isinstance(self.lease, ArmLease):
+            lease = self.lease.to_dict()
+        else:
+            lease = self.lease
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -55,11 +69,14 @@ class ArmSlots:
                 "b": b,
             }
         )
+        if lease is not UNSET:
+            field_dict["lease"] = lease
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.arm_lease import ArmLease
         from ..models.arm_state import ArmState
         from ..models.slot_error import SlotError
 
@@ -99,9 +116,27 @@ class ArmSlots:
 
         b = _parse_b(d.pop("b"))
 
+        def _parse_lease(data: object) -> ArmLease | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                lease_type_1 = ArmLease.from_dict(data)
+
+                return lease_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(ArmLease | None | Unset, data)
+
+        lease = _parse_lease(d.pop("lease", UNSET))
+
         arm_slots = cls(
             a=a,
             b=b,
+            lease=lease,
         )
 
         arm_slots.additional_properties = d
