@@ -798,7 +798,7 @@ def build_robot(kind: str, kin, robot_url: str, scene=None, world0=None,
     # moving after 1.5 s, worst joint 18.2 deg/s", tool 190 mm off). Time the
     # schedule at the speed the arm will actually have.
     from manipulation_kit.executors.firmware.executor import MAX_JOINT_RATE_DEG_S  # noqa: PLC0415
-    vel_ratio = float(os.environ.get("ASTRA_VEL_RATIO", "0.3"))
+    vel_ratio = float(os.environ.get("ASTRA_VEL_RATIO", "0.15"))  # Shu: the moves are not slow; keep the default speed
     rate = MAX_JOINT_RATE_DEG_S * vel_ratio
     arrive_timeout = float(os.environ.get("ASTRA_ARRIVE_TIMEOUT_S", "4.0"))
     print(f"[astra_loop] firmware executor: vel_ratio {vel_ratio}, schedule "
