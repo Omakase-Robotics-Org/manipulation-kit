@@ -719,6 +719,24 @@ def loop(model, robot=None, *, task: str = DEFAULT_TASK, max_turns: int = 8,
                 call["arguments"]["grip"] = cap
                 _say(messages, call_id,
                      f"note: grip {asked!r} is capped to {cap!r} on this robot tonight")
+        # Operator restriction on approach directions. Until the guard knows
+        # the table (manipulation-kit #23), horizontal approaches from HOME
+        # sweep the forearm through the wagon top (d1-2 run5, error 2 latch).
+        allowed = os.environ.get("ASTRA_APPROACH_ALLOW")
+        if allowed and call["name"] in ("approach", "grasp"):
+            asked = call["arguments"].get("approach", "top_down")
+            if asked not in allowed.split(","):
+                record.refused = [{"reason": "approach_disabled",
+                                   "detail": f"{asked!r} approaches are disabled on this robot "
+                                             f"tonight; allowed: {allowed}"}]
+                _say(messages, call_id,
+                     f"{call['name']} was refused: the {asked!r} approach direction is "
+                     f"disabled on this robot (the guard cannot yet see the table); "
+                     f"use one of: {allowed}. If top_down is refused near the body, the "
+                     f"object is closer than you declared — re-check with locate.")
+                trace.write(record)
+                _dump_messages(trace_path, messages)
+                continue
         primitive = decode(call["name"], call["arguments"], world)
         if not isinstance(primitive, object) or getattr(primitive, "ok", None) is False:
             record.refused = [primitive.to_json()]
