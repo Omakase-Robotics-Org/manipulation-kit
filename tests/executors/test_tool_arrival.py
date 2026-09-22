@@ -390,7 +390,7 @@ def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
     """Depth is what CONTACT takes, and pushing into it is F5.
 
     A descent deliberately ends with the fingertips 3 mm off the surface
-    (``approach.SUPPORT_CLEARANCE_M``), so an arm that parks a centimetre high
+    (``orientation.SUPPORT_CLEARANCE_M``), so an arm that parks a centimetre high
     with the jaws still lined up has met something. The barrier says so and
     stops; it does not command the same pose deeper, which is how ten grasps
     out of ten jammed their fingers on the table.
@@ -401,10 +401,13 @@ def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
     plan = _grasp(world, d1_arm)
 
     class StopsShort(DroopingExecutor):
-        """Every command lands 12 mm short ALONG the approach axis — 2.5 deg
-        in joints, inside the joint barrier and outside the tool one."""
+        """Every command lands 11 mm short ALONG the approach axis — inside
+        the 3 deg joint barrier and outside the 10 mm tool one. (12 mm until
+        0.16.0 step 3: the grasp point is now 7 mm lower on this fixture —
+        its table is the descent floor — and at that posture 12 mm is
+        3.03 deg, which the joint barrier catches first.)"""
 
-        short_m = 0.012
+        short_m = 0.011
 
         def measured(self):
             if self.commanded is None:
