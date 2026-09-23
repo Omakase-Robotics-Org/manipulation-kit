@@ -3,12 +3,14 @@
 Two halves, because CI has no CAD (it is withheld, see LICENSE-STATUS.md):
 
 * **Always** — the committed ``ARM_CAPSULES`` are exactly the fit record
-  ``arm_capsule_fit.json``, the record says no vertex of either arm's meshes
-  protrudes from its link's capsules, and ``d1.urdf`` carries exactly those
-  capsules. Editing a radius by hand fails here.
+  ``arm_capsule_fit.json``, the record's per-link residual (how far the
+  worst mesh vertex sits outside the capsules: the housing rims and tube
+  ends the model does not cover) stays within the accepted bound, and
+  ``d1.urdf`` carries exactly those capsules. Editing a radius by hand fails
+  here.
 * **With the CAD** (``MKIT_ASSETS_DIR``) — the meshes are the ones the record
-  was fitted to (sha256), every vertex really is inside (max protrusion
-  <= 0 mm, 1 um float tolerance), and re-running the fit reproduces the record.
+  was fitted to (sha256), no vertex sticks out further than the link's
+  recorded residual + 1 mm, and re-running the fit reproduces the record.
 """
 import json
 import math
@@ -37,10 +39,15 @@ def test_generator_capsules_are_the_fit_record():
         assert _norm(gen.ARM_CAPSULES[link]) == _norm(entry["capsules"]), link
 
 
-def test_the_record_says_every_vertex_is_inside():
+#: The residual Shu accepted on 2026-09-23 (Link4's elbow-housing rim is the
+#: worst); a refit that leaves more of the arm outside must be looked at.
+ACCEPTED_RESIDUAL_MM = 25.0
+
+
+def test_the_recorded_residuals_stay_within_what_was_accepted():
     for link, entry in RECORD["links"].items():
         for side, meta in entry["meshes"].items():
-            assert meta["max_protrusion_mm"] <= 0.0, (link, side, meta)
+            assert meta["max_protrusion_mm"] <= ACCEPTED_RESIDUAL_MM, (link, side, meta)
             assert meta["vertices"] > 1000, (link, side, meta)
 
 
@@ -78,8 +85,11 @@ def test_every_mesh_vertex_is_inside_its_capsules(link):
     for side, (path, P) in _clouds(link).items():
         meta = RECORD["links"][link]["meshes"][side]
         assert fit.sha256(path) == meta["sha256"], f"{link}_{side} mesh changed: refit"
-        worst = float(fit.protrusion(P, gen.ARM_CAPSULES[link]).max())
-        assert worst <= 1e-6, f"{link}_{side}: a vertex is {worst * 1000:.3f} mm outside"
+        worst = float(fit.protrusion(P, gen.ARM_CAPSULES[link]).max()) * 1000
+        allowed = meta["max_protrusion_mm"] + fit.TOLERANCE_M * 1000
+        assert worst <= allowed, (
+            f"{link}_{side}: a mesh vertex is {worst:.3f} mm outside the capsules, "
+            f"recorded residual {meta['max_protrusion_mm']:.3f} mm + 1 mm")
 
 
 @pytest.mark.skipif(assets.assets_root() is None and fit.mesh_path("Link2", "R") is None,

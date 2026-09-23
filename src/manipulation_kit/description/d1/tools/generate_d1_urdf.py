@@ -61,8 +61,9 @@ PROVENANCE OF NUMBERS
   ±0.037 m from the D1 STEP assembly (see d1-face/extract_arm_mounts.py),
   first written down in d1-manip-sim's d1_dual.urdf and now carried by
   d1_yubi_description_v2/urdf/d1_yubi.urdf, which is generated from here.
-* Arm link capsules: FITTED to the vendor arm meshes (ARM_CAPSULES,
-  tools/fit_arm_capsules.py, record arm_capsule_fit.json). The frozen
+* Arm link capsules: tubes at the real link radii + 97 mm J2/J4 housings,
+  fitted to the vendor arm meshes (ARM_CAPSULES, tools/fit_arm_capsules.py,
+  record and residuals in arm_capsule_fit.json). The frozen
   config/safety_zones.json / collision_model.h radii are no longer used.
 * YUBI hand mount + palm/camera/finger geometry: d1-manip-sim
   assets/d1_yubi.urdf (merged main, PR #12) and
@@ -212,44 +213,43 @@ TCP_RPY = (1.5708, -1.5708, 0.0)
 # than the vendor meshes.
 CAP_RADII = {"TCP_Link": 0.03}
 
-# The guard's arm model: per link, one tube capsule and one housing capsule
-# in the link's own frame, (part, a, b, radius), metres. FITTED to the vendor
-# arm meshes by tools/fit_arm_capsules.py so that every mesh vertex of both
-# arms lies inside (arm_capsule_fit.json is the record, and
-# tests/guard/test_arm_capsule_fit.py the check). A capsule's surface is
-# therefore the arm's real outer shell to within the fit's slack, not an
-# envelope around a thinner model, and the guard's margins are real air.
+# The guard's arm model, (part, a, b, radius) in each link's own frame,
+# metres, fitted to the vendor arm meshes by tools/fit_arm_capsules.py: a
+# tube per link at the link's real tube radius, and the shoulder (J2) and
+# elbow (J4) housings as the measured 97 mm cylinders (radius 0.0485 capsules
+# on the joint axis), every capsule trimmed so its rounded ends stop at the
+# mesh's ends. The housing cover-plate rims and the tube ends are NOT
+# covered: they stick out by up to ~24 mm (Link4), recorded per link in
+# arm_capsule_fit.json and pinned by tests/guard/test_arm_capsule_fit.py.
+# Shu accepted that on 2026-09-23 over ~200 extra capsules per arm; a true
+# cylinder primitive may replace the housing capsules later.
 ARM_CAPSULES = {
     "Base": (
         ("tube", (0.0, 0.0, 0.0), (0.0, 0.0, 0.1586), 0.0566),
     ),
     "Link1": (
-        ("tube", (0.0, 0.0, -0.108), (0.0, 0.0, 0.0), 0.0495),
-        ("housing", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0565),
+        ("tube", (0.0, 0.0, -0.077), (0.0, 0.0, 0.011), 0.0556),
     ),
     "Link2": (
-        ("tube", (0.0, 0.02, 0.0), (0.0, 0.1, 0.0), 0.0572),
-        ("housing", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0681),
+        ("housing_j2", (0.0, 0.0, -0.0094), (0.0, 0.0, 0.0094), 0.0485),
+        ("tube", (0.0, 0.0485, 0.0), (0.0, 0.0875, 0.0), 0.0425),
     ),
     "Link3": (
-        ("tube", (0.0, 0.0, -0.129), (0.0, 0.0, -0.0174), 0.043),
-        ("housing", (0.018, 0.01, 0.0), (0.018, -0.01, 0.0), 0.0487),
+        ("housing_j4", (0.018, 0.0, 0.0), (0.018, 0.0, 0.0), 0.0485),
+        ("tube", (0.0, 0.0, -0.0965), (0.0, 0.0, 0.0), 0.0425),
     ),
     "Link4": (
-        ("tube", (0.0014, -0.02, 0.0), (0.005, -0.0735, 0.0), 0.059),
-        ("housing", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0638),
+        ("housing_j4", (0.0, 0.0, -0.0059), (0.0, 0.0, 0.0059), 0.0485),
+        ("tube", (0.0, -0.0485, 0.0), (0.0008, -0.0581, 0.0), 0.0465),
     ),
     "Link5": (
-        ("tube", (0.0, 0.0, -0.139), (0.0, 0.0, -0.0211), 0.0499),
-        ("housing", (0.0, 0.03, 0.0), (0.0, -0.03, 0.0), 0.0232),
+        ("tube", (0.0, 0.0, -0.1209), (0.0, 0.0, -0.0277), 0.0482),
     ),
     "Link6": (
-        ("tube", (0.0, 0.0, -0.005), (0.0, 0.0, 0.0), 0.0368),
-        ("housing", (0.0, 0.02, 0.0), (0.0, -0.02, 0.0), 0.0339),
+        ("tube", (0.0, 0.0052, 0.0), (0.0, 0.0038, 0.0), 0.0313),
     ),
     "Link7": (
-        ("tube", (0.0, -0.02, 0.0), (0.0, -0.057, 0.0), 0.0442),
-        ("housing", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.049),
+        ("tube", (0.0, -0.0047, 0.0), (0.0, -0.0525, 0.0), 0.0345),
     ),
 }
 

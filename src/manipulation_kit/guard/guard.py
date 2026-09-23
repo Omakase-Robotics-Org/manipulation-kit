@@ -9,9 +9,12 @@ collision_model.h} and config/safety_zones.json:
   * angles in DEGREES, SDK order J1..J7;
   * SDK ArmSide 'A' = "_R" link tree = physical LEFT arm (+y);
     SDK ArmSide 'B' = "_L" link tree = physical RIGHT arm (-y);
-  * torso keep-out margin default 0.005 m, arm-arm min distance 0.035 m,
-    self margin 0.0. The model is fitted to the real shell (mesh-fitted arm
-    capsules, measured torso box), so a margin is real shell-to-shell air.
+  * torso keep-out margin default 0.005 m, arm-arm min distance 0.045 m,
+    self margin 0.0. The model is the real arm (tubes at the links' real
+    radii, the 97 mm J2/J4 housings) against the measured torso box, so a
+    margin is real shell-to-shell air -- except at the housing cover-plate
+    rims and tube ends, which stick out of the capsules by up to ~24 mm
+    (recorded in description/d1/arm_capsule_fit.json).
 
 The guard is OPT-IN: nothing in the SDK behaves differently unless a
 caller constructs a MotionGuard / wraps its robot in GuardedRobot (see
@@ -165,7 +168,7 @@ class MotionGuard:
         Required clearance between any arm capsule and the torso/head
         keep-out boxes (default 0.005: real air, the model being the shell).
     arm_arm_margin_m : float
-        Minimum distance between the two arms' capsules (default 0.035:
+        Minimum distance between the two arms' capsules (default 0.045:
         keeps two grippers side by side passing from ~140 mm apart).
     self_margin_m : float
         Extra margin for same-arm non-adjacent pairs (default 0.0, as in
@@ -200,7 +203,7 @@ class MotionGuard:
 
     def __init__(self, urdf_path: str = DEFAULT_URDF, *,
                  body_margin_m: float = 0.005,
-                 arm_arm_margin_m: float = 0.035,
+                 arm_arm_margin_m: float = 0.045,
                  self_margin_m: float = 0.0,
                  clamp_limits: bool = True,
                  check_body: bool = True,
