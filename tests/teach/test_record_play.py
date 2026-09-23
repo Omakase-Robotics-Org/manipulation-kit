@@ -14,7 +14,8 @@ from manipulation_kit.teach import (export, keyframes_from_samples, load_home,
                                     parse_csv, record, to_csv, trajectory_points)
 from manipulation_kit.teach.gesture_csv import Gesture, Keyframe
 from manipulation_kit.teach.play import play
-from manipulation_kit.teach.record import COMPLIANCE, HOLD_RATIO, Recording
+from manipulation_kit.executors.firmware.executor import RECOVER_RATIO
+from manipulation_kit.teach.record import COMPLIANCE, Recording
 
 HOME = load_home()
 
@@ -48,7 +49,7 @@ def test_compliance_record_is_gesture_records_sequence(daemon, robot_factory):
     assert soft[0]["holder"] == robot.holder
     assert not daemon.posts("/b/mode")[1:], "the untaught arm stays in position"
     assert daemon.posts("/a/recover") == [("/v1/arm/a/recover",
-                                           {"vel_ratio": HOLD_RATIO, "acc_ratio": HOLD_RATIO})]
+                                           {"vel_ratio": RECOVER_RATIO, "acc_ratio": RECOVER_RATIO})]
     assert not daemon.posts("brake_release")
     # sampled at 20 Hz for the 6 s window, timestamps from the executor clock
     assert 110 <= len(rec.samples) <= 121
@@ -76,10 +77,9 @@ def test_brake_guide_idles_then_releases_and_always_engages(daemon, robot_factor
             def stop():
                 calls["n"] += 1
                 if calls["n"] == 5:
-                    daemon.fail_on = "/v1/arm/a/state"
+                    raise RuntimeError("injected failure mid-take")
                 return False
             _record(robot, daemon, stop=stop, duration_s=None)   # default guide
-    daemon.fail_on = None
     order = [p for m, p, b in daemon.calls if m == "POST" and "/a/" in p]
     assert order.index("/v1/arm/a/mode") < order.index("/v1/arm/a/brake_release")
     release = daemon.posts("brake_release")[0][1]

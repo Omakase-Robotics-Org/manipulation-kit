@@ -113,6 +113,26 @@ guard") — **breaking for `mkit-teach` callers**:
   its daemon is redeployed with PR #102, so connecting to it regenerates the
   client again, as designed. `guard` is optional in the status schema, so a
   bundled client still decodes an older daemon's status.
+- **Confirmed mode transitions + a teardown the controller accepts** (first
+  live `mkit-teach record` on d1-2, 2026-09-23 20:16Z, d1-firmware main
+  5e7e23a). The idle request answered in 0 ms and the brake release 5 ms
+  later was refused (the controller reported idle only 11 ms after the
+  request); the recover 2 ms after the engage was refused (`RESET1` code 8,
+  mode flapping idle/error); an arm left idle by hand 40.2 deg from its
+  command stopped the session in `FirmwareExecutor.__enter__`. Now:
+  new `FirmwareExecutor.wait_for_mode()` (poll the generated `ArmState`
+  until the REPORTED mode matches; `ModeUnconfirmed`, new, on timeout or an
+  unexpected `error`), used by `position_mode()` and by `record` after every
+  mode request; order **idle → confirmed → 3-2-1 → release = t 0**; teardown
+  = brakes engaged → steady mode + stationary for 0.3 s → `recover_arm()`
+  (confirmed `position`, 3 attempts 1 s apart) → else the arm is left idle
+  with the brakes engaged and `exit_problems` / a WARNING line say how to
+  recover (console Arms → Recover, `POST /v1/arm/{side}/recover`);
+  `FirmwareExecutor(recover_on_entry=True, announce=)` (`recover_idle_arms()`)
+  recovers every non-position arm at its measured pose before position mode,
+  announced — set by `mkit-teach record` and `play` only; the agent loop's
+  executor still refuses. `record.HOLD_RATIO` is gone (`RECOVER_RATIO` in the
+  executor).
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

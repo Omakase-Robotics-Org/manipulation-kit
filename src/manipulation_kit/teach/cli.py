@@ -42,9 +42,15 @@ def _say(state: str, message: str) -> None:
 
 
 def _executor(args, *, lease_class: str):
+    """The executor both robot commands drive. ``recover_on_entry``: teaching
+    starts by holding the arms where they ARE, so an arm found idle (or
+    faulted) — e.g. left there by hand — is recovered at its measured pose,
+    announced, instead of refused (docs/teach.md, "Order of operations")."""
     from ..executors.firmware import FirmwareExecutor  # noqa: PLC0415
     return FirmwareExecutor(base_url=args.url, lease_class=lease_class,
-                            vel_ratio=args.vel_ratio, acc_ratio=args.vel_ratio)
+                            vel_ratio=args.vel_ratio, acc_ratio=args.vel_ratio,
+                            recover_on_entry=True,
+                            announce=lambda line: _say("starting", line))
 
 
 # -- record ------------------------------------------------------------------ #
@@ -113,8 +119,9 @@ def cmd_record(args) -> int:
                          adj_limit_mm=args.adj_limit_mm, countdown_s=args.countdown,
                          allow_bare_flange=args.allow_bare_flange, on_state=_say)
         except KeyboardInterrupt:
-            print("interrupted; brakes engaged and the arms put back in a "
-                  "position hold", file=sys.stderr)
+            print("interrupted; brakes engaged first, then the position hold "
+                  "(any arm that could not be recovered is named above)",
+                  file=sys.stderr)
             return 130
     rec.save(Path(args.out))
     print(f"saved {args.out}: {len(rec.samples)} samples. Next: "

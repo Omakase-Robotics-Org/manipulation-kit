@@ -37,30 +37,64 @@ mkit-teach record take.json --compliance    # 旧 gesture_record の force_compl
    （両腕でも 1 回。腕ごとには聞かない。`--yes` はスクリプト専用）。
 2. アームリースを `operator` クラスで取る（テレオペ・コンソールと同格。
    `policy` の自律動作より優先）。
-3. 位置モードでまっすぐ HOME へ移動（記録しない）。**ジェスチャーは必ず HOME
+3. **入口の recover**: 位置モードでない腕（idle / error など。手で動かして
+   idle のまま置いた腕を含む）があれば、その腕を**計測姿勢で** recover して
+   位置保持にする（`[starting] recovering arm b (idle, 40.2 deg from its
+   command)` と表示）。教えない側の腕も対象（位置モードと HOME 移動は両腕を
+   動かすため）。これは teach の明示的な選択で、エージェント実行の経路では
+   従来どおり拒否する。
+4. 位置モードでまっすぐ HOME へ移動（記録しない）。**ジェスチャーは必ず HOME
    から始まる**: `--no-home-start` で移動を省いた場合、教える腕のどれかの関節が
    HOME から 2 deg を超えていれば開始を拒否する。
-4. **カウントダウン 3, 2, 1**（`--countdown N`、0 で無し）。
-5. 柔らかくする:
-   * 既定（ブレーキ解放）: `idle`（サーボ OFF）→ `brake_release`
-     （確認語 `RELEASE_BRAKE`、時限窓 20 s、記録中は窓の 1/3 ごとに再送）。
+5. 柔らかくする（順序は下の「動作の順序」）:
+   * 既定（ブレーキ解放）: `idle`（サーボ OFF）を要求し、**腕が idle と報告する
+     まで待つ**（ブレーキは保持したままなので安全）→ **カウントダウン 3, 2, 1**
+     （`--countdown N`、0 で無し）→ "0" で `brake_release`（確認語
+     `RELEASE_BRAKE`、時限窓 20 s、記録中は窓の 1/3 ごとに再送）。
      **解放が受理された瞬間が t = 0**。そこから即記録開始（解放前の姿勢は記録
-     しない）。
-   * `--compliance`（旧 gesture_record と同じ）: `force_compliance`
-     （力方向 `[1,0,0,0,0,0]`、目標力 0、調整上限 2 mm、速度/加速度比 0.05）。
-     サーボは入ったまま、手で押すと逃げる。入ってから 1.5 秒待ってから記録開始。
+     しない）。idle の代わりに error と報告されたら故障として止める
+     （ブレーキは解放しない）。
+   * `--compliance`（旧 gesture_record と同じ）: カウントダウンの後に
+     `force_compliance`（力方向 `[1,0,0,0,0,0]`、目標力 0、調整上限 2 mm、
+     速度/加速度比 0.05）。モード遷移と静止を確認してから 1.5 秒待って記録開始。
+     サーボは入ったまま、手で押すと逃げる。
      デーモンにツール（エンドエフェクタ）が登録されていないと拒否する
      （空フランジとして重力補償され手首が垂れるため。何も付けていない時だけ
      `--allow-bare-flange`）。
-   * `--no-brake`: サーボ OFF のみ、ブレーキには触らない
-     （idle で手で動かせる個体向け）。
+   * `--no-brake`: カウントダウンの後にサーボ OFF のみ（idle を確認）、
+     ブレーキには触らない（idle で手で動かせる個体向け）。
 6. 手で腕を動かす。**Enter** で停止（Ctrl-C でも停止し保存される）。
    `--duration-s N` で自動停止、`--stationary-s N` で N 秒静止したら停止、
    `--stop-file PATH` でファイルが現れたら停止。
 7. 停止時は（例外時も必ず）**まずブレーキ締結**（他の何よりも先。再送スレッドは
-   ロックで止めるので、締結の後に解放が飛ぶことはない）→ `recover`（計測姿勢で
-   位置保持、比 0.05 = 旧 `lockCurrentPositionMode(5,5)`）→ リース返却 →
+   ロックで止めるので、締結の後に解放が飛ぶことはない）→ 腕が**静止し、同じ
+   モードを 0.3 s 保つまで待つ** → `recover`（計測姿勢で位置保持、比 0.05 =
+   旧 `lockCurrentPositionMode(5,5)`。position と報告されるまで確認）。
+   コントローラが拒否したら 1 秒おきに計 3 回まで試す。それでも駄目なら腕は
+   **idle・ブレーキ締結のまま（安全）**残し、`WARNING: arm b was not put back
+   in a position hold …` と表示して記録の `meta.exit_problems` に残す。復帰は
+   コンソールの Arms → Recover か `POST /v1/arm/b/recover`。→ リース返却 →
    テイク確定。
+
+### 動作の順序（2026-09-23 d1-2 初回実機で確定）
+
+```
+lease → [入口 recover: idle/error の腕] → position（報告を確認）→ HOME
+      → idle 要求 → idle と報告されるまで待つ（ブレーキ保持中＝安全）
+      → 3, 2, 1 → brake_release（"0"＝t = 0）→ 記録
+      → 停止: brake_engage → 静止＋モード安定 0.3 s → recover（最大 3 回, 1 s 間隔）
+      → position を確認 → リース返却
+```
+
+初回（kit 3fad724）で起きたこと: `POST /v1/arm/{side}/mode` はデーモンが要求を
+**受け付けた時点で**返る（0 ms）。コントローラが idle と報告したのは 11 ms 後で、
+キットはその 5 ms 前に `brake_release` を送り、デーモンは「位置モードの腕は
+解放しない」と 409 で拒否した。続く `recover` はブレーキ締結の 2 ms 後で、
+モードが idle/error を往復する間にコントローラが `RESET1`（code 8）を拒否した。
+コンソールの Brakes 画面で解放できたのは、その時点で腕がすでに idle だった
+から（デーモンの規則は一貫しており、キットが競走していただけ）。もう 1 回は、
+オペレーターが手で idle にして動かした腕（指令と計測が 40.2 deg ずれていた）で
+`FirmwareExecutor.__enter__` が停止した。今は 3. の入口 recover で始められる。
 
 記録ファイル（JSON）は生データのまま（平滑化も手首固定もしていない）なので、
 設定を変えて何度でも 2 以降をやり直せる。グリッパーの閉度も記録されるが、
@@ -134,7 +168,8 @@ UNSAFE 印・チェック NG（リミット/速度/時刻）・コントロー�
 （`speed_only` のときは「デーモンは干渉を検査しない＝教示どおりに再生する」旨も
 表示する）。HOME から
 2 deg 以上離れていれば先に HOME へ移動し、再生後に HOME 到着（計測値）と静止を
-確認する。
+確認する。record と同じく、位置モードでない腕（idle / error）は入口で計測姿勢に
+recover してから始める（表示あり）。
 
 ### ガード: ジェスチャー再生は speed_only（d1-firmware PR #102）
 
@@ -173,8 +208,9 @@ Shu 2026-09-23 17:50Z「gesture 再生の時はスピードガードはあって
 * サーボ OFF・ブレーキ強制開放: **支えていない腕はその瞬間に重力で落ちる。**
 * 解放する腕は、解放前から記録終了まで**必ず人が支える**。落下経路に手や顔を
   入れない。確認（`HOLDING`）はセッションに 1 回、教える腕すべてに対して。
-* カウントダウン 3, 2, 1 の後にブレーキが開き、その瞬間から記録。停止（Enter）
-  で**まずブレーキ締結**、その後に位置保持。
+* サーボ OFF（idle と報告されるまで確認）→ カウントダウン 3, 2, 1 → ブレーキ
+  が開き、その瞬間から記録。停止（Enter）で**まずブレーキ締結**、腕が静止して
+  から位置保持（recover）。recover できなければ idle・ブレーキ締結のまま残す。
 * 解放は時限式: デーモン自身が窓（既定 20 s、記録中は 1/3 ごとに再送）の
   終わりに締結する。このツールが落ちても窓で必ず締まる。
 * 締結されるのは: 記録終了（このツール）、窓切れ、`brake_engage`、estop、
@@ -269,6 +305,36 @@ player changed:
 Also: timestamps are real (the daemon read is not perfectly periodic), the raw
 capture is kept raw, and Douglas–Peucker (`--method dp`) is offered beside the
 greedy collinear walk.
+
+### Confirmed mode transitions (first live run, d1-2 2026-09-23)
+
+`POST /v1/arm/{side}/mode` returns when the daemon has ACCEPTED the request,
+not when the controller has switched; the daemon's own confirmed transitions
+(`arm_recovery.rs`, `confirmed(…, 500, 8, …)`) poll for the report. The kit
+now does the same, in one place:
+
+* `FirmwareExecutor.wait_for_mode(side, modes, timeout_s=3.0, poll_s=0.02,
+  steady_s=0, stationary=False)` polls the generated `ArmState` until `mode`
+  is in `modes` (any mode for `None`), optionally unchanged for `steady_s`
+  and `stationary`. Timeout → `ModeUnconfirmed` naming the last mode; an
+  `error` report when `error` was not asked for → `ModeUnconfirmed` at once.
+* `position_mode()` confirms `position` after each request (the executor's
+  "completed means arrived" contract, like the end-of-motion barrier).
+* `record` confirms `idle` before `brake_release` (the daemon's preflight
+  accepts idle|error; an error after an idle request is a fault, surfaced),
+  and for `force_compliance` waits for `COMPLIANCE_REPORTS` (`torque`, `pvt`,
+  `release`, `unknown`) + `stationary`. The document maps no
+  `ArmModeCommandMode` onto the feedback `ArmMode`, so "servo-on, not the
+  position hold it left, not idle, at rest" is the derivable check.
+* `FirmwareExecutor.recover_arm(side, steady_s=…)`: optional steady wait,
+  `arm_recover` at 0.05, confirmed `position`; 3 attempts, 1 s apart; a lost
+  lease is never retried. Teardown uses it with `steady_s=0.3`, after the
+  brakes are engaged.
+* `FirmwareExecutor(recover_on_entry=True, announce=…)` recovers every
+  non-position arm before `position_mode` (`recover_idle_arms()`, lines kept
+  in `entry_recoveries` and in the recording's `meta.entry_recoveries`).
+  Only `mkit-teach` sets it; the default executor still refuses an idle arm
+  whose command is more than 3 deg from its measurement.
 
 ### Daemon surface used (generated client only)
 

@@ -7,6 +7,11 @@ verbs (``arm_mode``, ``arm_recover``, ``brake_release``, ``brake_engage``) —
 and records every call as data. The arms FOLLOW: a completed trajectory leaves
 them at its last knot, and while an arm is soft (``force_compliance`` /
 ``idle``) its feedback is whatever ``hand(t)`` — the operator — says.
+
+Like the real daemon, a mode request is ACCEPTED at once and REPORTED later:
+``mode_lag`` state reads after the request (the controller's transition),
+never for an arm in ``stuck``. ``modes`` is what the arm reports, and the
+brake release is refused on anything but a reported idle/error.
 """
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 
-from manipulation_kit.executors.firmware import FirmwareExecutor
+from manipulation_kit.executors.firmware import FirmwareError, FirmwareExecutor
 from manipulation_kit.teach import load_home
 
 HOME = load_home()
@@ -40,6 +45,21 @@ class FakeDaemon:
     spec_sha256: str = "f" * 64
     #: the document's TrajectoryGuard values; () = a daemon before PR #102
     guards: Tuple[str, ...] = ("full", "speed_only")
+    #: state reads before a requested mode is reported
+    mode_lag: int = 0
+    #: arms whose reported mode never changes
+    stuck: Tuple[str, ...] = ()
+    #: recovers the controller refuses before it accepts one (RESET1 code 8)
+    recover_refusals: int = 0
+    #: wire -> degrees the commanded pose sits from the measured one
+    command_gap: Dict[str, float] = field(default_factory=dict)
+    #: fake-clock time of every recover request
+    recover_times: List[float] = field(default_factory=list)
+    _due: Dict[str, list] = field(default_factory=dict)
+
+    def _request_mode(self, wire: str, mode: str) -> None:
+        if wire not in self.stuck:
+            self._due[wire] = [mode, int(self.mode_lag)]
 
     def _log(self, method, path, body=None):
         self.calls.append((method, path, body))
@@ -56,7 +76,7 @@ class FakeDaemon:
         if path == "/v1/arm/lease":
             return None
         if path.endswith("/mode"):
-            self.modes[path.split("/")[3]] = body["mode"]
+            self._request_mode(path.split("/")[3], body["mode"])
             return None
         if path == "/v1/arm/trajectory/start":
             self._job = body["waypoints"]
@@ -79,12 +99,20 @@ class FakeDaemon:
     # -- generated-model reads ---------------------------------------------- #
     def arm_state(self, wire: str):
         self._log("GET", f"/v1/arm/{wire}/state")
+        due = self._due.get(wire)
+        if due is not None:
+            if due[1] > 0:
+                due[1] -= 1
+            else:
+                self.modes[wire] = due[0]
+                del self._due[wire]
         if self.hand is not None and self.modes[wire] in ("force_compliance", "idle"):
             self.pose[wire] = list(self.hand(self.clock())[wire])
         q = tuple(self.pose[wire])
         mode = {"force_compliance": "torque"}.get(self.modes[wire], self.modes[wire])
+        command = (q[0] + self.command_gap.get(wire, 0.0),) + q[1:]
         return SimpleNamespace(mode=mode, error_code=0, feedback_joints=q,
-                               command_joints=q, feedback_velocity=(0.0,) * 7,
+                               command_joints=command, feedback_velocity=(0.0,) * 7,
                                feedback_torque=(0.0,) * 7, stationary=True)
 
     def gripper_state(self, wire: str):
@@ -98,20 +126,31 @@ class FakeDaemon:
     # -- teach verbs --------------------------------------------------------- #
     def arm_mode(self, wire, mode, *, holder=None, **fields):
         self._log("POST", f"/v1/arm/{wire}/mode", dict(fields, mode=mode, holder=holder))
-        self.modes[wire] = mode
+        self._request_mode(wire, mode)
 
     def arm_recover(self, wire, *, vel_ratio=None, acc_ratio=None):
         self._log("POST", f"/v1/arm/{wire}/recover",
                   {"vel_ratio": vel_ratio, "acc_ratio": acc_ratio})
+        self.recover_times.append(self.clock())
         if self.brakes[wire]:
             raise AssertionError("recover while the brakes are released")
+        if self.recover_refusals > 0:
+            self.recover_refusals -= 1
+            raise FirmwareError("POST", f"/v1/arm/{wire}/recover", 409,
+                                "command refused: arm_para_write_refused RESET1 code 8")
+        # the daemon's recover confirms position itself before it answers
+        self._due.pop(wire, None)
         self.modes[wire] = "position"
+        self.command_gap.pop(wire, None)
 
     def brake_release(self, wire, *, seconds, holder=None):
         self._log("POST", f"/v1/arm/{wire}/brake_release",
                   {"confirm": "RELEASE_BRAKE", "seconds": seconds, "holder": holder})
         if self.modes[wire] not in ("idle", "error"):
-            raise AssertionError("brake_release on an arm whose servos are on")
+            raise FirmwareError(
+                "POST", f"/v1/arm/{wire}/brake_release", 409,
+                f"command refused: arm {wire} is in mode {self.modes[wire]}: "
+                f"its servos are holding it")
         self.brakes[wire] = True
 
     def brake_engage(self, wire):

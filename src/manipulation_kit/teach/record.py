@@ -16,37 +16,52 @@ client (:class:`~manipulation_kit.executors.firmware.FirmwareClient`) and the
 kit's :class:`~manipulation_kit.executors.firmware.FirmwareExecutor` (lease,
 position mode, trajectories, arrival barrier).
 
-The capture, step by step (Shu's operator flow, 2026-09-23):
+The capture, step by step (Shu's operator flow, 2026-09-23; order fixed after
+the first live run on d1-2, see docs/teach.md "Order of operations"):
 
+0. **Entry** (the executor, ``recover_on_entry`` — teach's explicit choice,
+   never the agent loop's): any arm that is not in position (idle, error —
+   e.g. left idle by hand, 40 deg from its command) is recovered at its
+   MEASURED pose, announced (``recovering arm b (idle, 40.2 deg from its
+   command)``) and confirmed ``position``; then position mode at this run's
+   ratios, confirmed. Both arms: position mode and the HOME move drive both.
 1. **Straight to HOME first** in position mode (not recorded), so the teach
    starts wrist-up rather than from wherever the arm sagged. The take ALWAYS
    starts at HOME: with ``--no-home-start`` the operator must have put the
    arms there, and the start is refused when any taught joint is more than
    ``HOME_TOL_DEG`` from HOME.
-2. **Countdown** ``3, 2, 1`` (``countdown_s``), printed through ``on_state``.
-3. **Go soft** — the guide mode, per taught arm:
+2. **Servos off, confirmed** (``brake`` guide only): mode ``idle`` per taught
+   arm, then :meth:`FirmwareExecutor.wait_for_mode` until the arm REPORTS
+   ``idle``. The mode route answers when the request is accepted, not when
+   the controller has switched, and the daemon releases brakes only on a
+   LIVE idle/error arm — the live run's release, 5 ms after the request, was
+   refused. An ``error`` report instead is a fault and stops here. Idle with
+   the brakes holding is safe, so the countdown comes after this.
+3. **Countdown** ``3, 2, 1`` (``countdown_s``), printed through ``on_state``.
+4. **Go soft** at "0" — the guide mode, per taught arm:
 
    ``brake`` (default: hand guiding)
-       mode ``idle`` then ``POST /v1/arm/{side}/brake_release`` (d1-firmware
-       PR #92) with the confirm word ``RELEASE_BRAKE``: servos OFF, holding
-       brakes forced open for a timed window the daemon closes itself;
-       re-sent every third of the window while recording, so the daemon's
-       own timer — not this process — is what closes them if this process
-       dies. **The arm drops under gravity unless someone holds it**; the
-       CLI prints the contract and takes ONE typed ``HOLDING`` per session,
-       for all taught arms. Shu, 2026-09-23: moving the arm in compliance
-       was hard; brakes-off is the teaching default.
+       ``POST /v1/arm/{side}/brake_release`` (d1-firmware PR #92) with the
+       confirm word ``RELEASE_BRAKE``: servos OFF, holding brakes forced
+       open for a timed window the daemon closes itself; re-sent every third
+       of the window while recording, so the daemon's own timer — not this
+       process — is what closes them if this process dies. **The arm drops
+       under gravity unless someone holds it**; the CLI prints the contract
+       and takes ONE typed ``HOLDING`` per session, for all taught arms.
+       Shu, 2026-09-23: moving the arm in compliance was hard; brakes-off is
+       the teaching default.
    ``compliance`` (``--compliance``, gesture_record's own)
        ``POST /v1/arm/{side}/mode`` ``force_compliance`` with
        ``ForceComplianceConfig::xAxisCompliance(2.0)``: force direction
        ``[1,0,0,0,0,0]``, target force 0, force type 0, adjustment limit
        2 mm, ratios 0.05 (``setForceComplianceMode(c, 5, 5)``), measured pose
-       anchored. Servos ON, the arm yields to the hand. Then 1.5 s to settle
-       before sampling, so the switch transient is not recorded.
+       anchored; confirmed as :data:`COMPLIANCE_REPORTS` + stationary. Servos
+       ON, the arm yields to the hand. Then 1.5 s to settle before sampling,
+       so the switch transient is not recorded.
    ``idle`` (``--no-brake``)
-       mode ``idle`` only, for an arm that moves by hand when idle.
+       mode ``idle`` only (confirmed), for an arm that moves by hand when idle.
 
-4. **Sample** ``GET /v1/arm/{side}/state`` (both arms, degrees) at ``rate_hz``
+5. **Sample** ``GET /v1/arm/{side}/state`` (both arms, degrees) at ``rate_hz``
    with timestamps, plus each gripper's closedness where the daemon publishes
    ``open_rad`` (kept in the recording; the CSV has no gripper column).
    ``t = 0`` is the instant the (last) release was acknowledged — the brakes
@@ -54,11 +69,18 @@ The capture, step by step (Shu's operator flow, 2026-09-23):
    on the caller's stop signal, after ``duration_s``, or after
    ``stationary_s`` of < 0.3 deg motion — or, in ``keyframe`` mode, capture
    one pose per operator request.
-5. **Stop = brakes engaged FIRST**: the renewal is stopped under a lock (no
+6. **Stop = brakes engaged FIRST**: the renewal is stopped under a lock (no
    release can land after the engage), ``brake_engage`` goes out on every
-   released arm, and only then ``POST /v1/arm/{side}/recover`` at 0.05 —
-   measured-pose position hold, the daemon's ``lockCurrentPositionMode(5,
-   5)`` — and the take is finalised. On EVERY exit path.
+   released arm; then, per arm, :meth:`FirmwareExecutor.recover_arm` — wait
+   until the arm reports one unchanged mode and ``stationary`` for
+   ``STEADY_S`` (0.3 s), ``POST /v1/arm/{side}/recover`` at 0.05 (the
+   daemon's ``lockCurrentPositionMode(5, 5)``), confirmed ``position``;
+   refused -> retried, 3 attempts 1 s apart. The live run's recover, 2 ms
+   after the engage, was refused (``RESET1`` code 8) while the mode flapped.
+   Still refused: the arm stays idle with the brakes engaged (safe), and
+   ``meta["exit_problems"]`` + a ``WARNING`` line say so and how to recover
+   (console Arms -> Recover, or ``POST /v1/arm/{side}/recover``). On EVERY
+   exit path.
 
 The raw recording is kept raw (no wrist lock, no smoothing): the reduction is
 :mod:`~manipulation_kit.teach.process`, run by ``mkit-teach keyframes`` /
@@ -90,10 +112,14 @@ COMPLIANCE = {"force_direction": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
               "adjustment_limit_mm": 2.0, "target_force": 0.0,
               "force_type": 0, "anchor_command_pose": True,
               "vel_ratio": 0.05, "acc_ratio": 0.05}
+#: What an arm REPORTS once ``force_compliance`` has taken. The document maps
+#: no ``ArmModeCommandMode`` onto an ``ArmMode`` (the feedback enum is idle /
+#: position / pvt / torque / release / error / unknown), so the kit waits for
+#: any servo-on mode that is neither the position hold it left nor idle, and
+#: stationary — an error is a fault, raised at once.
+COMPLIANCE_REPORTS = ("torque", "pvt", "release", "unknown")
 #: gesture_record sleeps this long after entering compliance
 SETTLE_S = 1.5
-#: ``lockCurrentPositionMode(5, 5)``
-HOLD_RATIO = 0.05
 #: gesture_record's stationary test: max joint change per sample [deg]
 STATIONARY_DEG = 0.3
 #: brake window granted per release [s] (the daemon: 1..120, default 30)
@@ -266,7 +292,10 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
                           "firmware_spec": getattr(robot, "firmware_spec", None),
                           "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                           "adj_limit_mm": adj_limit_mm if guide == "compliance" else None,
-                          "brake_window_s": brake_window_s if guide == "brake" else None})
+                          "brake_window_s": brake_window_s if guide == "brake" else None,
+                          # arms the executor recovered on entry (teach's
+                          # recover_on_entry): "recovering arm b (idle, ...)"
+                          "entry_recoveries": list(robot.entry_recoveries)})
     on_state(STARTING, "connecting")
     if home_start:
         on_state(STARTING, "moving to straight HOME (not recorded)")
@@ -302,24 +331,37 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
                     f"gravity-compensate an empty flange and the wrist sags. "
                     f"Configure [arm] end_effector on the daemon, or pass "
                     f"allow_bare_flange / --allow-bare-flange if nothing is mounted.")
-    for remaining in range(int(countdown_s), 0, -1):
-        on_state(STARTING, f"{remaining}")
-        sleep(1.0)
+    from ..executors.firmware.executor import STEADY_S  # noqa: PLC0415
     entered: List[str] = []
     released: List[str] = []
     keeper: Optional[_BrakeKeeper] = None
     problems: List[str] = []
     try:
-        for wire in wires:
-            if guide == "compliance":
-                params = dict(COMPLIANCE, adjustment_limit_mm=float(adj_limit_mm))
-                client.arm_mode(wire, "force_compliance", holder=holder, **params)
-            else:
+        if guide == "brake":
+            # Servos off FIRST, confirmed: the daemon releases the brakes only
+            # on an arm whose LIVE mode is idle (or error), and the mode route
+            # answers before the controller has switched (d1-2 2026-09-23:
+            # the release 5 ms after the idle request was refused). Idle with
+            # the brakes holding is safe, so the countdown runs here and the
+            # release lands on "0".
+            for side, wire in zip(arms, wires):
+                entered.append(wire)
                 client.arm_mode(wire, "idle", holder=holder)
-            entered.append(wire)
+                robot.wait_for_mode(side, ("idle",))
+        _countdown(countdown_s, on_state, sleep)
+        for side, wire in zip(arms, wires):
             if guide == "brake":
                 released.append(wire)      # engaged on exit even if this fails
                 client.brake_release(wire, seconds=brake_window_s, holder=holder)
+            elif guide == "compliance":
+                entered.append(wire)
+                params = dict(COMPLIANCE, adjustment_limit_mm=float(adj_limit_mm))
+                client.arm_mode(wire, "force_compliance", holder=holder, **params)
+                robot.wait_for_mode(side, COMPLIANCE_REPORTS, stationary=True)
+            else:
+                entered.append(wire)
+                client.arm_mode(wire, "idle", holder=holder)
+                robot.wait_for_mode(side, ("idle",))
         if guide == "brake":
             keeper = _BrakeKeeper(client, wires, brake_window_s, holder)
             keeper.start()
@@ -342,21 +384,46 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
                 problems.append(f"brake_engage {wire}: {exc}")
         if keeper is not None:
             keeper.join(timeout=2.0)
-        for wire in entered:
+        # Then the position hold — once the arm has come to rest in one
+        # mode: a recover sent 2 ms after the engage was refused on d1-2
+        # (RESET1 code 8, mode flapping idle/error) — retried, confirmed.
+        for side, wire in zip(arms, wires):
+            if wire not in entered:
+                continue
             try:
-                client.arm_recover(wire, vel_ratio=HOLD_RATIO, acc_ratio=HOLD_RATIO)
-            except Exception as exc:  # noqa: BLE001
-                problems.append(f"recover {wire}: {exc}")
+                robot.recover_arm(side, steady_s=STEADY_S)
+            except Exception as exc:  # noqa: BLE001 - reported, arm left safe
+                problems.append(_unrecovered(wire, guide, exc))
         rec.meta["exit_problems"] = problems
+        for line in problems:
+            on_state(IDLE, f"WARNING: {line}")
     if keeper is not None and keeper.error is not None:
         problems.append(f"brake window renewal failed: {keeper.error}")
+        on_state(IDLE, f"WARNING: {problems[-1]}")
     if len(rec.samples) < 2:
         raise RuntimeError(f"not enough samples to build a gesture "
                            f"({len(rec.samples)}); {'; '.join(problems)}")
     on_state(RECORDED, f"{len(rec.samples)} samples, "
                        f"{rec.times[-1] - rec.times[0]:.1f} s"
-             + (f"; exit problems: {'; '.join(problems)}" if problems else ""))
+             + (f"; {len(problems)} exit problem(s), WARNING above" if problems else ""))
     return rec
+
+
+def _countdown(countdown_s: int, on_state, sleep) -> None:
+    for remaining in range(int(countdown_s), 0, -1):
+        on_state(STARTING, f"{remaining}")
+        sleep(1.0)
+
+
+def _unrecovered(wire: str, guide: str, exc: BaseException) -> str:
+    """What the operator must know about an arm the teardown could not put
+    back in a position hold."""
+    left = ("left in force_compliance" if guide == "compliance" else
+            "left IDLE with its holding brakes ENGAGED (safe: the brakes hold "
+            "it, nothing drives it)")
+    return (f"arm {wire} was not put back in a position hold and is {left}: "
+            f"{exc}. Recover it when it is at rest: d1-firmwared console "
+            f"Arms -> Recover, or POST /v1/arm/{wire}/recover")
 
 
 def _tool_source(client, wire: str) -> str:

@@ -65,7 +65,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Collection, Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -88,7 +88,7 @@ from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
 from .client import lift_state as _lift_state
 from .client import neck_state as _neck_state
 from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
-                     OperationUnavailable,
+                     ModeUnconfirmed, OperationUnavailable,
                      RateRefused, TrajectoryInvalid)
 
 # --------------------------------------------------------------------------- #
@@ -186,6 +186,33 @@ MAX_COMMAND_STEP_DEG = math.degrees(safety.MAX_JOINT_STEP_RAD)
 #: degrees from its measurement.
 ANCHOR_GAP_DEG = 3.0
 
+#: How long a requested mode may take to be REPORTED [s], and the poll period.
+#: ``POST /v1/arm/{side}/mode`` returns once the daemon accepted the request;
+#: the controller reported the transition 11 ms later on d1-2 (2026-09-23),
+#: and the daemon's own confirmed transitions (``arm_recovery::confirmed``)
+#: poll 8 times at 500 ms. 3 s is well past both.
+MODE_TIMEOUT_S = 3.0
+MODE_POLL_S = 0.02
+
+#: ``POST /v1/arm/{side}/recover`` ratios: the daemon's own default, and the
+#: vendor's ``lockCurrentPositionMode(5, 5)``.
+RECOVER_RATIO = 0.05
+#: A recover the controller refuses is retried this many times in all, this
+#: far apart [s]. On d1-2 (2026-09-23) a recover sent 2 ms after the brakes
+#: engaged was refused (``RESET1`` code 8, mode flapping idle/error) while
+#: the arm was still settling.
+RECOVER_ATTEMPTS = 3
+RECOVER_SPACING_S = 1.0
+#: How long an arm must report one unchanged mode AND ``stationary`` before a
+#: recover is sent to it after hand guiding [s].
+STEADY_S = 0.3
+
+
+def _command_gap_deg(state: Any) -> float:
+    """Largest |commanded - measured| joint difference of a generated
+    ``ArmState`` [deg]: how far position control would snap the arm."""
+    return max(abs(c - f) for c, f in zip(state.command_joints, state.feedback_joints))
+
 
 def _given_text(value: Any) -> str:
     """A generated optional string (``None`` / ``Unset`` / text) as text."""
@@ -276,6 +303,8 @@ class FirmwareExecutor:
                  stroke_timeout_s: Optional[float] = None,
                  client_policy: str = "auto",
                  client_cache_dir=None,
+                 recover_on_entry: bool = False,
+                 announce: Callable[[str], None] = lambda line: None,
                  sleep=time.sleep, clock=time.monotonic):
         if transport not in ("trajectory", "stream"):
             raise ValueError("transport must be 'trajectory' or 'stream', "
@@ -343,6 +372,15 @@ class FirmwareExecutor:
         #: knows what it asked for, and a runner that cannot find it refuses
         #: to move a holding hand (F9).
         self._commanded: Dict[str, float] = {}
+        #: Opt-in (``manipulation_kit.teach``): on entry, RECOVER every arm
+        #: that is not in position — idle, error, anything — before position
+        #: mode is engaged, instead of refusing it. Off for everything else:
+        #: an agent loop that finds an arm idle and 40 degrees from its
+        #: command must stop and say so, not move it (``position_mode``).
+        self.recover_on_entry = bool(recover_on_entry)
+        self._announce = announce
+        #: what ``recover_on_entry`` did, one line per recovered arm
+        self.entry_recoveries: List[str] = []
 
     # -- lease ------------------------------------------------------------- #
     def acquire(self, *, strict: bool = False) -> Lease:
@@ -431,6 +469,8 @@ class FirmwareExecutor:
     def __enter__(self) -> "FirmwareExecutor":
         self.acquire()
         try:
+            if self.recover_on_entry:
+                self.recover_idle_arms()
             self.position_mode()
         except BaseException:
             # HAND THE ARMS BACK. A failed setup used to leave the lease
@@ -454,7 +494,9 @@ class FirmwareExecutor:
 
     # -- setup ------------------------------------------------------------- #
     def position_mode(self) -> None:
-        """Put both arms in position control at THIS run's ratios.
+        """Put both arms in position control at THIS run's ratios, and wait
+        until each REPORTS ``position`` ("completed means arrived": the mode
+        route answers on acceptance, not on the transition).
 
         Sent even when the arm already reports ``position``: the ratios are
         part of the request, the daemon's own ``recover`` leaves different ones
@@ -464,8 +506,7 @@ class FirmwareExecutor:
             wire = _wire_side(side)
             state = self.client.arm_state(wire)
             if _word(state.mode) != "position":
-                gap = max(abs(c - f) for c, f in
-                          zip(state.command_joints, state.feedback_joints))
+                gap = _command_gap_deg(state)
                 if state.error_code or gap > ANCHOR_GAP_DEG:
                     raise FirmwareUnavailable(
                         f"arm {wire} is in mode {_word(state.mode)!r} with error "
@@ -476,6 +517,113 @@ class FirmwareExecutor:
             self.client.request("POST", f"/v1/arm/{wire}/mode", self._holder_body({
                 "mode": "position", "vel_ratio": self.vel_ratio,
                 "acc_ratio": self.acc_ratio}))
+            self.wait_for_mode(side, ("position",))
+
+    # -- confirmed mode transitions ---------------------------------------- #
+    def wait_for_mode(self, side: str, modes: Optional[Collection[str]] = None, *,
+                      timeout_s: float = MODE_TIMEOUT_S, poll_s: float = MODE_POLL_S,
+                      steady_s: float = 0.0, stationary: bool = False) -> Any:
+        """Poll ``arm_state`` until the arm REPORTS a mode in ``modes``.
+
+        ``modes=None`` accepts any mode. ``steady_s`` additionally requires
+        the same mode word for that long, and ``stationary`` the daemon's
+        ``stationary`` flag, throughout. Returns the last generated
+        ``ArmState``. Raises :class:`ModeUnconfirmed`, naming the last mode
+        observed, on timeout — and at once when the arm reports ``error``
+        and ``error`` was not asked for: a fault after a mode request is a
+        fault, not a transition still in progress.
+        """
+        wire = _wire_side(side)
+        wanted = None if modes is None else frozenset(modes)
+        asked = ("any mode" if wanted is None else
+                 "mode " + "|".join(sorted(wanted)))
+        if stationary:
+            asked += ", stationary"
+        if steady_s > 0:
+            asked += f", unchanged for {steady_s:g} s"
+        deadline = self._clock() + float(timeout_s)
+        since: Optional[float] = None
+        held: Optional[str] = None
+        while True:
+            self.renew()
+            state = self.client.arm_state(wire)
+            word = _word(state.mode) or "unknown"
+            if wanted is not None and word == "error" and "error" not in wanted:
+                raise ModeUnconfirmed(
+                    f"arm {wire} reported mode 'error' (error code "
+                    f"{state.error_code}) while the kit waited for {asked}: "
+                    f"the controller faulted instead of making the transition")
+            now = self._clock()
+            ok = ((wanted is None or word in wanted)
+                  and (not stationary or bool(state.stationary)))
+            if not ok:
+                since, held = None, None
+            elif since is None or word != held:
+                since, held = now, word
+            if ok and now - since >= steady_s:
+                return state
+            if now >= deadline:
+                raise ModeUnconfirmed(
+                    f"arm {wire}: waited {timeout_s:g} s for {asked}; it last "
+                    f"reported mode {word!r}"
+                    + ("" if not stationary else
+                       f", stationary={bool(state.stationary)}")
+                    + f", error code {state.error_code}")
+            self._sleep(poll_s)
+
+    def recover_arm(self, side: str, *, steady_s: float = 0.0,
+                    attempts: int = RECOVER_ATTEMPTS,
+                    spacing_s: float = RECOVER_SPACING_S) -> Any:
+        """``POST /v1/arm/{side}/recover`` (errors cleared, commanded pose
+        anchored at the measured one, position hold at :data:`RECOVER_RATIO`),
+        confirmed by the arm REPORTING ``position``.
+
+        ``steady_s`` > 0 first waits for the arm to report one unchanged mode
+        and ``stationary`` for that long — after hand guiding the controller
+        refuses a recover sent while the arm is still settling. A refusal or
+        an unconfirmed result is retried, ``attempts`` in all, ``spacing_s``
+        apart; the last failure is raised. A lost lease is never retried.
+        """
+        wire = _wire_side(side)
+        failures: List[str] = []
+        for attempt in range(1, int(attempts) + 1):
+            try:
+                if steady_s > 0:
+                    self.wait_for_mode(side, None, steady_s=steady_s, stationary=True)
+                self.client.arm_recover(wire, vel_ratio=RECOVER_RATIO,
+                                        acc_ratio=RECOVER_RATIO)
+                return self.wait_for_mode(side, ("position",))
+            except LeasePreempted:
+                raise
+            except FirmwareUnavailable as exc:
+                failures.append(f"attempt {attempt}: {exc}")
+                if attempt < attempts:
+                    self._sleep(spacing_s)
+        raise FirmwareUnavailable(
+            f"arm {wire}: recover failed {len(failures)} time(s), "
+            f"{spacing_s:g} s apart; " + "; ".join(failures))
+
+    def recover_idle_arms(self) -> List[str]:
+        """Recover every arm that is not in position (``recover_on_entry``).
+
+        Both arms, always: :meth:`position_mode` engages both and a HOME move
+        drives both, so an untaught arm left idle would be refused just the
+        same. Each recovery is announced and kept in :attr:`entry_recoveries`.
+        """
+        done: List[str] = []
+        for side in SIDES:
+            wire = _wire_side(side)
+            state = self.client.arm_state(wire)
+            word = _word(state.mode) or "unknown"
+            if word == "position":
+                continue
+            line = (f"recovering arm {wire} ({word}, "
+                    f"{_command_gap_deg(state):.1f} deg from its command)")
+            self._announce(line)
+            self.recover_arm(side)
+            done.append(line)
+        self.entry_recoveries = done
+        return done
 
     # -- Executor protocol ------------------------------------------------- #
     def state(self) -> RawState:

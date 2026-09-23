@@ -98,3 +98,17 @@ class OperationUnavailable(FirmwareUnavailable):
     request: a route the document does not publish is a route the kit does not
     call. The message names the route and how to get a client that has it.
     """
+
+
+class ModeUnconfirmed(FirmwareUnavailable):
+    """A mode the kit asked for was not what the arm REPORTED in time.
+
+    ``POST /v1/arm/{side}/mode`` answers as soon as the daemon has accepted
+    the request, not when the controller has made the transition (d1-2
+    2026-09-23: the answer came back in 0 ms and the controller reported
+    ``idle`` 11 ms later). Anything gated on the transition — the brake
+    release accepts only an arm whose LIVE mode is ``idle`` or ``error`` —
+    has to wait for the report; this is what that wait raises when the
+    report never comes, or when the arm reports a fault instead. The
+    message names the last mode observed.
+    """

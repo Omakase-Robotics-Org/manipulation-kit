@@ -32,8 +32,8 @@ from .client import (FirmwareClient, hand_state, joint_state, lift_state,
 from .ensure import (ClientTree, Resolution, bundled_spec_sha256, ensure_client,
                      resolve_client, snapshot)
 from .errors import (ClientUnavailable, DeviceUnavailable, FirmwareError,
-                     FirmwareUnavailable, LeasePreempted, OperationUnavailable,
-                     ProtocolError, RateRefused, TrajectoryInvalid)
+                     FirmwareUnavailable, LeasePreempted, ModeUnconfirmed,
+                     OperationUnavailable, ProtocolError, RateRefused, TrajectoryInvalid)
 from .executor import (ANCHOR_GAP_DEG, DEFAULT_ACC_RATIO,
                        DEFAULT_STROKE_TIMEOUT_S, DEFAULT_TTL_S,
                        DEFAULT_VEL_RATIO, INTERPOLATION_S, LEASE_CLASS,
@@ -48,6 +48,7 @@ __all__ = [
     "DeviceUnavailable", "FirmwareClient", "FirmwareError", "FirmwareExecutor",
     "FirmwareUnavailable", "INTERPOLATION_S", "LEASE_CLASS",
     "Lease", "LeasePreempted", "MAX_COMMAND_STEP_DEG", "MAX_JOINT_RATE_DEG_S",
+    "ModeUnconfirmed",
     "OperationUnavailable",
     "ProtocolError", "RateRefused", "Resolution", "STREAM_HZ",
     "bundled_spec_sha256", "default_holder", "ensure_client", "hand_state",
