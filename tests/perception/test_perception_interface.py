@@ -190,10 +190,18 @@ def test_the_neck_sign_flip_has_one_implementation():
                                                   r.as_quat())
 
 
+#: the one example allowed an HTTP client: the wrist-look judge's client,
+#: which talks to ``jev_judge_server.py`` (a classifier), never to the daemon
+_JUDGE_CLIENT = "jev_judge.py"
+
+
 def test_no_raw_http_neck_or_slider_read_in_the_examples():
     for path in _python_files(EXAMPLES):
         text = path.read_text(encoding="utf-8")
-        assert "urllib" not in text, path
+        if path.name == _JUDGE_CLIENT:
+            assert "/v1/" not in text and "4750" not in text, path
+        else:
+            assert "urllib" not in text, path
         assert "/v1/neck/state" not in text.replace(
             "GET /v1/neck/state", ""), path
     assert not (EXAMPLES / "agent" / "camera.py").exists()

@@ -9,18 +9,24 @@ way a generative model does. What it can do — measured in report
 a prior-shaped answer without it — is place the object RELATIVE TO A MARK the
 kit has drawn. The kit does the rest (``manipulation_kit.agent.servo``).
 
-The part that knows a model exists is in this file: the words of the question,
-the option labels, the client. Nothing here decides a direction, a step or
+The part that knows a model exists is here and in ``jev_judge.py`` (the words
+of the question, the option labels, the local and remote judge). Nothing here decides a direction, a step or
 whether the stroke may run::
 
     python examples/agent/jev_servo.py --dry-run --misplace-mm 40   # no model, no key
     python examples/agent/jev_servo.py --model gpt-6-astra --executor firmware \\
         --robot http://d1-2:4750 --scene my_scene.json --robot-profile PATH \\
         --snapshot-cmd "grab_frames.sh --turn {turn} --out {out_dir}"
+    # the judge on a workstation (jev_judge_server.py), recorded, never stepping:
+    ... --judge-url http://100.x.y.z:8766 --judge-only
+    # offline, a finished run's wrist photos judged again (nothing moves):
+    python examples/agent/jev_servo.py --rejudge run/ --robot-profile PATH \
+        --judge-url http://127.0.0.1:8766
 
-Extra needs beyond the kit: ``huggingface_hub``, ``torch``, ``torchvision``,
-``transformers`` and a CUDA GPU with ~26 GiB free for ``--judge jev``; the
-model's own ``requirements.txt`` omits ``torchvision`` (needed at load).
+Extra needs beyond the kit, for ``--judge jev`` or the server:
+``huggingface_hub``, ``torch``, ``torchvision``, ``transformers`` and a CUDA GPU
+with ~47 GB free (measured); the model's own ``requirements.txt`` omits
+``torchvision`` (needed at load).
 """
 
 from __future__ import annotations
@@ -30,69 +36,22 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import astra_loop  # noqa: E402
+from jev_judge import LABELS, JevJudge, RemoteJudge, rejudge  # noqa: E402,F401
 from manipulation_kit.agent import (DecisionTrace, LiveRobot,  # noqa: E402
-                                    OperatorPolicy, Servo, ServoLook,
-                                    UnknownExecutor, geometry_judge, run)
-from manipulation_kit.agent.robot import (frames_from,  # noqa: E402
-                                          head_camera_from_scene, objects_from,
-                                          with_declared_hand)
+                                    OperatorPolicy, Servo, UnknownExecutor,
+                                    geometry_judge, run)
+from manipulation_kit.agent.robot import (  # noqa: E402
+    frames_from, head_camera_from_scene, objects_from,
+    wrist_camera_from_scene, with_declared_hand)
 from manipulation_kit.primitives import Place  # noqa: E402
 from run_scene import resolve_profile, scene_for_run  # noqa: E402
 from scene import DEMO_WRIST_CAMERA, demo_scene  # noqa: E402
 from scripted import ScriptedModel, two_things_on  # noqa: E402
-
-#: what each kit choice id is called in the question. The ids are the kit's.
-LABELS: Dict[str, str] = {
-    "on": "the {object} is entirely inside the green box",
-    "left": "the {object} sticks out to the LEFT of the green box",
-    "right": "the {object} sticks out to the RIGHT of the green box",
-    "above": "the {object} sticks out ABOVE the green box",
-    "below": "the {object} sticks out BELOW the green box",
-    "not_visible": "the {object} is not in the photo"}
-
-STATE = ("Photo from the camera on a robot hand, looking along the hand past "
-         "its two gripper fingers. A green box has been drawn on the photo "
-         "where the robot BELIEVES the {object} is, slightly larger than the "
-         "{object} should appear; a green cross marks the box's centre.")
-QUESTION = "How does the {object} sit relative to the green box?"
-
-
-class JevJudge:
-    """Jev-Omni as the servo's judge. Loaded on first use (~14 s, ~26 GiB)."""
-
-    def __init__(self, debug: bool = False):
-        self.classifier, self.debug = None, debug
-
-    def __call__(self, look: ServoLook) -> Dict[str, float]:
-        if look.image is None:
-            raise RuntimeError("Jev judges a photo; this robot gave none "
-                               "(--snapshot-cmd)")
-        if self.classifier is None:
-            from huggingface_hub import snapshot_download  # noqa: PLC0415
-            sys.path.insert(0, snapshot_download("akhilaaa3/Jev-Omni"))
-            from jev_omni import load_jev_omni  # noqa: PLC0415
-            self.classifier = load_jev_omni()
-        name = look.object.replace("_", " ")
-        started = time.time()
-        labels = {c: LABELS[c].format(object=name) for c in look.choices}
-        result = self.classifier.predict(
-            state=STATE.format(object=name),
-            question=QUESTION.format(object=name),
-            options=[labels[c] for c in look.choices],
-            media=str(look.image), modality="image")
-        by_label = {label: c for c, label in labels.items()}
-        out = {by_label[label]: float(p)
-               for label, p in result["probabilities"].items()}
-        if self.debug:
-            print(f"[jev_servo] {(time.time() - started) * 1000:.0f} ms "
-                  f"{look.image.name}: {out}", file=sys.stderr)
-        return out
-
 
 def wrist_frames(snapshotter):
     """``Servo``'s frame seam over the example's camera-grab contract: one
@@ -111,14 +70,41 @@ def wrist_frames(snapshotter):
 def build_parser():
     parser = astra_loop.build_parser()
     parser.description = __doc__.splitlines()[0]
-    parser.add_argument("--judge", choices=("jev", "geometry"), default=None,
-                        help="jev: the classifier (needs --snapshot-cmd on a "
-                             "robot); geometry: the no-photo stand-in "
-                             "(default under --dry-run)")
-    parser.add_argument("--misplace-mm", type=float, default=0.0,
-                        help="geometry judge: the TRUE object is this far "
-                             "(base +y) from where the scene declares it")
+    add = parser.add_argument
+    add("--judge", choices=("jev", "remote", "geometry"), default=None,
+        help="jev: the classifier here; remote: it behind "
+             "jev_judge_server.py (--judge-url); geometry: the no-photo "
+             "stand-in (default under --dry-run)")
+    add("--judge-url", default=None, help="the judge server, e.g. "
+        "http://100.x.y.z:8766 (implies --judge remote)")
+    add("--judge-only", action="store_true",
+        help="judge and record every wrist look, never step: the model "
+             "answers the look as without a servo")
+    add("--refine", action="store_true",
+        help="after 'on', re-mark the same photo 5 mm around the declaration "
+             "and move the DECLARATION to the best-judged mark (no motion)")
+    add("--rejudge", type=Path, default=None, metavar="RUN_DIR",
+        help="offline: judge the wrist photos a live run saved in RUN_DIR "
+             "(trace.jsonl + turn*_*_wrist_0_rgb.jpg) and print each answer")
+    add("--misplace-mm", type=float, default=0.0,
+        help="geometry judge: the TRUE object is this far (base +y) from "
+             "where the scene declares it")
     return parser
+
+
+def make_judge(parser, args, kind: str, world0):
+    if kind == "jev":
+        return JevJudge(debug=args.debug)
+    if kind == "remote":
+        if not args.judge_url:
+            parser.error("--judge remote needs --judge-url")
+        return RemoteJudge(args.judge_url, debug=args.debug)
+    declared = world0.find(args.object)
+    if declared is None:
+        parser.error(f"{args.object!r} is not in the scene; the geometry "
+                     f"judge needs it declared")
+    return geometry_judge(
+        {args.object: declared.p + [0.0, args.misplace_mm / 1000.0, 0.0]})
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -131,6 +117,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         profile = resolve_profile(args)
     except (ValueError, LookupError, OSError) as exc:
         parser.error(str(exc))
+    if args.rejudge is not None:
+        from manipulation_kit.description.robot_profile import with_profile
+        scene = scene_for_run(args, profile=profile) if args.scene else None
+        wrist = wrist_camera_from_scene(
+            with_profile(scene, profile) if profile else scene,
+            measured_only=True) or {}
+        if not wrist:
+            parser.error("--rejudge needs the wrist lenses: --robot-profile "
+                         "PATH or a --scene naming one")
+        world0, kin = demo_scene()
+        judge = make_judge(parser, args, args.judge or (
+            "remote" if args.judge_url else "jev"), world0)
+        return 0 if rejudge(args.rejudge, judge, kin=kin, wrist=wrist) else 1
     snapshotter = None
     run_dir = (args.trace or Path("run/trace.jsonl")).parent
     if args.snapshot_cmd:
@@ -154,20 +153,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if robot.head_camera is None:
         robot.head_camera = head_camera_from_scene(scene)
     dry = args.dry_run or not args.model
-    judge_kind = args.judge or ("geometry" if dry else "jev")
-    if judge_kind == "jev":
-        if snapshotter is None:
-            parser.error("--judge jev needs --snapshot-cmd: it judges a photo")
-        judge = JevJudge(debug=args.debug)
-    else:
-        declared = world0.find(args.object)
-        if declared is None:
-            parser.error(f"{args.object!r} is not in the scene; the geometry "
-                         f"judge needs it declared")
-        truth = declared.p + [0.0, args.misplace_mm / 1000.0, 0.0]
-        judge = geometry_judge({args.object: truth})
+    judge_kind = args.judge or ("remote" if args.judge_url else
+                                "geometry" if dry else "jev")
+    if judge_kind != "geometry" and snapshotter is None:
+        parser.error(f"--judge {judge_kind} needs --snapshot-cmd: it judges "
+                     f"a photo")
     servo = Servo(wrist_frames(snapshotter) if snapshotter else lambda s: None,
-                  judge, out_dir=run_dir)
+                  make_judge(parser, args, judge_kind, world0), out_dir=run_dir,
+                  observe_only=args.judge_only, refine=args.refine)
     if dry:
         model = ScriptedModel(args.object, args.destination, declare=(
             two_things_on(world0, obj=args.object, destination=args.destination)

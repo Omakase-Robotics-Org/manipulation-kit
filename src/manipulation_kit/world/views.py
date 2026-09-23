@@ -116,15 +116,24 @@ def _round(values: Iterable[float], places: int = 3) -> list:
 #: ``observed``   a sensor or a simulator's ground truth put it there
 #: ``declared``   somebody said so — a tape-measured scene file, or a model
 #:                declaring what it sees in a photograph
+#: ``judged``     a classifier CHOSE it: the wrist-look servo
+#:                (:mod:`manipulation_kit.agent.servo`) moved the declaration
+#:                one step the way its judge said the object sticks out of the
+#:                drawn box. A statement like ``declared`` — nobody measured a
+#:                position — with the judge's probability in ``confidence``
 #: ``attached``   it is in a hand: the pose is the tool pose composed with the
 #:                grasp transform recorded at the stroke
 #:                (:func:`manipulation_kit.world.attach.with_attached`) —
 #:                inferred, not sighted
 #: ``predicted``  where it should be and nobody has looked: let go at the
 #:                last attached pose, or a planner's rolled-forward world
-PROVENANCES: Tuple[str, ...] = ("observed", "declared", "attached", "predicted")
+PROVENANCES: Tuple[str, ...] = ("observed", "declared", "judged", "attached",
+                                "predicted")
 #: the two that are inferences, not sightings
 INFERRED: Tuple[str, ...] = ("attached", "predicted")
+#: the two that are STATEMENTS, not sightings: a verifier may plan from them
+#: but never ties a measurement to the object by their position alone
+STATED: Tuple[str, ...] = ("declared", "judged")
 #: ``ObjectView.size_provenance``: as the producer said, or MEASURED by a grip
 SIZE_PROVENANCES: Tuple[Optional[str], ...] = (None, "measured")
 
@@ -355,7 +364,9 @@ class ObjectView:
         how = {"attached": ", ATTACHED: riding the hand that holds it — "
                            "inferred from the tool pose, not sighted",
                "predicted": ", PREDICTED: where it was let go, not sighted "
-                            "since"}.get(self.provenance, "")
+                            "since",
+               "judged": ", JUDGED: placed by the wrist look's classifier, "
+                         "not measured"}.get(self.provenance, "")
         if self.size_provenance == "measured":
             how += ", size MEASURED by the grip that holds it"
         return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "

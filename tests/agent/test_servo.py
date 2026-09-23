@@ -79,7 +79,8 @@ def test_the_servo_aligns_the_hand_and_the_stroke_runs_in_the_same_turn(
     # the stroke ran, on the re-declared (sighted) block
     assert grasp.run["completed"] and grasp.verdict["verdict"] == "true"
     block = next(o for o in grasp.world["objects"] if o["name"] == "red_block")
-    assert block["provenance"] == "observed"
+    # a JUDGEMENT, not a sighting: the classifier chose, nobody measured
+    assert block["provenance"] == "judged"
     assert abs(block["p"][1] - truth[1]) < abs(declared[1] - truth[1])
     assert abs(block["p"][1] - truth[1]) <= 0.015
     # and the model never read a WRIST LOOK question
@@ -204,7 +205,12 @@ def test_the_jev_servo_example_is_short_and_carries_no_policy(agent_examples):
     options = {opt for action in jev_servo.build_parser()._actions
                for opt in action.option_strings}
     assert {"--judge", "--misplace-mm", "--max-nudges-per-target",
-            "--no-look-before-stroke", "--snapshot-cmd"} <= options
+            "--no-look-before-stroke", "--snapshot-cmd", "--judge-url",
+            "--judge-only", "--refine", "--rejudge"} <= options
+    for helper in ("jev_judge.py", "jev_judge_server.py"):
+        text = (Path(jev_servo.__file__).parent / helper).read_text()
+        assert len(text.splitlines()) < 200, helper
+        assert "os.environ" not in text and "getenv" not in text
 
 
 def test_the_jev_judge_refuses_to_judge_without_a_photo(agent_examples):
@@ -221,3 +227,284 @@ def test_the_servo_needs_a_place_goal_like_the_loop(agent_examples):
         run(goal="put it there", robot=robot, policy=OperatorPolicy(),
             ask=Script(), servo=Servo(_no_frame, geometry_judge({})))
     assert isinstance(GOAL, Place)
+
+
+# --------------------------------------------------------------------------- #
+# provenance "judged": a statement, like "declared" — never a sighting
+# --------------------------------------------------------------------------- #
+
+def _held_world(provenance: str, *, gap):
+    """The left hand stalled closed at the block, the block's pose ``provenance``;
+    no ``held_object`` from the producer, so only position can associate."""
+    from manipulation_kit.world import (ArmView, GripperView, ObjectView,
+                                        WorldView)
+    block = ObjectView("red_block", p=(0.4, 0.2, 0.05), size=(0.05, 0.04, 0.05),
+                       provenance=provenance, confidence=0.8)
+    arm = ArmView("left", joints=np.zeros(7), tool_p=(0.4, 0.2, 0.05))
+    hand = GripperView("left", 1.0, holding=True, jaw_stalled=True,
+                       jaw_gap_m=gap, open_gap_m=0.052)
+    return WorldView.of([block], arms=[arm], grippers=[hand])
+
+
+@pytest.mark.parametrize("provenance", ["judged", "declared"])
+def test_a_judged_pose_is_a_statement_not_a_sighting(provenance):
+    from manipulation_kit.primitives.verifiers import Holding
+    from manipulation_kit.world import INFERRED, STATED
+    assert "judged" in STATED and "judged" not in INFERRED
+    world = _held_world(provenance, gap=None)
+    block = world.find("red_block")
+    assert not block.inferred
+    if provenance == "judged":
+        assert "JUDGED" in block.to_text(world.frames)
+        assert "confidence 0.80" in block.to_text(world.frames)
+    # no measured gap: the stated position is where the grasp aimed, so it
+    # ties nothing to the stall — UNKNOWN, never TRUE
+    verdict = Holding("grasp", world, "left", obj=block).measure(world)
+    assert verdict.verdict == "unknown", verdict.reason
+    assert provenance in verdict.reason
+    # a measured gap that fits the object decides (grip_fit)
+    fitted = _held_world(provenance, gap=0.041)
+    verdict = Holding("grasp", fitted, "left",
+                      obj=fitted.find("red_block")).measure(fitted)
+    assert verdict.verdict == "true", verdict.reason
+    assert verdict.measured["association"] == "stated_position+grip_fit"
+    assert verdict.measured["provenance"] == provenance
+
+
+def _align(robot, servo):
+    """One servo alignment on the left hand after an approach."""
+    from manipulation_kit.agent.policy import PolicyState
+    from manipulation_kit.executor import run as run_plan
+    return servo.align(robot=robot, policy=OperatorPolicy(), state=PolicyState(),
+                       side="left", name="red_block", settings={},
+                       run_plan=run_plan)
+
+
+def _approached():
+    robot = _mirror()
+    run(goal=GOAL, robot=robot, policy=OperatorPolicy(max_turns=1),
+        ask=Script(APPROACH))
+    return robot
+
+
+def test_the_servo_carries_the_judges_confidence(agent_examples):
+    robot = _approached()
+    _declared, _truth, geometry = _misplaced(robot, 0.030)
+    answers = []
+
+    def seventy_percent(look):
+        (choice, _p), = geometry(look).items()
+        answers.append(choice)
+        return {choice: 0.7, "not_visible": 0.3}
+
+    report = _align(robot, Servo(_no_frame, seventy_percent))
+    assert report.outcome == ALIGNED and answers[0] != "on"
+    block = robot.world().find("red_block")
+    assert block.provenance == "judged"
+    assert block.confidence == pytest.approx(0.7)
+
+
+# --------------------------------------------------------------------------- #
+# refine: the residual under 5 mm without moving the hand
+# --------------------------------------------------------------------------- #
+
+def test_refine_adds_judgements_but_no_motion(agent_examples):
+    reports = []
+    for refine in (False, True):
+        robot = _approached()
+        _declared, _truth, judge = _misplaced(robot, 0.040)
+        reports.append(_align(robot, Servo(_no_frame, judge, refine=refine)))
+    rough, fine = reports
+    assert rough.outcome == fine.outcome == ALIGNED
+    moves = [sum(1 for s in r.steps if s.step_m) for r in reports]
+    assert moves == [1, 1]                   # refinement adds no motion
+    refines = [s for s in fine.steps if s.kind == "refine"]
+    assert 2 <= len(refines) <= 9
+    assert all(s.step_m is None and s.shift_m is not None for s in refines)
+    assert "refined: declaration moved" in fine.detail
+    assert "hand not moved" in fine.detail
+
+
+def test_refine_lands_within_refine_m_of_the_truth(agent_examples):
+    """A perfect judge: the 30 mm step leaves 10 mm (inside the tolerance);
+    the refinement grid brings the declaration within 5 mm."""
+    robot = _approached()
+    _declared, truth, judge = _misplaced(robot, 0.040)
+    report = _align(robot, Servo(_no_frame, judge, refine=True))
+    assert report.outcome == ALIGNED
+    block = robot.world().find("red_block")
+    off = float(np.hypot(*(block.p[:2] - truth[:2])))
+    assert off <= 0.0051, off
+    assert block.provenance == "judged"
+
+
+def test_refine_never_takes_a_worse_mark(agent_examples):
+    """A judge that rates the unshifted mark best: the declaration stays."""
+    robot = _approached()
+    before = robot.world().find("red_block").p.copy()
+
+    def centred(look):
+        here = np.allclose(look.declared_p[:2], before[:2], atol=1e-6)
+        on = 0.9 if here else 0.6
+        return {"on": on, "left": 1.0 - on}
+
+    report = _align(robot, Servo(_no_frame, centred, refine=True))
+    assert report.outcome == ALIGNED
+    assert "unshifted mark is best" in report.detail
+    assert np.allclose(robot.world().find("red_block").p, before)
+
+
+# --------------------------------------------------------------------------- #
+# judge-only: recorded, never stepping
+# --------------------------------------------------------------------------- #
+
+def test_judge_only_records_the_distribution_and_never_steps(agent_examples):
+    robot = _mirror()
+    _declared, _truth, judge = _misplaced(robot, 0.040)
+    model = Script(APPROACH, GRASP)
+    trace = run(goal=GOAL, robot=robot, policy=OperatorPolicy(max_turns=2),
+                ask=model, servo=Servo(_no_frame, judge, observe_only=True))
+    approach, look = trace.records
+    joints = [a for a in approach.observation_after["arms"] if a["side"] == "left"]
+    assert look.servo["outcome"] == "judged_only"
+    assert [s["step_m"] for s in look.servo["steps"]] == [None]
+    assert look.distribution["left"] == 1.0          # the judge's answer, kept
+    assert look.run is None and look.plan is None
+    # the model got the ordinary look question, the declaration is untouched
+    assert "WRIST LOOK" in look.refused[0]["detail"]
+    block = robot.world().find("red_block")
+    assert block.provenance != "judged"
+    now = [a for a in robot.world().to_json()["arms"] if a["side"] == "left"]
+    assert now[0]["joints_deg"] == joints[0]["joints_deg"]
+
+
+def test_the_jev_servo_example_runs_judge_only_to_the_goal(agent_examples,
+                                                            tmp_path, capsys):
+    import jev_servo
+    assert jev_servo.main(["--dry-run", "--misplace-mm", "40", "--judge-only",
+                           "--trace", str(tmp_path / "t.jsonl")]) == 0
+    out = capsys.readouterr().out
+    assert "[servo judged_only, 0 step(s)]" in out
+    assert '"stop": "goal_verified"' in out
+
+
+# --------------------------------------------------------------------------- #
+# the remote judge seam and the offline re-judge
+# --------------------------------------------------------------------------- #
+
+class FakeJev:
+    """``predict`` with Jev-Omni's signature: 'inside the green box' wins."""
+
+    loaded = True
+
+    def __init__(self):
+        self.calls = []
+
+    def predict(self, *, state, question, options, media, modality):
+        from pathlib import Path
+        assert modality == "image" and Path(media).stat().st_size > 0
+        self.calls.append(question)
+        return {"probabilities": {o: (0.8 if "entirely inside" in o
+                                      else 0.2 / (len(options) - 1))
+                                  for o in options}}
+
+
+@pytest.fixture
+def judge_server():
+    import threading
+    import jev_judge_server
+    fake = FakeJev()
+    server = jev_judge_server.make_server(fake, "127.0.0.1", 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", fake
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _photo(path):
+    from PIL import Image
+    Image.new("RGB", (640, 480), (128, 128, 128)).save(path)
+    return path
+
+
+def test_the_remote_judge_answers_over_http(agent_examples, tmp_path,
+                                            judge_server):
+    import json
+    import urllib.request
+    from jev_judge import RemoteJudge
+    url, fake = judge_server
+    look = ServoLook(side="left", object="red_block", camera=None, u=320.0,
+                     v=240.0, depth_m=0.2, image=_photo(tmp_path / "m.jpg"),
+                     photo=None)
+    dist = RemoteJudge(url)(look)
+    assert set(dist) == set(CHOICES) and max(dist, key=dist.get) == "on"
+    assert fake.calls == ["How does the red block sit relative to the green box?"]
+    with urllib.request.urlopen(url + "/health") as reply:
+        assert json.loads(reply.read())["ok"] is True
+    bad = urllib.request.Request(url + "/judge", data=b'{"options": []}',
+                                 headers={"Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(bad)
+    assert err.value.code == 400
+
+
+def test_the_servo_runs_with_the_remote_judge(agent_examples, tmp_path,
+                                              judge_server):
+    from jev_judge import RemoteJudge
+    url, fake = judge_server
+    robot = _mirror()
+    trace = run(goal=GOAL, robot=robot, policy=OperatorPolicy(max_turns=2),
+                ask=Script(APPROACH, GRASP),
+                servo=Servo(lambda side: _photo(tmp_path / f"{side}.jpg"),
+                            RemoteJudge(url), out_dir=tmp_path))
+    grasp = trace.records[1]
+    assert grasp.servo["outcome"] == ALIGNED and grasp.run["completed"]
+    assert len(fake.calls) == 1
+    assert list(tmp_path.glob("servo001_left_wrist_marked.jpg"))
+    # the recorded servo judgement is re-judged offline from its own photo
+    import json
+    from jev_judge import rejudge
+    from scene import DEMO_WRIST_CAMERA
+    (tmp_path / "trace.jsonl").write_text(
+        "\n".join(json.dumps(r.to_json()) for r in trace.records) + "\n")
+    said = []
+    assert rejudge(tmp_path, RemoteJudge(url), kin=robot.kin,
+                   wrist={"left": DEMO_WRIST_CAMERA}, say=said.append) == 1
+    assert said[0].startswith("turn 1 servo step 0 (was on 0.80)")
+
+
+def test_rejudge_replays_a_runs_wrist_photos(agent_examples, tmp_path,
+                                             judge_server, capsys):
+    """A finished run (here the dry run) plus the wrist photos
+    ``--snapshot-cmd`` saved: every photo is marked where the trace's
+    declared objects project through the robot profile's lens and judged
+    again, nothing moved."""
+    import jev_servo
+    from pathlib import Path
+    url, fake = judge_server
+    run_dir = tmp_path / "run"
+    assert jev_servo.main(["--dry-run", "--trace",
+                           str(run_dir / "trace.jsonl")]) == 0
+    for turn in range(2):
+        for side in ("left", "right"):
+            _photo(run_dir / f"turn{turn}_{side}_wrist_0_rgb.jpg")
+    capsys.readouterr()
+    profile = Path(__file__).resolve().parents[1] / "data/d1-2.camera_calibration.json"
+    assert jev_servo.main(["--rejudge", str(run_dir), "--robot-profile",
+                           str(profile), "--judge-url", url]) == 0
+    out = capsys.readouterr().out
+    assert "turn 1 left_wrist red_block: mark (" in out
+    assert "-> on 0.80" in out
+    assert fake.calls and list((run_dir / "rejudge").glob("*_marked.jpg"))
+
+
+def test_rejudge_without_a_lens_is_a_usage_error(agent_examples, tmp_path):
+    import jev_servo
+    with pytest.raises(SystemExit) as stop:
+        jev_servo.main(["--rejudge", str(tmp_path), "--robot-profile",
+                        str(tmp_path / "missing.json"),
+                        "--judge-url", "http://127.0.0.1:1"])
+    assert stop.value.code == 2

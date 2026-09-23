@@ -21,8 +21,8 @@ from typing import Any, Dict, Optional, Sequence
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..world import (ContainerView, FrameError, ObjectView, SurfaceView,
-                     WorldView)
+from ..world import (STATED, ContainerView, FrameError, ObjectView,
+                     SurfaceView, WorldView)
 from .orientation import JAW_CLEARANCE_M
 from .types import Verdict, VerdictReport, Verifier
 
@@ -246,6 +246,20 @@ def _why_missing(world: WorldView, name: str) -> str:
     except LookupError as exc:
         return f"{name!r}'s frame could not be resolved: {exc}"
     return f"{name!r} has no usable position"
+
+
+def _stated(world1: WorldView, world0: WorldView, name: str) -> str:
+    """``"declared"`` / ``"judged"`` when ``name``'s position is a STATEMENT
+    (:data:`~manipulation_kit.world.views.STATED`) in the later world, else
+    "". A judged pose (the wrist-look servo's classifier moved the
+    declaration) is treated exactly like a declared one: plannable, never a
+    measurement of where the thing is."""
+    item = world1.find(name)
+    if item is None:
+        item = world0.find(name)
+    if item is None or item.provenance not in STATED:
+        return ""
+    return item.provenance
 
 
 def _inferred(world: WorldView, name: str) -> str:
@@ -572,11 +586,32 @@ class Holding(Verifier):
                 f"object to turn this into a verdict", **measured)
         distance = float(np.linalg.norm(np.asarray(at) - tool))
         measured["object_to_tool_m"] = round(distance, 4)
+        stated = _stated(world1, self.world0, name)
+        said = f"{stated} at" if stated else "measured"
         if distance > ASSOCIATION_TOL_M:
             return _false(
                 f"the {self.side} jaws stalled on something, but {name!r} is "
-                f"measured {distance * 1000:.0f} mm from the tool point — "
+                f"{said} {distance * 1000:.0f} mm from the tool point — "
                 f"whatever is between the pads, it is not that", **measured)
+        if stated:
+            # A DECLARED or JUDGED position is where the grasp was planned
+            # to, so "it is at the tool point" is true by construction and
+            # measures nothing. Only the measured gap (grip_fit) can tie
+            # the stall to this object.
+            measured["provenance"] = stated
+            if fit is None:
+                measured["association"] = None
+                return _unknown(
+                    f"the {self.side} jaws stalled on something{gap}, and "
+                    f"{name!r} is {stated} {distance * 1000:.0f} mm from the "
+                    f"tool point — but a {stated} position is where the "
+                    f"grasp aimed, not a measurement, and no jaw gap was "
+                    f"measured to say the pads closed on {name!r}", **measured)
+            measured["association"] = "stated_position+grip_fit"
+            return _true(f"the {self.side} gripper is holding {name!r}{gap}: "
+                         f"the measured gap fits {name!r}, {stated} "
+                         f"{distance * 1000:.0f} mm from the tool point",
+                         **measured)
         measured["association"] = "measured_position"
         return _true(f"the {self.side} gripper is holding {name!r}{gap}, and "
                      f"{name!r} is measured {distance * 1000:.0f} mm from the "

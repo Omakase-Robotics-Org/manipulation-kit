@@ -50,8 +50,9 @@ print(trace.stop, trace.summary())
   `left` / `right` / `above` / `below` it in the image, or `not_visible`
   (`judge(look) -> {choice: probability}`). A direction becomes
   one base-frame step through the wrist camera's orientation: the object is
-  re-declared that step away as a sighting (`provenance="observed"`) and the
-  hand is moved by the same step with the kit's `Nudge` (coarse 30 mm, then 10
+  re-declared that step away as a JUDGEMENT (`provenance="judged"`, the
+  judge's probability in `confidence`; verifiers treat it like `declared`,
+  never as a sighting) and the hand is moved by the same step with the kit's `Nudge` (coarse 30 mm, then 10
   mm once the answer changes sign), within `max_nudges_per_target`. `on`
   counts as the look and the grasp runs in the same turn; anything else ends
   the servo with a named outcome (`unsure` below `min_confidence`, `nudge_budget`,
@@ -68,6 +69,22 @@ print(trace.stop, trace.summary())
   the box is a coarse tolerance, not a fine one; report `jev-servo-loop`).
   Roll is not asked for — it stays planner-only (`roll_candidates`). **Not
   yet run on hardware**: the judge has seen rendered frames only.
+  - `Servo(observe_only=True)` (`jev_servo.py --judge-only`): judge and
+    record every look, never step; the model answers the look as without a
+    servo. The first live sessions run this way.
+  - `Servo(refine=True)` (`--refine`, off by default): after `on`, the same
+    photo is re-marked on a 3 x 3 grid of 5 mm shifts and the DECLARATION
+    moves to the best-judged one (only if it beats the unshifted mark); the
+    hand does not move. With a perfect judge the residual ends within 5 mm
+    instead of within the 10 mm tolerance. Turn it on only after real photos
+    show the judge separates 5 mm.
+  - The 12B classifier does not fit a D1's Jetson: run
+    `examples/agent/jev_judge_server.py` on a workstation (loopback or a
+    Tailscale address, no authentication) and pass `--judge-url`; expect
+    ~47 GB of GPU memory, 80-200 ms per warm judgement (~0.7-0.8 s for the
+    first) on an RTX PRO 6000, plus the network round trip. `jev_servo.py --rejudge RUN_DIR
+    --robot-profile PATH --judge-url URL` judges a finished run's saved wrist
+    photos again, offline, and prints each distribution beside the mark.
 - `droop_margin_m` (`--droop-margin-m`): how far the real arm sags below the
   commanded pose, added to the fingertip floor of a descent and to every
   scene clearance (`primitives.clearance.ClearancePolicy`). 0.0 = the rigid

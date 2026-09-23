@@ -391,7 +391,11 @@ class _Loop:
             primitive, self.state, side=side,
             joints=None if arm is None else arm.joints)
         if unmet and all(u.code == LOOK_REQUIRED for u in unmet):
-            if self.servo is None:
+            if self.servo is None or self.servo.observe_only:
+                if self.servo is not None:
+                    # judge-only: the judge's answer is RECORDED beside the
+                    # model's own look; nothing is moved or re-declared
+                    self._servo(primitive, side, record, call_id)
                 self._look(primitive, side, world, cameras, record, call_id,
                            unmet)
                 return None
@@ -526,11 +530,14 @@ class _Loop:
             # the hand and the declaration moved: the record shows the world
             # the model's next choice is made in, aligned or not
             record.observation_after = self.robot.world().to_json()
-        if report.steps:
+        looks = [s for s in report.steps if s.kind == "look"]
+        if looks:
             record.look = dict(camera=f"{side}_wrist", object=primitive.object,
-                               visible=True, **{k: report.steps[0].look[k]
+                               visible=True, **{k: looks[0].look[k]
                                                 for k in ("u", "v", "depth_m")})
-            record.distribution = report.steps[-1].distribution
+            record.distribution = looks[-1].distribution
+        if self.servo.observe_only:
+            return False
         if not report.aligned:
             record.refused = [PlanError(PRECONDITION_UNMET, report.to_text(),
                                         primitive=primitive.name(),
@@ -665,7 +672,9 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
     ``servo``    a :class:`~manipulation_kit.agent.servo.Servo`: the look
                  before a stroke is then answered by its judge (System 1) and
                  an aligned stroke runs in the same turn; ``None`` keeps the
-                 look as a question to the model
+                 look as a question to the model. A servo built with
+                 ``observe_only=True`` only records its judge's answer
+                 (``record.servo``) and the look stays the model's question
     """
     return _Loop(robot=robot, policy=policy, ask=ask, goal=goal, task=task,
                  system=system, trace=trace if trace is not None
