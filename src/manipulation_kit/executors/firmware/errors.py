@@ -89,3 +89,12 @@ class DeviceUnavailable(FirmwareError):
     contract, so it arrives as a :class:`FirmwareError` carrying the daemon's
     own words rather than as a :class:`ProtocolError` about a missing field.
     """
+
+
+class OperationUnavailable(FirmwareUnavailable):
+    """The daemon's OpenAPI document (as this client has it) lacks an operation.
+
+    Raised instead of reaching around the generated client with a hand-built
+    request: a route the document does not publish is a route the kit does not
+    call. The message names the route and how to get a client that has it.
+    """

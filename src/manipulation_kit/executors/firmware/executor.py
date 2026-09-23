@@ -1248,7 +1248,31 @@ class FirmwareExecutor:
         if not steps:
             return 0
         self.renew()
-        waypoints = self._waypoints(steps)
+        return self._run_job(self._waypoints(steps))
+
+    def play_waypoints(self, points: Sequence[Dict[str, Any]]) -> int:
+        """Play an already-TIMED dual-arm trajectory and block until it ends.
+
+        ``points`` are the daemon's own ``Waypoint`` shape — ``{"t": s,
+        "a": [7 deg], "b": [7 deg]}`` with ``a`` the physical LEFT arm — and
+        their timestamps are kept exactly: this is for a motion whose timing
+        IS the content (a taught gesture, :mod:`manipulation_kit.teach`), not
+        for a plan, whose timing this executor derives itself (:meth:`_play`).
+        Everything else is the plan path's: the lease is renewed, the knots are
+        checked against the document's ``Waypoint`` contract before upload,
+        the job is polled to completion, and any way out that is not
+        ``completed`` cancels it. The daemon still refuses a first knot more
+        than 3 degrees from feedback and re-guards every sample.
+
+        Transport completion is not arrival — follow with :meth:`wait_arrived`.
+        """
+        self.renew()
+        return self._run_job([{"t": float(w["t"]),
+                               "a": [float(v) for v in w["a"]],
+                               "b": [float(v) for v in w["b"]]} for w in points])
+
+    def _run_job(self, waypoints: List[Dict[str, Any]]) -> int:
+        """Upload ``waypoints`` as one trajectory job and poll it to the end."""
         check_waypoints([(w["t"], w["a"], w["b"]) for w in waypoints])
         status = self.client.request("POST", "/v1/arm/trajectory/start",
                                      self._holder_body({"waypoints": waypoints}))
