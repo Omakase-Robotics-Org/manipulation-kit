@@ -32,7 +32,7 @@ def _right_home_deg():
 
 
 RIGHT_Q0_DEG = _right_home_deg()
-#: a tilted left hand over the wagon whose own roll does not plan down.
+#: a tilted left hand over the wagon whose seed-folded roll did not plan down.
 #: Inside the coupled wrist-roll limit (arms.coupled_limits): J6 -43.2 is in
 #: the measured range and |J7| 19.9 is well inside its +/-46.3 deg. The
 #: previous posture, J7 -79 at J6 59, was 50 deg past the measured wrist stop
@@ -66,16 +66,22 @@ def test_the_rolls_are_the_wrists_own_first_then_the_quarter_turns():
         0.0, 90.0, -90.0, 180.0}
 
 
-def test_a_tilted_hand_probes_after_a_quarter_turn(d1_arm, monkeypatch):
+def test_a_tilted_hand_probes_at_its_own_roll(d1_arm, monkeypatch):
+    """This posture was the one whose own roll did NOT plan: "its own roll"
+    was the jaw axis folded to the half-turn nearest the PADS_DOWN seed, not
+    the hand's orientation tilted onto the direction (d1-2 2026-09-23, see
+    ``tests/executors/test_probe_session_replay.py``). Tilted by the smallest
+    rotation it plans with no roll at all; the quarter turns stay the
+    fallback."""
     assert d1_arm.posture_violation("left", np.radians(TILTED_DEG)) is None
     world = _world(d1_arm, TILTED_DEG)
     probe = Probe(side="left", direction="down", max_travel_m=0.03)
     monkeypatch.setattr(contact, "PROBE_ROLLS_RAD", (0.0,))
-    assert not probe.plan(world, d1_arm).ok, "the own-roll-only probe plans"
+    assert probe.plan(world, d1_arm).ok, "the own-roll-only probe is refused"
     monkeypatch.undo()
     plan = probe.plan(world, d1_arm)
     assert plan.ok, plan
-    assert any("rolled" in note for note in plan.notes)
+    assert not any("rolled" in note for note in plan.notes)
 
 
 def test_the_live_post_approach_posture_is_still_refused(d1_arm):

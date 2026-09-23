@@ -139,6 +139,54 @@ caller of the API below, and pip needs a version that moves.)
 
 The consumers are updated in a following sweep, not in this repository.
 
+### Repeated probes: no wrist flip, no zero-duration knots (d1-2, 2026-09-23)
+
+The d1-2 probe trial (`docs/probe-hardware-trial.md`, fcc2087) stopped at
+table probe 4 of 10 with `HTTP 400: trajectory values must be finite with
+increasing times`, the left wrist at J5 = 171.5 deg (box 173) and J7 turned
+from -55 to +42.5 deg. Replayed on a fake daemon from the standoff posture
+alone (`tests/executors/test_probe_session_replay.py`), both faults
+reproduce, and both are fixed at the producer:
+
+- **The wrist flip.** `Probe` kept "the roll the hand has" by passing its jaw
+  axis to `align_tool(roll_to=...)`, which folds a jaw axis to the half-turn
+  representative nearest the PADS_DOWN *seed*. A hand whose jaw axis pointed
+  the other way (the d1-2 standoff) was turned 180 deg in place — a
+  105-sample re-aim that took J5 from -5 to +169 deg — and back on a later
+  probe, and over again, until J5 sat against its stop.
+  `align_tool(..., keep=r_now)` now tilts the CURRENT orientation by the
+  smallest rotation onto the direction; `Probe` uses it (its roll sweep of
+  0 / +-90 / 180 deg is now relative to the hand, as documented).
+- **Posture continuity.** `Probe` takes a roll only when every posture of
+  its plan keeps `PROBE_BOX_MARGIN_DEG` (10 deg) from every box limit; when
+  only nearer postures plan it refuses **`joint_limit`** naming the joint,
+  instead of planning a leg the solver pins at the stop. From the live end
+  posture it now refuses. (The IK's existing null-space pull toward READY
+  still moves the elbow a few degrees per probe/lift cycle; it converges —
+  replay: J1 -20 -> -4.5 deg over 13 cycles, every uploaded posture
+  keeps >= 24.9 deg from its box, J7 the nearest.)
+- **Zero-duration knots.** With J5 pinned the leg's solver re-solved the
+  same posture (35 of 41 knots identical); each got the same distance along
+  the leg, hence the same time. `_contact_plan` drops a knot identical to
+  the one before it, `ContactStep` refuses a distance that decreases or a
+  non-finite knot, and `ContactStep.timed_path()` is strictly increasing
+  (a knot that moves joints without advancing gets
+  `CONTACT_KNOT_MIN_DT_S` = 20 ms); `duration_s()` is its last time.
+- **Checked before upload.** Every firmware upload (`_play` and the contact
+  leg's `trajectory_start`) goes through
+  `executors.firmware.client.check_waypoints`: the document's `Waypoint.t`
+  contract ("seconds, starting at zero, strictly increasing") plus finite
+  values. A violation raises the new **`TrajectoryInvalid`** (a
+  `FirmwareUnavailable`) naming the offending knots and times, and nothing
+  is sent. The daemon's 120 s / 10 000-point ceilings are not in the
+  document and are not guessed (d1-firmware issue: publish them as
+  `maximum` / `maxItems`).
+- **Bundled client snapshot is behind.** d1-2 now serves spec `a9c8b0d2…`
+  (d1-firmware PR #92 added the brake routes); `ensure.py` regenerated the
+  client from it at connect time, as designed. The bundled `_client/`
+  snapshot (`388bcd08…`, 0.3.0 before #92) is left as is here and will be
+  refreshed in the consumer sweep.
+
 ### Coupled wrist-roll limit (d1-2 hardware, 2026-09-22)
 
 The per-joint box (J6 +/-60, J7 +/-90 deg) is not the D1 wrist's envelope: the

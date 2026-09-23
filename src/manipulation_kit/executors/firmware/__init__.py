@@ -33,7 +33,7 @@ from .ensure import (ClientTree, Resolution, bundled_spec_sha256, ensure_client,
                      resolve_client, snapshot)
 from .errors import (ClientUnavailable, DeviceUnavailable, FirmwareError,
                      FirmwareUnavailable, LeasePreempted, ProtocolError,
-                     RateRefused)
+                     RateRefused, TrajectoryInvalid)
 from .executor import (ANCHOR_GAP_DEG, DEFAULT_ACC_RATIO,
                        DEFAULT_STROKE_TIMEOUT_S, DEFAULT_TTL_S,
                        DEFAULT_VEL_RATIO, INTERPOLATION_S, LEASE_CLASS,
@@ -51,5 +51,5 @@ __all__ = [
     "ProtocolError", "RateRefused", "Resolution", "STREAM_HZ",
     "bundled_spec_sha256", "default_holder", "ensure_client", "hand_state",
     "joint_state", "lift_state", "neck_state", "resolve_client",
-    "schedule_rate_deg_s", "snapshot",
+    "TrajectoryInvalid", "schedule_rate_deg_s", "snapshot",
 ]

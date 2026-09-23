@@ -83,11 +83,12 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
 from ...primitives.types import (ContactCriterion, ContactStep, GripStep,
                                  JointStep, Plan, SettleStep)
 from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
+                     check_waypoints,
                      hand_state, joint_state)
 from .client import lift_state as _lift_state
 from .client import neck_state as _neck_state
 from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
-                     RateRefused)
+                     RateRefused, TrajectoryInvalid)
 
 # --------------------------------------------------------------------------- #
 # constants, each with the measurement behind it
@@ -858,6 +859,9 @@ class FirmwareExecutor:
                 pair = {side: deg, other: q_other}
                 points.append((0.0 if q is None else INTERPOLATION_S + t,
                                pair["left"], pair["right"]))
+            # checked HERE as well as in the adapter: the client is
+            # replaceable (a fake, a recorder) and the check is the kit's
+            check_waypoints(points)
             status = self.client.trajectory_start(
                 points, holder=self.holder if self.lease is not None else None)
             job = int(status.id)
@@ -1245,6 +1249,7 @@ class FirmwareExecutor:
             return 0
         self.renew()
         waypoints = self._waypoints(steps)
+        check_waypoints([(w["t"], w["a"], w["b"]) for w in waypoints])
         status = self.client.request("POST", "/v1/arm/trajectory/start",
                                      self._holder_body({"waypoints": waypoints}))
         job = int(status["id"])
