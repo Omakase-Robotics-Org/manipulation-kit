@@ -39,6 +39,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
@@ -48,8 +49,8 @@ import numpy as np
 from ...executor import HandState, JointState, LiftState, NeckState
 from ...hands.d1.parallel_gripper.description import gap_from_motor_rad
 from .ensure import ClientTree, document_bytes, ensure_client
-from .errors import (DeviceUnavailable, FirmwareError, OperationUnavailable,
-                     ProtocolError, TrajectoryInvalid)
+from .errors import (ClientTimeout, DeviceUnavailable, FirmwareError,
+                     OperationUnavailable, ProtocolError, TrajectoryInvalid)
 
 #: The wire spelling of a side, as the daemon names them.
 SIDES: Tuple[str, str] = ("a", "b")
@@ -272,12 +273,15 @@ class FirmwareClient:
     release ships (spec hashes match) or one regenerated from *this* daemon's
     document. ``tree=`` skips that when the caller has already resolved it.
 
-    ``timeout`` is the per-request default for the non-blocking reads. An
-    operation the document marks with ``x-timeout-seconds`` (the blocking
-    gripper stroke: 40 s on 0.3.0) gets that instead
-    (:meth:`operation_timeout_s`), so a real close is not cut off at two
-    seconds — the reason the example used to build this client with a blanket
-    20 s.
+    ``timeout`` is the per-request floor. EVERY request — generated
+    operation or enveloped :meth:`request` — waits at least the document's
+    ``x-timeout-seconds`` for its route (:meth:`timeout_for`: the blocking
+    gripper stroke 40 s, ``recover`` 65 s, ``mode`` / brakes 10 s on the
+    bundled document), never less than ``timeout``. A client that hangs up
+    early is not harmless: the daemon cancels the handler (d1-2 2026-09-23
+    20:46Z, a recover cancelled at exactly the old blanket 2 s). Running
+    out of even that raises :class:`ClientTimeout`, which says the KIT gave
+    up — distinct from a :class:`FirmwareError` refusal.
     """
 
     def __init__(self, base_url: str = "http://127.0.0.1:4750", *,
@@ -293,6 +297,7 @@ class FirmwareClient:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         self.base_url = base_url.rstrip("/")
+        self.timeout = float(timeout)
         self.tree = tree if tree is not None else ensure_client(
             self.base_url, policy=policy, cache_dir=cache_dir)
         #: The generated package — every operation the daemon publishes.
@@ -306,6 +311,7 @@ class FirmwareClient:
             timeout=httpx.Timeout(timeout))
         self._http = self.api_client.get_httpx_client()
         self._document: Optional[Dict[str, Any]] = None
+        self._route_timeouts: Optional[list] = None
 
     # -- provenance -------------------------------------------------------- #
     @property
@@ -327,26 +333,56 @@ class FirmwareClient:
                 f"GET /openapi.json: HTTP {response.status_code}, "
                 f"not an OpenAPI document") from exc
 
-    def operation_timeout_s(self, method: str, route: str) -> Optional[float]:
-        """The document's ``x-timeout-seconds`` for one operation, or ``None``.
-
-        Read from the document the client in use was GENERATED from (the
-        generator does not carry vendor extensions into the code), so it is
-        the same contract, not a kit constant.
-        """
+    def _spec(self) -> Dict[str, Any]:
         if self._document is None:
             try:
                 self._document = json.loads(document_bytes(self.tree.resolution))
             except (OSError, ValueError):
                 self._document = {}
-        operation = (self._document.get("paths", {}).get(route, {})
+        return self._document
+
+    def operation_timeout_s(self, method: str, route: str) -> Optional[float]:
+        """The document's ``x-timeout-seconds`` for one operation, or ``None``.
+
+        ``route`` is the document's template (``/v1/arm/{side}/recover``).
+        Read from the document the client in use was GENERATED from (the
+        generator does not carry vendor extensions into the code), so it is
+        the same contract, not a kit constant.
+        """
+        operation = (self._spec().get("paths", {}).get(route, {})
                      .get(method.lower(), {}))
-        value = operation.get("x-timeout-seconds")
+        value = operation.get("x-timeout-seconds") if isinstance(operation, dict) else None
         try:
             value = float(value)
         except (TypeError, ValueError):
             return None
         return value if math.isfinite(value) and value > 0 else None
+
+    def timeout_for(self, method: str, path: str) -> float:
+        """How long ONE request to the concrete ``path`` may take [s]: the
+        document's ``x-timeout-seconds`` for the route it instantiates, never
+        below this client's ``timeout``. A literal route outranks a templated
+        one (``/v1/arm/lease`` is not ``/v1/arm/{side}``)."""
+        if self._route_timeouts is None:
+            table = []
+            for route, ops in self._spec().get("paths", {}).items():
+                if not isinstance(ops, dict):
+                    continue
+                pattern = re.compile("^" + "/".join(
+                    "[^/]+" if part.startswith("{") and part.endswith("}")
+                    else re.escape(part) for part in route.split("/")) + "$")
+                templated = route.count("{")
+                for verb in ops:
+                    value = self.operation_timeout_s(verb, route)
+                    if value is not None:
+                        table.append((verb.upper(), templated, pattern, value))
+            table.sort(key=lambda row: row[1])
+            self._route_timeouts = table
+        path = path.split("?", 1)[0]
+        for verb, _templated, pattern, value in self._route_timeouts:
+            if verb == method.upper() and pattern.match(path):
+                return max(self.timeout, value)
+        return self.timeout
 
     def api_module(self, dotted: str):
         """Import one generated operation module, e.g. ``"arm.arm_state"``.
@@ -385,9 +421,13 @@ class FirmwareClient:
         method = str(kwargs.get("method", "GET")).upper()
         path = str(kwargs.get("url", ""))
         send = {k: v for k, v in kwargs.items() if k not in ("method", "url")}
-        if timeout_s is not None:
-            send["timeout"] = self._httpx.Timeout(float(timeout_s))
-        response = self._http.request(method, path, **send)
+        if timeout_s is None:
+            timeout_s = self.timeout_for(method, path)
+        send["timeout"] = self._httpx.Timeout(float(timeout_s))
+        try:
+            response = self._http.request(method, path, **send)
+        except self._httpx.TimeoutException as exc:
+            raise ClientTimeout(method, path, timeout_s) from exc
         try:
             envelope = json.loads(response.content)
         except ValueError as exc:
@@ -468,8 +508,6 @@ class FirmwareClient:
         body = self.model("GripperTarget")(**fields)
         kwargs = self.api_module("gripper.gripper_set")._get_kwargs(
             side=self.model("ArmSide")(wire), body=body)
-        if timeout_s is None:
-            timeout_s = self.operation_timeout_s("POST", "/v1/gripper/{side}/set")
         data = self._send(kwargs, timeout_s=timeout_s)
         if data is not None:
             raise ProtocolError(f"POST /v1/gripper/{wire}/set: the document "

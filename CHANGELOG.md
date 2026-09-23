@@ -133,6 +133,16 @@ guard") — **breaking for `mkit-teach` callers**:
   announced — set by `mkit-teach record` and `play` only; the agent loop's
   executor still refuses. `record.HOLD_RATIO` is gone (`RECOVER_RATIO` in the
   executor).
+- **Every firmware request waits the document's `x-timeout-seconds`**
+  (second live run, dc51dbe, 20:46Z: the take recorded fine, then the
+  teardown recover was cancelled by the daemon at exactly 2.0 s — the
+  client's blanket timeout hung up on a route declared at 65 s).
+  `FirmwareClient.timeout_for(method, path)` maps a concrete path to its
+  route's documented bound, floored at the client's `timeout`; `_send` uses
+  it for every generated operation and `request()`. New `ClientTimeout`
+  ("the kit gave up", not a refusal) and `RecoverFailed` (per-attempt
+  reason); `recover_arm` never re-issues after a client timeout, and
+  `exit_problems` says whether the daemon refused or the kit gave up.
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

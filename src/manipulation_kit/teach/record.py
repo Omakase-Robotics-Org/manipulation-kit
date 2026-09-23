@@ -74,8 +74,10 @@ the first live run on d1-2, see docs/teach.md "Order of operations"):
    released arm; then, per arm, :meth:`FirmwareExecutor.recover_arm` — wait
    until the arm reports one unchanged mode and ``stationary`` for
    ``STEADY_S`` (0.3 s), ``POST /v1/arm/{side}/recover`` at 0.05 (the
-   daemon's ``lockCurrentPositionMode(5, 5)``), confirmed ``position``;
-   refused -> retried, 3 attempts 1 s apart. The live run's recover, 2 ms
+   daemon's ``lockCurrentPositionMode(5, 5)``), waited for as long as the
+   document's ``x-timeout-seconds`` allows (65 s — a 2 s client cut-off made
+   the daemon cancel it on the second live run), confirmed ``position``;
+   refused -> retried, 3 attempts 1 s apart; a client timeout is not retried. The live run's recover, 2 ms
    after the engage, was refused (``RESET1`` code 8) while the mode flapped.
    Still refused: the arm stays idle with the brakes engaged (safe), and
    ``meta["exit_problems"]`` + a ``WARNING`` line say so and how to recover
@@ -417,13 +419,27 @@ def _countdown(countdown_s: int, on_state, sleep) -> None:
 
 def _unrecovered(wire: str, guide: str, exc: BaseException) -> str:
     """What the operator must know about an arm the teardown could not put
-    back in a position hold."""
+    back in a position hold — and WHO gave up: the daemon (refused), the
+    kit (stopped waiting for the answer), or the arm (never reported
+    position / never came to rest)."""
+    from ..executors.firmware.errors import RecoverFailed  # noqa: PLC0415
     left = ("left in force_compliance" if guide == "compliance" else
             "left IDLE with its holding brakes ENGAGED (safe: the brakes hold "
             "it, nothing drives it)")
+    reason = exc.reason if isinstance(exc, RecoverFailed) else "error"
+    attempts = len(exc.failures) if isinstance(exc, RecoverFailed) else 1
+    why = {
+        "refused": f"the DAEMON REFUSED the recover ({attempts} attempt(s))",
+        "client_timeout": ("the KIT GAVE UP waiting for the daemon's answer "
+                           "(client timeout, not a refusal; not re-sent, so "
+                           "no second recover lands on one still running)"),
+        "unconfirmed": ("the daemon accepted the recover but the arm never "
+                        "reported position"),
+        "not_steady": "the arm never came to rest in one mode, so no recover was sent",
+    }.get(reason, "the recover failed")
     return (f"arm {wire} was not put back in a position hold and is {left}: "
-            f"{exc}. Recover it when it is at rest: d1-firmwared console "
-            f"Arms -> Recover, or POST /v1/arm/{wire}/recover")
+            f"{why}. Detail: {exc}. Recover it when it is at rest: "
+            f"d1-firmwared console Arms -> Recover, or POST /v1/arm/{wire}/recover")
 
 
 def _tool_source(client, wire: str) -> str:

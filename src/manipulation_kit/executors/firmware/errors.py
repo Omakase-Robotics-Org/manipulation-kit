@@ -112,3 +112,49 @@ class ModeUnconfirmed(FirmwareUnavailable):
     report never comes, or when the arm reports a fault instead. The
     message names the last mode observed.
     """
+
+
+class ClientTimeout(FirmwareUnavailable):
+    """The KIT stopped waiting for an answer — not a refusal by the daemon.
+
+    Closing the connection is what the daemon sees, and it cancels the
+    handler: on d1-2 (2026-09-23 20:46Z) a recover was cancelled at exactly
+    the client's old blanket 2 s while the daemon's confirm loop (up to
+    8 x 500 ms) was still running, although the document gives that route
+    ``x-timeout-seconds: 65``. Every request now waits at least the
+    document's bound for its route; this is raised when even that ran out.
+    Whether the operation took effect is unknown: re-read the state rather
+    than re-issue it.
+    """
+
+    def __init__(self, method: str, path: str, timeout_s: float):
+        self.method, self.path, self.timeout_s = method, path, float(timeout_s)
+        super().__init__(
+            f"{method} {path}: the kit gave up waiting for the daemon's answer "
+            f"after {self.timeout_s:g} s (client timeout, not a refusal); the "
+            f"daemon cancels a request whose connection closes, so whether it "
+            f"took effect is unknown")
+
+
+class RecoverFailed(FirmwareUnavailable):
+    """``FirmwareExecutor.recover_arm`` did not get the arm into a confirmed
+    position hold. ``failures`` is one ``(reason, message)`` per attempt,
+    ``reason`` one of :data:`RECOVER_REASONS`; :attr:`reason` is the last."""
+
+    def __init__(self, wire: str, failures):
+        self.wire = wire
+        self.failures = list(failures)
+        super().__init__(f"arm {wire}: recover failed after "
+                         f"{len(self.failures)} attempt(s): "
+                         + "; ".join(f"[{r}] {m}" for r, m in self.failures))
+
+    @property
+    def reason(self) -> str:
+        return self.failures[-1][0] if self.failures else "error"
+
+
+#: Why one recover attempt failed: the daemon answered with a refusal; the kit
+#: gave up waiting for its answer; it answered but the arm never reported
+#: ``position``; the arm never came to rest before the recover could be sent;
+#: anything else (a malformed answer).
+RECOVER_REASONS = ("refused", "client_timeout", "unconfirmed", "not_steady", "error")

@@ -87,8 +87,9 @@ from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
                      hand_state, joint_state)
 from .client import lift_state as _lift_state
 from .client import neck_state as _neck_state
-from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
-                     ModeUnconfirmed, OperationUnavailable,
+from .errors import (ClientTimeout, FirmwareError,  # noqa: F401 - re-exported
+                     FirmwareUnavailable, LeasePreempted,
+                     ModeUnconfirmed, OperationUnavailable, RecoverFailed,
                      RateRefused, TrajectoryInvalid)
 
 # --------------------------------------------------------------------------- #
@@ -580,28 +581,41 @@ class FirmwareExecutor:
 
         ``steady_s`` > 0 first waits for the arm to report one unchanged mode
         and ``stationary`` for that long — after hand guiding the controller
-        refuses a recover sent while the arm is still settling. A refusal or
-        an unconfirmed result is retried, ``attempts`` in all, ``spacing_s``
-        apart; the last failure is raised. A lost lease is never retried.
+        refuses a recover sent while the arm is still settling. The request
+        waits for the daemon's answer as long as the document allows
+        (``x-timeout-seconds``, 65 s on the bundled document: the daemon's
+        own confirm loop runs inside it). A refusal, an arm that never came
+        to rest, or an answer not followed by ``position`` is retried,
+        ``attempts`` in all, ``spacing_s`` apart. A :class:`ClientTimeout`
+        is NOT retried: the daemon may still be running that recover, and a
+        second one must not be issued on top of it. Raises
+        :class:`RecoverFailed` with the reason per attempt; a lost lease is
+        re-raised as is.
         """
         wire = _wire_side(side)
-        failures: List[str] = []
+        failures: List[tuple] = []
         for attempt in range(1, int(attempts) + 1):
+            stage = "not_steady"
             try:
                 if steady_s > 0:
                     self.wait_for_mode(side, None, steady_s=steady_s, stationary=True)
+                stage = "request"
                 self.client.arm_recover(wire, vel_ratio=RECOVER_RATIO,
                                         acc_ratio=RECOVER_RATIO)
+                stage = "unconfirmed"
                 return self.wait_for_mode(side, ("position",))
             except LeasePreempted:
                 raise
+            except ClientTimeout as exc:
+                failures.append(("client_timeout", str(exc)))
+                break
             except FirmwareUnavailable as exc:
-                failures.append(f"attempt {attempt}: {exc}")
-                if attempt < attempts:
-                    self._sleep(spacing_s)
-        raise FirmwareUnavailable(
-            f"arm {wire}: recover failed {len(failures)} time(s), "
-            f"{spacing_s:g} s apart; " + "; ".join(failures))
+                if stage == "request":
+                    stage = "refused" if isinstance(exc, FirmwareError) else "error"
+                failures.append((stage, str(exc)))
+            if attempt < attempts:
+                self._sleep(spacing_s)
+        raise RecoverFailed(wire, failures)
 
     def recover_idle_arms(self) -> List[str]:
         """Recover every arm that is not in position (``recover_on_entry``).

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -24,8 +25,13 @@ pytestmark = pytest.mark.skipif(sys.version_info < ensure.MIN_PYTHON,
 
 
 class _Daemon:
-    def __init__(self, data):
+    def __init__(self, data, delay=None):
         self.seen = []
+        #: path -> seconds the daemon works before it answers
+        self.delay = dict(delay or {})
+        #: path -> True once the answer was written to an open connection,
+        #: False when the client had hung up (the daemon cancels then)
+        self.answered = {}
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -50,8 +56,16 @@ class _Daemon:
                 self._reply()
 
             def _reply(self):
-                self._answer(json.dumps({"status": "ok", "data": data.get(self.path),
-                                         "message": None}).encode())
+                if self.path in outer.delay:
+                    time.sleep(outer.delay[self.path])
+                try:
+                    self._answer(json.dumps({"status": "ok",
+                                             "data": data.get(self.path),
+                                             "message": None}).encode())
+                    self.wfile.flush()
+                    outer.answered[self.path] = True
+                except OSError:
+                    outer.answered[self.path] = False
 
             def log_message(self, *_a):
                 pass
@@ -152,3 +166,57 @@ def test_the_bundled_document_offers_both_trajectory_guards(connect):
     checks before sending ``guard: speed_only``."""
     with _Daemon({}) as daemon, connect(daemon) as client:
         assert client.trajectory_guards() == ("full", "speed_only")
+
+
+# --------------------------------------------------------------------------- #
+# x-timeout-seconds: the document's bound, never the 2 s default (d1-2
+# 2026-09-23 20:46Z: recover received 20:46:19.363, cancelled 21.366 = the
+# client's blanket 2.0 s, while the daemon's confirm loop was still running)
+# --------------------------------------------------------------------------- #
+
+def test_every_request_waits_the_documents_bound_for_its_route(connect):
+    spec = json.loads(ensure.bundled_spec_bytes())["paths"]
+    with _Daemon({}) as daemon, connect(daemon) as client:
+        assert client.timeout == 2.0
+        for route, concrete in (("/v1/arm/{side}/recover", "/v1/arm/b/recover"),
+                                ("/v1/arm/{side}/mode", "/v1/arm/a/mode"),
+                                ("/v1/arm/{side}/brake_release", "/v1/arm/a/brake_release"),
+                                ("/v1/arm/{side}/brake_engage", "/v1/arm/b/brake_engage"),
+                                ("/v1/arm/move_joints_both", "/v1/arm/move_joints_both"),
+                                ("/v1/gripper/{side}/set", "/v1/gripper/a/set")):
+            documented = spec[route]["post"]["x-timeout-seconds"]
+            assert client.timeout_for("POST", concrete) == max(2.0, documented), route
+        assert client.timeout_for("POST", "/v1/arm/b/recover") == 65.0
+        # a bound SHORTER than the client's floor never shortens it
+        assert spec["/v1/arm/lease"]["post"]["x-timeout-seconds"] < 2.0
+        assert client.timeout_for("POST", "/v1/arm/lease") == 2.0
+        # an undocumented route gets the floor
+        assert client.timeout_for("GET", "/v1/arm/a/state") == 2.0
+        assert client.timeout_for("POST", "/v1/arm/trajectory/start") == 2.0
+
+
+def test_a_recover_that_takes_three_seconds_is_waited_for_not_cancelled(connect):
+    """One request, answered on an open connection, decoded — not cut at
+    2 s (which the daemon logs as phase=cancelled)."""
+    report = {"side": "b", "recovered": True, "elapsed_ms": 3000,
+              "initial_state": None, "state": None}
+    with _Daemon({"/v1/arm/b/recover": report},
+                 delay={"/v1/arm/b/recover": 3.0}) as daemon, connect(daemon) as client:
+        started = time.monotonic()
+        client.arm_recover("b", vel_ratio=0.05, acc_ratio=0.05)
+        took = time.monotonic() - started
+    assert took >= 3.0
+    assert [s for s in daemon.seen if s[1] == "/v1/arm/b/recover"] == [
+        ("POST", "/v1/arm/b/recover", {"vel_ratio": 0.05, "acc_ratio": 0.05})]
+    assert daemon.answered["/v1/arm/b/recover"] is True
+
+
+def test_running_out_of_the_bound_is_a_client_timeout_not_a_refusal(tmp_path):
+    from manipulation_kit.executors.firmware import ClientTimeout, FirmwareError
+    from manipulation_kit.executors.firmware.client import FirmwareClient
+    with _Daemon({}, delay={"/v1/arm/a/state": 1.0}) as daemon:
+        with FirmwareClient(daemon.url, cache_dir=tmp_path, timeout=0.2) as client:
+            with pytest.raises(ClientTimeout, match="gave up waiting") as caught:
+                client.request("GET", "/v1/arm/a/state")
+    assert not isinstance(caught.value, FirmwareError)
+    assert caught.value.timeout_s == pytest.approx(0.2)

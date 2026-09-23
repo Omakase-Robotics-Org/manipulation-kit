@@ -70,7 +70,12 @@ mkit-teach record take.json --compliance    # 旧 gesture_record の force_compl
    ロックで止めるので、締結の後に解放が飛ぶことはない）→ 腕が**静止し、同じ
    モードを 0.3 s 保つまで待つ** → `recover`（計測姿勢で位置保持、比 0.05 =
    旧 `lockCurrentPositionMode(5,5)`。position と報告されるまで確認）。
-   コントローラが拒否したら 1 秒おきに計 3 回まで試す。それでも駄目なら腕は
+   recover はデーモン内で確認ループ（最大 500 ms × 8）を回すので、キットは
+   文書の `x-timeout-seconds`（recover は 65 s）まで答えを待つ。
+   コントローラが拒否したら 1 秒おきに計 3 回まで試す（キット側が待ちきれずに
+   諦めた場合は、デーモンがまだ実行中かもしれないので再送しない）。
+   メッセージは「デーモンが拒否した（DAEMON REFUSED）」と「キットが待つのを
+   やめた（KIT GAVE UP、拒否ではない）」を区別する。それでも駄目なら腕は
    **idle・ブレーキ締結のまま（安全）**残し、`WARNING: arm b was not put back
    in a position hold …` と表示して記録の `meta.exit_problems` に残す。復帰は
    コンソールの Arms → Recover か `POST /v1/arm/b/recover`。→ リース返却 →
@@ -95,6 +100,13 @@ lease → [入口 recover: idle/error の腕] → position（報告を確認）�
 から（デーモンの規則は一貫しており、キットが競走していただけ）。もう 1 回は、
 オペレーターが手で idle にして動かした腕（指令と計測が 40.2 deg ずれていた）で
 `FirmwareExecutor.__enter__` が停止した。今は 3. の入口 recover で始められる。
+
+2 回目（kit dc51dbe, 20:46Z）: 記録自体は成功（idle 確認 → 解放 20:46:13 →
+5.44 s / 63 サンプル → Enter → brake_engage 20:46:19.037）。ところが recover
+（20:46:19.363 受信）が 20:46:21.366 にデーモン側で `phase=cancelled`。ちょうど
+2.0 s = クライアントの既定タイムアウトで接続を切ったため、デーモンが確認ループの
+途中で取り消した。文書は recover に `x-timeout-seconds: 65` を宣言している。
+今は全リクエストがルートごとの文書の値（下限は既定の 2 s）まで待つ。
 
 記録ファイル（JSON）は生データのまま（平滑化も手首固定もしていない）なので、
 設定を変えて何度でも 2 以降をやり直せる。グリッパーの閉度も記録されるが、
@@ -330,6 +342,20 @@ now does the same, in one place:
   `arm_recover` at 0.05, confirmed `position`; 3 attempts, 1 s apart; a lost
   lease is never retried. Teardown uses it with `steady_s=0.3`, after the
   brakes are engaged.
+* **Every request honours the document's `x-timeout-seconds`.**
+  `FirmwareClient._send` (under every generated operation and `request()`)
+  waits `timeout_for(method, path)`: the bound declared for the route the
+  concrete path instantiates (literal routes outrank templated ones), never
+  below the client's `timeout` floor (2 s). On the bundled document:
+  `recover` 65 s, `mode` / `brake_release` / `brake_engage` 10 s,
+  `move_joints*` 30 s, gripper strokes 40 s; `lease` declares 0.5 s and keeps
+  the 2 s floor. Second live run (dc51dbe, 20:46Z): the recover was
+  cancelled by the daemon at exactly 2.0 s because the client hung up. A
+  request that outlives even the documented bound raises `ClientTimeout`
+  ("the kit gave up", not a `FirmwareError` refusal); `recover_arm` never
+  retries after one (the daemon may still be running it) and raises
+  `RecoverFailed` with a reason per attempt (`refused`, `client_timeout`,
+  `unconfirmed`, `not_steady`, `error`), which `exit_problems` spells out.
 * `FirmwareExecutor(recover_on_entry=True, announce=…)` recovers every
   non-position arm before `position_mode` (`recover_idle_arms()`, lines kept
   in `entry_recoveries` and in the recording's `meta.entry_recoveries`).

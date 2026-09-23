@@ -155,6 +155,8 @@ def test_teardown_refused_three_times_leaves_the_arm_safe_and_says_how(
     assert len(daemon.posts("/b/recover")) == RECOVER_ATTEMPTS == 3
     [problem] = rec.meta["exit_problems"]
     assert "IDLE with its holding brakes ENGAGED" in problem
+    assert "the DAEMON REFUSED the recover (3 attempt(s))" in problem
+    assert "KIT GAVE UP" not in problem
     assert "Arms -> Recover" in problem and "POST /v1/arm/b/recover" in problem
     assert daemon.brakes["b"] is False and daemon.modes["b"] == "idle"
     assert any(line.startswith("WARNING: arm b was not put back") for line in lines)
@@ -232,3 +234,39 @@ def test_the_cli_executor_opts_into_recover_on_entry(monkeypatch):
     args = argparse.Namespace(url="http://fake:4750", vel_ratio=0.15)
     assert cli._executor(args, lease_class="operator") == "robot"
     assert seen["recover_on_entry"] is True and callable(seen["announce"])
+
+
+def test_a_client_timeout_is_not_retried_and_says_the_kit_gave_up(daemon, robot_factory):
+    """d1-2 2026-09-23 20:46Z: the recover was cut by the CLIENT. Such a
+    recover may still be running in the daemon, so no second one is sent,
+    and the operator is told who gave up."""
+    from manipulation_kit.executors.firmware import ClientTimeout
+    real = daemon.arm_recover
+
+    def slow(wire, **kw):
+        daemon.recover_times.append(daemon.fake_clock())
+        raise ClientTimeout("POST", f"/v1/arm/{wire}/recover", 65.0)
+    with robot_factory() as robot:
+        daemon.arm_recover = slow
+        rec = _record(robot, daemon)
+        daemon.arm_recover = real
+    assert len(daemon.recover_times) == 1
+    [problem] = rec.meta["exit_problems"]
+    assert "the KIT GAVE UP waiting for the daemon's answer" in problem
+    assert "not a refusal" in problem and "REFUSED" not in problem
+    assert "IDLE with its holding brakes ENGAGED" in problem
+
+
+def test_a_slow_recover_is_one_call_and_succeeds(daemon, robot_factory):
+    """A recover that takes 3 s (the daemon's confirm loop) is one call and a
+    success: the executor never re-issues while one is in flight."""
+    real = daemon.arm_recover
+
+    def slow(wire, **kw):
+        daemon.fake_clock.sleep(3.0)
+        return real(wire, **kw)
+    with robot_factory() as robot:
+        daemon.arm_recover = slow
+        rec = _record(robot, daemon)
+    assert len(daemon.posts("/b/recover")) == 1
+    assert rec.meta["exit_problems"] == [] and daemon.modes["b"] == "position"
