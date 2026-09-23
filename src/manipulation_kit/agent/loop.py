@@ -422,6 +422,10 @@ class _Loop:
             after = self._fold_contacts(after, report, clamped)
         verdict = clamped.verifier(world)(after)
         record.verdict = verdict.to_json()
+        corrected = self._measured_width(verdict, record)
+        if corrected:
+            notes = list(notes) + corrected
+            after = self.robot.world()
         record.observation_after = after.to_json()
         how = ("ok" if report.completed else
                f"{report.stop_reason} — {report.error}")
@@ -434,6 +438,26 @@ class _Loop:
         if goal_report.verdict == "true":
             return Stop("goal_verified", goal_report.reason)
         return None
+
+    def _measured_width(self, verdict, record) -> list:
+        """A TRUE grasp that MEASURED the object wider or narrower than it was
+        declared: the measurement replaces the declaration in the world
+        source, so Carry / Place / the scene gate plan with the real size, and
+        the trace records the correction (``record.corrections``)."""
+        fix = (verdict.measured or {}).get("width_correction")
+        if verdict.verdict != "true" or not fix or not fix.get("jaw_axis"):
+            return []
+        update = getattr(self.robot, "measured_width", None)
+        applied = bool(callable(update) and update(
+            fix["object"], fix["jaw_axis"], fix["measured_m"]))
+        record.corrections.append(dict(fix, field="width_along_jaw_axis",
+                                       applied=applied))
+        if not applied:
+            return []
+        return [f"{fix['object']!r} was declared "
+                f"{fix['declared_m'] * 1000:.1f} mm across the jaws and the "
+                f"grasp MEASURED {fix['measured_m'] * 1000:.1f} mm; the scene "
+                f"now uses the measured width"]
 
     def _fold_contacts(self, after, report, verb):
         """A probe / press MEASURED where it met something: fold the run's

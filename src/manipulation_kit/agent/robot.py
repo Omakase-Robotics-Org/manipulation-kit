@@ -57,7 +57,8 @@ from scipy.spatial.transform import Rotation as R
 from ..primitives.orientation import tool_from_link7
 from ..world import (ArmView, ContactView, ContainerView, Frame, FrameGraph, GripperView,
                      ObjectView, SurfaceView, WorldView)
-from ..world.attach import (GraspTransform, grasp_transform, with_attached)
+from ..world.attach import (GraspTransform, grasp_transform, with_attached,
+                            with_measured_width)
 from ..world.frames import BASE
 from .policy import OperatorPolicy
 
@@ -398,6 +399,25 @@ class SceneSource:
                 except LookupError:
                     pass
 
+    def measured_width(self, name: str, axis, width_m: float) -> bool:
+        """A grasp MEASURED ``name``'s width along the base-frame jaw ``axis``:
+        it replaces the declared extent there
+        (:func:`~manipulation_kit.world.attach.with_measured_width`), so every
+        later plan — Carry, Place, the scene gate — uses the real size. The
+        grasp transform is untouched (the pose was not re-measured). ``False``
+        when the object is unknown or its frame does not resolve."""
+        item = self.objects.get(name)
+        if item is None:
+            return False
+        frames = (self._last.frames if self._last is not None
+                  else self._frames(0.0))
+        try:
+            self.objects[name] = with_measured_width(item, frames, axis,
+                                                     width_m)
+        except (LookupError, ValueError):
+            return False
+        return True
+
     def remember_contacts(self, contacts: Iterable[ContactView]) -> None:
         """Keep the contacts a run measured (the WHOLE history the loop folded,
         not only the new ones): they are measurements, and every later
@@ -583,6 +603,12 @@ class LiveRobot:
                             f"({type(self.source).__name__}) does not take a "
                             f"declared scene")
         self.source.declare(objects)
+
+    def measured_width(self, name: str, axis, width_m: float) -> bool:
+        """Hand a grasp's MEASURED width to the world source, when it keeps
+        objects (:meth:`SceneSource.measured_width`); ``False`` otherwise."""
+        update = getattr(self.source, "measured_width", None)
+        return bool(update(name, axis, width_m)) if callable(update) else False
 
     def remember_contacts(self, contacts: Sequence[ContactView]) -> None:
         """Hand measured contacts to the world source, when it keeps them."""

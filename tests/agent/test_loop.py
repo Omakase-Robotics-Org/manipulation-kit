@@ -175,3 +175,65 @@ def test_run_wants_a_measurable_goal(agent_examples):
     with pytest.raises(TypeError):
         run(goal=None, robot=_mirror(), policy=OperatorPolicy(),
             ask=Script())
+
+
+def test_a_grasp_that_measured_the_width_corrects_the_world(agent_examples):
+    """d1-2 2026-09-23 record 6, end to end: the hand holds, stalled at a gap
+    wider than declared. The grasp is TRUE, and the world the NEXT turn plans
+    in carries the MEASURED width along the jaws (``size_provenance``), with
+    the correction in the trace and in what the model is told."""
+    from scene import DEMO_WRIST_CAMERA, demo_scene
+
+    from manipulation_kit.primitives.orientation import jaw_axis
+    world, kin = demo_scene()
+    robot = KinematicMirror(kin, world, wrist_intrinsics=DEMO_WRIST_CAMERA,
+                            open_gap_m=0.0605)
+    source, extra = robot.source, 0.006
+    inner = source._robot_half
+
+    def robot_half(state):
+        # the mirror measures no gap; this stands in for the daemon's
+        # jaw_rad: the declared extent along the jaws plus 6 mm, stalled
+        arms, grippers = inner(state)
+        out = []
+        for g in grippers:
+            arm = next(a for a in arms if a.side == g.side)
+            if g.holding:
+                block = source.objects["red_block"]
+                declared = block.extent_along(jaw_axis(arm.tool_r),
+                                              source._frames(0.0))
+                if block.size_provenance != "measured":
+                    robot_half.gap = declared + extra
+                g = dataclasses.replace(g, jaw_gap_m=robot_half.gap,
+                                        jaw_stalled=True)
+            out.append(g)
+        return arms, out
+
+    source._robot_half = robot_half
+    model = Script(APPROACH, GRASP, GRASP, ("go_home", {"side": "left"}))
+    seen = []
+
+    def ask(messages, tools):
+        seen[:] = [str(m.get("output", m.get("content", ""))) for m in messages]
+        return model(messages, tools)
+
+    trace = run(goal=GOAL, robot=robot, policy=OperatorPolicy(max_turns=4),
+                ask=ask)
+    grasp = trace.records[2]
+    assert grasp.choice["name"] == "grasp" and grasp.run is not None
+    assert grasp.verdict["verdict"] == "true", grasp.verdict["reason"]
+    assert "width corrected" in grasp.verdict["reason"]
+    fix, = grasp.corrections
+    assert fix["applied"] and fix["field"] == "width_along_jaw_axis"
+    assert fix["measured_m"] == pytest.approx(robot_half.gap, abs=1e-4)
+    # the next turn's world: the measured width, on the object in the hand
+    later = trace.records[3].world
+    block = next(o for o in later["objects"] if o["name"] == "red_block")
+    assert block["size_provenance"] == "measured"
+    assert block["provenance"] == "attached"
+    measured = robot.source.objects["red_block"]
+    axis = np.asarray(fix["jaw_axis"])
+    assert measured.extent_along(axis, robot.world().frames) == pytest.approx(
+        robot_half.gap, abs=1e-3)
+    assert any("grasp MEASURED" in m for m in seen), \
+        "the model was not told its declaration was corrected"
