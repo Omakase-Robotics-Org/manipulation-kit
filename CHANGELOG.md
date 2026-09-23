@@ -143,6 +143,36 @@ guard") — **breaking for `mkit-teach` callers**:
   ("the kit gave up", not a refusal) and `RecoverFailed` (per-attempt
   reason); `recover_arm` never re-issues after a client timeout, and
   `exit_problems` says whether the daemon refused or the kit gave up.
+- **Teach operator flow after d1-2 take2** (Shu 2026-09-23 21:09Z / 21:12Z)
+  — **breaking for `mkit-teach` callers**:
+  - **Speed: one `process.SpeedPolicy`**, used by export (stretch), check and
+    play (judge); `MAX_JOINT_VEL_DEG_S` / `MAX_JOINT_ACC_DEG_S2` and
+    `check_gesture(max_vel_deg_s=, max_acc_deg_s2=)` are gone
+    (`speed=SpeedPolicy(...)`; `KeyframeOptions.speed`). **Default ceiling
+    150 deg/s, 600 deg/s^2** (was gesture_record's 25 / 120, now
+    `LEGACY_SPEED`): take2's ~130 deg/s J1 swing had been stretched 3.83 s ->
+    5.52 s. The caps travel in the CSV (`# mkit-teach: max_joint_vel=…
+    max_joint_acc=…`, plus `speed_stretch=…` when it stretched), and
+    `check` / `play` hold a CSV to its own caps unless `--max-joint-vel` /
+    `--max-joint-acc` override. Export prints the stretch only when it
+    stretched. This ceiling is the only gesture speed policy (the daemon
+    caps 350 deg/s per step, the omakaseos player none). HOME connect /
+    return stays a constant 20 deg/s.
+  - **Named takes**: `mkit-teach record` asks the gesture name first
+    (before the HOLDING contract) or takes `--name`; the take is
+    `<teach dir>/<name>.json` (`$MKIT_TEACH_DIR`, default `~/teach`), an
+    existing one is overwritten only on request (`--yes` in scripts); a
+    positional path still works. The name is stored in the recording.
+  - **`export` writes beside the take** when `out` is omitted:
+    `<take dir>/<name>_motion.csv`, the name from the recording or `--name`,
+    printed as an absolute path. Sentiment / usage are asked for on a
+    terminal when omitted, else neutral / filler.
+  - `[saved]` and `check` print the same duration (the daemon spline's end;
+    new `Gesture.played_s` replaces `total_duration_s`, which counted row
+    0's ignored duration).
+  - **Every subcommand ends with `Next:`** — the recommended next command
+    with absolute paths (`next_steps()`), or `To fix:` with the recover /
+    re-run command on a failure.
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

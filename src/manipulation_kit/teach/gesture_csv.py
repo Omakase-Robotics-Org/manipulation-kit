@@ -90,8 +90,11 @@ class Gesture:
     comments: List[str] = field(default_factory=list)
 
     @property
-    def total_duration_s(self) -> float:
-        return float(sum(k.duration for k in self.keyframes))
+    def played_s(self) -> float:
+        """How long the gesture PLAYS [s]: the daemon spline's end time. Row
+        0's duration is not in it — the player starts the spline at HOME at
+        ``t = 0`` and ignores that row's duration (the module doc)."""
+        return float(sum(k.duration for k in self.keyframes[1:]))
 
     def array(self) -> np.ndarray:
         return np.array([k.positions for k in self.keyframes], dtype=float)

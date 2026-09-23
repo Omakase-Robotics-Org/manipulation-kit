@@ -12,6 +12,12 @@ MotionGuard clearance findings are advisory for a taught gesture (see
 :mod:`~manipulation_kit.teach.check`): they never make a file UNSAFE. The
 file records the minimum clearances as ``# mkit-teach: min_clearance=...``
 and, when a margin was not met, ``# mkit-teach: guard_advisory=...``.
+
+The speed ceiling travels in the file: ``# mkit-teach: max_joint_vel=…`` and
+``max_joint_acc=…`` (the :class:`~manipulation_kit.teach.process.SpeedPolicy`
+the gesture was limited to and checked against), plus ``speed_stretch=…``
+when limiting slowed the taught timing down. ``check`` and ``play`` hold the
+file to that ceiling unless told otherwise.
 """
 from __future__ import annotations
 
@@ -21,6 +27,7 @@ from typing import Optional, Sequence, Tuple
 
 from .check import CheckReport, check_gesture
 from .gesture_csv import Gesture, Keyframe
+from .process import SPEED_META_KEYS, SpeedPolicy
 from .registry import USAGES, check_name
 
 
@@ -40,11 +47,13 @@ def home_digest(home: Sequence[float]) -> str:
 
 def export(gesture: Gesture, home: Sequence[float], *, name: Optional[str] = None,
            sentiment: str = "neutral", usage: Sequence[str] = ("filler",),
-           force: bool = False, check_kwargs=None, extra_meta=None
-           ) -> Tuple[Gesture, CheckReport]:
+           force: bool = False, speed: Optional[SpeedPolicy] = None,
+           check_kwargs=None, extra_meta=None) -> Tuple[Gesture, CheckReport]:
     """Validate and stamp ``gesture``. Raises :class:`UnsafeGesture` when the
-    check fails and ``force`` is not set."""
-    report = check_gesture(gesture, home, **(check_kwargs or {}))
+    check fails and ``force`` is not set. ``speed=None``: the policy the
+    gesture carries (a reduced take carries the one it was limited to)."""
+    speed = speed if speed is not None else SpeedPolicy.of(gesture)
+    report = check_gesture(gesture, home, speed=speed, **(check_kwargs or {}))
     if not report.ok and not force:
         raise UnsafeGesture(report)
     meta = {}
@@ -53,6 +62,8 @@ def export(gesture: Gesture, home: Sequence[float], *, name: Optional[str] = Non
     meta.update({"sentiment": sentiment,
                  "usage": " ".join(u for u in usage if u in USAGES) or "filler",
                  "source": "teach", "home_sha": home_digest(home)})
+    meta.update({k: gesture.meta[k] for k in SPEED_META_KEYS if k in gesture.meta})
+    meta.update(speed.meta())
     meta["min_clearance"] = report.clearance_note()
     if report.guard_findings:
         meta["guard_advisory"] = " | ".join(f.summary() for f in report.guard_findings)

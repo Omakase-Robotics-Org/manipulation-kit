@@ -14,7 +14,8 @@ Refusals, all BEFORE anything moves:
   ``no_safety`` (the old ``gesture_play --no-safety``);
 * a file that fails :func:`~manipulation_kit.teach.check.check_gesture`'s
   HARD checks (joint limits incl. the coupled wrist limit, rates, timing) —
-  unless ``no_safety``. This flag only skips the kit's pre-flight, never the
+  unless ``no_safety``. Rates are held to the ceiling the CSV was exported
+  with (``# mkit-teach: max_joint_vel/max_joint_acc``), or ``speed``. This flag only skips the kit's pre-flight, never the
   daemon's;
 * a latched arm controller.
 
@@ -45,6 +46,7 @@ GUARDS = ("speed_only", "full")
 from ..executor import controller_fault
 from .check import CheckReport, check_gesture
 from .gesture_csv import Gesture, trajectory_points
+from .process import SpeedPolicy
 from .record import HOME_TOL_DEG, _q16, move_to, pose_deg
 
 
@@ -60,15 +62,16 @@ class PlayReport:
 
 
 def preflight(gesture: Gesture, home: Sequence[float], *, no_safety: bool = False,
-              check_kwargs=None) -> PlayReport:
-    """Everything ``play`` decides without the robot."""
+              speed: Optional[SpeedPolicy] = None, check_kwargs=None) -> PlayReport:
+    """Everything ``play`` decides without the robot. ``speed=None``: the
+    ceiling the CSV was exported with (``SpeedPolicy.of``)."""
     if gesture.unsafe and not no_safety:
         return PlayReport(False, "this CSV was force-saved UNSAFE ("
                           + "; ".join(gesture.unsafe)
                           + "); re-teach it, or pass --no-safety to play it anyway")
     report = None
     if not no_safety:
-        report = check_gesture(gesture, home, **(check_kwargs or {}))
+        report = check_gesture(gesture, home, speed=speed, **(check_kwargs or {}))
         if not report.ok:
             return PlayReport(False, "refused by the pre-flight check:\n"
                               + report.summary(), check=report)
@@ -94,6 +97,7 @@ def guard_notes(report: Optional[CheckReport],
 
 
 def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = False,
+         speed: Optional[SpeedPolicy] = None,
          check_kwargs=None, settle_s: float = 2.0, guard: str = DEFAULT_GUARD,
          announce: Callable[[str], None] = lambda line: None) -> PlayReport:
     """Play on an ENTERED :class:`FirmwareExecutor`. Returns what happened.
@@ -101,7 +105,8 @@ def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = Fa
     ``guard`` is the daemon trajectory guard for the upload (module doc)."""
     if guard not in GUARDS:
         raise ValueError(f"guard must be one of {GUARDS}, not {guard!r}")
-    pre = preflight(gesture, home, no_safety=no_safety, check_kwargs=check_kwargs)
+    pre = preflight(gesture, home, no_safety=no_safety, speed=speed,
+                    check_kwargs=check_kwargs)
     if not pre.ok:
         return pre
     send_guard: Optional[str] = guard

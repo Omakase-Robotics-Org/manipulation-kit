@@ -20,9 +20,11 @@ refuses without ``--no-safety``):
   a function of |J6|, both arms), which the box does not know about;
 * per segment, per joint, the peak velocity and acceleration measured on
   that spline the way ``limitJointDynamics`` measures them (64 samples inside
-  each segment), against gesture_record's playability caps (25 deg/s,
-  120 deg/s^2), with 3 % slack (the library's repaired files peak at
-  25.0-25.4).
+  each segment), against the gesture's :class:`~manipulation_kit.teach.
+  process.SpeedPolicy` — the caps its CSV was exported with
+  (``# mkit-teach: max_joint_vel=… max_joint_acc=…``; the default
+  150 deg/s, 600 deg/s^2 for a file without them), or the caller's
+  ``speed`` — with 3 % slack.
 
 ADVISORY findings (``CheckReport.guard_findings``, printed as warnings, never
 a failure): the :class:`~manipulation_kit.guard.MotionGuard` clearances —
@@ -55,8 +57,7 @@ import numpy as np
 from ..arms.coupled_limits import load_coupled_limits
 from .gesture_csv import (Gesture, JOINT_NAMES, N_JOINTS, sample_path,
                           trajectory_points)
-from .process import (MAX_JOINT_ACC_DEG_S2, MAX_JOINT_VEL_DEG_S,
-                      segment_peaks_per_joint)
+from .process import SpeedPolicy, segment_peaks_per_joint
 
 DEFAULT_STEP_S = 0.01
 RATE_SLACK = 1.03
@@ -129,6 +130,8 @@ class CheckReport:
     min_arm_arm_m: float = float("inf")
     min_self_clearance_m: float = float("inf")
     flange_range_m: Dict[str, Tuple[List[float], List[float]]] = field(default_factory=dict)
+    #: the speed ceiling the rates were checked against
+    speed: Optional[SpeedPolicy] = None
 
     @property
     def guard_clear(self) -> bool:
@@ -154,7 +157,8 @@ class CheckReport:
             ja = int(np.argmax(self.peak_acc_deg_s2))
             lines.append(f"  peak velocity {self.peak_vel_deg_s[jv]:.1f} deg/s "
                          f"({JOINT_NAMES[jv]}), peak acceleration "
-                         f"{self.peak_acc_deg_s2[ja]:.1f} deg/s^2 ({JOINT_NAMES[ja]})")
+                         f"{self.peak_acc_deg_s2[ja]:.1f} deg/s^2 ({JOINT_NAMES[ja]})"
+                         + (f"; ceiling {self.speed.describe()}" if self.speed else ""))
         lines.append(f"  min clearance: body {self.min_body_clearance_m:.3f} m, "
                      f"arm-arm {self.min_arm_arm_m:.3f} m, self "
                      f"{self.min_self_clearance_m:.3f} m")
@@ -221,11 +225,14 @@ def _translation(tf) -> Sequence[float]:
 
 def check_gesture(gesture: Gesture, home: Sequence[float], *, guard=None,
                   coupled=None, step_s: float = DEFAULT_STEP_S,
-                  max_vel_deg_s: float = MAX_JOINT_VEL_DEG_S,
-                  max_acc_deg_s2: float = MAX_JOINT_ACC_DEG_S2) -> CheckReport:
+                  speed: Optional[SpeedPolicy] = None) -> CheckReport:
+    """``speed=None``: the policy the gesture carries (:meth:`SpeedPolicy.of`)."""
+    speed = speed if speed is not None else SpeedPolicy.of(gesture)
+    max_vel_deg_s = speed.max_joint_vel_deg_s
+    max_acc_deg_s2 = speed.max_joint_acc_deg_s2
     guard = guard if guard is not None else _guard()
     coupled = coupled if coupled is not None else load_coupled_limits()
-    report = CheckReport(ok=True, keyframes=len(gesture.keyframes))
+    report = CheckReport(ok=True, keyframes=len(gesture.keyframes), speed=speed)
     rows = gesture.array()
     for label, idx in (("first", 0), ("last", -1)):
         gap = float(np.max(np.abs(rows[idx] - np.asarray(home))))
@@ -292,12 +299,12 @@ def check_gesture(gesture: Gesture, home: Sequence[float], *, guard=None,
         report.peak_vel_deg_s = [float(v) for v in vel.max(axis=0)]
         report.peak_acc_deg_s2 = [float(v) for v in acc.max(axis=0)]
         for j in range(N_JOINTS):
-            if max_vel_deg_s > 0 and report.peak_vel_deg_s[j] > max_vel_deg_s * RATE_SLACK:
+            if report.peak_vel_deg_s[j] > max_vel_deg_s * RATE_SLACK:
                 s = int(np.argmax(vel[:, j]))
                 add(float(points[s]["t"]),
                     f"{JOINT_NAMES[j]} velocity {report.peak_vel_deg_s[j]:.1f} "
                     f"deg/s over the {max_vel_deg_s:g} deg/s cap (segment {s + 1})")
-            if max_acc_deg_s2 > 0 and report.peak_acc_deg_s2[j] > max_acc_deg_s2 * RATE_SLACK:
+            if report.peak_acc_deg_s2[j] > max_acc_deg_s2 * RATE_SLACK:
                 s = int(np.argmax(acc[:, j]))
                 add(float(points[s]["t"]),
                     f"{JOINT_NAMES[j]} acceleration {report.peak_acc_deg_s2[j]:.1f} "

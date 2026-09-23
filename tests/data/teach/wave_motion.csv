@@ -6,6 +6,8 @@
 # mkit-teach: usage=filler ending
 # mkit-teach: source=teach
 # mkit-teach: home_sha=b3b0b73f4ad0
+# mkit-teach: max_joint_vel=150
+# mkit-teach: max_joint_acc=600
 # mkit-teach: min_clearance=body 30.3mm arm-arm 291.2mm self 162.6mm
 duration,R1,R2,R3,R4,R5,R6,R7,L1,L2,L3,L4,L5,L6,L7
 0.0500,-52.2600,87.3800,88.3000,-114.3200,86.6700,-1.1000,13.0500,52.2600,87.3800,-88.3000,-114.3200,-86.6700,-1.1000,-13.0500

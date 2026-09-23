@@ -6,8 +6,10 @@ finalize half, after the capture loop) and
 ``reduceSamples``, ``buildGesture``, ``limitJointDynamics``), read-only clone
 of d1-sdk-workspace @ f142fc6; plus omakase-core
 ``status_server/d1/teach.py::_trim_idle_keyframes`` (the panel's "Trim idle
-pauses"). Defaults are gesture_record's: smoothing window 5, epsilon 1.5 deg,
-25 deg/s, 120 deg/s^2, 0.05 s minimum keyframe, wrist locked at HOME.
+pauses"). Defaults are gesture_record's (smoothing window 5, epsilon 1.5 deg,
+0.05 s minimum keyframe, wrist locked at HOME) except the speed ceiling:
+:class:`SpeedPolicy`, 150 deg/s and 600 deg/s^2 (gesture_record's was 25 and
+120, which slowed a hand-taught swing down visibly).
 
 Order: trim the release sag -> lock wrist -> smooth -> reduce -> build (real
 elapsed time per keyframe) -> HOME in / HOME out -> [trim idle] -> limit
@@ -26,7 +28,8 @@ HOME RULES (Shu, 2026-09-23), for a hand-guided take:
 * **The return to HOME is a constant speed.** The player replaces the last
   row with HOME, so the last recorded pose is kept as a real row and a HOME
   row is APPENDED after it, lasting ``max|pose - HOME| / home_speed_deg_s``
-  (20 deg/s, under the player's 25 deg/s cap): a long return and a short one
+  (20 deg/s — deliberately slow and constant, well under the ceiling, since
+  it is not taught motion): a long return and a short one
   move at the same joint speed. The HOME-in blend is timed the same way.
   A stream end (or start) already within ``epsilon_deg`` of HOME is snapped
   to HOME instead, as gesture_record did.
@@ -53,18 +56,17 @@ first and last sample and honour ``min_spacing_s``.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
-from .gesture_csv import Gesture, Keyframe, N_JOINTS, sample, trajectory_points
+from .gesture_csv import (JOINT_NAMES, Gesture, GestureFormatError, Keyframe,
+                          N_JOINTS, sample, trajectory_points)
 
 #: gesture_record defaults
 SMOOTH_WINDOW = 5
 EPSILON_DEG = 1.5
-MAX_JOINT_VEL_DEG_S = 25.0
-MAX_JOINT_ACC_DEG_S2 = 120.0
 MIN_KEYFRAME_S = 0.05
 #: buildGesture's floor on a keyframe span before the playability pass
 BUILD_MIN_DURATION_S = 0.02
@@ -83,6 +85,126 @@ SAG_VEL_DEG_S = 8.0
 #: segment sample count in limitJointDynamics
 _LIMIT_STEPS = 64
 _LIMIT_PASSES = 6
+
+
+@dataclass(frozen=True)
+class SpeedPolicy:
+    """THE gesture speed policy — the ceiling ``export`` stretches a taught
+    gesture to, and ``check`` / ``play`` refuse above. One place, used by all
+    three.
+
+    It is the only speed policy a taught gesture meets: d1-firmwared caps a
+    trajectory at 350 deg/s per step and the omakaseos player validates no
+    speed at all.
+
+    Default: 150 deg/s, 600 deg/s^2 (Shu 2026-09-23 21:09Z, "option c"): a
+    taught motion plays back at the speed it was recorded at, and only what
+    is faster than that is stretched. d1-2 take2 is the reason: its J1 swing
+    peaked ~130 deg/s after smoothing, and gesture_record's legacy caps
+    (``limitJointDynamics``: 25 deg/s, 120 deg/s^2, to which the 30 library
+    CSVs were repaired) stretched it from 3.83 s to 5.52 s — visibly slower
+    than taught. ``--max-joint-vel`` / ``--max-joint-acc`` set another
+    ceiling per gesture, and the caps a CSV was exported with travel IN the
+    CSV (``# mkit-teach: max_joint_vel=… max_joint_acc=…``), so ``check`` and
+    ``play`` hold that file to its own ceiling unless told otherwise.
+    """
+
+    max_joint_vel_deg_s: float = 150.0
+    max_joint_acc_deg_s2: float = 600.0
+
+    #: the CSV metadata keys
+    VEL_KEY = "max_joint_vel"
+    ACC_KEY = "max_joint_acc"
+
+    def __post_init__(self) -> None:
+        for name in ("max_joint_vel_deg_s", "max_joint_acc_deg_s2"):
+            value = float(getattr(self, name))
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+            object.__setattr__(self, name, value)
+
+    def meta(self) -> Dict[str, str]:
+        """The ``# mkit-teach:`` lines that carry this policy in a CSV."""
+        return {self.VEL_KEY: f"{self.max_joint_vel_deg_s:g}",
+                self.ACC_KEY: f"{self.max_joint_acc_deg_s2:g}"}
+
+    def describe(self) -> str:
+        return f"{self.max_joint_vel_deg_s:g} deg/s, {self.max_joint_acc_deg_s2:g} deg/s^2"
+
+    def override(self, vel: Optional[float] = None,
+                 acc: Optional[float] = None) -> "SpeedPolicy":
+        """This policy with the caps that were given (``None`` = keep)."""
+        return SpeedPolicy(self.max_joint_vel_deg_s if vel is None else vel,
+                           self.max_joint_acc_deg_s2 if acc is None else acc)
+
+    @classmethod
+    def of(cls, gesture: Gesture, vel: Optional[float] = None,
+           acc: Optional[float] = None) -> "SpeedPolicy":
+        """The policy a gesture was exported under (its CSV metadata; the
+        defaults for a file that predates the keys), then the overrides."""
+        return cls.from_meta(gesture.meta).override(vel, acc)
+
+    @classmethod
+    def from_meta(cls, meta: Mapping[str, str]) -> "SpeedPolicy":
+        values = {}
+        for key, name in ((cls.VEL_KEY, "max_joint_vel_deg_s"),
+                          (cls.ACC_KEY, "max_joint_acc_deg_s2")):
+            if key not in meta:
+                continue
+            try:
+                values[name] = float(meta[key])
+            except ValueError:
+                values[name] = float("nan")
+            if not (math.isfinite(values[name]) and values[name] > 0):
+                raise GestureFormatError(
+                    f"# mkit-teach: {key}={meta[key]!r} is not a positive number")
+        return cls(**values)
+
+
+#: the default ceiling (Shu 2026-09-23: taught speed plays as taught)
+DEFAULT_SPEED = SpeedPolicy()
+#: gesture_record's ``limitJointDynamics`` caps, the library's repaired speed
+LEGACY_SPEED = SpeedPolicy(25.0, 120.0)
+
+
+@dataclass(frozen=True)
+class SpeedStretch:
+    """How much :func:`limit_joint_dynamics` slowed a gesture down."""
+
+    before_s: float
+    after_s: float
+    policy: SpeedPolicy
+    #: per joint, the peak |velocity| / |acceleration| of the UNLIMITED
+    #: gesture on the daemon's spline (what was taught, after smoothing)
+    peak_vel_deg_s: List[float] = field(default_factory=list)
+    peak_acc_deg_s2: List[float] = field(default_factory=list)
+
+    @property
+    def stretched(self) -> bool:
+        return self.after_s > self.before_s + 1e-3
+
+    def summary(self) -> str:
+        if self.peak_vel_deg_s:
+            jv = int(np.argmax(self.peak_vel_deg_s))
+            ja = int(np.argmax(self.peak_acc_deg_s2))
+            peaks = (f"{JOINT_NAMES[jv]} peak {self.peak_vel_deg_s[jv]:.0f} deg/s, "
+                     f"{JOINT_NAMES[ja]} {self.peak_acc_deg_s2[ja]:.0f} deg/s^2 recorded")
+        else:
+            peaks = "no motion"
+        if not self.stretched:
+            return (f"kept as recorded: {self.after_s:.2f} s ({peaks}, within "
+                    f"{self.policy.describe()})")
+        return (f"stretched {self.before_s:.2f} s -> {self.after_s:.2f} s to meet "
+                f"{self.policy.describe()} ({peaks})")
+
+
+def speed_stretch(before: Gesture, after: Gesture, home: Sequence[float],
+                  policy: SpeedPolicy) -> SpeedStretch:
+    """Measure what limiting did: the taught peaks and both play times."""
+    peaks = segment_peaks_per_joint(trajectory_points(before, home))
+    vel = [float(v) for v in np.max([v for v, _ in peaks], axis=0)] if peaks else []
+    acc = [float(a) for a in np.max([a for _, a in peaks], axis=0)] if peaks else []
+    return SpeedStretch(before.played_s, after.played_s, policy, vel, acc)
 
 
 def lock_wrist(samples: np.ndarray, home: Sequence[float]) -> np.ndarray:
@@ -251,26 +373,25 @@ def segment_peaks(points: Sequence[dict], steps: int = _LIMIT_STEPS):
 
 
 def limit_joint_dynamics(gesture: Gesture, home: Sequence[float],
-                         max_vel_deg_s: float = MAX_JOINT_VEL_DEG_S,
-                         max_acc_deg_s2: float = MAX_JOINT_ACC_DEG_S2,
+                         speed: SpeedPolicy = DEFAULT_SPEED,
                          min_duration_s: float = MIN_KEYFRAME_S) -> Gesture:
     """gesture_csv.h ``limitJointDynamics``, on the player's knots: STRETCH
     durations (never shorten, never touch a pose) until every segment's
-    realized peak velocity/acceleration is within the caps. Row 0's duration
+    realized peak velocity/acceleration is within ``speed``. Row 0's duration
     is not a segment the firmware player plays and is only floored."""
     frames = [Keyframe(max(k.duration, min_duration_s), k.positions)
               for k in gesture.keyframes]
     out = Gesture(frames, dict(gesture.meta), list(gesture.unsafe))
-    if max_vel_deg_s <= 0 and max_acc_deg_s2 <= 0:
-        return out
+    max_vel_deg_s = speed.max_joint_vel_deg_s
+    max_acc_deg_s2 = speed.max_joint_acc_deg_s2
     for _ in range(_LIMIT_PASSES):
         points = trajectory_points(out, home)
         changed = False
         for s, (vel, acc) in enumerate(segment_peaks(points)):
             scale = 1.0
-            if max_vel_deg_s > 0 and vel > max_vel_deg_s:
+            if vel > max_vel_deg_s:
                 scale = max(scale, vel / max_vel_deg_s)
-            if max_acc_deg_s2 > 0 and acc > max_acc_deg_s2:
+            if acc > max_acc_deg_s2:
                 scale = max(scale, math.sqrt(acc / max_acc_deg_s2))
             if scale > 1.0 + 1e-4:
                 kf = frames[s + 1]          # segment s ends at row s+1
@@ -328,9 +449,10 @@ class KeyframeOptions:
     lock_wrist: bool = True
     pin_home: bool = True
     max_idle_s: float = 0.0
+    #: stretch to ``speed`` (off: keep the taught timing; ``export``'s check
+    #: still holds the result to ``speed`` and refuses what exceeds it)
     speed_limit: bool = True
-    max_joint_vel_deg_s: float = MAX_JOINT_VEL_DEG_S
-    max_joint_acc_deg_s2: float = MAX_JOINT_ACC_DEG_S2
+    speed: SpeedPolicy = DEFAULT_SPEED
     min_keyframe_s: float = MIN_KEYFRAME_S
     #: HOME-in blend and appended return speed [deg/s]
     home_speed_deg_s: float = HOME_SPEED_DEG_S
@@ -407,9 +529,24 @@ def keyframes_from_poses(poses: Sequence[Sequence[float]], home: Sequence[float]
 
 
 def finish(gesture: Gesture, home: Sequence[float], o: KeyframeOptions) -> Gesture:
+    """Trim idle pauses, then limit to ``o.speed``. The result carries the
+    policy (``max_joint_vel`` / ``max_joint_acc``) and, when it had to slow
+    the gesture down, ``speed_stretch`` in its metadata — which ``export``
+    writes into the CSV header."""
     if o.max_idle_s and o.max_idle_s > 0:
         gesture = trim_idle(gesture, o.max_idle_s)
-    if o.speed_limit:
-        gesture = limit_joint_dynamics(gesture, home, o.max_joint_vel_deg_s,
-                                       o.max_joint_acc_deg_s2, o.min_keyframe_s)
-    return gesture
+    limited = (limit_joint_dynamics(gesture, home, o.speed, o.min_keyframe_s)
+               if o.speed_limit else gesture)
+    stretch = speed_stretch(gesture, limited, home, o.speed)
+    meta = dict(limited.meta)
+    meta.update(o.speed.meta())
+    meta.pop(STRETCH_KEY, None)
+    if stretch.stretched:
+        meta[STRETCH_KEY] = stretch.summary()
+    return Gesture(limited.keyframes, meta, list(limited.unsafe))
+
+
+#: metadata key: what limiting did to the taught timing (only when it slowed it)
+STRETCH_KEY = "speed_stretch"
+#: the metadata ``export`` carries from a reduced gesture into its CSV
+SPEED_META_KEYS = (SpeedPolicy.VEL_KEY, SpeedPolicy.ACC_KEY, STRETCH_KEY)

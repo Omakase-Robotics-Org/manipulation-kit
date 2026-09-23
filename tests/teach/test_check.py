@@ -81,9 +81,21 @@ def test_a_joint_limit_is_a_violation_not_a_clip(guard):
 
 
 def test_too_fast_is_a_violation(guard):
-    report = check_gesture(_bump(np.r_[0, -6.0, np.zeros(12)], seconds=0.1), HOME,
+    report = check_gesture(_bump(np.r_[0, -20.0, np.zeros(12)], seconds=0.1), HOME,
                            guard=guard, step_s=0.01)
-    assert any("velocity" in v for v in report.violations)
+    assert any("velocity" in v and "150 deg/s cap" in v for v in report.violations)
+
+
+def test_the_ceiling_is_the_csvs_own_unless_overridden(guard):
+    """A CSV exported at a higher ceiling carries it, and check holds it to
+    that one — not the default; an explicit policy still wins."""
+    from manipulation_kit.teach import SpeedPolicy
+    fast = _bump(np.r_[0, -20.0, np.zeros(12)], seconds=0.1)
+    fast.meta.update(SpeedPolicy(1000.0, 100000.0).meta())
+    assert check_gesture(fast, HOME, guard=guard, step_s=0.01).ok
+    strict = check_gesture(fast, HOME, guard=guard, step_s=0.01,
+                           speed=SpeedPolicy(25.0, 120.0))
+    assert any("25 deg/s cap" in v for v in strict.violations)
 
 
 def test_a_row_the_player_will_replace_is_warned_about(guard):

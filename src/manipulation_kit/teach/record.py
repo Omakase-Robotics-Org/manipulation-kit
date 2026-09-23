@@ -267,7 +267,7 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
            home_start: bool = True, brake_window_s: float = BRAKE_WINDOW_S,
            adj_limit_mm: float = COMPLIANCE["adjustment_limit_mm"],
            allow_bare_flange: bool = False, countdown_s: int = COUNTDOWN_S,
-           home_tol_deg: float = HOME_TOL_DEG,
+           home_tol_deg: float = HOME_TOL_DEG, name: Optional[str] = None,
            on_state: Callable[[str, str], None] = lambda state, msg: None,
            sleep=time.sleep, clock=time.monotonic) -> Recording:
     """Capture a teach on an ENTERED :class:`FirmwareExecutor` (lease held).
@@ -275,7 +275,8 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
     ``stop()`` is polled every sample (stream mode); ``next_keyframe()``
     blocks until the operator asks for a pose and returns ``False`` when they
     are done (keyframe mode). ``on_state(state, message)`` reports the
-    lifecycle.
+    lifecycle. ``name`` (the gesture's) is kept in ``meta["name"]``, so
+    ``export`` needs no ``--name``.
     """
     if guide not in GUIDES:
         raise ValueError(f"guide must be one of {GUIDES}, got {guide!r}")
@@ -290,7 +291,7 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
     client, holder = robot.client, robot.holder
     rec = Recording(mode=mode, guide=guide, arms=list(arms), rate_hz=float(rate_hz),
                     home=[float(v) for v in home],
-                    meta={"holder": holder,
+                    meta={"name": name, "holder": holder,
                           "firmware_spec": getattr(robot, "firmware_spec", None),
                           "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                           "adj_limit_mm": adj_limit_mm if guide == "compliance" else None,

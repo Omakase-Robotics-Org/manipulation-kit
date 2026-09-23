@@ -2,7 +2,7 @@
 
     mkit-teach record    take.json  --url http://127.0.0.1:4750   # brakes off, hand-guide
     mkit-teach keyframes take.json  take.keys.json                # reduce
-    mkit-teach export    take.json  wave_motion.csv --name wave   # check + CSV
+    mkit-teach export    take.json  --name wave                   # check + <take dir>/wave_motion.csv
     mkit-teach check     wave_motion.csv --ascii                  # pre-flight
     mkit-teach play      wave_motion.csv --url http://127.0.0.1:4750
     mkit-teach register  wave --yaml <omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml
@@ -26,9 +26,9 @@ from . import registry
 from .check import ascii_preview, check_gesture
 from .export import UnsafeGesture, export
 from .gesture_csv import Gesture, Keyframe, load_csv, load_home, save_csv
-from .process import (EPSILON_DEG, HOME_SPEED_DEG_S, MAX_JOINT_ACC_DEG_S2,
-                      MAX_JOINT_VEL_DEG_S, MIN_KEYFRAME_S, SAG_MAX_S,
-                      SAG_VEL_DEG_S, SMOOTH_WINDOW, KeyframeOptions,
+from .process import (DEFAULT_SPEED, EPSILON_DEG, HOME_SPEED_DEG_S,
+                      MIN_KEYFRAME_S, SAG_MAX_S, SAG_VEL_DEG_S, SMOOTH_WINDOW,
+                      STRETCH_KEY, KeyframeOptions, SpeedPolicy,
                       keyframes_from_poses, keyframes_from_samples)
 from .record import (BRAKE_CONTRACT, BRAKE_WINDOW_S, COMPLIANCE, DEFAULT_RATE_HZ,
                      Recording, record)
@@ -39,6 +39,82 @@ ARMS = {"both": ("left", "right"), "left": ("left",), "right": ("right",)}
 
 def _say(state: str, message: str) -> None:
     print(f"[{state}] {message}", flush=True)
+
+
+# -- what to run next ---------------------------------------------------------- #
+def recover_steps(url: str, wires) -> List[str]:
+    """How to put an arm back in a position hold by hand."""
+    lines = ["recover the arm(s) at rest: d1-firmwared console Arms -> Recover, or"]
+    lines += [f"curl -X POST {url}/v1/arm/{w}/recover -H 'Content-Type: "
+              f"application/json' -d '{{}}'" for w in wires]
+    return lines
+
+
+def next_steps(step: str, *, ok: bool = True, take: Optional[Path] = None,
+               csv: Optional[Path] = None, name: Optional[str] = None,
+               url: str = "http://127.0.0.1:4750", unrecovered=(),
+               dry_run: bool = False) -> List[str]:
+    """The command(s) an operator should run after ``step``, absolute paths
+    filled in — the fix when ``ok`` is False. Every subcommand ends by
+    printing these (Shu 2026-09-23: "tell me the next command in the log")."""
+    name_arg = name or "<name>"
+    lines: List[str] = []
+    if unrecovered:
+        lines += recover_steps(url, unrecovered)
+    if step == "record":
+        if ok:
+            lines.append(f"mkit-teach export {take}"
+                         + ("" if name else " --name <name>")
+                         + f"   # writes {Path(take).parent / (name_arg + '_motion.csv')}")
+        else:
+            if not unrecovered:
+                lines += recover_steps(url, ("a", "b"))[:1]
+            lines.append(f"mkit-teach record {take} --yes   # then try again")
+    elif step == "keyframes":
+        lines.append(f"mkit-teach export {take}" + ("" if name else " --name <name>"))
+    elif step == "export":
+        if ok:
+            lines += [f"mkit-teach check {csv} --ascii",
+                      f"mkit-teach play {csv} --dry-run"]
+        else:
+            where = Path(take).parent if take is not None else Path.cwd()
+            lines += [f"mkit-teach record {where / (name_arg + '.json')}   # re-teach it",
+                      f"mkit-teach export {take} --name {name_arg} --force"
+                      f"   # or write it flagged UNSAFE (play then needs --no-safety)"]
+    elif step == "check":
+        lines.append(f"mkit-teach play {csv} --dry-run" if ok else
+                     f"mkit-teach export <take.json> --name {name_arg}   "
+                     f"# re-export (or re-teach) the take this CSV came from")
+    elif step == "play":
+        if ok and dry_run:
+            lines.append(f"mkit-teach play {csv}")
+        elif ok:
+            lines += [f"mkit-teach register {name_arg} --yaml "
+                      f"<omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml"
+                      f"   # then copy {csv} to csv/ beside it",
+                      "mkit-teach record   # the next take (asks for its name)"]
+        else:
+            lines.append(f"mkit-teach check {csv} --ascii   # see what was refused"
+                         if not unrecovered else f"mkit-teach play {csv}   # then again")
+    elif step == "register":
+        lines.append("mkit-teach record   # the next take (asks for its name)")
+    else:
+        raise ValueError(f"unknown step {step!r}")
+    return lines
+
+
+def print_next(lines: List[str], *, ok: bool = True) -> None:
+    print("Next:" if ok else "To fix:", flush=True)
+    for line in lines:
+        print(f"  {line}", flush=True)
+
+
+def _gesture_name(gesture: Gesture, csv: Path) -> str:
+    name = gesture.meta.get("name")
+    if name:
+        return name
+    stem = Path(csv).stem
+    return stem[:-len("_motion")] if stem.endswith("_motion") else stem
 
 
 def _executor(args, *, lease_class: str):
@@ -79,8 +155,69 @@ def confirm_holding(args, arms, *, ask=input) -> bool:
     return True
 
 
+def teach_dir() -> Path:
+    """Where named takes and their CSVs live: ``$MKIT_TEACH_DIR`` or ``~/teach``."""
+    return Path(os.environ.get("MKIT_TEACH_DIR") or "~/teach").expanduser().resolve()
+
+
+def _interactive(args=None) -> bool:
+    return not getattr(args, "yes", False) and sys.stdin.isatty()
+
+
+def _ask_name(ask, prompt: str = "Gesture name (a-z, 0-9, _, -): ") -> str:
+    while True:
+        try:
+            name = ask(prompt).strip()
+        except EOFError:
+            raise SystemExit("mkit-teach record: no gesture name given") from None
+        try:
+            return registry.check_name(name)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+
+
+def resolve_take(args, *, ask=input, interactive: Optional[bool] = None):
+    """``(take path, gesture name or None)`` for ``record``.
+
+    A positional path is used as given (the name is ``--name``, else its
+    stem when that is a valid name). Otherwise the name is ``--name`` or —
+    interactively — asked for, and the take is ``<teach dir>/<name>.json``;
+    an existing take there is only overwritten when the operator says so
+    (or ``--yes``), else a new name is asked for.
+    """
+    interactive = _interactive(args) if interactive is None else interactive
+    if args.out is not None:
+        path = Path(args.out).expanduser().resolve()
+        name = args.name or path.stem
+        try:
+            return path, registry.check_name(name)
+        except ValueError:
+            if args.name:
+                raise SystemExit(f"mkit-teach record: bad --name {args.name!r}") from None
+            return path, None
+    if args.name:
+        name = registry.check_name(args.name)
+    elif interactive:
+        name = _ask_name(ask)
+    else:
+        raise SystemExit("mkit-teach record: give --name NAME (or a take path); "
+                         "the name is asked for only on a terminal")
+    while True:
+        path = teach_dir() / f"{name}.json"
+        if not path.exists() or getattr(args, "yes", False):
+            return path, name
+        if not interactive:
+            raise SystemExit(f"mkit-teach record: {path} exists; choose another "
+                             f"--name, or pass --yes to overwrite it")
+        answer = ask(f"{path} exists: [o]verwrite, or [n]ew name? ").strip().lower()
+        if answer in ("o", "overwrite"):
+            return path, name
+        name = _ask_name(ask)
+
+
 def cmd_record(args) -> int:
     guide = _guide(args)
+    take, name = resolve_take(args)
     if guide == "brake" and not confirm_holding(args, ARMS[args.arms]):
         return 2
     home = load_home(args.home)
@@ -108,8 +245,11 @@ def cmd_record(args) -> int:
             line = input("Enter = capture this pose, q + Enter = done: ").strip()
             return line.lower() not in ("q", "quit", "done")
         should_stop = None
-    with _executor(args, lease_class=args.lease_class) as robot:
-        try:
+    from ..executors.firmware import FirmwareUnavailable  # noqa: PLC0415
+    out = take
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with _executor(args, lease_class=args.lease_class) as robot:
             rec = record(robot, home=home, guide=guide, arms=ARMS[args.arms],
                          mode=args.mode, rate_hz=args.rate_hz,
                          duration_s=args.duration_s, stationary_s=args.stationary_s,
@@ -117,16 +257,37 @@ def cmd_record(args) -> int:
                          home_start=not args.no_home_start,
                          brake_window_s=args.brake_window_s,
                          adj_limit_mm=args.adj_limit_mm, countdown_s=args.countdown,
-                         allow_bare_flange=args.allow_bare_flange, on_state=_say)
-        except KeyboardInterrupt:
-            print("interrupted; brakes engaged first, then the position hold "
-                  "(any arm that could not be recovered is named above)",
-                  file=sys.stderr)
-            return 130
-    rec.save(Path(args.out))
-    print(f"saved {args.out}: {len(rec.samples)} samples. Next: "
-          f"mkit-teach export {args.out} <name>_motion.csv --name <name>")
+                         allow_bare_flange=args.allow_bare_flange, name=name,
+                         on_state=_say)
+    except KeyboardInterrupt:
+        print("interrupted; brakes engaged first, then the position hold "
+              "(any arm that could not be recovered is named above)",
+              file=sys.stderr)
+        print_next(next_steps("record", ok=False, take=out, url=args.url), ok=False)
+        return 130
+    except (FirmwareUnavailable, RuntimeError) as exc:
+        print(f"record failed: {exc}", file=sys.stderr)
+        print_next(next_steps("record", ok=False, take=out, url=args.url), ok=False)
+        return 1
+    rec.save(out)
+    print(f"saved {out}: {len(rec.samples)} samples")
+    print_next(next_steps("record", take=out, name=name, url=args.url,
+                          unrecovered=_unrecovered_wires(rec)))
     return 0
+
+
+def _unrecovered_wires(rec: Recording) -> List[str]:
+    """The arms the teardown left without a position hold."""
+    return [w for w in ("a", "b")
+            if any(p.startswith(f"arm {w} was not put back")
+                   for p in rec.meta.get("exit_problems", []))]
+
+
+def default_csv(source: Path, name: str) -> Path:
+    """Where ``export`` writes when no ``out`` is given: beside the take, as
+    the library names it (``<name>_motion.csv``), absolute — so the path the
+    hint prints is the path ``play`` needs, whatever the cwd."""
+    return Path(source).expanduser().resolve().parent / registry.csv_filename(name)
 
 
 # -- keyframes / export ------------------------------------------------------ #
@@ -136,11 +297,17 @@ def _options(args) -> KeyframeOptions:
         epsilon_deg=args.epsilon_deg, method=args.method,
         min_spacing_s=args.min_spacing_s, lock_wrist=not args.free_wrist,
         pin_home=not args.no_home, max_idle_s=args.max_idle_s,
-        speed_limit=not args.no_speed_limit,
-        max_joint_vel_deg_s=args.max_joint_vel, max_joint_acc_deg_s2=args.max_joint_acc,
+        speed_limit=not args.no_speed_limit, speed=_speed(args),
         min_keyframe_s=args.min_keyframe_s, home_speed_deg_s=args.home_speed,
         sag_max_s=0.0 if args.no_sag_trim else args.sag_max_s,
         sag_vel_deg_s=args.sag_vel)
+
+
+def _speed(args, gesture: Optional[Gesture] = None) -> SpeedPolicy:
+    """THE speed ceiling for this command: the gesture's own (its CSV
+    header), else the default, with the caps given on the command line."""
+    base = SpeedPolicy.of(gesture) if gesture is not None else DEFAULT_SPEED
+    return base.override(args.max_joint_vel, args.max_joint_acc)
 
 
 def _gesture_from(path: Path, args):
@@ -151,49 +318,104 @@ def _gesture_from(path: Path, args):
         return load_csv(path), home
     doc = json.loads(path.read_text(encoding="utf-8"))
     if doc.get("schema") == KEYFRAMES_SCHEMA:
-        return Gesture([Keyframe(r[0], r[1:]) for r in doc["keyframes"]]), home
+        return Gesture([Keyframe(r[0], r[1:]) for r in doc["keyframes"]],
+                       meta=dict(doc.get("meta") or {})), home
     rec = Recording.from_json(doc)
     o = _options(args)
     if rec.mode == "keyframe":
-        return keyframes_from_poses(rec.samples, home, args.segment_s, o), home
-    return keyframes_from_samples(rec.times, rec.samples, home, o), home
+        gesture = keyframes_from_poses(rec.samples, home, args.segment_s, o)
+    else:
+        gesture = keyframes_from_samples(rec.times, rec.samples, home, o)
+    if rec.meta.get("name"):
+        gesture.meta.setdefault("name", rec.meta["name"])
+    return gesture, home
 
 
 def cmd_keyframes(args) -> int:
     gesture, home = _gesture_from(Path(args.recording), args)
-    doc = {"schema": KEYFRAMES_SCHEMA, "home": home,
+    doc = {"schema": KEYFRAMES_SCHEMA, "home": home, "meta": gesture.meta,
            "keyframes": [[round(k.duration, 4)] + [round(v, 4) for v in k.positions]
                          for k in gesture.keyframes]}
-    Path(args.out).write_text(json.dumps(doc, indent=1), encoding="utf-8")
-    print(f"{len(gesture.keyframes)} keyframes, {gesture.total_duration_s:.2f} s "
-          f"-> {args.out}")
+    out = Path(args.out).expanduser().resolve()
+    out.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    _say_speed(gesture)
+    print(f"{len(gesture.keyframes)} keyframes, {gesture.played_s:.2f} s -> {out}")
+    print_next(next_steps("keyframes", take=out))
     return 0
 
 
+def _say_speed(gesture: Gesture) -> None:
+    """Say so when the speed ceiling slowed the taught timing — only then."""
+    stretch = gesture.meta.get(STRETCH_KEY)
+    if stretch:
+        print(f"speed: {stretch}. Pass --max-joint-vel / --max-joint-acc to keep "
+              f"more of the recorded speed (this ceiling is the only gesture "
+              f"speed policy: the daemon caps 350 deg/s per step, the omakaseos "
+              f"player none; docs/teach.md 'Speed').")
+
+
+def ask_labels(args, *, ask=input, interactive: Optional[bool] = None):
+    """``(sentiment, usage)``: as given; when omitted, asked for on a terminal,
+    else the defaults ``neutral`` / ``filler``."""
+    interactive = sys.stdin.isatty() if interactive is None else interactive
+    sentiment, usage = args.sentiment, args.usage
+    if sentiment is None:
+        sentiment = "neutral"
+        if interactive:
+            while True:
+                answer = ask(f"Sentiment {registry.SENTIMENTS} [neutral]: ").strip()
+                if not answer or answer in registry.SENTIMENTS:
+                    sentiment = answer or "neutral"
+                    break
+    if usage is None:
+        usage = ["filler"]
+        if interactive:
+            while True:
+                answer = ask(f"Usage, space-separated {registry.USAGES} [filler]: ").split()
+                if all(u in registry.USAGES for u in answer):
+                    usage = answer or ["filler"]
+                    break
+    return sentiment, usage
+
+
 def cmd_export(args) -> int:
-    gesture, home = _gesture_from(Path(args.source), args)
+    source = Path(args.source).expanduser().resolve()
+    gesture, home = _gesture_from(source, args)
+    name = args.name or gesture.meta.get("name")
+    if name:
+        name = registry.check_name(name)
+    if args.out is None and not name:
+        raise SystemExit("mkit-teach export: give --name (the CSV is then written "
+                         "beside the take as <name>_motion.csv) or an explicit out path")
+    target = (Path(args.out).expanduser().resolve() if args.out is not None
+              else default_csv(source, name))
+    sentiment, usage = ask_labels(args)
+    _say_speed(gesture)
     try:
-        out, report = export(gesture, home, name=args.name, sentiment=args.sentiment,
-                             usage=args.usage, force=args.force)
+        out, report = export(gesture, home, name=name, sentiment=sentiment,
+                             usage=usage, force=args.force,
+                             speed=_speed(args, gesture))
     except UnsafeGesture as exc:
         print(str(exc), file=sys.stderr)
+        print_next(next_steps("export", ok=False, take=source, name=name), ok=False)
         return 1
     print(report.summary())
     if not report.ok:
         print("FORCE-SAVED UNSAFE: `play` will refuse this file without "
               "--no-safety", file=sys.stderr)
-    save_csv(Path(args.out), out)
-    print(f"[saved] {args.out}: {len(out.keyframes)} keyframes, "
-          f"{out.total_duration_s:.2f} s")
-    if args.name:
+    save_csv(target, out)
+    # the same number `check` prints: the daemon spline's end time
+    print(f"[saved] {target}: {len(out.keyframes)} keyframes, "
+          f"{out.played_s:.2f} s on the daemon's spline")
+    if name:
         print("gesture.yaml entry (omakaseos robot_stack/robots/omakase/d1/):")
-        print(registry.entry_yaml(args.name, sentiment=args.sentiment,
-                                  usage=args.usage), end="")
+        print(registry.entry_yaml(name, sentiment=sentiment, usage=usage), end="")
         if args.register:
-            how = registry.register(Path(args.register), args.name,
-                                    sentiment=args.sentiment, usage=args.usage)
-            print(f"{how} d1_{args.name} in {args.register}; copy the CSV to "
-                  f"csv/{registry.csv_filename(args.name)} beside it")
+            how = registry.register(Path(args.register), name,
+                                    sentiment=sentiment, usage=usage)
+            print(f"{how} d1_{name} in {args.register}; copy the CSV to "
+                  f"csv/{registry.csv_filename(name)} beside it")
+    print_next(next_steps("export", csv=target, name=name))
     return 0
 
 
@@ -201,7 +423,8 @@ def cmd_export(args) -> int:
 def cmd_check(args) -> int:
     gesture = load_csv(Path(args.csv))
     home = load_home(args.home)
-    report = check_gesture(gesture, home, step_s=args.step_s)
+    report = check_gesture(gesture, home, step_s=args.step_s,
+                           speed=_speed(args, gesture))
     # Exit status: the HARD checks only. Guard clearance findings print as
     # WARNING lines (advisory for a taught gesture, docs/teach.md "Guard").
     if gesture.unsafe:
@@ -209,34 +432,56 @@ def cmd_check(args) -> int:
     print(report.summary())
     if args.ascii:
         print(ascii_preview(gesture, home))
-    return 0 if report.ok and not gesture.unsafe else 1
+    ok = report.ok and not gesture.unsafe
+    csv = Path(args.csv).expanduser().resolve()
+    print_next(next_steps("check", ok=ok, csv=csv, name=_gesture_name(gesture, csv)),
+               ok=ok)
+    return 0 if ok else 1
 
 
 def cmd_play(args) -> int:
     from .play import play, preflight  # noqa: PLC0415
     gesture = load_csv(Path(args.csv))
     home = load_home(args.home)
+    speed = _speed(args, gesture)
+    csv = Path(args.csv).expanduser().resolve()
+    name = _gesture_name(gesture, csv)
     if args.dry_run:
-        pre = preflight(gesture, home, no_safety=args.no_safety)
+        pre = preflight(gesture, home, no_safety=args.no_safety, speed=speed)
         print(pre.detail if not pre.check else pre.check.summary())
+        print_next(next_steps("play", ok=pre.ok, csv=csv, name=name, dry_run=True),
+                   ok=pre.ok)
         return 0 if pre.ok else 1
-    with _executor(args, lease_class=args.lease_class) as robot:
-        report = play(robot, gesture, home, no_safety=args.no_safety,
-                      guard=args.guard,
-                      announce=lambda line: print(line, flush=True))
+    from ..executor import controller_fault  # noqa: PLC0415
+    from ..executors.firmware import FirmwareUnavailable  # noqa: PLC0415
+    try:
+        with _executor(args, lease_class=args.lease_class) as robot:
+            report = play(robot, gesture, home, no_safety=args.no_safety,
+                          guard=args.guard, speed=speed,
+                          announce=lambda line: print(line, flush=True))
+            faulted = controller_fault(robot.state()) is not None
+    except FirmwareUnavailable as exc:
+        print(f"play failed: {exc}", file=sys.stderr)
+        print_next(next_steps("play", ok=False, csv=csv, name=name, url=args.url,
+                              unrecovered=("a", "b")), ok=False)
+        return 1
     print(report.detail)
     for note in report.notes:
         print(f"  note: {note}")
+    print_next(next_steps("play", ok=report.ok, csv=csv, name=name, url=args.url,
+                          unrecovered=("a", "b") if faulted else ()),
+               ok=report.ok)
     return 0 if report.ok else 1
 
 
 def cmd_register(args) -> int:
-    print(registry.entry_yaml(args.name, sentiment=args.sentiment, usage=args.usage),
-          end="")
+    sentiment, usage = ask_labels(args)
+    print(registry.entry_yaml(args.name, sentiment=sentiment, usage=usage), end="")
     if args.yaml:
         how = registry.register(Path(args.yaml), args.name,
-                                sentiment=args.sentiment, usage=args.usage)
+                                sentiment=sentiment, usage=usage)
         print(f"{how} d1_{args.name} in {args.yaml}")
+    print_next(next_steps("register", name=args.name))
     return 0
 
 
@@ -248,6 +493,17 @@ def _common(p, *, robot: bool) -> None:
                        help="d1-firmwared origin (default $D1FW_URL or 127.0.0.1:4750)")
         p.add_argument("--vel-ratio", type=float, default=0.15,
                        help="position-mode velocity/acceleration ratio, a FRACTION")
+
+
+def _speed_args(p) -> None:
+    """The speed ceiling (process.SpeedPolicy). Unset = the gesture's own
+    (its CSV header), or the default for a recording."""
+    p.add_argument("--max-joint-vel", type=float, default=None,
+                   help=f"joint speed ceiling [deg/s] (default: the CSV's own, "
+                        f"else {DEFAULT_SPEED.max_joint_vel_deg_s:g})")
+    p.add_argument("--max-joint-acc", type=float, default=None,
+                   help=f"joint acceleration ceiling [deg/s^2] (default: the "
+                        f"CSV's own, else {DEFAULT_SPEED.max_joint_acc_deg_s2:g})")
 
 
 def _keyframe_args(p) -> None:
@@ -266,9 +522,10 @@ def _keyframe_args(p) -> None:
     g.add_argument("--max-idle-s", type=float, default=0.0,
                    help="trim idle pauses to this dwell (0 = keep; the panel "
                         "offered 0.25 / 0.5 / 1)")
-    g.add_argument("--no-speed-limit", action="store_true")
-    g.add_argument("--max-joint-vel", type=float, default=MAX_JOINT_VEL_DEG_S)
-    g.add_argument("--max-joint-acc", type=float, default=MAX_JOINT_ACC_DEG_S2)
+    g.add_argument("--no-speed-limit", action="store_true",
+                   help="keep the taught timing (no stretch); the check still "
+                        "refuses what exceeds the ceiling")
+    _speed_args(g)
     g.add_argument("--min-keyframe-s", type=float, default=MIN_KEYFRAME_S)
     g.add_argument("--home-speed", type=float, default=HOME_SPEED_DEG_S,
                    help="joint speed [deg/s] of the HOME-in blend and the "
@@ -285,8 +542,10 @@ def _keyframe_args(p) -> None:
 
 def _meta_args(p) -> None:
     p.add_argument("--name", default=None, help="gesture name (a-z, 0-9, _, -)")
-    p.add_argument("--sentiment", choices=registry.SENTIMENTS, default="neutral")
-    p.add_argument("--usage", nargs="+", choices=registry.USAGES, default=["filler"])
+    p.add_argument("--sentiment", choices=registry.SENTIMENTS, default=None,
+                   help="default neutral (asked for on a terminal when omitted)")
+    p.add_argument("--usage", nargs="+", choices=registry.USAGES, default=None,
+                   help="default filler (asked for on a terminal when omitted)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -295,7 +554,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("record", help="hand-guide the arms and sample them")
     _common(p, robot=True)
-    p.add_argument("out", help="recording JSON to write")
+    p.add_argument("out", nargs="?", default=None,
+                   help="recording JSON to write (default: <teach dir>/<name>.json, "
+                        "teach dir = $MKIT_TEACH_DIR or ~/teach; the name is "
+                        "asked for, or --name)")
+    p.add_argument("--name", default=None,
+                   help="gesture name (a-z, 0-9, _, -); asked for when omitted")
     guide = p.add_argument_group(
         "how the arm goes soft (default: RELEASE THE HOLDING BRAKES — hand "
         "guiding; the arm drops unless someone holds it)")
@@ -336,7 +600,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export", help="check and write the omakaseos gesture CSV")
     _common(p, robot=False)
     p.add_argument("source", help="recording JSON, keyframes JSON or CSV")
-    p.add_argument("out", help="<name>_motion.csv")
+    p.add_argument("out", nargs="?", default=None,
+                   help="CSV to write (default: <source dir>/<name>_motion.csv, "
+                        "needs --name)")
     _keyframe_args(p)
     _meta_args(p)
     p.add_argument("--force", action="store_true",
@@ -350,6 +616,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("csv")
     p.add_argument("--ascii", action="store_true", help="print joint strips")
     p.add_argument("--step-s", type=float, default=0.01)
+    _speed_args(p)
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("play", help="play a CSV through FirmwareExecutor")
@@ -358,6 +625,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-safety", action="store_true",
                    help="skip the kit's pre-flight (the daemon still guards)")
     p.add_argument("--dry-run", action="store_true", help="pre-flight only")
+    _speed_args(p)
     p.add_argument("--lease-class", choices=("operator", "policy"), default="policy")
     p.add_argument("--guard", choices=("speed_only", "full"), default="speed_only",
                    help="daemon trajectory guard: speed_only (default) skips its "

@@ -9,7 +9,8 @@ from manipulation_kit.teach import (KeyframeOptions, Keyframe, Gesture, load_hom
                                     keyframes_from_poses, keyframes_from_samples,
                                     limit_joint_dynamics, smooth_samples, trim_idle,
                                     trajectory_points)
-from manipulation_kit.teach.process import (WRIST_JOINTS, enforce_min_spacing,
+from manipulation_kit.teach.process import (DEFAULT_SPEED, LEGACY_SPEED, WRIST_JOINTS,
+                                            enforce_min_spacing,
                                             reduce_collinear,
                                             reduce_douglas_peucker, segment_peaks)
 
@@ -67,15 +68,18 @@ def test_a_stream_pins_home_and_locks_the_wrist():
     assert np.max(free.array()[:, 4]) > HOME[4] + 10.0
 
 
-def test_limiting_stretches_time_only_and_meets_the_caps():
+@pytest.mark.parametrize("speed", [DEFAULT_SPEED, LEGACY_SPEED])
+def test_limiting_stretches_time_only_and_meets_the_caps(speed):
     far = HOME + np.r_[0, 30.0, 0, -25.0, np.zeros(10)]
-    g = Gesture([Keyframe(0.05, HOME), Keyframe(0.2, far), Keyframe(0.2, HOME)])
-    out = limit_joint_dynamics(g, HOME)
+    g = Gesture([Keyframe(0.05, HOME), Keyframe(0.1, far), Keyframe(0.1, HOME)])
+    out = limit_joint_dynamics(g, HOME, speed)
     assert out.array() == pytest.approx(g.array())          # poses untouched
+    assert out.played_s > g.played_s
     assert all(b.duration >= a.duration for a, b in zip(g.keyframes, out.keyframes))
     for vel, acc in segment_peaks(trajectory_points(out, HOME)):
-        assert vel <= 25.0 * 1.02 and acc <= 120.0 * 1.02
-    again = limit_joint_dynamics(out, HOME)                 # idempotent
+        assert vel <= speed.max_joint_vel_deg_s * 1.02
+        assert acc <= speed.max_joint_acc_deg_s2 * 1.02
+    again = limit_joint_dynamics(out, HOME, speed)          # idempotent
     assert [k.duration for k in again.keyframes] == pytest.approx(
         [k.duration for k in out.keyframes], abs=1e-3)
 
@@ -141,7 +145,8 @@ def test_a_sagged_take_exports_from_home_without_the_dip_or_a_spike():
     assert np.max(np.abs(early[:, 3] - HOME[3])) < 0.6
     # continuous and capped: no segment is a spike
     for vel, acc in segment_peaks_per_joint(points):
-        assert np.max(vel) <= 25.0 * 1.03 and np.max(acc) <= 120.0 * 1.03
+        assert np.max(vel) <= DEFAULT_SPEED.max_joint_vel_deg_s * 1.03
+        assert np.max(acc) <= DEFAULT_SPEED.max_joint_acc_deg_s2 * 1.03
     assert check_gesture(g, HOME, step_s=0.05).ok
     # without the cut the dip IS played
     raw = keyframes_from_samples(times, q, HOME, KeyframeOptions(sag_max_s=0.0))

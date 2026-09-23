@@ -22,16 +22,18 @@ from .export import UnsafeGesture, export
 from .gesture_csv import (HEADER, JOINT_NAMES, Gesture, GestureFormatError,
                           Keyframe, load_csv, load_home, parse_csv, save_csv,
                           to_csv, trajectory_points)
-from .process import (KeyframeOptions, keyframes_from_poses,
+from .process import (DEFAULT_SPEED, KeyframeOptions, SpeedPolicy, SpeedStretch,
+                      keyframes_from_poses,
                       keyframes_from_samples, limit_joint_dynamics,
                       settle_index, smooth_samples, trim_idle)
 from .record import GUIDES, Recording, record
 
 __all__ = [
-    "CheckReport", "GUIDES", "Gesture", "GuardFinding", "GestureFormatError", "HEADER",
+    "CheckReport", "DEFAULT_SPEED", "GUIDES", "Gesture", "GuardFinding", "GestureFormatError", "HEADER",
     "JOINT_NAMES", "Keyframe", "KeyframeOptions", "Recording", "UnsafeGesture",
     "ascii_preview", "check_gesture", "export", "keyframes_from_poses",
     "keyframes_from_samples", "limit_joint_dynamics", "load_csv", "load_home",
-    "parse_csv", "record", "save_csv", "settle_index", "smooth_samples", "to_csv", "trim_idle",
+    "parse_csv", "record", "save_csv", "settle_index", "smooth_samples",
+    "SpeedPolicy", "SpeedStretch", "to_csv", "trim_idle",
     "trajectory_points",
 ]

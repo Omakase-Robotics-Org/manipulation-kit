@@ -21,11 +21,24 @@ with omakaseos running, over `ssh -L 4750:127.0.0.1:4750`.
 ### 1. 録る（record）
 
 ```sh
-mkit-teach record take.json                 # 既定: 両腕, ブレーキ解放（手で導く）, 20 Hz
-mkit-teach record take.json --arms left     # 片腕だけ解放する（反対側は位置保持）
-mkit-teach record take.json --mode keyframe # Enter ごとに 1 ポーズ、q+Enter で終了
-mkit-teach record take.json --compliance    # 旧 gesture_record の force_compliance で録る
+mkit-teach record                           # 名前を聞かれる → ~/teach/<name>.json。既定: 両腕, ブレーキ解放, 20 Hz
+mkit-teach record --name wave --arms left   # 片腕だけ解放する（反対側は位置保持）
+mkit-teach record --name wave --mode keyframe  # Enter ごとに 1 ポーズ、q+Enter で終了
+mkit-teach record --name wave --compliance  # 旧 gesture_record の force_compliance で録る
+mkit-teach record /path/take.json           # 保存先を直接指定（スクリプト向け）
 ```
+
+**名前が最初**（Shu 2026-09-23）: 引数なしで起動すると、安全契約より前に
+`Gesture name (a-z, 0-9, _, -):` と聞く。テイクは `<teach dir>/<name>.json`
+（teach dir = `$MKIT_TEACH_DIR`、既定 `~/teach`）、CSV の既定は
+`<teach dir>/<name>_motion.csv`。同名のテイクがあれば上書きか別名かを聞く
+（端末でなければ拒否、`--yes` なら上書き）。名前は記録に残るので export で
+`--name` は不要。
+
+**各コマンドは最後に「Next:」として次に打つコマンドを絶対パス入りで表示する**
+（record → `export <take>`、export → `check <csv> --ascii` と `play <csv> --dry-run`、
+check OK → `play --dry-run`、dry-run OK → `play`、play OK → `register` と次の
+テイク）。失敗時は「To fix:」として直し方（recover の方法・再実行コマンド）を出す。
 
 既定は**ブレーキ解放（ハンドガイド）**。Shu 2026-09-23:「コンプライアンスだと
 動かすのが難しかった」ため、サーボ OFF + 保持ブレーキ解放で直接手で動かす方式を
@@ -115,9 +128,13 @@ CSV には列が無い（omakaseos のプレーヤーは 15 列以外を拒否�
 ### 2. キーフレーム化して書き出す（export）
 
 ```sh
-mkit-teach export take.json wave_motion.csv --name wave \
-    --sentiment neutral --usage filler
+mkit-teach export ~/teach/wave.json          # → ~/teach/wave_motion.csv（絶対パスで表示）
+mkit-teach export take.json out.csv --name wave --sentiment neutral --usage filler
 ```
+
+出力先を省くと**テイクと同じディレクトリ**の `<name>_motion.csv`（名前は記録の
+ものか `--name`）。sentiment / usage を省くと端末なら聞き、そうでなければ
+neutral / filler。
 
 旧パネルの Review & Save と同じ処理を順に行う:
 
@@ -130,14 +147,39 @@ mkit-teach export take.json wave_motion.csv --name wave \
 | 最後の姿勢を残し、そこから HOME へ戻る区間を**一定の関節速度**で追加（時間 = 最大関節差 / 20 deg/s。遠くても近くても同じ速さ） | 20 deg/s | `--home-speed` / `--no-home` |
 | キーフレーム削減（直線から ε 以内を間引き） | 1.5 deg, collinear | `--epsilon-deg` / `--method dp` / `--min-spacing-s` |
 | 停止区間の短縮（Trim idle pauses） | Off | `--max-idle-s 0.25/0.5/1` |
-| 再生可能化（速度 25 deg/s・加速度 120 deg/s² 以下になるまで時間だけ延ばす） | on | `--max-joint-vel` / `--max-joint-acc` / `--no-speed-limit` |
+| 再生可能化（速度 150 deg/s・加速度 600 deg/s² 以下になるまで時間だけ延ばす。下記「速度」） | on | `--max-joint-vel` / `--max-joint-acc` / `--no-speed-limit`（教えたタイミングのまま。上限超えは check で NG） |
 | 安全チェック（下記 check）→ 関節リミット・速度・時刻が NG なら書かない | — | `--force`（UNSAFE 印付きで保存、play は `--no-safety` が必要） |
 | ガード（干渉）の所見は**警告のみ**。UNSAFE にはしない。最小クリアランスを `# mkit-teach: min_clearance=…`、マージン割れを `# mkit-teach: guard_advisory=…` として CSV に残す | — | — |
 
 始点・終点が HOME から ε（1.5 deg）以内ならその姿勢を HOME にスナップする
 （旧 gesture_record と同じ。区間を足さない）。
 
-`--name` を付けると omakaseos の `gesture.yaml` 用エントリを表示する。
+### 速度（SpeedPolicy）
+
+**ジェスチャーの速度を制限しているのはキットのこの上限だけ**。デーモンは
+1 ステップ 350 deg/s を上限にするだけで、omakaseos のプレーヤーは速度を一切
+検査しない。上限は `process.SpeedPolicy` の 1 か所で、export（伸ばす）・check
+（判定）・play（事前チェック）が同じものを使う。
+
+* 既定 **150 deg/s・600 deg/s²**（Shu 2026-09-23 21:09Z「案 c」: 教えた速さで
+  再生し、それより速い部分だけ上限まで伸ばす）。旧 gesture_record の 25 deg/s・
+  120 deg/s² では d1-2 take2（J1 の振りが平滑化後で約 130 deg/s）が 3.83 s →
+  5.52 s に伸び、目に見えて遅くなった。
+* 伸ばしたときだけ export が `speed: stretched 3.83 s -> 5.52 s to meet … (J1
+  peak 130 deg/s … recorded)` と表示する。加速度上限が効くことが多い
+  （キーフレームの角で Catmull-Rom の加速度が大きくなるため）。
+* 使った上限は CSV に `# mkit-teach: max_joint_vel=… max_joint_acc=…`
+  （伸ばした場合は `speed_stretch=…` も）として残り、**check と play はその
+  CSV 自身の上限で判定する**（`--max-joint-vel` / `--max-joint-acc` で上書き
+  可）。キーが無い古い CSV は既定値で判定。
+* HOME への接続・復帰は教示動作ではないので、従来どおり一定 20 deg/s
+  （`--home-speed`）。
+* `[saved]` と `check` が表示する時間はどちらも**デーモンのスプラインの長さ**
+  （0 行目の duration はプレーヤーが無視するので含めない）。
+
+### gesture.yaml
+
+`--name`（または記録の名前）があれば omakaseos の `gesture.yaml` 用エントリを表示する。
 `--register <omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml` で
 そのファイルに追加/置換まで行う（CSV は同じ階層の `csv/` にコピーする）。
 
@@ -151,8 +193,9 @@ mkit-teach check wave_motion.csv --ascii
 刻みでたどる。
 
 * **不合格（exit 1）になるもの**: 関節リミット（クリップせず違反扱い）、
-  手首ロールの連成リミット（J6 に応じた |J7| 上限）、速度 25 deg/s・加速度
-  120 deg/s²、時刻（有限・0 始まり・単調増加）と角度の有限性。
+  手首ロールの連成リミット（J6 に応じた |J7| 上限）、速度・加速度（その CSV
+  の `max_joint_vel` / `max_joint_acc`、無ければ 150 deg/s・600 deg/s²）、
+  時刻（有限・0 始まり・単調増加）と角度の有限性。
 * **警告だけのもの（exit 0）**: MotionGuard の胴体・胸・両腕間・自己干渉。
   `WARNING: guard (advisory) body: closest -40.0 mm at t=2.60s — arm A link
   Link2_R within … of body box torso_belly …` のように、最も近づいた距離・
@@ -287,7 +330,7 @@ was deleted; it simply stopped being able to reach the arm.
   limiter keep it continuous in velocity and under the caps.
 * The player replaces the LAST row with HOME, so the last recorded pose is kept
   as a real row and a HOME row is appended after it, lasting
-  `max|q_last - HOME| / home_speed_deg_s` (20 deg/s < the 25 deg/s cap): the
+  `max|q_last - HOME| / home_speed_deg_s` (20 deg/s, well under the ceiling): the
   return is at the same joint speed whether it is long or short. The limiter
   may still stretch it (acceleration), never shorten it. Keyframe-mode takes
   time their last move the same way.
@@ -311,8 +354,11 @@ player changed:
 2. Dynamics are limited, and `check` samples, on the **daemon's** spline
    (`trajectory_points`), not gesture_play's `[HOME, kf0, …]` path.
    Cross-check: every one of omakase-core's 30 library CSVs passes `check`
-   with peaks of exactly 25.0 deg/s and ≤ 120 deg/s², and `limit_joint_dynamics`
-   is a no-op on all 30 (they were repaired to those caps).
+   with peaks of exactly 25.0 deg/s and ≤ 120 deg/s² (gesture_record's caps,
+   `process.LEGACY_SPEED`), and `limit_joint_dynamics` at those caps is a
+   no-op on all 30 (they were repaired to them). The teach default ceiling
+   is 150 deg/s, 600 deg/s² since 2026-09-23 (Shu), so those files pass it
+   with room to spare.
 
 Also: timestamps are real (the daemon read is not perfectly periodic), the raw
 capture is kept raw, and Douglas–Peucker (`--method dp`) is offered beside the
