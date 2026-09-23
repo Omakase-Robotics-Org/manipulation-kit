@@ -985,7 +985,8 @@ class Grasp(Primitive):
 
         def waypoints_for(r_tcp):
             search = ([Waypoint("contact_limit", meet.p_grasp + meet.d * search_m,
-                                r_tcp, allow_via=False, knot_m=CONTACT_KNOT_M)]
+                                r_tcp, allow_via=False, knot_m=CONTACT_KNOT_M,
+                                exact=True)]
                       if by_contact else [])
             return [
                 # getting to the standoff is free-space transit: a detour is
@@ -1679,7 +1680,7 @@ class Nudge(Primitive):
         # the same endpoint, which is not the move that was asked for (R10).
         return _plan_for(self, world, kin, side,
                          [Waypoint("nudged", p_tool + world_delta, r_goal,
-                                   allow_via=False)],
+                                   allow_via=False, exact=True)],
                          notes=notes, extra_steps=(SettleStep(SETTLE_S),))
 
     def verifier(self, world0: WorldView) -> Verifier:

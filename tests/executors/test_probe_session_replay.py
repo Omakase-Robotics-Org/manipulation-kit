@@ -526,3 +526,20 @@ def test_straight_leg_tuning_tightens_and_never_loosens():
     assert (kept.pos_tol, kept.rot_tol) == (1e-5, 1e-5)
     # an arm without a tuning of its own gets the default, tightened
     assert straight_tuning(object()) == got
+
+
+def test_only_legs_whose_line_is_the_report_are_exact(d1_arm):
+    """A nudge and a contact leg are exact; a Carry's straight transit is not
+    (it needs the READY pull to keep the elbow off the body), and an exact
+    leg that may detour is a contradiction."""
+    from scipy.spatial.transform import Rotation as R
+
+    from manipulation_kit.primitives.types import Waypoint
+    world = _world_at(d1_arm, STANDOFF_LEFT_DEG)
+    nudge = Nudge(side="left", dz=0.05, frame="base").plan(world, d1_arm)
+    probe = Probe(side="left", direction="down", max_travel_m=0.05).plan(
+        world, d1_arm)
+    assert [w.exact for w in nudge.waypoints] == [True]
+    assert [w.exact for w in probe.waypoints] == [False, True]
+    with pytest.raises(ValueError):
+        Waypoint("x", (0.4, 0.1, 0.2), R.identity(), allow_via=True, exact=True)

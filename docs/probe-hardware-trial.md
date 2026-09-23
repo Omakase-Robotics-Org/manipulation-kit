@@ -332,13 +332,13 @@ smaller term: the probe leg had 25 mm knots and the daemon interpolates joints
 between them, so a probe that stops between two knots is 0.2 mm off the line
 (again always the same way).
 
-**Fix** (`redesign/fix-xy-drift`): a straight leg (`allow_via=False`: descent,
-lift, nudge, contact leg) is solved to 0.2 mm / 1 mrad at Link7 (≤ 0.3 mm at
-the tool) with the READY pull off, seeded knot by knot from the previous
-solution, and must stay within the 3 mm arrival tolerance (not the 12 mm
-transit window) or be refused; a contact leg is knotted every 5 mm. On the
-replay the ten contacts now sit within **0.4 mm** of the first (dz band
-unchanged). To confirm on the robot: rerun the trial and check the xy spread
+**Fix** (`redesign/fix-xy-drift`): a Nudge and every contact leg are
+`Waypoint.exact` — solved to 0.2 mm / 1 mrad at Link7 (≤ 0.3 mm at the tool)
+with the READY pull off, seeded knot by knot from the previous solution, and
+held to the 3 mm arrival tolerance instead of the 12 mm transit window (or
+refused). A contact leg is knotted every 5 mm. On the replay the ten
+contacts now sit within **0.4 mm** of the first (was 74.9 mm), dz band
+unchanged. To confirm on the robot: rerun the trial and check the xy spread
 of the ten table contacts is ≤ 2 mm.
 
 ## 5. Not part of the gate (do afterwards, if G1–G3 pass)

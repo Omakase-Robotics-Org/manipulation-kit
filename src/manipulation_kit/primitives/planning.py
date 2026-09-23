@@ -112,9 +112,9 @@ ARRIVE_TOL_RAD = 0.06
 PATH_TOL_M = 0.012
 PATH_TOL_RAD = 0.12
 
-#: THE IK TOLERANCES OF A STRAIGHT LEG (``Waypoint.allow_via=False``: a
-#: descent, a lift, a nudge, a probe's contact leg), at LINK7, where the solver
-#: measures. The default ones (``safety.IK_POS_TOL`` 2 mm / ``IK_ROT_TOL``
+#: THE IK TOLERANCES OF AN EXACT LEG (``Waypoint.exact``: a nudge, the
+#: contact leg of a probe, a press or a fingertip grasp — legs whose line is
+#: what they report), at LINK7, where the solver measures. The default ones (``safety.IK_POS_TOL`` 2 mm / ``IK_ROT_TOL``
 #: 0.05 rad) are Link7's, and the tool point is ``TOOL_Z_M`` = 100 mm further
 #: out: a posture the solver calls converged can leave the TOOL 7-9 mm to the
 #: side, re-solving from it is a no-op (Link7 has arrived), so the knot is
@@ -131,22 +131,25 @@ PATH_TOL_RAD = 0.12
 STRAIGHT_IK_POS_TOL_M = 2e-4
 STRAIGHT_IK_ROT_TOL_RAD = 1e-3
 
-#: How far a straight leg's knot, or its end, may be MISSED at the tool
-#: point: the arrival tolerance, not the transit window. A straight leg's
-#: shape is its promise; walking on 12 mm off it is not keeping it.
+#: How far an exact leg's knot, or its end, may be MISSED at the tool point:
+#: the arrival tolerance, not the transit window. Its line is its promise;
+#: walking on 12 mm off it is not keeping it.
 STRAIGHT_PATH_TOL_M = ARRIVE_TOL_M
 
 
 def straight_tuning(arm) -> IkTuning:
-    """The IK tuning a straight leg solves with.
+    """The IK tuning an exact leg (``Waypoint.exact``) solves with.
 
     The arm's own tuning, tightened to :data:`STRAIGHT_IK_POS_TOL_M` /
     :data:`STRAIGHT_IK_ROT_TOL_RAD` (never loosened: a tuning already tighter
     keeps its own), and WITHOUT the null-space pull toward READY. Each knot is
     seeded at the previous knot's solution, so the leg stays in the posture
     branch it started in; the pull is what drifts the elbow between a
-    descent and the lift after it, and on a straight leg nothing needs the
-    elbow to go anywhere.
+    descent and the lift after it, and on a short exact leg nothing needs
+    the elbow to go anywhere. (A long straight TRANSIT does: a carry across
+    the wagon without the pull runs the elbow into the body, which is why
+    this is per leg and not every ``allow_via=False`` leg.) A knot this
+    tuning cannot solve falls back to the arm's own: :func:`_solve_straight`.
     """
     base = getattr(arm, "tuning", None)
     base = base if isinstance(base, IkTuning) else DEFAULT_TUNING
@@ -319,11 +322,11 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
     """
     steps: List[JointStep] = []
     worst_m = worst_rad = 0.0
-    # A straight leg is solved tight and without the READY pull, and judged
-    # against the arrival tolerance rather than the transit window
-    # (STRAIGHT_IK_* above: the d1-2 probe drift).
-    tuning = None if wp.allow_via else straight_tuning(kin.kin)
-    path_tol_m = PATH_TOL_M if wp.allow_via else STRAIGHT_PATH_TOL_M
+    # An EXACT leg (a nudge, a contact leg) is solved tight and without the
+    # READY pull, and judged against the arrival tolerance rather than the
+    # transit window (STRAIGHT_IK_* above: the d1-2 probe drift).
+    tuning = straight_tuning(kin.kin) if wp.exact else None
+    path_tol_m = STRAIGHT_PATH_TOL_M if wp.exact else PATH_TOL_M
     pos_err, rot_err = _pose_error(kin, side, wp.p, wp.r)
     if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
         return steps, None
@@ -353,7 +356,7 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
             p7, r7 = ap.link7_from_tool(p_knot, r_knot)
             q_before = kin.joints(side)
             result = (kin.kin.solve_ee(side, p7, r7) if tuning is None else
-                      kin.kin.solve_ee(side, p7, r7, tuning=tuning))
+                      _solve_straight(kin, side, p7, r7, tuning))
             if result.ok and kin.scene is not None:
                 error = _scene_check(kin, side, q_before, kin.joints(side), wp,
                                      primitive=primitive, index=index)
@@ -427,6 +430,24 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
             residual_m=residual, residual_rad=rot_residual, stage="arrival",
             primitive=primitive, side=side)
     return steps, None
+
+
+def _solve_straight(kin: Kin, side: str, p7, r7: R, tuning: IkTuning):
+    """One knot of an exact leg: the tight, pull-free solve first; where it
+    does not converge, the arm's ordinary solve.
+
+    The tight solve is what keeps a leg on its line wherever it CAN be solved
+    to the tool point. Near the edge of the workspace it cannot — the solver
+    plateaus mm short of the knot (see :data:`PATH_TOL_M`) and, without the
+    READY pull, can run a joint into its stop — and the ordinary solve is what
+    those legs have always walked on. Nothing is accepted on the fallback's
+    word: the off-line and arrival checks in :func:`_straight` judge whatever
+    posture either solve leaves.
+    """
+    result = kin.kin.solve_ee(side, p7, r7, tuning=tuning)
+    if result.ok:
+        return result
+    return kin.kin.solve_ee(side, p7, r7)
 
 
 def _off_line_m(p, a, b) -> float:

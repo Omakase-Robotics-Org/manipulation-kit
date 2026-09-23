@@ -239,8 +239,19 @@ class Waypoint:
     #: the joint-space interpolation bows off the line (0.2 mm at 25 mm
     #: spacing on the d1-2 probe, in the same direction every probe).
     knot_m: Optional[float] = None
+    #: Is this leg's LINE the measurement? A nudge (a bounded correction the
+    #: model reads back) and a contact leg (a probe, a press, a fingertip
+    #: descent: where it stops is what it reports) are solved to the tool
+    #: point without the IK's READY pull and must stay within the arrival
+    #: tolerance of their line (``planning.straight_tuning``,
+    #: ``STRAIGHT_PATH_TOL_M``). Only on a leg with ``allow_via=False``.
+    #: ``False`` for every other leg: a long straight transit (a carry across
+    #: the wagon) NEEDS the pull to keep the elbow off the body.
+    exact: bool = False
 
     def __post_init__(self) -> None:
+        if self.exact and self.allow_via:
+            raise ValueError("an exact leg is a straight one: allow_via=False")
         if self.knot_m is not None and not (0.0 < float(self.knot_m)
                                             <= safety.MAX_STEP_M):
             raise ValueError(
@@ -256,6 +267,7 @@ class Waypoint:
                 "quat_xyzw": [round(float(v), 4) for v in self.r.as_quat()],
                 "allow_via": bool(self.allow_via),
                 "arrive": bool(self.arrive),
+                **({"exact": True} if self.exact else {}),
                 **({} if self.knot_m is None else
                    {"knot_m": round(float(self.knot_m), 4)})}
 

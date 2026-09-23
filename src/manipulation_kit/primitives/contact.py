@@ -302,7 +302,8 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
         Waypoint(standoff_label, p_standoff, r_tool, allow_via=standoff_via,
                  arrive=standoff_arrive),
         Waypoint("contact_limit", p_standoff + d * float(travel_m), r_tool,
-                 allow_via=False, knot_m=CONTACT_KNOT_M)]
+                 allow_via=False, knot_m=CONTACT_KNOT_M,
+                 exact=True)]
     # The scene gates the standoff transit and the leg — except the surface
     # the leg is MEANT to reach: the first obstacle its ray meets (and a
     # press's named target), which a probe ends past by construction.
