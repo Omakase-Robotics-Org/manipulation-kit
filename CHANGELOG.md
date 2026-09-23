@@ -7,9 +7,18 @@ in particular what it **breaks** — the repository's rule is a clean break with
 loud reason, not a legacy path kept alive beside the new one.
 
 
-## 0.16.1 — unreleased
+## 0.16.0 — unreleased
 
-### The look before a stroke, answered by a judge that chooses (System 1)
+The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the
+vocabulary a model and a Python caller use is rebuilt around a `Direction`,
+the executor state is typed from the daemon's own OpenAPI document, contact
+and scene clearance become kit concepts, perception and the agent loop move
+into the wheel, `handover` plans both arms, and every per-robot number lives
+in one typed robot profile. **It is a clean break**: nothing below is kept
+alive beside its replacement except the one transitional `RawState`
+accessor set, removed in 0.17.
+
+### The look before a stroke, answered by a judge that chooses (System 1, PR #25)
 
 - **NEW `manipulation_kit.agent.servo`** — `Servo(frame, judge)`, passed to
   `run(..., servo=)`. When a `grasp` needs a wrist look, the kit no longer
@@ -20,10 +29,10 @@ loud reason, not a legacy path kept alive beside the new one.
   the caller's `judge(look)` one five-way question — the object is `on`
   (inside the box), or sticks out `left` / `right` / `above` / `below` it in
   the image (or `not_visible`) — as a probability per choice. The kit maps
-  the chosen image direction to a table-plane step
-  through the wrist camera's orientation, re-declares the object that step
-  away as a sighting (`provenance="observed"`, as the `locate` correction
-  does), moves the hand by the same step with its own `Nudge` (30 mm first,
+  the chosen image direction to a table-plane step through the wrist
+  camera's orientation, re-declares the object that step away as a
+  JUDGEMENT (`provenance="judged"`, below), moves the hand by the same step
+  with its own `Nudge` (30 mm first,
   10 mm once the answer changes sign), and looks again — until `on`, which
   counts as the look so the grasp runs in the same turn, or a named end:
   `unsure` (best answer below `min_confidence`, default 0.5; no blind step),
@@ -32,6 +41,48 @@ loud reason, not a legacy path kept alive beside the new one.
   is near-vertical in base from this posture). The model reads the outcome
   and chooses; it never reads a wrist-look question when a servo is set.
   Without `servo=` nothing changes.
+- **NEW provenance `"judged"`** (`world.views.PROVENANCES`, and
+  `STATED = ("declared", "judged")`). A re-declaration made because a
+  classifier CHOSE a side is not a sighting: the servo writes
+  `provenance="judged"` with the judge's probability in
+  `ObjectView.confidence`, and the object's line in the world text says
+  "JUDGED: placed by the wrist look's classifier, not measured". The
+  verifiers treat it exactly like `declared` (not an inference, so a verdict
+  is not downgraded; not a measurement either). One verifier changed with it:
+  `Holding` no longer ties a stall to the object by a DECLARED or JUDGED
+  position alone — that position is where the grasp aimed, so "it is at the
+  tool point" is true by construction. With no measured jaw gap such a grasp
+  is UNKNOWN; with one, `grip_fit` decides
+  (`association="stated_position+grip_fit"`). A producer that names the held
+  object (`GripperView.held_object`, e.g. `SceneSource`) is unaffected.
+  `observed` stays for real `locate` sightings.
+- **`Servo(observe_only=True)`** — judge-only: the servo photographs, marks
+  and asks, records the distribution (`record.servo`, outcome
+  `judged_only`), and never steps or re-declares; the loop then asks the
+  model the ordinary wrist-look question. The judge rides along on a live
+  run without moving anything.
+- **`Servo(refine=True, refine_m=0.005)`** — the final centring, off by
+  default. `on` means "inside the tolerance box", and the mirror runs ended
+  5-30 mm off. After `on` the SAME photo is re-marked with the declaration
+  shifted on a 3 x 3 grid of `refine_m` along the two mappable image axes,
+  the box grown by `refine_m` only; the declaration moves to the shift the
+  judge rates `on` highest, only when that beats the unshifted mark, and the
+  hand does not move (the grasp plans to the declaration, so the correction
+  needs no nudge). With a perfect judge the grid covers every residual inside
+  the tolerance, so the result is within `refine_m`: with `geometry_judge` a
+  block declared 40 mm off ends 10 mm off without it and 5 mm with it. This
+  replaces the "one more 10 mm step, kept if the judge still says on" idea
+  from the review: a step as large as the tolerance cannot be told from no
+  step by an `on` judgement, so it could make the residual worse unseen,
+  and it costs a motion. Until real photos have shown the judge separates a
+  5 mm shift, keep it off.
+- `Servo.look_at(camera, item, frames, photo)`: one mark + look, no motion
+  (what the offline re-judge uses). `ServoLook` carries `declared_p` and
+  `tolerance_m`; `ServoStep` carries `kind` (`look` / `refine`) and
+  `shift_m`. `geometry_judge(truth, tol_m=)` answers `on` from the table-plane
+  distance to `declared_p` against the look's tolerance (was: pixels against
+  the drawn circle, which put a 10 mm residual on a knife edge between 13.76
+  and 14.0 px after the base's standoff moved).
 - **`DecisionRecord.servo`** — every judgement with its distribution, every
   correction with its plan, run and verdict; `record.look` and
   `record.distribution` are filled from it.
@@ -56,10 +107,31 @@ loud reason, not a legacy path kept alive beside the new one.
   classifier answered "clockwise" for a bar tilted either way. **Not run on
   hardware yet**: rendered frames only.
 
-### Examples and docs
+#### Examples and docs (PR #25)
 
-- **NEW `examples/agent/jev_servo.py`** (195 lines): `astra_loop` with a
-  `Servo` — Astra decides the verbs, Jev-Omni judges the look. The words of
+- **NEW `examples/agent/jev_servo.py`** (191 lines): `astra_loop` with a
+  `Servo` — Astra decides the verbs, Jev-Omni judges the look. Flags
+  `--judge jev|remote|geometry`, `--judge-url URL` (implies remote),
+  `--judge-only`, `--refine`, and `--rejudge RUN_DIR`: offline, every wrist
+  photo a live run saved (`turn{N}_{left,right}_wrist_0_rgb.jpg` from
+  `--snapshot-cmd`, and each servo judgement's own photo) is marked where
+  the trace's declared objects project through the robot profile's MEASURED
+  wrist lens at that turn's recorded joints, judged again, and printed with
+  its distribution beside the recorded answer — the judge characterised on
+  real photos before it moves anything.
+- **NEW `examples/agent/jev_judge.py`**: the question's words, `JevJudge`
+  (in-process) and `RemoteJudge(url)` (the `judge(look)` seam over HTTP),
+  `rejudge()`. **NEW `examples/agent/jev_judge_server.py`**: Jev-Omni loaded
+  once behind `POST /judge` (marked JPEG + state/question/options ->
+  probability per option) and `GET /health`, judgements serialised, bound to
+  loopback by default (`--host` for a Tailscale address; no authentication).
+  The 12B classifier cannot run on a D1's Jetson. Smoke-tested with the real
+  classifier (RTX PRO 6000, 2026-09-23): the server process held 46.9 GB of
+  GPU memory (not the ~26 GiB first estimated), answered 700 ms for its first
+  judgement and 82-139 ms warm, and `RemoteJudge` through an ssh tunnel added
+  4-6 ms; the three marked mirror frames came back `left` 0.96, `on` 0.97,
+  `on` 0.96, identical on a repeat. The wheel stays free of
+  torch/transformers. The words of
   the question and the option labels are here; the ids, the direction, the
   step and the budget are the kit's. `--dry-run --misplace-mm 40` runs the
   geometry stand-in with no model and no photo. Jev's dependencies (torch,
@@ -68,17 +140,6 @@ loud reason, not a legacy path kept alive beside the new one.
   omits `torchvision`, which its processor needs.
 - `docs/agent.md`: the servo bullet. `examples/agent/jev_menu.py` no longer
   says Jev "never sees an image".
-
-## 0.16.0 — unreleased
-
-The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the
-vocabulary a model and a Python caller use is rebuilt around a `Direction`,
-the executor state is typed from the daemon's own OpenAPI document, contact
-and scene clearance become kit concepts, perception and the agent loop move
-into the wheel, `handover` plans both arms, and every per-robot number lives
-in one typed robot profile. **It is a clean break**: nothing below is kept
-alive beside its replacement except the one transitional `RawState`
-accessor set, removed in 0.17.
 
 ### Grasp: the measured width outranks the declared one
 
