@@ -6,9 +6,21 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
-## 0.16.1 — unreleased
 
-### BREAKING: the kit owns the calibration schema and reader; the robot holds the values
+## 0.16.0 — unreleased
+
+The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the
+vocabulary a model and a Python caller use is rebuilt around a `Direction`,
+the executor state is typed from the daemon's own OpenAPI document, contact
+and scene clearance become kit concepts, perception and the agent loop move
+into the wheel, `handover` plans both arms, and every per-robot number lives
+in one typed robot profile. **It is a clean break**: nothing below is kept
+alive beside its replacement except the one transitional `RawState`
+accessor set, removed in 0.17.
+
+### Calibration schema: the kit ships the reader, the robot holds the values
+
+#### BREAKING: the kit owns the calibration schema and reader; the robot holds the values
 
 Decision (Shu, 2026-09-23): no per-robot number ships in this wheel. Until now
 d1-2's measured profile was committed as `description/profiles/d1-2.json` and
@@ -82,17 +94,6 @@ caller of the API below, and pip needs a version that moves.)
 | `RobotProfile.from_files(name, head_calibration=, wrist=)` | `seiryu-calib migrate` those d1-inference files into the robot's v2 file, then `RobotProfile.load` |
 | a `manipulation_kit.robot_profile/1` JSON | the same numbers as an `omakase.camera_calibration/2` file (head mount ABSOLUTE with its nominal) |
 | a FAIL calibration layer used silently | refused; `gate.override` with a reason in the file, or `--allow-failed-calibration` |
-
-## 0.16.0 — unreleased
-
-The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the
-vocabulary a model and a Python caller use is rebuilt around a `Direction`,
-the executor state is typed from the daemon's own OpenAPI document, contact
-and scene clearance become kit concepts, perception and the agent loop move
-into the wheel, `handover` plans both arms, and every per-robot number lives
-in one typed robot profile. **It is a clean break**: nothing below is kept
-alive beside its replacement except the one transitional `RawState`
-accessor set, removed in 0.17.
 
 ### BREAKING — read this first
 
