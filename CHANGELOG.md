@@ -6,6 +6,52 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.15.0 — 2026-09-23
+
+**The guard's model is now the real robot, and its margins are real air.**
+Breaking: the guard refuses and accepts different poses than 0.14.x.
+
+The 2026-06 model had one hand-picked capsule per arm link, 0 to 23 mm THINNER
+than the vendor arm meshes (Link4's elbow housing by 23 mm, Link2 by 13), a
+torso box taken from the CAD shell that is 20 mm wider than the built robot and
+8 mm short at the front, and its top edge in the shoulder sleeve. The 30 mm /
+60 mm margins compensated for all of that without anyone having measured it.
+HOME sat 30.3 mm from the torso box against a 30 mm margin; the arm hanging at
+the side was refused by 1.7 mm. The real air at HOME is ~50 mm (Shu, measured).
+
+### Changed
+
+* **Arm capsules are fitted to the vendor meshes** (`ARM_CAPSULES` in
+  `generate_d1_urdf.py`, by the new `tools/fit_arm_capsules.py`): per link a
+  tube capsule and a housing capsule in the link frame, each vertex of both
+  arms' meshes inside one of them. The fit record `description/d1/
+  arm_capsule_fit.json` carries the mesh hashes and the per-link maximum
+  protrusion (all <= 0 mm); `tests/guard/test_arm_capsule_fit.py` checks the
+  committed capsules against it in CI and re-measures the meshes when the CAD
+  is present (`MKIT_ASSETS_DIR`). Collision names are now
+  `<link>_<side>_capsule_{tube,housing}`.
+* **`torso_belly` is the measured torso**: x -0.130 .. +0.135, y +/-0.110
+  (220 x 265 mm, Shu on the built robot at HOME), z 0.19 .. 0.44. The top is
+  where the CAD shell stops being torso and widens into the shoulder sleeve
+  (0.43 -> 0.45); the exempt shoulder shell and the chest keep-out now start
+  at 0.44 so there is no gap.
+* **`Link1` is body-exempt like `Base`**: its capsules lie on the J1 axis and
+  around the J2 centre, so no joint angle moves them; the real Link1 shell
+  sits 0.2 mm from the shoulder sleeve by design.
+* **`seg_aabb_distance` is exact** (piecewise-quadratic minimum), replacing
+  25-point sampling that read up to ~2.4 mm too far on a 0.26 m link.
+* **Default margins: body 0.005 m (was 0.03), arm-arm 0.035 m (was 0.06)**.
+  With the model at the real shell the margin is real shell-to-shell air.
+  Arm-arm 0.035 keeps today's boundary for two grippers side by side pointing
+  forward: pass from ~140 mm flange-to-flange (as 0.06 did on the old radii).
+* The frozen `config/safety_zones.json` / `docs/reference/safety_zones.h`
+  radii and margins are the legacy C++ model and are no longer what the guard
+  uses; they are unchanged.
+
+HOME is now 31.7 mm (guard model) from `torso_belly`; the arm hanging at the
+side 23.8 mm; arms crossed at the chest are refused (-24.3 mm). Renders:
+the PR.
+
 ## 0.14.1 — 2026-09-21
 
 **The jaw meshes now open 64 mm, like the joints always said.** The vendor CAD
