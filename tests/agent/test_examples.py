@@ -326,3 +326,66 @@ def test_policy_flags_reach_the_loop(agent_examples, tmp_path, capsys):
     assert '"turns": 2' in out and '"stop": "max_turns"' in out
     with pytest.raises(SystemExit):
         astra_loop.main(["--dry-run", "--max-grip", "crushing"])
+
+
+def test_the_default_task_is_the_objects_the_run_is_about(agent_examples,
+                                                          tmp_path, capsys):
+    """d1-2 2026-09-23: a run with ``--object tape --destination cup`` and no
+    ``--task`` told the model to "put the red block in the box"."""
+    import astra_loop
+    assert astra_loop.DEFAULT_TASK == "put the red_block into the box"
+    assert astra_loop.build_parser().parse_args([]).task is None
+    assert astra_loop.main(["--dry-run", "--executor", "kinematic",
+                            "--scene", str(AGENT / "scenes" / "tabletop.json"),
+                            "--object", "red_block", "--destination", "box",
+                            "--trace", str(tmp_path / "t.jsonl")]) == 0
+    first = json.loads((tmp_path / "t.jsonl").read_text().splitlines()[0])
+    assert first["task"] == "put the red_block into the box"
+    trace = astra_loop.loop(astra_loop.ScriptedModel(), max_turns=1,
+                            obj="red_block", destination="box")
+    assert trace.task == astra_loop.default_task("red_block", "box")
+    assert astra_loop.default_task("tape", "cup") == "put the tape into the cup"
+    capsys.readouterr()
+
+
+def test_a_scene_tool_turn_prints_its_own_answer_not_a_verdict(
+        agent_examples, tmp_path, capsys, monkeypatch):
+    """The turn line of ``declare_scene`` / ``locate`` is that tool's answer;
+    the verdict column is only for a verb the kit verified. d1-2
+    2026-09-23: a ``locate`` line read "true the right hand moved 50 mm as
+    asked" — its correction nudge's verdict, in the verb's column."""
+    import astra_loop
+    real = astra_loop.ScriptedModel
+
+    class LocatesFirst(real):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.located = False
+
+        def __call__(self, messages, tools):
+            if not self.located:
+                self.located = True
+                return {"name": "locate", "call_id": "loc", "claimed": "",
+                        "arguments": {"u": 320, "v": 400, "camera": "head"}}
+            return super().__call__(messages, tools)
+
+    monkeypatch.setattr(astra_loop, "ScriptedModel", LocatesFirst)
+    assert astra_loop.main(["--dry-run", "--executor", "kinematic",
+                            "--scene", str(AGENT / "scenes" / "tabletop.json"),
+                            "--object", "red_block", "--destination", "box",
+                            "--trace", str(tmp_path / "t.jsonl")]) == 0
+    records = [json.loads(line) for line in
+               (tmp_path / "t.jsonl").read_text().splitlines()]
+    lines = [l for l in capsys.readouterr().out.splitlines()
+             if l.startswith("turn ")]
+    assert len(lines) == len(records)
+    scene_turns = 0
+    for record, line in zip(records, lines):
+        answer = (record["observation_after"] or {}).get("answer")
+        if answer is not None:
+            scene_turns += 1
+            assert " -> -   " in line, line
+            assert answer[:40] in line, line
+        elif record["verdict"]:
+            assert f"-> {record['verdict']['verdict']}" in line, line
+    assert scene_turns, "the scripted scene run used no scene tool"

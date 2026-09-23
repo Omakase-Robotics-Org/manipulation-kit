@@ -18,6 +18,46 @@ in one typed robot profile. **It is a clean break**: nothing below is kept
 alive beside its replacement except the one transitional `RawState`
 accessor set, removed in 0.17.
 
+### Grasp: the measured width outranks the declared one
+
+First live Astra run on d1-2 (2026-09-23 03:46Z, trace
+`astra-20260923-1146`, record 6): the model declared `tape` 50x50x18 mm, a
+right tip grasp stalled with the daemon reporting holding=true,
+jaw_stalled=true and a 57.1 mm pad gap — the hand WAS holding the roll — and
+`Holding` said FALSE ("wider than tape's 50.0 mm — the jaws never reached
+it") because the gap fell outside a +-4 mm window around the DECLARED width.
+The model believed it, let go, and spent its remaining turns.
+
+- **BREAKING (verdicts): `Holding` judges a stalled gap by `grip_fit`**
+  (`primitives/verifiers.py`). Holding + stalled is TRUE when the gap is a
+  plausible width for the named object: inside
+  `[declared / WIDTH_PLAUSIBLE_FACTOR, min(open_gap - clearance, declared x 2)]`
+  and above `EMPTY_GAP_M` (6 mm, or half the declared width for something
+  thinner). FALSE only when the jaws closed to (near) zero (`fit: "empty"`),
+  stalled within one per-side clearance of the hand's open gap
+  (`fit: "blocked"`; the clearance is the grasp reference's — 4 mm pad, 2 mm
+  tip — so `Holding(reference=)` is new and `Grasp` passes its own), or the
+  producer reports nothing held. More than a factor of two off the
+  declaration is UNKNOWN (was FALSE). The +-4 mm window survives only as
+  `measured.matches_declaration` / `width_window_m`, a note on the
+  declaration; when it is off, the verdict says so ("declared 50.0 mm, width
+  corrected to the MEASURED 57.1 mm") and carries `width_correction`.
+- **NEW `ObjectView.size_provenance`** (`None` | `"measured"`) and
+  **`world.with_measured_width(item, frames, axis, width_m)`**: the object's
+  extent along the jaw axis becomes the measured gap.
+  `SceneSource.measured_width` / `LiveRobot.measured_width` apply it to the
+  world source, and the agent loop does so after a TRUE grasp that corrected
+  the width — so Carry, Place and the scene gate plan with the real size. The
+  trace records it in the new `DecisionRecord.corrections`, and the model is
+  told in the verb's answer.
+- `examples/agent/astra_loop.py`: without `--task`, the task is derived from
+  `--object` / `--destination` (`default_task`: "put the {object} into the
+  {destination}"); the run above was told "put the red block in the box".
+  `DEFAULT_TASK` is now `default_task("red_block", "box")`.
+- `examples/agent/astra_loop.py`: a scene-tool turn (`declare_scene`,
+  `locate`) prints its own answer, never a verdict — a wrist `locate` line
+  showed its correction nudge's verdict in the verb's column.
+
 ### Calibration schema: the kit ships the reader, the robot holds the values
 
 #### BREAKING: the kit owns the calibration schema and reader; the robot holds the values
