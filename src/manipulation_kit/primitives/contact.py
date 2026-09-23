@@ -46,7 +46,7 @@ from . import orientation as ap
 from . import verifiers as V
 from .arguments import ROLE_ANY, check_arguments
 from .clearance import SceneGate
-from .planning import IncompleteObservation, Kin, solve_path
+from .planning import IncompleteObservation, Kin, coupled_limit_notes, solve_path
 from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN,
                     ContactCriterion, ContactStep, GripStep, JointStep, Plan,
                     PlanBinding, PlanError, Primitive, SIDES, SettleStep,
@@ -332,7 +332,8 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
                 if scene.contact_target else ())
     return Plan(verb.name(), side, tuple(waypoints), all_steps,
                 tuple(notes) + tuple(detours) + measured
-                + tuple(_unchecked_note(scene)),
+                + tuple(_unchecked_note(scene))
+                + coupled_limit_notes(kin, all_steps),
                 binding=PlanBinding.of(world, kin))
 
 

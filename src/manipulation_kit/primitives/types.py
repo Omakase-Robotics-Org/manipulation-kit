@@ -88,6 +88,10 @@ NUDGE_FRAMES: Tuple[str, ...] = (_TOOL, _BASE)
 IK_FAIL = "ik_fail"
 INFEASIBLE = "infeasible"
 GUARD_REJECT = "guard_reject"
+#: the pose needs more of a joint than the arm has IN THAT POSTURE — a coupled
+#: limit (the D1 wrist roll J7 narrows with J6,
+#: :mod:`manipulation_kit.arms.coupled_limits`); the detail names it
+JOINT_LIMIT = "joint_limit"
 #: ...and the ones that are about the WORLD rather than the arm
 UNREACHABLE_OBJECT = "unreachable_object"
 #: the DESTINATION of a carry/place is outside this arm's reachable set at
@@ -125,7 +129,7 @@ UNSUPPORTED_GEOMETRY = "unsupported_geometry"
 BAD_ARGUMENT = "bad_argument"
 
 PLAN_REASONS: Tuple[str, ...] = (
-    IK_FAIL, INFEASIBLE, GUARD_REJECT, UNREACHABLE_OBJECT,
+    IK_FAIL, INFEASIBLE, GUARD_REJECT, JOINT_LIMIT, UNREACHABLE_OBJECT,
     UNREACHABLE_DESTINATION, UNREACHABLE_HANDOVER, NO_SUCH_OBJECT, FRAME_STALE,
     UNKNOWN_FRAME, PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED, INCOMPLETE_OBSERVATION,
     STALE_PLAN, UNSUPPORTED_GEOMETRY, BAD_ARGUMENT)

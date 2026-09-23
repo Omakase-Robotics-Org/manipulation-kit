@@ -39,6 +39,14 @@ DOWN = ALIASES["down"].vector()
 CUBES = {"block_red": (0.4651, -0.0966, 0.195),
          "block_blue": (0.4507, 0.0051, 0.195),
          "block_yellow": (0.4708, 0.1100, 0.195)}
+#: The same three with block_blue 21 mm nearer and 15 mm further left. At the
+#: served (0.4507, 0.0051) NEITHER arm grasps it top-down any more: once the
+#: wrist roll stays inside the coupled limit measured on d1-2 (2026-09-22,
+#: arms.coupled_limits) the left arm's standoff over the centre line is
+#: guard-rejected and the right arm's too. At (0.43, 0.02) the left arm plans,
+#: so the tests below still exercise every cube, and the loss at the served
+#: position is stated rather than hidden (CHANGELOG 0.16.0).
+PLANNABLE_CUBES = dict(CUBES, block_blue=(0.43, 0.02, 0.195))
 #: a bin on the far half of the wagon top
 BOX_RED = (0.6288, 0.1576, 0.200)
 WAGON_TOP = (0.5641, 0.0018, 0.169)
@@ -88,7 +96,7 @@ def _tool(kin, side, q):
 @pytest.mark.parametrize("name", sorted(CUBES))
 def test_a_top_down_grasp_over_the_wagon_plans_from_home(d1_arm, name):
     """The case the harness could not offer. All three cubes, both arms."""
-    world = _scene(d1_arm, CUBES)
+    world = _scene(d1_arm, PLANNABLE_CUBES)
     plan = Grasp(object=name).plan(world, d1_arm)
     assert plan.ok, str(plan)
     steps = plan.joint_steps()
@@ -109,7 +117,7 @@ def test_a_top_down_grasp_over_the_wagon_plans_from_home(d1_arm, name):
     # the grasp point is over the cube, and lifted just clear of the MEASURED
     # wagon top it stands on (the support, not the cube's declared underside:
     # the two differ by 5 mm here) rather than driven through it
-    centre = np.array(CUBES[name])
+    centre = np.array(PLANNABLE_CUBES[name])
     assert np.linalg.norm(tool[:2] - centre[:2]) < 0.01
     from manipulation_kit.primitives import grasp_geometry as gg
     from manipulation_kit.primitives import orientation as ap
@@ -124,9 +132,10 @@ def test_the_same_grasp_is_refused_with_the_detour_switched_off(d1_arm):
 
     Same world, same waypoints, ``allow_via=False``: the straight line dies
     exactly where the 2026-09-19 run said it did, on the guard, in the first
-    handful of knots.
+    handful of knots. On PLANNABLE_CUBES: the block the via search plans in
+    ``test_a_top_down_grasp_over_the_wagon_plans_from_home``.
     """
-    world = _scene(d1_arm, CUBES)
+    world = _scene(d1_arm, PLANNABLE_CUBES)
     verb = Grasp(object="block_blue")
     meet, unmet = verb._meet(world)
     assert not unmet
@@ -159,9 +168,14 @@ def test_a_target_no_via_reaches_is_still_refused_and_says_where(d1_arm):
                                                                  "grasp")
     assert np.isfinite(error.residual_m)
     assert "motion guard" in error.detail
-    # Approach alone gets further than the descent does, which is the honest
-    # answer: the standoff is routable and the grasp point is not.
-    assert Approach(object="block_far").plan(world, d1_arm).ok
+    # Before the coupled wrist-roll limit (arms.coupled_limits) the standoff
+    # alone was routable; with the wrist roll inside what the d1-2 hardware
+    # has, no posture reaches even the standoff, and the Approach says so the
+    # same way — the guard, at the standoff, with a finite residual.
+    approach = Approach(object="block_far").plan(world, d1_arm)
+    assert not approach.ok and approach.reason == GUARD_REJECT
+    assert approach.waypoint_label == "standoff"
+    assert np.isfinite(approach.residual_m)
 
 
 def test_the_ready_reseed_is_the_last_resort_when_no_clearance_point_works(
@@ -191,8 +205,8 @@ def test_a_detour_never_exceeds_the_per_tick_caps(d1_arm):
     a straight line alike, so it is asserted with that margin stated rather
     than pretended away.
     """
-    world = _scene(d1_arm, CUBES)
-    for name in sorted(CUBES):
+    world = _scene(d1_arm, PLANNABLE_CUBES)
+    for name in sorted(PLANNABLE_CUBES):
         plan = Grasp(object=name).plan(world, d1_arm)
         assert plan.ok, str(plan)
         q = world.arm(plan.side).joints

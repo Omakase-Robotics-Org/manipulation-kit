@@ -33,13 +33,16 @@ WAGON_TOP = (0.564, 0.002, 0.169)
 CUBE_P = (0.45, -0.12, WAGON_TOP[2] + CUBE / 2)
 
 #: A bin on a SHELF, high enough that the 100 mm transit is over the right
-#: arm's head and the 60 mm one is not. Measured on this URDF: at x = 0.48,
-#: y = -0.15 the arm's top-down ceiling is between 0.44 and 0.46 m, and the
-#: rim is at 0.42 — so rim + 100 mm and rim + 80 mm are both out and rim +
-#: 60 mm is in. This is the shape of destination the ladder exists for.
-SHELF_BIN_P = (0.48, -0.15, 0.36)
+#: arm's head and the 60 mm one is not. Measured on this URDF WITH the coupled
+#: wrist-roll limit (arms.coupled_limits, d1-2 2026-09-22): at x = 0.48,
+#: y = -0.15 a centre z of 0.29-0.30 m (rim 0.35-0.36) leaves rim + 60 mm in
+#: and rim + 80 / 100 mm out; 0.28 lets 80 mm in, 0.31 shuts 60 mm out. The
+#: box-only arm reached 60 mm over a rim at 0.42 — a posture whose wrist roll
+#: the hardware does not have. 0.295 is the middle of the band. This is the
+#: shape of destination the ladder exists for.
+SHELF_BIN_P = (0.48, -0.15, 0.295)
 SHELF_BIN_SIZE = (0.15, 0.15, 0.12)
-SHELF_BIN_RIM_Z = SHELF_BIN_P[2] + SHELF_BIN_SIZE[2] / 2       # 0.42
+SHELF_BIN_RIM_Z = SHELF_BIN_P[2] + SHELF_BIN_SIZE[2] / 2       # 0.355
 
 #: The served ``blocks-eval`` bins, as the env reports them (seed 7, trial 3).
 #: Measured 2026-09-19: NO top-down posture of either arm puts the tool past
@@ -104,8 +107,8 @@ def after_a_real_grasp_and_lift(kin, destination, *, side="right", lift_m=0.12):
     a transit from a pose the robot is never in.
 
     The DESTINATION JOINS THE WORLD AFTER THE LIFT. The shelf bin hangs
-    30-150 mm straight above the cube (x 0.405-0.555, y -0.225..-0.075, z
-    0.30-0.42 against a cube at (0.45, -0.12)): with the scene gate (0.16.0)
+    25-145 mm straight above the cube (x 0.405-0.555, y -0.225..-0.075, z
+    0.235-0.355 against a cube at (0.45, -0.12)): with the scene gate (0.16.0)
     a grasp there drives Link7 — 100 mm above the pad centre — into the bin,
     and the 120 mm lift drives the wrist through its floor. Both refusals are
     correct geometry and neither is what this file is about, which is the

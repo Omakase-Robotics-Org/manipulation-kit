@@ -107,14 +107,26 @@ SCENE_REFUSED = {
     70: "table", 74: "table", 77: "table",
     # yawed, forward onto the block: forearm (Link4) 13 mm from the table
     93: "table", 95: "table", 109: "table",
-    # side_shelf: the forearm passes 14-15 mm from the shelf (0-1 mm inside
-    # its 15 mm — knife-edge). 140/142: the squared roll's own failure is an
-    # IK miss at the standoff; the quarter turn was the shelf's, and the
-    # refusal carries obstacle:shelf in ``attempted``
-    140: "shelf", 142: "shelf", 144: "shelf",
+    # (side_shelf 140/142/144 were listed here until the coupled wrist-roll
+    # limit: they are refused WITHOUT the gate now — COUPLED_REFUSED)
 }
 #: the listed cases whose refusal reason is not ``guard_reject``
-SCENE_REFUSED_REASON = {140: "ik_fail", 142: "ik_fail"}
+SCENE_REFUSED_REASON: dict = {}
+
+#: Cases that PLANNED on the box-only arm and are refused since the coupled
+#: wrist-roll limit (``arms.coupled_limits``, measured by hand on d1-2
+#: 2026-09-22: |J7| 65 deg at J6 30, 39 deg at J6 55, 5 deg margin) — with the
+#: gate off, i.e. in the captured file itself. A REAL CAPABILITY LOSS, not a
+#: test artefact: each needed |J7| > limit(J6). Every side-on approach onto
+#: the side_shelf bottle (0.40, 0, 0.20) and the d1-2 cube's side grasps. A
+#: redesign of the side-approach roll, or a hand without the camera plate,
+#: would restore them. The side_chest scene pins the two directions instead.
+COUPLED_REFUSED = {
+    72: "joint_limit", 76: "joint_limit",          # d1-2 cube, grasp from the side
+    139: "joint_limit", 140: "joint_limit",        # side_shelf, right arm travelling left
+    141: "joint_limit", 142: "joint_limit",        # side_shelf, auto (= right) travelling left
+    143: "guard_reject", 144: "guard_reject",      # side_shelf, left arm travelling right
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -320,6 +332,16 @@ def test_the_golden_set_pins_a_planned_side_approach_both_ways():
         axis = R.from_quat(quat).as_matrix()[:, 2]
         want = {"left": (0, 1, 0), "right": (0, -1, 0)}[case["args"]["direction"]]
         assert axis == pytest.approx(want, abs=1e-6), case["args"]
+
+
+def test_the_coupled_limit_losses_are_recorded_refusals():
+    """Each :data:`COUPLED_REFUSED` case is captured as a refusal with its
+    reason — the capability loss is in the evidence, named, not dropped."""
+    cases = _load()["cases"]
+    for index, reason in COUPLED_REFUSED.items():
+        result = cases[index]["result"]
+        assert result["kind"] == "refusal", (index, result)
+        assert result["reason"] == reason, (index, result["reason"])
 
 
 def test_every_golden_case_replays(d1_arm, monkeypatch):

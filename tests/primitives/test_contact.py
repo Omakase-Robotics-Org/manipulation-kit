@@ -39,6 +39,20 @@ SIDES = ("left", "right")
 # the rig
 # --------------------------------------------------------------------------- #
 
+#: The left hand FINGERTIPS-DOWN over the d1-2 wagon (the kit's own Approach
+#: to (0.403, 0.10) from HOME, J7 backed 5 deg off the limit it ended on).
+#: Probes down start here, not at HOME: turning the wrist-forward HOME hand
+#: fingertips-down IN PLACE needs J7 ~ -88 deg at J6 ~ 10 deg, past the
+#: coupled wrist-roll limit measured on d1-2 (arms.coupled_limits), at every
+#: one of the probe's rolls. What these tests pin — the contact leg, the
+#: measured stop, faults, the fit — is downstream of that turn.
+LEFT_DOWN_DEG = [-21.091, -68.997, 37.832, -84.469, -5.509, -34.506, -50.0]
+
+
+def _left_hand_down(kin) -> None:
+    kin.set_joints("left", np.radians(LEFT_DOWN_DEG))
+
+
 def _tip(kin, side: str, q) -> np.ndarray:
     saved = np.array(kin.joints(side), dtype=float)
     try:
@@ -150,6 +164,7 @@ def probe_and_record(kin, rig, verb, world0):
 # --------------------------------------------------------------------------- #
 
 def test_a_probe_down_measures_a_table(d1_arm):
+    _left_hand_down(d1_arm)
     table_z = float(probe_tip_start(d1_arm, "left", "down")[2]) - 0.060
     rig = SurfaceRig(d1_arm, point=(0.0, 0.0, table_z), normal=(0, 0, 1))
     world0 = observe(d1_arm)
@@ -224,6 +239,7 @@ def test_a_press_returns_to_its_standoff(d1_arm):
 
 
 def test_contact_is_measured_from_state_not_from_the_command(d1_arm):
+    _left_hand_down(d1_arm)
     table_z = float(probe_tip_start(d1_arm, "left", "down")[2]) - 0.040
     rig = SurfaceRig(d1_arm, point=(0.0, 0.0, table_z), normal=(0, 0, 1))
     world0 = observe(d1_arm)
@@ -256,6 +272,7 @@ def test_contact_is_measured_from_state_not_from_the_command(d1_arm):
 
 
 def test_a_controller_fault_during_a_probe_stops_with_fault(d1_arm):
+    _left_hand_down(d1_arm)
     table_z = float(probe_tip_start(d1_arm, "left", "down")[2]) - 0.080
     rig = SurfaceRig(d1_arm, point=(0.0, 0.0, table_z), normal=(0, 0, 1))
     world0 = observe(d1_arm)
@@ -275,6 +292,7 @@ def test_a_controller_fault_during_a_probe_stops_with_fault(d1_arm):
 def test_a_kinematic_executor_reports_no_contact_and_the_verifier_says_so(d1_arm):
     """C.3: the mirror returns ``made=False, stopped_by="max_travel"`` — a
     dry-run keeps working, and the verdict says nothing was touched."""
+    _left_hand_down(d1_arm)
     mirror = KinematicExecutor(d1_arm)
     world0 = observe(d1_arm)
     verb = Probe(side="left", direction="down", max_travel_m=0.10,
@@ -291,6 +309,7 @@ def test_a_kinematic_executor_reports_no_contact_and_the_verifier_says_so(d1_arm
 
 
 def test_an_executor_without_move_until_fails_a_contact_step_loudly(d1_arm):
+    _left_hand_down(d1_arm)
     world0 = observe(d1_arm)
     plan = Probe(side="left", direction="down").plan(world0, d1_arm)
     recorder = RecordingExecutor(RawState(
@@ -310,6 +329,7 @@ def test_an_executor_without_move_until_fails_a_contact_step_loudly(d1_arm):
 def test_three_probes_fit_a_plane_with_a_real_normal(d1_arm):
     """Three contacts on a table tilted 4 deg about x: the published surface
     carries the TABLE's normal, not the probes' straight-down hint."""
+    _left_hand_down(d1_arm)
     tilt = math.radians(4.0)
     normal = np.array([0.0, -math.sin(tilt), math.cos(tilt)])
     start = probe_tip_start(d1_arm, "left", "down")
@@ -337,10 +357,19 @@ def test_three_probes_fit_a_plane_with_a_real_normal(d1_arm):
 
 
 def _ik_down(kin, side: str, tip) -> np.ndarray:
-    """A posture whose fingertip is at ``tip`` pointing down, via a plan."""
-    from manipulation_kit.primitives import Kin, Waypoint, align_tool, solve_path
+    """A posture whose fingertip is at ``tip`` pointing down, via a plan.
+
+    Keeps the hand's CURRENT jaw yaw (the caller starts fingertips-down,
+    ``_left_hand_down``): the roll-0 ``align_tool`` pose needs a J7 past the
+    coupled wrist-roll limit from there, and the roll is not what this pins."""
+    from manipulation_kit.primitives import Kin, Waypoint, solve_path
     world = observe(kin)
-    r = align_tool(side, (0, 0, -1))
+    from scipy.spatial.transform import Rotation  # noqa: PLC0415
+    x = tool_from_link7(*kin.ee_pose(side))[1].as_matrix()[:, 0]
+    z = np.array([0.0, 0.0, -1.0])
+    x = x - (x @ z) * z
+    x /= np.linalg.norm(x)
+    r = Rotation.from_matrix(np.column_stack([x, np.cross(z, x), z]))
     with Kin(kin, world) as borrowed:
         steps, error, _ = solve_path(borrowed, side, [Waypoint(
             "spot", np.asarray(tip) - np.array([0, 0, -PAD.lead_m]), r,

@@ -34,7 +34,8 @@ from . import orientation as ap
 from . import verifiers as V
 from .arguments import check_arguments
 from .clearance import SceneGate, policy_of
-from .planning import IncompleteObservation, Kin, joint_ramp, solve_path
+from .planning import (IncompleteObservation, Kin, coupled_limit_notes,
+                       joint_ramp, solve_path)
 from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, INCOMPLETE_OBSERVATION, LearnedPrimitive,
                     LEARNED_POLICY_REQUIRED, NO_FIT, NO_MOTION, NO_SUCH_OBJECT,
@@ -263,7 +264,7 @@ def _plan(primitive: Primitive, world: WorldView, kin, side: str, waypoints,
     — and, for a grasp, to WHERE on the hand its waypoints put the contact
     (``reference``: a fingertip plan is not a pad plan)."""
     return Plan(primitive.name(), side, tuple(waypoints), tuple(steps),
-                tuple(notes),
+                tuple(notes) + coupled_limit_notes(kin, steps),
                 binding=PlanBinding.of(world, kin, reference=reference))
 
 

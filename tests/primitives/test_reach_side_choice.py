@@ -52,8 +52,11 @@ NOMINAL_CUBES = {
 #: ``blocks_eval.NOMINAL_BOX_UV`` — red goes robot-LEFT, blue robot-RIGHT
 SERVED_BOXES = {"box_red": _uv(0.060, 0.168, WAGON_TOP[2] + 0.030),
                 "box_blue": _uv(0.060, -0.168, WAGON_TOP[2] + 0.030)}
-#: the same two bins, moved into the arm's measured top-down workspace
-REACHABLE_BOXES = {"box_red": (0.500, 0.180, WAGON_TOP[2] + 0.030),
+#: the same two bins, moved into the arm's measured top-down workspace. The
+#: LEFT one is at x 0.44, not 0.50: under the coupled wrist-roll limit
+#: (arms.coupled_limits, measured on d1-2 2026-09-22) the left arm's
+#: top-down carry reaches x 0.46 over y 0.12-0.24 and not x 0.50.
+REACHABLE_BOXES = {"box_red": (0.440, 0.180, WAGON_TOP[2] + 0.030),
                    "box_blue": (0.500, -0.180, WAGON_TOP[2] + 0.030)}
 
 
@@ -80,7 +83,10 @@ def _scene(kin, boxes):
 
 @pytest.mark.parametrize("obj,destination,expected", [
     ("block_red", "box_blue", "right"),      # both on the robot's right
-    ("block_blue", "box_red", "left"),       # the bin is on the left; go left
+    # the bin is on the left; go left. block_yellow (y +0.105), not the
+    # centre-line block_blue: the left arm's standoff over the centre line is
+    # guard-rejected once its wrist roll stays inside the coupled limit
+    ("block_yellow", "box_red", "left"),
 ])
 def test_both_directions_pick_the_arm_that_can_deliver(d1_arm, obj, destination, expected):
     from manipulation_kit.primitives.reach import choose_side
@@ -104,10 +110,21 @@ def test_the_hand_flips_away_from_the_near_one_when_it_cannot_deliver(
     grasps and lifts it perfectly well and then cannot deliver it; the right
     arm can do both, because the centre line is inside both arms' workspaces.
     The chain picks the right.
+
+    The block is moved to 10 mm LEFT of the centre line and 20 mm nearer
+    (u -0.13, v +0.01): exactly on it, the left arm's standoff is refused by
+    the guard once the wrist roll stays inside the coupled limit
+    (arms.coupled_limits), so the chain broke at ``approach`` rather than at
+    the ``carry`` this pins. Still the near hand is left, and still only the
+    right delivers.
     """
     from manipulation_kit.primitives.reach import _near_hand, choose_side
 
+    import dataclasses
     world = _scene(d1_arm, REACHABLE_BOXES)
+    world = world.with_(objects=tuple(
+        dataclasses.replace(o, p=np.asarray(_uv(-0.130, 0.010, o.p[2])))
+        if o.name == "block_blue" else o for o in world.objects))
     assert _near_hand(world, "block_blue") == "left"
     pick = choose_side(world, d1_arm, obj="block_blue", destination="box_blue")
     assert pick.reachable, pick.reason

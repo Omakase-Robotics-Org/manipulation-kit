@@ -32,8 +32,13 @@ def _right_home_deg():
 
 
 RIGHT_Q0_DEG = _right_home_deg()
-#: a tilted left hand over the wagon whose own roll does not plan down
-TILTED_DEG = [17.4, -75.4, 10.6, -68.9, -10.0, 59.0, -79.0]
+#: a tilted left hand over the wagon whose own roll does not plan down.
+#: Inside the coupled wrist-roll limit (arms.coupled_limits): J6 -43.2 is in
+#: the measured range and |J7| 19.9 is well inside its +/-46.3 deg. The
+#: previous posture, J7 -79 at J6 59, was 50 deg past the measured wrist stop
+#: — a start the hand cannot hold. Found by sampling tilted tool poses over
+#: the wagon and keeping one whose own roll fails and a quarter turn plans.
+TILTED_DEG = [23.7, -28.8, -13.4, -106.8, 57.0, -43.2, -19.9]
 #: d1-2 after the Approach: the plan's final posture with J7 at -39.5 deg
 LIVE_AFTER_APPROACH_DEG = [8.333, -61.29, -6.316, -84.468, 9.737, 55.223, -39.5]
 
@@ -62,6 +67,7 @@ def test_the_rolls_are_the_wrists_own_first_then_the_quarter_turns():
 
 
 def test_a_tilted_hand_probes_after_a_quarter_turn(d1_arm, monkeypatch):
+    assert d1_arm.posture_violation("left", np.radians(TILTED_DEG)) is None
     world = _world(d1_arm, TILTED_DEG)
     probe = Probe(side="left", direction="down", max_travel_m=0.03)
     monkeypatch.setattr(contact, "PROBE_ROLLS_RAD", (0.0,))
@@ -79,4 +85,4 @@ def test_the_live_post_approach_posture_is_still_refused(d1_arm):
     plan = Probe(side="left", direction="down", max_travel_m=0.03).plan(
         _world(d1_arm, LIVE_AFTER_APPROACH_DEG), d1_arm)
     assert not plan.ok
-    assert plan.reason in ("ik_fail", "guard_reject")
+    assert plan.reason in ("ik_fail", "guard_reject", "joint_limit")
