@@ -50,7 +50,7 @@
   },
   "flavour": "d1_wholebody_gripper",
   "mesh_prefix": "",
-  "source_commit": "14a0a13b766625be33f20832826765c60b87fd1b",
+  "source_commit": "841f19a1e040b5d1483e852bca57187483ed23b0",
   "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",
