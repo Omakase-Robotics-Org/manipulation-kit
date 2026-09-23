@@ -1,7 +1,7 @@
 """The verbs ``manipulation_kit.teach`` adds to FirmwareClient, on the wire.
 
-A loopback daemon serving the BUNDLED document (0.3.0 with d1-firmware PR
-#92, spec ``a9c8b0d2…``): ``arm_mode``, ``arm_recover`` and the holding-brake
+A loopback daemon serving the BUNDLED document (0.3.0 with d1-firmware PRs
+#92 and #102, spec ``1ec29096…``): ``arm_mode``, ``arm_recover`` and the holding-brake
 routes go out as the generated ``ArmModeCommand`` / ``ArmRecoverRequest`` /
 ``ArmBrakeReleaseBody`` bodies; an operation a document does not publish is
 refused as :class:`OperationUnavailable` with no request sent, never
@@ -145,3 +145,10 @@ def test_an_operation_the_document_lacks_is_refused_before_the_wire(connect):
         with pytest.raises(OperationUnavailable, match="not in the OpenAPI"):
             client.operation("arm.arm_no_such_route", "POST /v1/arm/{side}/nope")
     assert not [s for s in daemon.seen if s[0] == "POST"]
+
+
+def test_the_bundled_document_offers_both_trajectory_guards(connect):
+    """d1-firmware PR #102: ``TrajectoryGuard`` is what ``mkit-teach play``
+    checks before sending ``guard: speed_only``."""
+    with _Daemon({}) as daemon, connect(daemon) as client:
+        assert client.trajectory_guards() == ("full", "speed_only")

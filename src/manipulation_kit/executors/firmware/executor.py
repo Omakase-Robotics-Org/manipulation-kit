@@ -88,6 +88,7 @@ from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
 from .client import lift_state as _lift_state
 from .client import neck_state as _neck_state
 from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
+                     OperationUnavailable,
                      RateRefused, TrajectoryInvalid)
 
 # --------------------------------------------------------------------------- #
@@ -1250,7 +1251,13 @@ class FirmwareExecutor:
         self.renew()
         return self._run_job(self._waypoints(steps))
 
-    def play_waypoints(self, points: Sequence[Dict[str, Any]]) -> int:
+    def trajectory_guards(self) -> tuple:
+        """The trajectory ``guard`` values the connected daemon publishes
+        (``()`` before d1-firmware PR #102). See :meth:`play_waypoints`."""
+        return tuple(self.client.trajectory_guards())
+
+    def play_waypoints(self, points: Sequence[Dict[str, Any]], *,
+                       guard: Optional[str] = None) -> int:
         """Play an already-TIMED dual-arm trajectory and block until it ends.
 
         ``points`` are the daemon's own ``Waypoint`` shape — ``{"t": s,
@@ -1264,18 +1271,39 @@ class FirmwareExecutor:
         ``completed`` cancels it. The daemon still refuses a first knot more
         than 3 degrees from feedback and re-guards every sample.
 
+        ``guard`` is the daemon's ``TrajectoryGuard`` for this one job
+        (d1-firmware PR #102): ``None`` sends nothing and gets the daemon's
+        default, ``"full"``; ``"speed_only"`` asks it to skip its clearance
+        checks (body / chest / arm-arm / self) while keeping joint limits, the
+        350 deg/s step cap, timing, the 3 degree first knot and every stop
+        path. The daemon grants that to the lease holder only, which this
+        executor is. A value the connected daemon's document does not publish
+        raises :class:`OperationUnavailable` BEFORE anything is sent — an
+        older daemon would ignore the field and play under its full guard,
+        and the caller must not believe otherwise.
+
         Transport completion is not arrival — follow with :meth:`wait_arrived`.
         """
+        if guard is not None and guard not in self.trajectory_guards():
+            raise OperationUnavailable(
+                f"trajectory guard {guard!r} is not in this daemon's document "
+                f"(it publishes {list(self.trajectory_guards()) or 'no guard field'};"
+                f" d1-firmware PR #102 added it)")
         self.renew()
         return self._run_job([{"t": float(w["t"]),
                                "a": [float(v) for v in w["a"]],
-                               "b": [float(v) for v in w["b"]]} for w in points])
+                               "b": [float(v) for v in w["b"]]} for w in points],
+                             guard=guard)
 
-    def _run_job(self, waypoints: List[Dict[str, Any]]) -> int:
+    def _run_job(self, waypoints: List[Dict[str, Any]], *,
+                 guard: Optional[str] = None) -> int:
         """Upload ``waypoints`` as one trajectory job and poll it to the end."""
         check_waypoints([(w["t"], w["a"], w["b"]) for w in waypoints])
+        body: Dict[str, Any] = {"waypoints": waypoints}
+        if guard is not None:
+            body["guard"] = guard
         status = self.client.request("POST", "/v1/arm/trajectory/start",
-                                     self._holder_body({"waypoints": waypoints}))
+                                     self._holder_body(body))
         job = int(status["id"])
         self._jobs.append(job)
         deadline = self._clock() + waypoints[-1]["t"] + 5.0

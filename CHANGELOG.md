@@ -91,6 +91,28 @@ guard") — **breaking for `mkit-teach` callers**:
   the same model and margins. It also does NOT refuse out-of-limit joints:
   its guard clamps for the check and the raw pose is commanded. See
   d1-firmware issue #101 (teach-mode relaxation question + that gap).
+- **`mkit-teach play` asks the daemon for `guard: speed_only`** (Shu
+  2026-09-23 17:50Z: keep the speed guard, the range guard may be off for
+  gesture playback; d1-firmware PR #102, closing issue #101). The gesture
+  upload carries `guard: "speed_only"`. The daemon then skips its clearance
+  checks for that job and keeps joint limits (newly enforced by PR #102), the
+  350 deg/s cap, timing, the 3 deg first knot and every stop path. The
+  approach to HOME stays a plan move under the daemon's `full` guard.
+  `--guard full` opts back. The kit's own `check` warnings are still printed
+  before anything moves, and under `speed_only` they say the daemon will not
+  check clearances. New `FirmwareExecutor.play_waypoints(..., guard=)` and
+  `FirmwareExecutor.trajectory_guards()` / `FirmwareClient.trajectory_guards()`
+  (the document's `TrajectoryGuard` values, `()` before PR #102). A guard the
+  connected document does not publish raises `OperationUnavailable` before
+  anything is sent. `play` instead warns and plays under the daemon's full
+  guard.
+- **Bundled client snapshot → d1-firmware PR #102** (`1ec29096…`, branch
+  `feat/trajectory-guard-speed-only` @ 39537a4). It adds `TrajectoryGuard`,
+  `TrajectoryRequest.guard` and the optional `TrajectoryStatus.guard`, and
+  supersedes the `a9c8b0d2…` snapshot below. d1-2 serves `a9c8b0d2…` until
+  its daemon is redeployed with PR #102, so connecting to it regenerates the
+  client again, as designed. `guard` is optional in the status schema, so a
+  bundled client still decodes an older daemon's status.
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

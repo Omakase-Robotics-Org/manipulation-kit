@@ -106,25 +106,33 @@ def test_the_bundled_client_is_a_real_tree_not_an_empty_directory():
         "tree holds — a partial commit")
 
 
-#: sha256 of the OpenAPI document d1-firmwared 0.3.0 served on d1-2 at
-#: ``GET /openapi.json`` on 2026-09-23, after d1-firmware PR #92 (holding-brake
-#: release) was deployed — byte-identical to d1-firmware main d090ac4
-#: ``openapi/d1-firmwared.v1.json``. The daemon the kit is driven against.
-D1_2_SPEC_SHA256 = ("a9c8b0d2bb16df16fbb03652d77b9d2efd4824e47c085ae48f06679827"
-                    "efb297")
+#: sha256 of d1-firmware ``openapi/d1-firmwared.v1.json`` at 39537a4 (branch
+#: feat/trajectory-guard-speed-only, PR #102: ``TrajectoryGuard``), which
+#: ``mkit-teach play`` needs for ``guard: speed_only``. It is a superset of
+#: ``a9c8b0d2…`` (main d090ac4, PR #92), the document d1-2 serves until its
+#: daemon is redeployed; against that daemon ``ensure`` regenerates at connect.
+BUNDLED_SPEC_SHA256 = ("1ec29096cdf531d777ed8161d49c3000f74870eac6c2c7d6fdddd26b"
+                       "adc1cd18")
 
 
-def test_the_bundled_client_matches_the_d1_2_document(spec_document):
-    """The snapshot is the d1-2 daemon's own document, not an older one.
+def test_the_bundled_client_is_the_trajectory_guard_document(spec_document):
+    """The snapshot is the PR #102 document, not an older one.
 
-    A bundled client generated from an older spec is what made every connect
-    to d1-2 regenerate (or, without a generator, fall back to a client that
-    provably did not match). The hash is computed from the file on disk, so a
-    hand-edited ``SNAPSHOT.json`` cannot satisfy this.
+    The hash is computed from the file on disk, so a hand-edited
+    ``SNAPSHOT.json`` cannot satisfy this.
     """
-    assert ensure.bundled_spec_sha256() == D1_2_SPEC_SHA256
-    assert ensure.snapshot()["spec_sha256"] == D1_2_SPEC_SHA256
+    assert ensure.bundled_spec_sha256() == BUNDLED_SPEC_SHA256
+    assert ensure.snapshot()["spec_sha256"] == BUNDLED_SPEC_SHA256
     assert spec_document["info"]["version"] == "0.3.0"
+
+
+def test_the_bundled_document_publishes_the_trajectory_guard(spec_document):
+    schemas = spec_document["components"]["schemas"]
+    assert schemas["TrajectoryGuard"]["enum"] == ["full", "speed_only"]
+    assert "guard" in schemas["TrajectoryRequest"]["properties"]
+    assert "guard" in schemas["TrajectoryStatus"]["properties"]
+    # optional in the document so an older daemon's status still decodes
+    assert "guard" not in schemas["TrajectoryStatus"]["required"]
 
 
 @needs_310

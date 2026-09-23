@@ -6453,6 +6453,14 @@
         ],
         "type": "object"
       },
+      "TrajectoryGuard": {
+        "description": "Which of the daemon's checks one trajectory is held to.\n\nThe default is the whole guard. `speed_only` exists for taught gestures:\na person moved the arm through every pose of such a trajectory by hand,\nso the operator decided whether it clears the body, and the guard's model\nmargins must not veto what was demonstrated. The speed guard stays on\nfor them; only the clearance (\"range\") guard may be switched off.",
+        "enum": [
+          "full",
+          "speed_only"
+        ],
+        "type": "string"
+      },
       "TrajectoryPhase": {
         "description": "The lifecycle phase of one trajectory job.\n\n`running` is the only non-terminal phase; the other three are final for\nthat job identifier.",
         "enum": [
@@ -6466,6 +6474,10 @@
       "TrajectoryRequest": {
         "description": "A bounded trajectory upload. Mode and tool selection remain explicit verbs.",
         "properties": {
+          "guard": {
+            "$ref": "#/components/schemas/TrajectoryGuard",
+            "description": "Which checks this trajectory is held to. Omitted means `full`.\n`speed_only` skips the clearance checks and is refused unless the\ncaller holds the arm lease."
+          },
           "waypoints": {
             "description": "Two or more absolute-time waypoints, at most 10,000 and 120 seconds.",
             "items": {
@@ -6487,6 +6499,10 @@
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "guard": {
+            "$ref": "#/components/schemas/TrajectoryGuard",
+            "description": "The checks this job was accepted and is being played under.\n\nAlways sent. Published as optional only so that a client generated\nfrom this document still decodes the status of a daemon that predates\nthe field, which played every job under `full`."
           },
           "id": {
             "description": "Monotonic daemon-local job identifier.",
@@ -8272,7 +8288,7 @@
     },
     "/v1/arm/trajectory/start": {
       "post": {
-        "description": "Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists at a time and only the most recent job's status is retained. The arms must already be in a clean position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at once, before the job is created, with the same `advisory` the motion verbs carry. Not available over WebSocket.",
+        "description": "Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists at a time and only the most recent job's status is retained. The arms must already be in a clean position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample is checked against the URDF joint limits and the 350 deg/s per-joint step cap. `guard: \"full\"` (the default) also checks the guard's clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and at playback; `guard: \"speed_only\"` skips those clearances for this job only, for taught gestures whose poses a person demonstrated, and is refused (409) unless the caller holds the arm lease. The job's status reports the guard it runs under. Not available over WebSocket.",
         "operationId": "arm_trajectory_start",
         "requestBody": {
           "content": {

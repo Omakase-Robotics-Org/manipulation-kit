@@ -114,8 +114,8 @@ mkit-teach check wave_motion.csv --ascii
 
 ガードを警告に下げた理由: 教示はオペレーターが**手で腕を導いて実際に通った姿勢**
 なので、ガードのカプセルモデルがその姿勢の可否を裁く立場にない（Shu
-2026-09-23「teaching に関しては、ガードを外した方がいいかも」）。ただし下の
-「ガード」節のとおり、**デーモン自身のガードは外れていない**。
+2026-09-23「teaching に関しては、ガードを外した方がいいかも」）。デーモン側も
+`play` の既定（`guard: speed_only`）では干渉検査をしない。下の「ガード」節を参照。
 
 `--ascii` は関節ごとの帯グラフ。動画で見たい時は
 `python examples/preview_gesture.py wave_motion.csv`（mujoco）。
@@ -124,41 +124,49 @@ mkit-teach check wave_motion.csv --ascii
 
 ```sh
 mkit-teach play wave_motion.csv --dry-run     # ロボットに触れず事前チェックだけ
-mkit-teach play wave_motion.csv               # policy リース, vel_ratio 0.15
+mkit-teach play wave_motion.csv               # policy リース, vel_ratio 0.15, guard speed_only
+mkit-teach play wave_motion.csv --guard full  # デーモンの干渉検査も有効にする
 ```
 
 UNSAFE 印・チェック NG（リミット/速度/時刻）・コントローラ異常のいずれでも何も
 動かさない（`--no-safety` でキットの事前チェックを飛ばせるが、デーモンの検査は
-飛ばせない）。ガードの警告は**動かす前に表示**してから再生に進む。HOME から
+飛ばせない）。キットのガード警告は**動かす前に表示**してから再生に進む
+（`speed_only` のときは「デーモンは干渉を検査しない＝教示どおりに再生する」旨も
+表示する）。HOME から
 2 deg 以上離れていれば先に HOME へ移動し、再生後に HOME 到着（計測値）と静止を
 確認する。
 
-### ガード: キットは警告、デーモンは拒否（2026-09-23 d1-firmware main d090ac4 で確認）
+### ガード: ジェスチャー再生は speed_only（d1-firmware PR #102）
 
-`POST /v1/arm/trajectory/start` でデーモンがやること（`d1fw-core
-arm_trajectory.rs::validate` と実行ループ）:
+Shu 2026-09-23 17:50Z「gesture 再生の時はスピードガードはあっても、範囲のガードは
+オフにしていいかと」。`mkit-teach play` はジェスチャー本体を
+`POST /v1/arm/trajectory/start` に **`guard: "speed_only"`** 付きで送る
+（`--guard full` で従来どおり）。HOME への事前移動は通常の計画移動なので
+`guard` を付けず、デーモン既定の `full` のまま。
 
-* 点数 2..10000、t=0 始まり、時刻は有限・単調増加・120 s 以下、角度は有限。
-* スプラインを **1 ms ごと**にサンプルし、各点を**デーモンの MotionGuard**
-  （キットと同じモデル・同じ参照マージン: 胴体/胸 30 mm、両腕間 60 mm、自己）
-  で検査。1 点でも違反すれば**アップロードを拒否**（`Refused: trajectory at
-  X s: [...]`）。再生中も毎サンプル再検査し、違反で停止。
-* 関節速度 350 deg/s を超える点で拒否（キットの 25 deg/s よりずっと緩い）。
-* 最初の点が計測姿勢から 3 deg 以内、腕がエラー無しの position/torque モード。
-* **関節リミットは拒否しない**: デーモンのガードは `clamp_limits = true` で
-  作られ、ガード検査はクリップ後の姿勢に対して行われる。一方、コントローラには
-  クリップ前の値がそのまま送られる。つまり関節リミットと手首の連成リミットを
-  ハードに止めているのは**キットの check だけ**（連成リミットは d1-firmware
-  issue #99）。
+| デーモンの検査（1 ms ごと、アップロード時と再生中） | `full`（デーモン既定） | `speed_only`（play 既定） |
+| --- | --- | --- |
+| 干渉: 胴体/胸 30 mm、両腕間 60 mm、自己干渉 | 拒否 / 停止 | **検査しない** |
+| URDF 関節リミット（PR #102 で追加。以前はクリップ後の姿勢しか見ていなかった） | 拒否 / 停止 | 拒否 / 停止 |
+| 関節速度 350 deg/s | 拒否 / 停止 | 拒否 / 停止 |
+| 点数 2..10000・t=0 始まり・単調増加・120 s 以下・有限 | 拒否 | 拒否 |
+| 最初の点が計測姿勢から 3 deg 以内、エラー無しの position/torque 保持 | 拒否 | 拒否 |
+| cancel・estop・ソフトキル・古いフィードバック検出 | 停止 | 停止 |
 
-帰結: **「HOME がボディマージンぎりぎり（30.3 mm）」問題の決定権はデーモン側に
-移った**。キットの check はもう HOME 付近のオーバーシュートで不合格にしないが、
-デーモンは同じモデル・同じ 30 mm で拒否する。そのロボットの
-`[arm] guard_body_margin_m` / `guard_arm_arm_margin_m`（`[0, 0.20]` m、
-デーモン全体・再起動で反映）を下げない限り、ガード所見のあるジェスチャーは
-`play` の `trajectory/start` でデーモンに拒否される。教示専用の緩和（teach
-モード）が必要かどうかは d1-firmware 側の判断（d1-firmware issue #101。
-関節リミット外のサンプルが素通りする件も同じ issue に記載）。
+* `speed_only` を頼めるのは**アームリースの保持者だけ**（リース無しは 409、
+  他人がリース中はリース拒否）。`play` は executor がリースを取るので該当する。
+* デーモンは受理した軌道ごとに `arm_trajectory_guard`（guard と holder）を INFO で
+  ログし、`GET /v1/arm/trajectory/{id}/status` の `guard` に記録する。
+* 手首の連成リミット（J6 に応じた |J7| 上限）はデーモンではまだ検査していない
+  （d1-firmware issue #99）。これを止めているのはキットの `check` だけなので、
+  `--no-safety` は使わないこと。
+* **デーモンが PR #102 より古い場合**（d1-2 は再デプロイまで `a9c8b0d2…` を配信）、
+  そのドキュメントには `TrajectoryGuard` が無い。`play` は「このデーモンは
+  guard=speed_only を提供していない」と警告し、`guard` を付けずに送る。つまり
+  デーモンの `full` で再生され、HOME の 30.3 mm 問題のような干渉所見がある
+  ジェスチャーは従来どおり拒否される。同梱クライアントは PR #102 のドキュメント
+  （`1ec29096…`）から生成してあるが、`ensure.py` は接続時にデーモンが配信する
+  ドキュメントから生成し直す。そのため、何を送れるかは常に接続先で決まる。
 
 ### ブレーキ解放の安全契約（record の既定）
 
@@ -197,7 +205,8 @@ Reader of record: omakase-core `robot_stack/robots/omakase/d1/firmware_session.p
 * The player overwrites row 0 and the last row with HOME
   (`config/home_pose.json`), starts the spline at HOME at t = 0 and ignores row
   0's duration; row k plays at `sum(duration_1..k)`. The daemon samples those
-  knots as uniform Catmull-Rom on a linear time base and guards every 1 ms.
+  knots as uniform Catmull-Rom on a linear time base and checks every 1 ms
+  (limits + speed always; clearances only under `guard: full`).
 * Teach metadata travels as `# mkit-teach: key=value` comments (name,
   sentiment, usage, source, `home_sha` = fingerprint of the HOME pinned,
   `min_clearance`, and `guard_advisory` when a guard margin was not met);
@@ -280,8 +289,8 @@ against the guard's 30 mm margin, and only J2+ / J1− (A; mirrored on B) eat
 into it (+2 deg on J2 → 28.2 mm). A Catmull-Rom that returns to HOME from an
 outward J2 swing overshoots HOME by a fraction of a degree. The kit's `check`
 now reports that as an advisory `guard (advisory) body … Link2_R …
-torso_belly` warning and lets it pass; **the daemon still refuses the upload**
-(`arm_trajectory.rs::validate`, same model and margin, verified on d1-firmware
-main d090ac4). The decision moved to the daemon: that robot's
-`[arm] guard_body_margin_m`, or a teach-mode relaxation in d1-firmware
-(issue #101).
+torso_belly` warning and lets it pass. Resolved by d1-firmware PR #102 (issue
+#101, Shu 2026-09-23): `play` uploads with `guard: speed_only`, so a daemon
+with PR #102 does not refuse it on clearance. A daemon without it still
+refuses the upload under its full guard (`arm_trajectory.rs::validate`), and
+`play` says so before it moves.

@@ -215,6 +215,7 @@ def cmd_play(args) -> int:
         return 0 if pre.ok else 1
     with _executor(args, lease_class=args.lease_class) as robot:
         report = play(robot, gesture, home, no_safety=args.no_safety,
+                      guard=args.guard,
                       announce=lambda line: print(line, flush=True))
     print(report.detail)
     for note in report.notes:
@@ -351,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip the kit's pre-flight (the daemon still guards)")
     p.add_argument("--dry-run", action="store_true", help="pre-flight only")
     p.add_argument("--lease-class", choices=("operator", "policy"), default="policy")
+    p.add_argument("--guard", choices=("speed_only", "full"), default="speed_only",
+                   help="daemon trajectory guard: speed_only (default) skips its "
+                        "clearance checks for this gesture, keeping limits, the "
+                        "speed cap and timing; full has it refuse clearance "
+                        "violations too")
     p.set_defaults(func=cmd_play)
 
     p = sub.add_parser("register", help="print / splice the gesture.yaml entry")

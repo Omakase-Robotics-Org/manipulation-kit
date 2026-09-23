@@ -396,6 +396,7 @@ from .state_response_200 import StateResponse200
 from .stroke_kind import StrokeKind
 from .suggested_action import SuggestedAction
 from .tool_config import ToolConfig
+from .trajectory_guard import TrajectoryGuard
 from .trajectory_phase import TrajectoryPhase
 from .trajectory_request import TrajectoryRequest
 from .trajectory_status import TrajectoryStatus
@@ -834,6 +835,7 @@ __all__ = (
     "StrokeKind",
     "SuggestedAction",
     "ToolConfig",
+    "TrajectoryGuard",
     "TrajectoryPhase",
     "TrajectoryRequest",
     "TrajectoryStatus",

@@ -106,3 +106,12 @@ def test_record_defaults_to_brake_release_with_one_holding_for_all_arms(capsys):
     assert len(asked) == 1 and "left/right" in asked[0]      # once, not per arm
     assert "BRAKES RELEASED" in capsys.readouterr().out
     assert not confirm_holding(args, ("left",), ask=lambda prompt: "yes")
+
+
+def test_play_defaults_to_the_speed_only_guard():
+    from manipulation_kit.teach.cli import build_parser
+    parse = build_parser().parse_args
+    assert parse(["play", "x.csv"]).guard == "speed_only"
+    assert parse(["play", "x.csv", "--guard", "full"]).guard == "full"
+    with pytest.raises(SystemExit):
+        parse(["play", "x.csv", "--guard", "off"])

@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.trajectory_guard import TrajectoryGuard
 from ..models.trajectory_phase import TrajectoryPhase
 from ..types import UNSET, Unset
 
@@ -24,12 +25,20 @@ class TrajectoryStatus:
 
             `running` is the only non-terminal phase; the other three are final for
             that job identifier.
+        guard (TrajectoryGuard | Unset): Which of the daemon's checks one trajectory is held to.
+
+            The default is the whole guard. `speed_only` exists for taught gestures:
+            a person moved the arm through every pose of such a trajectory by hand,
+            so the operator decided whether it clears the body, and the guard's model
+            margins must not veto what was demonstrated. The speed guard stays on
+            for them; only the clearance ("range") guard may be switched off.
         message (None | str | Unset): Failure reason when phase is failed.
     """
 
     elapsed_ms: int
     id: int
     phase: TrajectoryPhase
+    guard: TrajectoryGuard | Unset = UNSET
     message: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -39,6 +48,10 @@ class TrajectoryStatus:
         id = self.id
 
         phase = self.phase.value
+
+        guard: str | Unset = UNSET
+        if not isinstance(self.guard, Unset):
+            guard = self.guard.value
 
         message: None | str | Unset
         if isinstance(self.message, Unset):
@@ -55,6 +68,8 @@ class TrajectoryStatus:
                 "phase": phase,
             }
         )
+        if guard is not UNSET:
+            field_dict["guard"] = guard
         if message is not UNSET:
             field_dict["message"] = message
 
@@ -69,6 +84,13 @@ class TrajectoryStatus:
 
         phase = TrajectoryPhase(d.pop("phase"))
 
+        _guard = d.pop("guard", UNSET)
+        guard: TrajectoryGuard | Unset
+        if isinstance(_guard, Unset):
+            guard = UNSET
+        else:
+            guard = TrajectoryGuard(_guard)
+
         def _parse_message(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -82,6 +104,7 @@ class TrajectoryStatus:
             elapsed_ms=elapsed_ms,
             id=id,
             phase=phase,
+            guard=guard,
             message=message,
         )
 
