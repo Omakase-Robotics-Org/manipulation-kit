@@ -18,6 +18,41 @@ in one typed robot profile. **It is a clean break**: nothing below is kept
 alive beside its replacement except the one transitional `RawState`
 accessor set, removed in 0.17.
 
+### Teach: hand-taught omakaseos gestures over d1-firmwared (`mkit-teach`)
+
+Shu, 2026-09-23: the teaching tool that produced the omakaseos gesture CSVs
+(d1-sdk `gesture_record`, driven by omakase-core's `/d1_teach` panel) stopped
+working at the firmwared migration — playback was ported to daemon
+trajectories, teach was not, and `gesture_record` cannot reach the arm while
+the daemon owns it. It comes back here, over the generated client.
+
+- **New `manipulation_kit.teach`** (`docs/teach.md`): `record` (hand-guide in
+  `force_compliance` — gesture_record's own parameters — or with the holding
+  brakes released for a timed window, or idle; sample both arms at 20 Hz with
+  timestamps and gripper closedness; always engage + `recover` on exit),
+  `process` (gesture_record's smoothing / collinear reduction / HOME snap /
+  `limitJointDynamics`, plus Douglas–Peucker, min spacing and the panel's idle
+  trim), `check` (the DAEMON's Catmull-Rom through `MotionGuard` with limits
+  unclamped, the coupled wrist-roll limit, and per-segment velocity /
+  acceleration caps; FK flange sweep; ASCII joint strips), `export`
+  (check-then-write; `--force` stamps `# mkit-teach: UNSAFE=`), `play`
+  (through `FirmwareExecutor`: lease, approach to HOME, measured first knot,
+  arrival barrier, settle; refuses UNSAFE without `--no-safety`), `registry`
+  (the `gesture.yaml` entry, `source: teach`).
+- **New CLI `mkit-teach`** — `record | keyframes | export | check | play | register`.
+- **New `FirmwareExecutor.play_waypoints(points)`**: upload an already-timed
+  dual-arm trajectory with the plan path's contract checks, polling and
+  cancel-on-exit (`_play` now shares `_run_job` with it).
+- **New `FirmwareClient` verbs** over generated operations: `arm_mode`
+  (`ArmModeCommand`), `arm_recover`, `arm_tool_state`, `brake_release` /
+  `brake_engage` / `brake_state` (d1-firmware PR #92), and `operation()`,
+  which raises the new **`OperationUnavailable`** when the client's document
+  lacks a route — the bundled 0.3.0 document has no brake routes.
+- The CSV contract is pinned from the firmware reader: 15 columns, degrees,
+  R = physical LEFT, row 0 / last row replaced by HOME and row 0's duration
+  ignored. Row 0 is therefore HOME itself (a deviation from gesture_record,
+  whose first row the new player would have dropped).
+
 ### Grasp: the measured width outranks the declared one
 
 First live Astra run on d1-2 (2026-09-23 03:46Z, trace
