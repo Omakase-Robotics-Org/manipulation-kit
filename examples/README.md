@@ -33,7 +33,7 @@ wheel (`manipulation_kit.primitives.{offer,schema,reach}`,
 | `run_scene.py` | where a run's scene comes from before turn 0: `--perceive` (one frame, the live neck on firmware) or `--scene` (resolved against the robot profile) | as `perceive.py` |
 | `detector.py` | `AstraDetector`: a model as the box detector for `perceive.py --detector astra` — the prompt, the call and a strict parse | `openai` |
 | `snapshot.py` | the camera-grab contract: run `--snapshot-cmd`, check its exit code, require fresh frames, label each camera — or stop the loop | — |
-| `scene.py`, `scenes/` | the demo scene, and two MEASURED scene files (`tabletop.json`, `d1-2_tape_cup.json`, the latter naming the `d1-2` robot profile) | — |
+| `scene.py`, `scenes/` | the demo scene, and two MEASURED scene files (`tabletop.json`, `d1-2_tape_cup.json`; a robot's measured numbers are NOT in them — they come from the robot's calibration file) | — |
 
 The gate (`offer.py`), the schema export (`schema.py`) and the chain planner
 (`reach.py`) that older versions of this table listed here are in the wheel,
@@ -47,21 +47,25 @@ under `manipulation_kit/primitives/`.
 | `--executor firmware --robot http://d1-2:4750` | a real D1 through d1-firmwared, configured by the operator policy (`--vel-ratio`, timeouts) |
 | `--executor isaac --isaac-url tcp://HOST:8977` | d1-isaaclab's simulator, when that package registers itself (entry point `manipulation_kit.executors`), or with `--executor-class agent_eval.kit_executor:isaac`; see `docs/agent.md` |
 
-Add `--robot-profile d1-2` (or a profile JSON) for a robot's MEASURED hand
-and wrist lenses; the operator policy is flags (`--max-grip`,
+A robot's MEASURED hand gap, head mount and wrist lenses come from its
+`omakase.camera_calibration/2` file: `~/.config/omakase/camera_calibration.json`
+on the robot (read by default), or `--robot-profile PATH` (offline, d1-2's is
+`tests/data/d1-2.camera_calibration.json`). A layer whose calibration gate
+FAILED is refused unless `--allow-failed-calibration`. The operator policy is flags (`--max-grip`,
 `--allowed-directions`, `--no-look-before-stroke`, `--droop-margin-m`, ...)
 or `--policy FILE`.
 
 ```sh
 python examples/agent/astra_loop.py --dry-run
 python examples/agent/astra_loop.py --dry-run --executor kinematic \
-    --scene examples/agent/scenes/d1-2_tape_cup.json --object cube --destination cup
+    --scene examples/agent/scenes/d1-2_tape_cup.json --object cube --destination cup \
+    --robot-profile tests/data/d1-2.camera_calibration.json
 python examples/agent/jev_menu.py
 
 # a scene from one frame, with NO scene number at all
 pip install -e '.[perception]'
 python examples/agent/perceive.py --image head.jpg \
-    --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 --robot-profile d1-2 \
+    --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 --robot-profile tests/data/d1-2.camera_calibration.json \
     --out examples/agent/scenes/live.json --debug /tmp/fit.png
 
 # ...and the loop doing it for itself, then declaring the things

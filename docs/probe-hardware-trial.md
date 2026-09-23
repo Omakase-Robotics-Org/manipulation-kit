@@ -315,7 +315,8 @@ About 15 minutes, right after the probe trial, same set-up:
    on the wagon under the left hand, its long side along the robot's x.
    Measure its centre and size into a scene (`kind: object`, `size [L, W,
    0.006]`), with the wagon top as a `surface` — the same file the loop uses,
-   `"robot": {"profile": "d1-2"}` included.
+   with d1-2's own calibration file (`~/.config/omakase/camera_calibration.json`
+   on the robot, read by default).
 2. Per trial: `Approach(object="card", side="left", contact="tip")`, then
    `Grasp(object="card", side="left", contact="tip", grip="soft")`, then
    `Lift(object="card", side="left", height_m=0.05)`, each planned, run with

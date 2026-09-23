@@ -86,17 +86,29 @@ KNOWN_ELSEWHERE: Dict[str, str] = {
 # the scene file — a measurement somebody made, read one way
 # --------------------------------------------------------------------------- #
 
-def load_scene(path: Path, *, profile: Any = None) -> Dict[str, Any]:
-    """A scene file, with its ``robot`` block resolved against the robot
-    profile it names (``"robot": {"profile": "d1-2"}`` — a committed name, or
-    a path relative to the scene file) or against ``profile``
-    (:class:`~manipulation_kit.description.robot_profile.RobotProfile`; a
-    ``--robot-profile`` flag). The scene's own ``robot`` keys override the
-    profile's."""
+def load_scene(path: Path, *, profile: Any = None,
+               allow_failed_gate: bool = False) -> Dict[str, Any]:
+    """A scene file, with its ``robot`` block resolved against ``profile``
+    (a :class:`~manipulation_kit.description.robot_profile.RobotProfile` or
+    the path of the robot's ``omakase.camera_calibration/2`` file — a
+    ``--robot-profile`` flag) or, without one, against the file the block
+    names (``"robot": {"profile": "PATH"}``, relative to the scene file). The
+    scene's own ``robot`` keys override the profile's. ``allow_failed_gate``
+    accepts a calibration layer whose gate FAILED."""
     from ..description.robot_profile import with_profile  # noqa: PLC0415
     path = Path(path)
     scene = json.loads(path.read_text(encoding="utf-8"))
-    return with_profile(scene, profile, relative_to=path.parent)
+    return with_profile(scene, profile, relative_to=path.parent,
+                        allow_failed_gate=allow_failed_gate)
+
+
+def _profile_option(options: Dict[str, Any]) -> Any:
+    """``profile=`` (and ``allow_failed_gate=``) out of a factory's options,
+    resolved: a RobotProfile, or the path of a calibration file."""
+    from ..description.robot_profile import RobotProfile  # noqa: PLC0415
+    allow = bool(options.pop("allow_failed_gate", False))
+    return RobotProfile.resolve(options.pop("profile", None),
+                                allow_failed_gate=allow)
 
 
 def _robot_block(scene: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -645,14 +657,15 @@ class LiveRobot:
         The factory gets ``kin``, ``policy`` (the RESOLVED one: its
         ``vel_ratio`` and timeouts configure the executor), ``scene``,
         ``url`` and any ``options``. ``profile=`` (a
-        :class:`~manipulation_kit.description.robot_profile.RobotProfile`) is
+        :class:`~manipulation_kit.description.robot_profile.RobotProfile`, or
+        the path of the robot's calibration file) is
         folded into the scene's ``robot`` block first, so the hand gap and
         the MEASURED wrist lenses reach every executor the same way. Raises :class:`UnknownExecutor` with the
         registered names and what to install.
         """
         factory = (_load_attr(executor_class) if executor_class
                    else executor_factory(name))
-        profile = options.pop("profile", None)
+        profile = _profile_option(options)
         if profile is not None:
             # the robot's measured numbers, under whatever the scene restates
             from ..description.robot_profile import with_profile  # noqa: PLC0415
@@ -678,7 +691,7 @@ class LiveRobot:
         """A real D1 through d1-firmwared, configured by ``policy`` (its
         ``vel_ratio`` for velocity AND acceleration, its arrival timeout, its
         stroke timeout or — ``None`` — the daemon document's)."""
-        profile = options.pop("profile", None)
+        profile = _profile_option(options)
         if profile is not None:
             from ..description.robot_profile import with_profile  # noqa: PLC0415
             scene = with_profile(scene, profile)

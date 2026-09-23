@@ -4,11 +4,8 @@
     "base = dual_base (torso platform), +x forward, +y robot LEFT, +z up.",
     "Table top z in base = 0.884 - (0.513 + lift 0.205) = 0.166 m.",
     "Wagon plane fit: far corners px (96,217)/(543,203); cup base ctr px (458,424); cube base ctr px (568,436).",
-    "robot.profile names d1-2's MEASURED numbers (manipulation_kit/description/profiles/d1-2.json): hand 60.5 mm, both wrist fisheyes (d1-calibrate-wrist 2026-09-22) and the head mount delta. Keys written here under robot override the profile's."
+    "d1-2's MEASURED numbers (hand 60.5 mm, both wrist fisheyes, the head mount) are not in this file: they live on the robot, ~/.config/omakase/camera_calibration.json (omakase.camera_calibration/2), which astra_loop.py reads by default there. Offline, pass --robot-profile tests/data/d1-2.camera_calibration.json (a copy of d1-2's file). A robot block here, or \"robot\": {\"profile\": \"PATH\"} (relative to this file), overrides it."
   ],
-  "robot": {
-    "profile": "d1-2"
-  },
   "frames": [],
   "objects": [
     {

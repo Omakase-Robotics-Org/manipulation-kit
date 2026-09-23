@@ -4,8 +4,10 @@ One turn = **observe → model → gate → execute → verify → record**. Not
 model says moves the robot until the kit's own gate has re-derived it.
 
 Before turn 0: the operator policy (flags / `--policy FILE`), the robot profile
-(`--robot-profile d1-2`, or the scene's `"robot": {"profile": ...}`: hand gap,
-both wrist fisheyes, head mount), `reach.choose_side` (which hand can do the
+(the robot's `~/.config/omakase/camera_calibration.json`, or `--robot-profile
+PATH`, or the scene's `"robot": {"profile": PATH}`: hand gap, both wrist
+fisheyes, head mount; a FAILED calibration gate is refused unless
+`--allow-failed-calibration`), `reach.choose_side` (which hand can do the
 WHOLE task), and — with `look_before_stroke` — a check that a wrist camera
 model exists (else `look_unavailable`, before anything moves).
 

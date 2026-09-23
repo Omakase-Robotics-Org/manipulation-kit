@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.16.0"
+version = "0.16.1"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]
@@ -119,8 +119,9 @@ where = ["src"]
 # `git clean -xdf` first, or build from a fresh clone.
 "manipulation_kit.config" = ["*.json", "tool_configs/*.json", "tool_configs/*.md"]
 "manipulation_kit.description" = [
-    # the measured per-robot profiles (description.robot_profile)
-    "profiles/*.json",
+    # the omakase.camera_calibration/2 JSON Schema (description.camera_calibration).
+    # A SCHEMA ships; per-robot VALUES never do — they live on the robot.
+    "schemas/*.schema.json",
     "d1/*.urdf", "d1/*.xml", "d1/*.md", "d1/CMakeLists.txt",
     "d1/meshes/body/*", "d1/meshes/gripper/*", "d1/meshes/body_hifi/*",
     "d1_yubi_description_v2/*.xml", "d1_yubi_description_v2/*.md",
