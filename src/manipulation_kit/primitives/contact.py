@@ -46,7 +46,8 @@ from . import orientation as ap
 from . import verifiers as V
 from .arguments import ROLE_ANY, check_arguments
 from .clearance import SceneGate
-from .planning import IncompleteObservation, Kin, coupled_limit_notes, solve_path
+from .planning import (DUPLICATE_KNOT_RAD, IncompleteObservation, Kin,  # noqa: F401
+                       coupled_limit_notes, leg_knots, solve_path)
 from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN, JOINT_LIMIT,
                     ContactCriterion, ContactStep, GripStep, JointStep, Plan,
                     PlanBinding, PlanError, Primitive, SIDES, SettleStep,
@@ -82,9 +83,6 @@ CONTACT_SLAB_M = 0.02
 #: Three contacts closer to a LINE than this [m] fit no plane: the normal
 #: about that line is unobserved, and the probes' own normal is used.
 COLLINEAR_TOL_M = 0.005
-#: Two consecutive contact-leg knots closer than this on every joint [rad]
-#: are one knot: the solver re-solved without moving.
-DUPLICATE_KNOT_RAD = 1e-9
 #: A probe's postures keep at least this far from every joint's BOX limit
 #: [deg], or the roll is not taken. A probe is repeated (a trial is 3 air +
 #: 10 table probes with a lift between each), so a roll that parks a joint
@@ -320,24 +318,7 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
             standoff = [s for s in steps if s.waypoint == 0]
             leg = [s for s in steps if s.waypoint == 1]
             q_start = standoff[-1].q if standoff else q_now
-            # A knot the solver did not move (it re-solved a posture pinned
-            # at a limit: d1-2 2026-09-23, J5 held at 173 deg for 35 of 41
-            # knots) is the same sample twice. It is dropped HERE, where it
-            # is made: kept, it has the same distance as the one before it,
-            # hence the same time, and the daemon refuses the whole leg
-            # ("increasing times").
-            path = [np.asarray(q_start, dtype=float)]
-            for s in leg:
-                q = np.asarray(s.q, dtype=float)
-                if np.max(np.abs(q - path[-1])) > DUPLICATE_KNOT_RAD:
-                    path.append(q)
-            borrowed.kin.set_joints(side, path[0])
-            p0 = borrowed.tool_pose(side)[0]
-            dist = [0.0]
-            for q in path[1:]:
-                borrowed.kin.set_joints(side, q)
-                along = float(np.dot(borrowed.tool_pose(side)[0] - p0, d))
-                dist.append(max(dist[-1], along))
+            path, dist = leg_knots(borrowed, side, q_start, leg, d)
     except IncompleteObservation as exc:
         return _incomplete(verb, side, exc)
     if len(path) < 2 or dist[-1] <= 1e-4:

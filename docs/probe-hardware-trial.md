@@ -298,39 +298,64 @@ if __name__ == "__main__":
 
 `Grasp(contact="tip")` takes a flat thing between the finger TIPS instead of
 the pad centres (`grasp_geometry.TIP`: 129 mm from the flange, nothing
-leading, 2 mm clearance a side). Like the contact verbs it has been planned
-and verified on kinematic mirrors only. **Until this trial passes, the kit's
+leading, 2 mm clearance a side). **Until this trial passes, the kit's
 default stays `contact="pad"`**, and the generated ROBOT FACTS tell the model
 that `tip` is experimental and unmeasured on hardware.
 
+**The descent finishes by contact (0.16.0, after the 2026-09-23 trial).** The
+first trial stopped the tips at a fixed 14.9 mm over the wagon (3 mm + the
+12 mm droop margin); the near arm did not sag and the jaws closed 7 mm above
+an 8 mm slab, 3 of 3. A fingertip grasp onto a known surface now stops the
+tips 15 mm up (`TIP_SEARCH_START_M`), then runs a `ContactStep` straight
+down for at most 20 mm (5 mm past the modelled top), stopping at a 3.0 Nm
+joint-torque rise (`TIP_CONTACT_NM`), and closes where the tips touched. The
+droop margin no longer applies to it (keep setting it: pad grasps use it).
+`plan.notes` says "SEARCHES down by contact"; `run(...).contacts[0]` is the
+search's `ContactReport`.
+
 | gate | acceptance |
 |---|---|
-| T1 — lifted | **10 / 10**: the `Grasp` verdict TRUE and a following `Lift(height_m=0.05)` verdict TRUE (`ObjectRose`) |
-| T2 — no table contact | **zero** contacts of the pads with the wagon: nobody sees the pads touch (film it), and no arm joint's `feedback_torque` rises more than 2 Nm during the descent (print `state().arms["left"].torque_nm` before and at the grasp pose) |
-| T3 — controller health | zero controller errors, as G1 |
+| T1 — controller health | zero controller errors, as G1 |
+| T2 — lifted | **10 / 10**: the `Grasp` verdict TRUE and a following `Lift(height_m=0.05)` verdict TRUE (`ObjectRose`) |
+| T3 — the search touched | **10 / 10** grasps with `contacts[0].stopped_by == "contact"` and the touched tip height (`record_contacts(...)` → `ContactView.p[2]`) within ±5 mm of the tape-measured wagon top; a `max_travel` means the wagon is lower than the scene says — re-measure, do not raise the margin |
+| T4 — no pad/table jam | zero **jam flags**: the jaws STALLED more than 4 mm open of the slab's presented width (they closed on the table, not the slab). A touch of the TIPS on the wagon is now expected (T3) and is not a flag |
+
+The slab's orientation is declared **in the robot's base frame**, not as the
+operator sees it. `yaw 0` = the slab's long side (`size[0]`) along the
+robot's FORWARD axis (away from the chest); `yaw 1.5708` = long side along
+the line through the robot's two shoulders. The 2026-09-23 photos were taken
+from the robot's right side, where "left-right" is the forward axis: the slab
+lay at yaw 0 while the script declared 1.5708, so the jaws (planned across
+the declared 55 mm, along base x) spanned the real 91 mm. Check from BEHIND
+the robot before every session.
 
 About 15 minutes, right after the probe trial, same set-up:
 
-1. A **6 mm card** (a stack of cardboard, or a phone-sized plastic card) flat
-   on the wagon under the left hand, its long side along the robot's x.
-   Measure its centre and size into a scene (`kind: object`, `size [L, W,
-   0.006]`), with the wagon top as a `surface` — the same file the loop uses,
-   `"robot": {"profile": "d1-2"}` included.
-2. Per trial: `Approach(object="card", side="left", contact="tip")`, then
-   `Grasp(object="card", side="left", contact="tip", grip="soft")`, then
-   `Lift(object="card", side="left", height_m=0.05)`, each planned, run with
-   `run(plan, robot, kin=kin)` and verified from a fresh observation; then
-   `Place` it back (or put it back by hand, re-measure, and restate the
-   scene). The same pad grasp on the card must be REFUSED at planning
+1. The slab (a stack of business cards, 91 x 55 x 8 mm) flat on the wagon
+   under the left hand at (x 0.403, y 0.10) in base, **long side across the
+   robot (parallel to the shoulder line), `CARD_YAW_RAD = 1.5708`** — the
+   orientation the left wrist can take at that spot (J7 about -48 deg). At
+   yaw 0 the same spot is refused (`joint_limit`, coupled J7): turn the
+   slab, do not re-declare it. Scene as before: `kind: object`,
+   `size [L, W, T]`, the wagon top as a `surface`.
+2. Dry-run first (`tip_trial.py --dry`): every plan's notes must contain
+   "SEARCHES down by contact", and the mirror reports
+   `stopped_by="max_travel"` (it measures no contact — expected, and said).
+3. Per trial: `Approach(contact="tip")`, `Grasp(contact="tip",
+   grip="soft")`, `Lift(height_m=0.05)`, each planned, run with
+   `run(plan, robot, kin=kin)` and verified from a fresh observation; fold
+   the grasp's contacts into the world with `record_contacts(world, report,
+   grasp)` and log the touched tip z, `stopped_by`, `torque_nm` and
+   `travel_m`. The same PAD grasp on the slab must be REFUSED at planning
    (`object_too_flat`) — check it once, it is the control.
-3. Report per trial: the three verdicts, the torque rise during the descent,
-   `plan.notes` (the descent floor and the pad-tip clearance the plan
-   claims) and any controller error. Stop at the first controller fault.
+4. Stop at the first controller fault. Record the jaw gap at the stall per
+   trial (T4) and film the grasp from behind the robot.
 
-If T1-T3 pass, the default can move and the ROBOT FACTS line drops the
-"experimental" warning (`agent/loop.py`, `robot_facts`); if the pads touch the
-wagon, the 2 mm tip clearance (`TIP_CLEARANCE_PER_SIDE_M`) and the droop
-margin are the numbers to revisit.
+If T1-T4 pass, the default can move and the ROBOT FACTS line drops the
+"experimental" warning (`agent/loop.py`, `robot_facts`). If the search stops
+early on free air (contact before the tips reach the slab's height), the
+3.0 Nm threshold is the number to revisit; if the pads jam, the 2 mm tip
+clearance (`TIP_CLEARANCE_PER_SIDE_M`).
 
 ## What the kit needs from d1-firmware (to file)
 
