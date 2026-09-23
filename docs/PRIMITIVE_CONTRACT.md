@@ -91,7 +91,8 @@ body, the other arm or itself
 ```
 
 The reason vocabulary is closed (`PLAN_REASONS`): `ik_fail`, `infeasible`,
-`guard_reject`, `unreachable_object`, `unreachable_destination`,
+`guard_reject`, `joint_limit` (a coupled joint limit, e.g. the D1
+wrist roll narrowing with J6), `unreachable_object`, `unreachable_destination`,
 `no_such_object`, `frame_stale`, `unknown_frame`, `precondition_unmet`,
 `learned_policy_required`. A consumer switches on it; it never parses a
 message.

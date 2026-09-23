@@ -115,7 +115,7 @@ def test_probe_link_positions_agree(pair, side):
 def arms():
     if not mk.default_urdf().exists():
         pytest.skip(f"no d1.urdf at {mk.default_urdf()}")
-    return {kind: mk.build_kinematics(chain=kind, quiet=True)
+    return {kind: mk.build_kinematics(chain=kind, coupled=(), quiet=True)
             for kind in ("urdf", "mujoco")}
 
 

@@ -79,4 +79,4 @@ def test_the_live_post_approach_posture_is_still_refused(d1_arm):
     plan = Probe(side="left", direction="down", max_travel_m=0.03).plan(
         _world(d1_arm, LIVE_AFTER_APPROACH_DEG), d1_arm)
     assert not plan.ok
-    assert plan.reason in ("ik_fail", "guard_reject")
+    assert plan.reason in ("ik_fail", "guard_reject", "joint_limit")
