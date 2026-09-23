@@ -35,6 +35,20 @@ mkit-teach record /path/take.json           # 保存先を直接指定（スク�
 （端末でなければ拒否、`--yes` なら上書き）。名前は記録に残るので export で
 `--name` は不要。
 
+続けて**どちらの腕を教えるか**を聞く: `Arms to teach [both/left/right] (default
+both):`（b / l / r も可）。`--arms` を付ければ聞かない。安全契約は選んだ腕だけを
+名指しして表示する。選択は記録の `arms` に残る。
+
+**録画中の Ctrl-C は Enter と同じ「停止」**で、テイクは保存される（ブレーキ締結 →
+位置保持の順も同じ）。サンプルが 2 未満ならテイクは破棄され、録り直しの
+コマンドを表示する。録画開始前（HOME 移動・カウントダウン中）の Ctrl-C は何も
+保存しない。
+
+`To fix:` が出るのは本当に直すものがある時だけ（位置保持に戻せなかった腕、
+デーモンの拒否、キット側のタイムアウトなど）。**ヒントが `--yes` を勧めることは
+無い**（`--yes` は HOLDING の確認を飛ばすスクリプト専用）。録り直しは
+`mkit-teach record --name <name> --arms <arms>`。
+
 **各コマンドは最後に「Next:」として次に打つコマンドを絶対パス入りで表示する**
 （record → `export <take>`、export → `check <csv> --ascii` と `play <csv> --dry-run`、
 check OK → `play --dry-run`、dry-run OK → `play`、play OK → `register` と次の

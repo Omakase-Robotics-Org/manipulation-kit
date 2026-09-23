@@ -169,6 +169,13 @@ guard") — **breaking for `mkit-teach` callers**:
   - **Every subcommand ends with `Next:`** — the recommended next command
     with absolute paths (`next_steps()`), or `To fix:` with the recover /
     re-run command on a failure.
+  - `record` also asks **which arm(s)** after the name (`both/left/right`,
+    b/l/r; `--arms` skips it) and names only those in the contract.
+    **Ctrl-C while recording is a Stop** that keeps the take (new
+    `RecordAborted` when fewer than two samples); `To fix:` appears only
+    when an arm was left without a position hold or the run failed, and
+    **no hint ever suggests `--yes`** (it skips the HOLDING confirmation;
+    the retry is `mkit-teach record --name <name> --arms <arms>`).
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

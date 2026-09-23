@@ -152,6 +152,15 @@ HAND GUIDING WITH THE HOLDING BRAKES RELEASED (d1-firmware PR #92)
   * The kit's brake path is unverified on hardware as of 2026-09-23."""
 
 
+class RecordAborted(RuntimeError):
+    """The take ended without a usable recording (fewer than two samples).
+    ``recording`` is what there was, teardown problems included."""
+
+    def __init__(self, message: str, recording: "Recording"):
+        super().__init__(message)
+        self.recording = recording
+
+
 @dataclass
 class Recording:
     """A raw teach capture. ``samples[k]`` is 14 degrees, CSV column order
@@ -373,9 +382,19 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
             sleep(SETTLE_S)
         on_state(RECORDING, f"{guide}: move the {'/'.join(arms)} arm(s) by hand")
         # t = 0 is NOW: the release was just acknowledged (brake guide).
-        _capture(robot, rec, mode=mode, duration_s=duration_s,
-                 stationary_s=stationary_s, stop=stop, next_keyframe=next_keyframe,
-                 keeper=keeper, sleep=sleep, clock=clock)
+        try:
+            _capture(robot, rec, mode=mode, duration_s=duration_s,
+                     stationary_s=stationary_s, stop=stop,
+                     next_keyframe=next_keyframe, keeper=keeper, sleep=sleep,
+                     clock=clock)
+        except KeyboardInterrupt:
+            # Ctrl-C while recording is a Stop: the take is kept.
+            rec.meta["stopped_by"] = "interrupt"
+    except BaseException as exc:
+        # The caller learns what the teardown below did (exit_problems is
+        # filled into this same object) even when the take never started.
+        exc.teach_recording = rec
+        raise
     finally:
         # Brakes FIRST: nothing else happens before they are engaged.
         if keeper is not None:
@@ -404,8 +423,9 @@ def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
         problems.append(f"brake window renewal failed: {keeper.error}")
         on_state(IDLE, f"WARNING: {problems[-1]}")
     if len(rec.samples) < 2:
-        raise RuntimeError(f"not enough samples to build a gesture "
-                           f"({len(rec.samples)}); {'; '.join(problems)}")
+        raise RecordAborted(f"not enough samples to build a gesture "
+                            f"({len(rec.samples)})"
+                            + (f"; {'; '.join(problems)}" if problems else ""), rec)
     on_state(RECORDED, f"{len(rec.samples)} samples, "
                        f"{rec.times[-1] - rec.times[0]:.1f} s"
              + (f"; {len(problems)} exit problem(s), WARNING above" if problems else ""))

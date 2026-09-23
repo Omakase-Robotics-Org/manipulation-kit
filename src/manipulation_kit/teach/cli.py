@@ -31,7 +31,7 @@ from .process import (DEFAULT_SPEED, EPSILON_DEG, HOME_SPEED_DEG_S,
                       STRETCH_KEY, KeyframeOptions, SpeedPolicy,
                       keyframes_from_poses, keyframes_from_samples)
 from .record import (BRAKE_CONTRACT, BRAKE_WINDOW_S, COMPLIANCE, DEFAULT_RATE_HZ,
-                     Recording, record)
+                     RecordAborted, Recording, record)
 
 KEYFRAMES_SCHEMA = "manipulation_kit.teach.keyframes/1"
 ARMS = {"both": ("left", "right"), "left": ("left",), "right": ("right",)}
@@ -50,10 +50,23 @@ def recover_steps(url: str, wires) -> List[str]:
     return lines
 
 
+def retry_record(take: Optional[Path], name: Optional[str],
+                 arms: Optional[str]) -> str:
+    """Record the take again. NEVER with ``--yes``: that skips the typed
+    HOLDING confirmation, which a person at the robot must give every time."""
+    if name and take is not None and Path(take) == teach_dir() / f"{name}.json":
+        cmd = f"mkit-teach record --name {name}"
+    elif take is not None:
+        cmd = f"mkit-teach record {take}"
+    else:
+        cmd = "mkit-teach record"
+    return cmd + (f" --arms {arms}" if arms else "") + "   # record it again"
+
+
 def next_steps(step: str, *, ok: bool = True, take: Optional[Path] = None,
                csv: Optional[Path] = None, name: Optional[str] = None,
                url: str = "http://127.0.0.1:4750", unrecovered=(),
-               dry_run: bool = False) -> List[str]:
+               dry_run: bool = False, arms: Optional[str] = None) -> List[str]:
     """The command(s) an operator should run after ``step``, absolute paths
     filled in — the fix when ``ok`` is False. Every subcommand ends by
     printing these (Shu 2026-09-23: "tell me the next command in the log")."""
@@ -67,9 +80,7 @@ def next_steps(step: str, *, ok: bool = True, take: Optional[Path] = None,
                          + ("" if name else " --name <name>")
                          + f"   # writes {Path(take).parent / (name_arg + '_motion.csv')}")
         else:
-            if not unrecovered:
-                lines += recover_steps(url, ("a", "b"))[:1]
-            lines.append(f"mkit-teach record {take} --yes   # then try again")
+            lines.append(retry_record(take, name, arms))
     elif step == "keyframes":
         lines.append(f"mkit-teach export {take}" + ("" if name else " --name <name>"))
     elif step == "export":
@@ -138,9 +149,10 @@ def _guide(args) -> str:
     return "compliance" if args.compliance else "idle" if args.no_brake else "brake"
 
 
-def confirm_holding(args, arms, *, ask=input) -> bool:
+def confirm_holding(args, arms, *, ask=None) -> bool:
     """The brake contract, printed and acknowledged ONCE for the session and
     all taught arms (one typed HOLDING, not one per arm)."""
+    ask = _asker(ask)
     print(BRAKE_CONTRACT.format(window=args.brake_window_s, arms="/".join(arms)))
     if args.yes:
         return True
@@ -160,6 +172,12 @@ def teach_dir() -> Path:
     return Path(os.environ.get("MKIT_TEACH_DIR") or "~/teach").expanduser().resolve()
 
 
+def _asker(ask):
+    """The prompt function: the one given, else ``input`` looked up NOW (so a
+    replaced ``builtins.input`` — a scripted stdin — is honoured)."""
+    return ask if ask is not None else (lambda prompt: input(prompt))
+
+
 def _interactive(args=None) -> bool:
     return not getattr(args, "yes", False) and sys.stdin.isatty()
 
@@ -176,7 +194,7 @@ def _ask_name(ask, prompt: str = "Gesture name (a-z, 0-9, _, -): ") -> str:
             print(exc, file=sys.stderr)
 
 
-def resolve_take(args, *, ask=input, interactive: Optional[bool] = None):
+def resolve_take(args, *, ask=None, interactive: Optional[bool] = None):
     """``(take path, gesture name or None)`` for ``record``.
 
     A positional path is used as given (the name is ``--name``, else its
@@ -185,6 +203,7 @@ def resolve_take(args, *, ask=input, interactive: Optional[bool] = None):
     an existing take there is only overwritten when the operator says so
     (or ``--yes``), else a new name is asked for.
     """
+    ask = _asker(ask)
     interactive = _interactive(args) if interactive is None else interactive
     if args.out is not None:
         path = Path(args.out).expanduser().resolve()
@@ -215,10 +234,31 @@ def resolve_take(args, *, ask=input, interactive: Optional[bool] = None):
         name = _ask_name(ask)
 
 
+def resolve_arms(args, *, ask=None, interactive: Optional[bool] = None) -> str:
+    """``--arms``, else — on a terminal — asked; else ``both``."""
+    ask = _asker(ask)
+    if args.arms is not None:
+        return args.arms
+    interactive = _interactive(args) if interactive is None else interactive
+    if not interactive:
+        return "both"
+    short = {"b": "both", "l": "left", "r": "right", "": "both"}
+    while True:
+        try:
+            answer = ask("Arms to teach [both/left/right] (default both): ").strip().lower()
+        except EOFError:
+            return "both"
+        answer = short.get(answer, answer)
+        if answer in ARMS:
+            return answer
+        print(f"answer both, left or right (b/l/r), not {answer!r}", file=sys.stderr)
+
+
 def cmd_record(args) -> int:
     guide = _guide(args)
     take, name = resolve_take(args)
-    if guide == "brake" and not confirm_holding(args, ARMS[args.arms]):
+    arms = resolve_arms(args)
+    if guide == "brake" and not confirm_holding(args, ARMS[arms]):
         return 2
     home = load_home(args.home)
     stop = threading.Event()
@@ -236,7 +276,7 @@ def cmd_record(args) -> int:
                     return
                 stop.set()
             threading.Thread(target=wait_enter, daemon=True).start()
-            print("Press Enter to stop (Ctrl-C also stops and still saves).")
+            print("Press Enter to stop (Ctrl-C while recording also stops and keeps the take).")
 
         def should_stop() -> bool:
             return stop.is_set() or bool(stop_path and stop_path.exists())
@@ -250,7 +290,7 @@ def cmd_record(args) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         with _executor(args, lease_class=args.lease_class) as robot:
-            rec = record(robot, home=home, guide=guide, arms=ARMS[args.arms],
+            rec = record(robot, home=home, guide=guide, arms=ARMS[arms],
                          mode=args.mode, rate_hz=args.rate_hz,
                          duration_s=args.duration_s, stationary_s=args.stationary_s,
                          stop=should_stop, next_keyframe=next_keyframe,
@@ -259,21 +299,43 @@ def cmd_record(args) -> int:
                          adj_limit_mm=args.adj_limit_mm, countdown_s=args.countdown,
                          allow_bare_flange=args.allow_bare_flange, name=name,
                          on_state=_say)
-    except KeyboardInterrupt:
-        print("interrupted; brakes engaged first, then the position hold "
-              "(any arm that could not be recovered is named above)",
+    except RecordAborted as exc:
+        print(f"take discarded, nothing saved: {exc}", file=sys.stderr)
+        return _record_ended(args, out, name, arms, exc.recording, code=1)
+    except KeyboardInterrupt as exc:
+        print("interrupted before recording started; nothing saved",
               file=sys.stderr)
-        print_next(next_steps("record", ok=False, take=out, url=args.url), ok=False)
-        return 130
+        return _record_ended(args, out, name, arms,
+                             getattr(exc, "teach_recording", None), code=130)
     except (FirmwareUnavailable, RuntimeError) as exc:
         print(f"record failed: {exc}", file=sys.stderr)
-        print_next(next_steps("record", ok=False, take=out, url=args.url), ok=False)
-        return 1
+        return _record_ended(args, out, name, arms,
+                             getattr(exc, "teach_recording", None), code=1,
+                             failed=True)
     rec.save(out)
-    print(f"saved {out}: {len(rec.samples)} samples")
-    print_next(next_steps("record", take=out, name=name, url=args.url,
-                          unrecovered=_unrecovered_wires(rec)))
+    print(f"[recorded] {out}: {len(rec.samples)} samples, "
+          f"{rec.times[-1] - rec.times[0]:.2f} s")
+    unrecovered = _unrecovered_wires(rec)
+    if unrecovered:
+        print_next(recover_steps(args.url, unrecovered), ok=False)
+    print_next(next_steps("record", take=out, name=name, url=args.url))
     return 0
+
+
+def _record_ended(args, take, name, arms, rec, *, code: int,
+                  failed: bool = False) -> int:
+    """No take was saved. ``To fix:`` only for what really needs fixing — an
+    arm left without a position hold, or a failure — then how to record
+    again."""
+    unrecovered = _unrecovered_wires(rec) if rec is not None else []
+    if unrecovered:
+        print_next(recover_steps(args.url, unrecovered), ok=False)
+    if failed:
+        print_next(next_steps("record", ok=False, take=take, name=name, arms=arms),
+                   ok=False)
+    else:
+        print_next([retry_record(take, name, arms)])
+    return code
 
 
 def _unrecovered_wires(rec: Recording) -> List[str]:
@@ -354,9 +416,10 @@ def _say_speed(gesture: Gesture) -> None:
               f"player none; docs/teach.md 'Speed').")
 
 
-def ask_labels(args, *, ask=input, interactive: Optional[bool] = None):
+def ask_labels(args, *, ask=None, interactive: Optional[bool] = None):
     """``(sentiment, usage)``: as given; when omitted, asked for on a terminal,
     else the defaults ``neutral`` / ``filler``."""
+    ask = _asker(ask)
     interactive = sys.stdin.isatty() if interactive is None else interactive
     sentiment, usage = args.sentiment, args.usage
     if sentiment is None:
@@ -572,7 +635,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip the typed HOLDING confirmation (scripts only)")
     p.add_argument("--countdown", type=int, default=3,
                    help="seconds counted down before the arms go soft (default 3)")
-    p.add_argument("--arms", choices=tuple(ARMS), default="both")
+    p.add_argument("--arms", choices=tuple(ARMS), default=None,
+                   help="arm(s) to teach (default: asked on a terminal, else both)")
     p.add_argument("--mode", choices=("stream", "keyframe"), default="stream",
                    help="stream = sample at --rate-hz; keyframe = Enter per pose")
     p.add_argument("--rate-hz", type=float, default=DEFAULT_RATE_HZ)
