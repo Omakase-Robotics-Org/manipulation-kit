@@ -47,7 +47,7 @@ from . import verifiers as V
 from .arguments import ROLE_ANY, check_arguments
 from .clearance import SceneGate
 from .planning import IncompleteObservation, Kin, coupled_limit_notes, solve_path
-from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN,
+from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN, JOINT_LIMIT,
                     ContactCriterion, ContactStep, GripStep, JointStep, Plan,
                     PlanBinding, PlanError, Primitive, SIDES, SettleStep,
                     Unmet, Verifier, Waypoint)
@@ -82,6 +82,17 @@ CONTACT_SLAB_M = 0.02
 #: Three contacts closer to a LINE than this [m] fit no plane: the normal
 #: about that line is unobserved, and the probes' own normal is used.
 COLLINEAR_TOL_M = 0.005
+#: Two consecutive contact-leg knots closer than this on every joint [rad]
+#: are one knot: the solver re-solved without moving.
+DUPLICATE_KNOT_RAD = 1e-9
+#: A probe's postures keep at least this far from every joint's BOX limit
+#: [deg], or the roll is not taken. A probe is repeated (a trial is 3 air +
+#: 10 table probes with a lift between each), so a roll that parks a joint
+#: next to its stop is the posture the next cycle has to start from; on d1-2
+#: (2026-09-23) the probe trial ended with J5 at 171.5 of 173 deg and the
+#: next leg's solver pinned there. Refused with ``joint_limit`` when no roll
+#: keeps it, instead of drifting further.
+PROBE_BOX_MARGIN_DEG = 10.0
 
 
 def _unit(v) -> np.ndarray:
@@ -273,7 +284,7 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
                   travel_m: float, criterion: ContactCriterion,
                   speed_m_s: float, hold_s: float, retract: bool,
                   notes: Sequence[str], roll_to=None,
-                  roll_rad: float = 0.0) -> Any:
+                  roll_rad: float = 0.0, keep=None) -> Any:
     """Standoff, then the contact leg — solved, split and wrapped.
 
     The standoff's joint steps stay ordinary :class:`JointStep`\\ s. The
@@ -285,7 +296,8 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
     # allows: a probe is about the fingertips, not the roll, and turning the
     # wrist half a revolution in place is how a posture next to the body
     # becomes a guard refusal.
-    r_tool = ap.align_tool(side, d, roll_to=roll_to, roll_rad=roll_rad)
+    r_tool = ap.align_tool(side, d, roll_to=roll_to, roll_rad=roll_rad,
+                           keep=keep)
     p_standoff = np.asarray(p_standoff, dtype=float)
     waypoints = [
         Waypoint(standoff_label, p_standoff, r_tool, allow_via=standoff_via,
@@ -308,7 +320,17 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
             standoff = [s for s in steps if s.waypoint == 0]
             leg = [s for s in steps if s.waypoint == 1]
             q_start = standoff[-1].q if standoff else q_now
-            path = [np.asarray(q_start, dtype=float)] + [s.q for s in leg]
+            # A knot the solver did not move (it re-solved a posture pinned
+            # at a limit: d1-2 2026-09-23, J5 held at 173 deg for 35 of 41
+            # knots) is the same sample twice. It is dropped HERE, where it
+            # is made: kept, it has the same distance as the one before it,
+            # hence the same time, and the daemon refuses the whole leg
+            # ("increasing times").
+            path = [np.asarray(q_start, dtype=float)]
+            for s in leg:
+                q = np.asarray(s.q, dtype=float)
+                if np.max(np.abs(q - path[-1])) > DUPLICATE_KNOT_RAD:
+                    path.append(q)
             borrowed.kin.set_joints(side, path[0])
             p0 = borrowed.tool_pose(side)[0]
             dist = [0.0]
@@ -335,6 +357,28 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
                 + tuple(_unchecked_note(scene))
                 + coupled_limit_notes(kin, all_steps),
                 binding=PlanBinding.of(world, kin))
+
+
+def _box_margin(kin, side: str, steps) -> Tuple[float, str]:
+    """The smallest distance [deg] any posture of ``steps`` keeps from a box
+    limit, and which joint at which angle that is."""
+    lo, hi = (np.degrees(np.asarray(v, dtype=float)) for v in kin.limits(side))
+    worst, where = float("inf"), ""
+    for step in steps:
+        if isinstance(step, JointStep):
+            postures = (step.q,) if step.side == side else ()
+        elif isinstance(step, ContactStep):
+            postures = step.path if step.side == side else ()
+        else:
+            continue
+        for q in postures:
+            deg = np.degrees(np.asarray(q, dtype=float))
+            gaps = np.minimum(deg - lo, hi - deg)
+            j = int(np.argmin(gaps))
+            if float(gaps[j]) < worst:
+                worst = float(gaps[j])
+                where = f"J{j + 1}={deg[j]:+.1f} deg"
+    return worst, where
 
 
 # --------------------------------------------------------------------------- #
@@ -425,6 +469,7 @@ class Probe(Primitive):
         # (2026-09-22) every Probe from a real posture was refused that way
         # (ik_fail, 0.25-1.2 rad residual) while a quarter turn plans.
         first = None
+        near = None
         for roll in PROBE_ROLLS_RAD:
             plan = _contact_plan(
                 self, world, kin, side, d=d, p_standoff=p_tool,
@@ -436,11 +481,27 @@ class Probe(Primitive):
                     f"jaws rolled {math.degrees(roll):+.0f} deg about the "
                     f"probe direction (planner choice: the wrist's own roll "
                     f"did not plan)"]),
-                roll_to=r_tool.as_matrix()[:, 0], roll_rad=roll)
+                keep=r_tool, roll_rad=roll)
             if getattr(plan, "ok", False):
-                return plan
+                margin, where = _box_margin(kin, side, plan.steps)
+                if margin >= PROBE_BOX_MARGIN_DEG:
+                    return plan
+                if near is None or margin > near[0]:
+                    near = (margin, where, roll)
+                continue
             if first is None:
                 first = plan
+        if near is not None:
+            margin, where, roll = near
+            return PlanError(
+                JOINT_LIMIT,
+                f"the {side} arm can probe {self.direction.label()} only in a "
+                f"posture next to a joint stop: at best {where} is "
+                f"{margin:.1f} deg from its box limit (jaws rolled "
+                f"{math.degrees(roll):+.0f} deg), inside the "
+                f"{PROBE_BOX_MARGIN_DEG:.0f} deg a repeated probe keeps. "
+                f"Move the hand to a posture further from its limits first",
+                primitive=self.name(), side=side)
         return first
 
     def verifier(self, world0: WorldView) -> Verifier:

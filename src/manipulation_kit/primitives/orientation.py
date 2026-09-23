@@ -258,7 +258,8 @@ def roll_tool(r_tcp: R, roll_rad: float) -> R:
     return roll_about(r_tcp, r_tcp.as_matrix()[:, 2], roll_rad)
 
 
-def align_tool(side: str, d_base, *, roll_to=None, roll_rad: float = 0.0) -> R:
+def align_tool(side: str, d_base, *, roll_to=None, roll_rad: float = 0.0,
+               keep: Optional[R] = None) -> R:
     """The TCP orientation whose +z is ``d_base``, in the base frame.
 
     Rolled about ``d_base`` so the jaw-gap axis (TCP +x) lies along ``roll_to``
@@ -267,10 +268,35 @@ def align_tool(side: str, d_base, *, roll_to=None, roll_rad: float = 0.0) -> R:
     The per-side mirrored PADS_DOWN seed is used when ``|d.z| > 0.9``,
     otherwise the horizontal frame. THE ONLY PLACE A QUATERNION IS PRODUCED.
 
+    ``keep`` is the hand's CURRENT orientation, for a verb that re-aims the
+    hand where it is (a probe): the result is ``keep`` tilted by the smallest
+    rotation that puts its +z on ``d_base`` — the roll it has, literally —
+    then turned by ``roll_rad``. ``roll_to`` cannot say that: its half-turn
+    representative is the one nearest the SEED, not the hand, so a hand whose
+    jaw axis points the other way was turned 180 deg in place (d1-2
+    2026-09-23: the probe trial flipped J5 by ~175 deg on every other probe
+    and walked the wrist to J5 = 172 deg, 1 deg from its box).
+
     Raises ``ValueError`` for an upward direction; verbs refuse that before
     they get here.
     """
     d = _unit(d_base)
+    if keep is not None:
+        if roll_to is not None:
+            raise ValueError("align_tool: keep and roll_to are exclusive")
+        if abs(float(d[2])) > VERTICAL_COS and float(d[2]) > 0:
+            raise ValueError("no upward tool direction is defined: the hand "
+                             "cannot approach an object from underneath")
+        z_now = keep.as_matrix()[:, 2]
+        axis = np.cross(z_now, d)
+        s = float(np.linalg.norm(axis))
+        r = keep
+        if s > 1e-12:
+            r = R.from_rotvec(axis / s * math.atan2(s, float(np.dot(z_now, d)))) * keep
+        elif float(np.dot(z_now, d)) < 0.0:
+            raise ValueError("align_tool: keep points exactly away from d; "
+                             "no smallest tilt is defined")
+        return roll_about(r, d, roll_rad)
     r = _seed(side, d)
     if roll_to is not None:
         gap = np.asarray(roll_to, dtype=float).reshape(3)
