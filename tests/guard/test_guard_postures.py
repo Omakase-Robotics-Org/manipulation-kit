@@ -6,13 +6,15 @@ spare, the arm hanging at the side must pass, and arms crossed at the chest
 must not.
 """
 import json
-from importlib import resources
+import os
 
 import pytest
 
+import manipulation_kit
 from manipulation_kit.guard import MotionGuard
 
-_HOME = json.loads((resources.files("manipulation_kit.config") / "home_pose.json").read_text())["home_pose"]
+with open(os.path.join(os.path.dirname(manipulation_kit.__file__), "config", "home_pose.json")) as f:
+    _HOME = json.load(f)["home_pose"]
 HOME = (_HOME[:7], _HOME[7:])
 MIRROR = (-1, 1, -1, 1, -1, 1, -1)
 
