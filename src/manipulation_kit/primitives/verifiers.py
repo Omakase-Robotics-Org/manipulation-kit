@@ -16,7 +16,7 @@ nothing must not be able to pass.
 from __future__ import annotations
 
 import math
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -68,6 +68,20 @@ MIN_TURN_TOL_RAD = math.radians(2.0)
 ASSOCIATION_TOL_M = 0.08
 
 
+#: At or under this pad-face gap the jaws closed on NOTHING: the stroke
+#: stalled on the pads themselves (or on a sliver no verb is planned for).
+#: Capped at half the named object's width, so a declared 6 mm card is still
+#: a card at 5 mm.
+EMPTY_GAP_M = 0.006
+#: How far a MEASURED stalled gap may sit from the DECLARED width and still be
+#: that object, as a factor either way. The declaration is a model's estimate
+#: from a photo; the gap is the robot's own measurement (d1-2, 2026-09-23: a
+#: tape roll declared 50 mm was held at 57.1 mm and the old +-4 mm window
+#: called it a miss). Beyond a factor of two the jaws are on something the
+#: declaration does not describe, and that is UNKNOWN, not TRUE.
+WIDTH_PLAUSIBLE_FACTOR = 2.0
+
+
 def grip_width_window(width_m: float, tol_m: float = GRIP_WIDTH_TOL_M):
     """The pad gaps that are ``width_m`` held, rather than air or the pads.
 
@@ -77,6 +91,65 @@ def grip_width_window(width_m: float, tol_m: float = GRIP_WIDTH_TOL_M):
     """
     width = float(width_m)
     return max(0.0, width - float(tol_m)), width + float(tol_m)
+
+
+#: :func:`grip_fit` outcomes
+FIT_HELD, FIT_EMPTY, FIT_BLOCKED, FIT_IMPLAUSIBLE = (
+    "held", "empty", "blocked", "implausible")
+
+
+def grip_fit(gap_m: float, declared_m: float, *,
+             open_gap_m: Optional[float] = None,
+             reference=None) -> Dict[str, Any]:
+    """What a STALLED pad-face gap says about the object it was closed on.
+
+    MEASUREMENT OUTRANKS DECLARATION. The declared width is somebody's estimate;
+    a stalled gap is where the pads actually stopped. So the gap decides, and
+    the declaration is only graded:
+
+    * ``empty``   the gap is at most :data:`EMPTY_GAP_M` (or half the declared
+                  width, for something thinner): nothing between the pads;
+    * ``blocked`` the gap is within one planner clearance of the hand's open
+                  gap (``open_gap_m``, else the nominal driven opening): the
+                  pads barely moved, stopped by something before the object;
+    * ``implausible``  more than :data:`WIDTH_PLAUSIBLE_FACTOR` off the
+                  declaration either way: the jaws stalled on something the
+                  declaration does not describe;
+    * ``held``    anything else — the object, at its MEASURED width.
+
+    ``reference`` is the grasp's :class:`~.grasp_geometry.GraspReference`. The
+    gap is the pad-FACE gap for either reference (a parallel gripper's faces
+    are parallel), so it does not move the band's lower half; it sets the
+    ``blocked`` margin, which is the per-side clearance that reference plans
+    with (pad 4 mm, tip 2 mm): a hold wider than ``open - clearance`` is pads
+    that travelled less than the planner would ever leave free. The +-
+    :data:`GRIP_WIDTH_TOL_M` window is kept as ``matches_declaration`` — a
+    note on how good the declaration was, not the verdict.
+    """
+    from ..hands.d1.parallel_gripper.description import (  # noqa: PLC0415
+        DRIVEN_OPEN_GAP_M)
+    from .grasp_geometry import PAD  # noqa: PLC0415
+    ref = PAD if reference is None else reference
+    gap, declared = float(gap_m), float(declared_m)
+    opening = DRIVEN_OPEN_GAP_M if open_gap_m is None else float(open_gap_m)
+    empty = min(EMPTY_GAP_M, 0.5 * declared)
+    blocked = opening - float(ref.clearance_per_side_m)
+    low = declared / WIDTH_PLAUSIBLE_FACTOR
+    high = min(blocked, declared * WIDTH_PLAUSIBLE_FACTOR)
+    w_low, w_high = grip_width_window(declared)
+    if gap <= empty:
+        kind = FIT_EMPTY
+    elif gap >= blocked:
+        kind = FIT_BLOCKED
+    elif not low <= gap <= high:
+        kind = FIT_IMPLAUSIBLE
+    else:
+        kind = FIT_HELD
+    return {"fit": kind, "declared_width_m": round(declared, 4),
+            "width_band_m": [round(max(low, empty), 4), round(high, 4)],
+            "width_window_m": [round(w_low, 4), round(w_high, 4)],
+            "matches_declaration": bool(w_low <= gap <= w_high),
+            "open_gap_m": round(opening, 4), "contact": ref.name}
 
 
 def resting_on(obj: ObjectView, world: WorldView, *,
@@ -362,10 +435,14 @@ class Holding(Verifier):
        ``GripperReport.holding`` carries on the robot.
     2. **A body is between the two pad faces** — which only the producer can
        see, and which is exactly what ``holding`` means here.
-    3. **The gap is one the named object could make**: within
-       :data:`GRIP_WIDTH_TOL_M` of its own narrowest width. Below the window the
-       jaws went past it (closed on themselves, or on something thinner); above
-       it they never reached it.
+    3. **The gap is one the named object could make** (:func:`grip_fit`).
+       The MEASURED gap outranks the DECLARED width: a stall inside the
+       plausibility band is the object, at its measured width, and the verdict
+       says so (``width_correction``) when that differs from the declaration
+       by more than :data:`GRIP_WIDTH_TOL_M`. Only a gap at (near) zero —
+       nothing between the pads — or at (near) the open gap — blocked before
+       the object — is FALSE; a gap more than a factor of two off the
+       declaration is UNKNOWN.
 
     Every part is optional-if-unmeasured and never optional-if-measured: a
     producer that reports no gap gets (1) and (2) — the documented fallback for
@@ -377,11 +454,14 @@ class Holding(Verifier):
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
                  obj: Optional[ObjectView] = None,
-                 tol_m: float = GRIP_WIDTH_TOL_M, *, jaw_axis=None):
+                 tol_m: float = GRIP_WIDTH_TOL_M, *, jaw_axis=None,
+                 reference=None):
         super().__init__(primitive, world0)
         self.side = side
         self.obj = obj
         self.tol_m = float(tol_m)
+        #: the grasp's GraspReference (pad / tip); None = pad
+        self.reference = reference
         #: the base-frame jaw axis the grasp was planned with. The width the
         #: pads must span is the object's extent ALONG THIS, not its smallest
         #: side (R9).
@@ -428,28 +508,47 @@ class Holding(Verifier):
         # verdict so "it closed on itself" is reported as itself rather than as
         # a bare `nothing held`.
         width = self._width(world1)
+        fit = None
         if width is not None and gripper.jaw_gap_m is not None:
-            low, high = grip_width_window(width, self.tol_m)
-            measured["width_window_m"] = [round(low, 4), round(high, 4)]
-            measured["object_width_m"] = round(float(width), 4)
-            if gripper.jaw_gap_m < low:
+            gap_m = float(gripper.jaw_gap_m)
+            fit = grip_fit(gap_m, width, open_gap_m=gripper.open_gap_m,
+                           reference=self.reference)
+            measured.update(fit, object_width_m=round(float(width), 4))
+            if fit["fit"] == FIT_EMPTY:
                 return _false(
-                    f"the {self.side} gripper stalled at "
-                    f"{gripper.jaw_gap_m * 1000:.1f} mm, inside "
-                    f"{name}'s {width * 1000:.1f} mm — it closed on "
-                    f"itself, not on the object", **measured)
-            if gripper.jaw_gap_m > high:
+                    f"the {self.side} gripper stalled at {gap_m * 1000:.1f} mm "
+                    f"— it closed on itself, not on {name!r}: nothing is "
+                    f"between the pads", **measured)
+            if fit["fit"] == FIT_BLOCKED:
                 return _false(
-                    f"the {self.side} gripper stopped at "
-                    f"{gripper.jaw_gap_m * 1000:.1f} mm, wider than "
-                    f"{name}'s {width * 1000:.1f} mm — the jaws never "
-                    f"reached it", **measured)
+                    f"the {self.side} gripper stalled at {gap_m * 1000:.1f} mm, "
+                    f"at (or past) its {fit['open_gap_m'] * 1000:.1f} mm open "
+                    f"gap — something blocked the pads before {name!r}: the "
+                    f"jaws never reached it", **measured)
         # (2) the half only the producer can see: a body between the pad faces
         if not gripper.holding:
             return _false(f"the {self.side} gripper reports nothing between its "
                           f"pads", **measured)
+        if fit is not None and fit["fit"] == FIT_IMPLAUSIBLE:
+            return _unknown(
+                f"the {self.side} jaws stalled on something at "
+                f"{gripper.jaw_gap_m * 1000:.1f} mm, but {name!r} was declared "
+                f"{width * 1000:.1f} mm — more than a factor of "
+                f"{WIDTH_PLAUSIBLE_FACTOR:.0f} off, so this is not evidence it "
+                f"is {name!r}. Look again and re-declare it", **measured)
         gap = ("" if gripper.jaw_gap_m is None
                else f" at a {gripper.jaw_gap_m * 1000:.1f} mm gap")
+        if fit is not None and not fit["matches_declaration"]:
+            # the MEASURED width replaces the declared one (the loop hands
+            # this to the world source)
+            measured["width_provenance"] = "measured"
+            measured["width_correction"] = {
+                "object": name, "declared_m": fit["declared_width_m"],
+                "measured_m": round(float(gripper.jaw_gap_m), 4),
+                "jaw_axis": (None if self.jaw_axis is None
+                             else [round(float(v), 4) for v in self.jaw_axis])}
+            gap += (f"; declared {width * 1000:.1f} mm, width corrected to "
+                    f"the MEASURED {gripper.jaw_gap_m * 1000:.1f} mm")
         if name is None:
             return _true(f"the {self.side} gripper is holding{gap}", **measured)
         # (4) ASSOCIATION. "Something is gripped" is not "the named block is

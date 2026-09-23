@@ -162,8 +162,10 @@ def test_the_gap_has_to_be_one_the_object_could_make(d1_arm, observe):
 
 
 def test_a_10mm_bar_is_held_at_the_gap_a_10mm_bar_makes(d1_arm, observe):
-    """The window is the OBJECT's, not the gripper's: the same 41 mm gap that
-    holds a 40 mm cube is the jaws nowhere near a 10 mm bar."""
+    """The band is the OBJECT's, not the gripper's: the same 41 mm gap that
+    holds a 40 mm cube is four times a 10 mm bar — not evidence of the bar
+    (UNKNOWN, not TRUE; the measurement outranks a declaration only within a
+    factor of two of it)."""
     bar = (0.010, 0.080, 0.010)
     world = observe(d1_arm, block_p=REACHABLE, block_size=bar)
     verifier = Grasp(object="red_block", side="left").verifier(world)
@@ -172,7 +174,7 @@ def test_a_10mm_bar_is_held_at_the_gap_a_10mm_bar_makes(d1_arm, observe):
     assert verifier(held).verdict == Verdict.TRUE
     wide = observe(d1_arm, block_p=REACHABLE, block_size=bar, closed={"left": 0.41},
                    held={"left": "red_block"}, gap={"left": 0.04122})
-    assert verifier(wide).verdict == Verdict.FALSE
+    assert verifier(wide).verdict == Verdict.UNKNOWN
 
 
 def test_an_empty_close_is_not_holding_however_hard_it_stalled(d1_arm, observe):

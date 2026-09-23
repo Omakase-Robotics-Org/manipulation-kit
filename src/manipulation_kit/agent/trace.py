@@ -67,6 +67,9 @@ class DecisionRecord:
     #: ``ContactReport.to_json()`` — where the hand met something, and why it
     #: stopped
     contacts: List[Dict[str, Any]] = field(default_factory=list)
+    #: measurements that REPLACED a declaration this turn — a grasp that
+    #: measured the object's width along the jaws (``width_correction``)
+    corrections: List[Dict[str, Any]] = field(default_factory=list)
     stamp: float = field(default_factory=time.time)
 
     def to_json(self) -> Dict[str, Any]:

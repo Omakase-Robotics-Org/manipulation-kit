@@ -1108,7 +1108,7 @@ class Grasp(Primitive):
                            f"grasp cannot be verified: {unmet[0]}")
         return _by_roll(self.name(), world0, meet, lambda r_tcp: V.Holding(
             self.name(), world0, meet.side, meet.item,
-            jaw_axis=ap.jaw_axis(r_tcp)))
+            jaw_axis=ap.jaw_axis(r_tcp), reference=meet.spec.reference))
 
 
 # --------------------------------------------------------------------------- #

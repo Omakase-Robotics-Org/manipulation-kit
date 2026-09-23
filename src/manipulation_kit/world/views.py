@@ -125,6 +125,8 @@ def _round(values: Iterable[float], places: int = 3) -> list:
 PROVENANCES: Tuple[str, ...] = ("observed", "declared", "attached", "predicted")
 #: the two that are inferences, not sightings
 INFERRED: Tuple[str, ...] = ("attached", "predicted")
+#: ``ObjectView.size_provenance``: as the producer said, or MEASURED by a grip
+SIZE_PROVENANCES: Tuple[Optional[str], ...] = (None, "measured")
 
 
 @dataclass(frozen=True)
@@ -147,8 +149,16 @@ class ObjectView:
     #: one of :data:`PROVENANCES`. ``attached`` / ``predicted`` are
     #: INFERENCES and every verifier that reads the pose says so.
     provenance: str = "observed"
+    #: where ``size`` came from, when that is not the producer's statement:
+    #: ``"measured"`` = a stalled grasp measured the object's extent along the
+    #: jaw axis (:func:`manipulation_kit.world.attach.with_measured_width`) and
+    #: it replaced the declared number. ``None`` = as the producer gave it.
+    size_provenance: Optional[str] = None
 
     def __post_init__(self) -> None:
+        if self.size_provenance not in SIZE_PROVENANCES:
+            raise ValueError(f"{self.name}.size_provenance must be one of "
+                             f"{SIZE_PROVENANCES}, got {self.size_provenance!r}")
         if self.uncertainty_m is not None:
             value = float(self.uncertainty_m)
             if not math.isfinite(value) or value < 0.0:
@@ -299,6 +309,8 @@ class ObjectView:
             "stamp": round(float(self.stamp), 3),
             "provenance": self.provenance,
         }
+        if self.size_provenance:
+            out["size_provenance"] = self.size_provenance
         if self.colour:
             out["colour"] = self.colour
         if self.uncertainty_m is not None:
@@ -344,6 +356,8 @@ class ObjectView:
                            "inferred from the tool pose, not sighted",
                "predicted": ", PREDICTED: where it was let go, not sighted "
                             "since"}.get(self.provenance, "")
+        if self.size_provenance == "measured":
+            how += ", size MEASURED by the grip that holds it"
         return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "
                 f"{where[1]:.3f}, {where[2]:.3f}) m base{note}, "
                 f"{self.size[0] * 1000:.0f}x{self.size[1] * 1000:.0f}x"

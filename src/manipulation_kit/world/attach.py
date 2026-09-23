@@ -140,6 +140,35 @@ def attached(world: WorldView, *, side: str) -> Optional[ObjectView]:
     return item
 
 
+def with_measured_width(item: ObjectView, frames: Any, axis,
+                        width_m: float) -> ObjectView:
+    """``item`` with its extent along the base-frame ``axis`` (the jaw axis of
+    the grasp that measured it) set to ``width_m``, and
+    ``size_provenance="measured"``.
+
+    A stalled grasp is a MEASUREMENT of the object's width along the jaws, and
+    it outranks the declared size (d1-2, 2026-09-23: a tape roll declared
+    50 mm was held at 57.1 mm). The object-frame axis most aligned with
+    ``axis`` absorbs the difference, so :meth:`ObjectView.extent_along` of the
+    result along ``axis`` IS ``width_m`` (for an axis-aligned grasp: exactly
+    that side). The other two sides are not measured and stay as declared.
+    Raises ``LookupError`` when ``item``'s frame does not resolve.
+    """
+    a = np.asarray(axis, dtype=float).reshape(3)
+    norm = float(np.linalg.norm(a))
+    if not norm > 0.0 or not float(width_m) > 0.0:
+        raise ValueError(f"a measured width needs a jaw axis and a positive "
+                         f"width, got axis={axis!r}, width={width_m!r}")
+    _p, r = item.pose_in_base(frames)
+    local = np.abs(r.inv().apply(a / norm))
+    k = int(np.argmax(local))
+    size = np.array(item.size, dtype=float)
+    rest = float(sum(size[i] * local[i] for i in range(3) if i != k))
+    side = (float(width_m) - rest) / float(local[k])
+    size[k] = side if side > 1e-4 else float(width_m)
+    return dataclasses.replace(item, size=size, size_provenance="measured")
+
+
 def released(world: WorldView, *, name: str,
              provenance: str = PREDICTED) -> WorldView:
     """``name`` let go where the hand last had it: the pose stays, and it is a
@@ -151,4 +180,5 @@ def released(world: WorldView, *, name: str,
 
 
 __all__ = ["ATTACHED", "GraspTransform", "PREDICTED", "attached",
-           "grasp_transform", "released", "with_attached"]
+           "grasp_transform", "released", "with_attached",
+           "with_measured_width"]

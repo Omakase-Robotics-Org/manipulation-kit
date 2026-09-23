@@ -23,7 +23,7 @@ from .views import (INFERRED, PROVENANCES, UPRIGHT_TOL_RAD, ArmView,
                     ContactView, ContainerView, GripperView, ObjectView,
                     SurfaceView, WorldView)
 from .attach import (GraspTransform, attached, grasp_transform, released,
-                     with_attached)
+                     with_attached, with_measured_width)
 
 __all__ = [
     "ALIASES", "Direction", "FRAMES", "OBJECT_PREFIX", "TOOL",
@@ -34,5 +34,5 @@ __all__ = [
     "ArmView", "GripperView", "WorldView", "ContactView",
     "INFERRED", "PROVENANCES",
     "GraspTransform", "attached", "grasp_transform", "released",
-    "with_attached",
+    "with_attached", "with_measured_width",
 ]
