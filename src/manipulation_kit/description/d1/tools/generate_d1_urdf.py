@@ -61,8 +61,10 @@ PROVENANCE OF NUMBERS
   ±0.037 m from the D1 STEP assembly (see d1-face/extract_arm_mounts.py),
   first written down in d1-manip-sim's d1_dual.urdf and now carried by
   d1_yubi_description_v2/urdf/d1_yubi.urdf, which is generated from here.
-* Per-link capsule radii: config/safety_zones.json (conservative bounds on
-  the vendor collision meshes) — same numbers as collision_model.h.
+* Arm link capsules: tubes at the real link radii + 97 mm J2/J4 housings,
+  fitted to the vendor arm meshes (ARM_CAPSULES, tools/fit_arm_capsules.py,
+  record and residuals in arm_capsule_fit.json). The frozen
+  config/safety_zones.json / collision_model.h radii are no longer used.
 * YUBI hand mount + palm/camera/finger geometry: d1-manip-sim
   assets/d1_yubi.urdf (merged main, PR #12) and
   description/d1_arm/yubi_description/urdf/yubi_hand.urdf.xacro.
@@ -204,11 +206,51 @@ ARM_CHAIN = [
 TCP_XYZ = (0.0, -0.087, 0.0)
 TCP_RPY = (1.5708, -1.5708, 0.0)
 
-# Capsule radius per link segment (Base, Link1..Link7) — safety_zones.json.
-CAP_RADII = {
-    "Base": 0.055, "Link1": 0.05, "Link2": 0.045, "Link3": 0.04,
-    "Link4": 0.04, "Link5": 0.035, "Link6": 0.03, "Link7": 0.03,
-    "TCP_Link": 0.03,
+# Joint-to-joint capsule radius, now used only by the TCP flange (an
+# end-effector body the guard does not check). The arm links' capsules are
+# ARM_CAPSULES below; the old per-link radii here (Base 0.055 ... Link7 0.03,
+# = the frozen safety_zones.json / collision_model.h) were up to 23 mm thinner
+# than the vendor meshes.
+CAP_RADII = {"TCP_Link": 0.03}
+
+# The guard's arm model, (part, a, b, radius) in each link's own frame,
+# metres, fitted to the vendor arm meshes by tools/fit_arm_capsules.py: a
+# tube per link at the link's real tube radius, and the shoulder (J2) and
+# elbow (J4) housings as the measured 97 mm cylinders (radius 0.0485 capsules
+# on the joint axis), every capsule trimmed so its rounded ends stop at the
+# mesh's ends. The housing cover-plate rims and the tube ends are NOT
+# covered: they stick out by up to ~24 mm (Link4), recorded per link in
+# arm_capsule_fit.json and pinned by tests/guard/test_arm_capsule_fit.py.
+# Shu accepted that on 2026-09-23 over ~200 extra capsules per arm; a true
+# cylinder primitive may replace the housing capsules later.
+ARM_CAPSULES = {
+    "Base": (
+        ("tube", (0.0, 0.0, 0.0), (0.0, 0.0, 0.1586), 0.0566),
+    ),
+    "Link1": (
+        ("tube", (0.0, 0.0, -0.077), (0.0, 0.0, 0.011), 0.0556),
+    ),
+    "Link2": (
+        ("housing_j2", (0.0, 0.0, -0.0094), (0.0, 0.0, 0.0094), 0.0485),
+        ("tube", (0.0, 0.0485, 0.0), (0.0, 0.0875, 0.0), 0.0425),
+    ),
+    "Link3": (
+        ("housing_j4", (0.018, 0.0, 0.0), (0.018, 0.0, 0.0), 0.0485),
+        ("tube", (0.0, 0.0, -0.0965), (0.0, 0.0, 0.0), 0.0425),
+    ),
+    "Link4": (
+        ("housing_j4", (0.0, 0.0, -0.0059), (0.0, 0.0, 0.0059), 0.0485),
+        ("tube", (0.0, -0.0485, 0.0), (0.0008, -0.0581, 0.0), 0.0465),
+    ),
+    "Link5": (
+        ("tube", (0.0, 0.0, -0.1209), (0.0, 0.0, -0.0277), 0.0482),
+    ),
+    "Link6": (
+        ("tube", (0.0, 0.0052, 0.0), (0.0, 0.0038, 0.0), 0.0313),
+    ),
+    "Link7": (
+        ("tube", (0.0, -0.0047, 0.0), (0.0, -0.0525, 0.0), 0.0345),
+    ),
 }
 
 # Child-joint origin (= capsule far endpoint) expressed in each link's frame.
@@ -789,10 +831,10 @@ BODY_BOXES = [
      (0.068, -0.0565, 0.4355), (0.1003, 0.0625, 0.5545),
      "M260C smart speaker, front of chest - CAD bbox X+/-59.5 Y-100.3..-68 Z-64.5..54.5"),
     ("torso_belly",
-     (-0.1297, -0.1171, 0.19), (0.1271, 0.1231, 0.45),
-     "_omakase body shell, belly band - CAD shell z-slices -310..-50 (X+/-120 Y-127..130)"),
+     (-0.130, -0.110, 0.19), (0.135, 0.110, 0.44),
+     "_omakase body shell, belly band - MEASURED on the built robot (Shu, 2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45)"),
     ("torso_shoulder_shell_exempt",
-     (-0.126, -0.147, 0.45), (0.123, 0.153, 0.635),
+     (-0.126, -0.147, 0.44), (0.123, 0.153, 0.635),
      "body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out"),
 ]
 # Static head keep-out for d1.urdf, at the PARKED neck pose (pan = tilt = 0):
@@ -858,35 +900,51 @@ def box_elem(name, lo, hi, comment, indent="    "):
             f"{indent}</collision>\n")
 
 
-def seg_collision(link, side, indent="    "):
-    """Capsule primitive covering the link's joint-to-joint segment:
-    cylinder (axis z rotated onto the segment) or sphere when degenerate."""
-    seg = LINK_SEGMENT[link]
-    r = CAP_RADII[link]
-    L = math.sqrt(sum(c * c for c in seg))
-    name = f"{link}_{side}_capsule"
+def capsule_collision(name, a, b, r, indent="    "):
+    """One capsule primitive from ``a`` to ``b`` (link frame) of radius ``r``:
+    a cylinder with its axis on the segment plus two sphere caps (named
+    ``*_cap_*``, which the guard skips because the cylinder already stands
+    for the whole capsule), or a single sphere when the segment is
+    degenerate."""
+    d = tuple(bi - ai for ai, bi in zip(a, b))
+    L = math.sqrt(sum(c * c for c in d))
     if L < 1e-9:
         return (f"{indent}<collision name=\"{name}\">\n"
-                f"{indent}  <origin xyz=\"0 0 0\" rpy=\"0 0 0\"/>\n"
+                f"{indent}  <origin xyz=\"{_xyz(a)}\" rpy=\"0 0 0\"/>\n"
                 f"{indent}  <geometry><sphere radius=\"{_fmt(r)}\"/></geometry>\n"
                 f"{indent}</collision>\n")
-    ux, uy, uz = (seg[0] / L, seg[1] / L, seg[2] / L)
+    ux, uy, uz = (d[0] / L, d[1] / L, d[2] / L)
     # rpy (roll about x then pitch about y, yaw 0) mapping local +z onto u:
     # R = Rz(0)*Ry(p)*Rx(rll); z' = (sin p * cos rll, -sin rll, cos p cos rll)
     rll = math.atan2(-uy, math.sqrt(ux * ux + uz * uz))
     p = math.atan2(ux, uz)
-    mid = (seg[0] / 2.0, seg[1] / 2.0, seg[2] / 2.0)
+    mid = tuple((ai + bi) / 2.0 for ai, bi in zip(a, b))
     out = (f"{indent}<collision name=\"{name}\">\n"
            f"{indent}  <origin xyz=\"{_xyz(mid)}\" rpy=\"{_fmt(rll)} {_fmt(p)} 0\"/>\n"
            f"{indent}  <geometry><cylinder radius=\"{_fmt(r)}\" length=\"{_fmt(L)}\"/></geometry>\n"
            f"{indent}</collision>\n")
     # sphere caps so the primitive union is a true capsule
-    for tag, pos in (("a", (0.0, 0.0, 0.0)), ("b", seg)):
+    for tag, pos in (("a", a), ("b", b)):
         out += (f"{indent}<collision name=\"{name}_cap_{tag}\">\n"
                 f"{indent}  <origin xyz=\"{_xyz(pos)}\" rpy=\"0 0 0\"/>\n"
                 f"{indent}  <geometry><sphere radius=\"{_fmt(r)}\"/></geometry>\n"
                 f"{indent}</collision>\n")
     return out
+
+
+def seg_collision(link, side, indent="    "):
+    """The link's collision capsules.
+
+    An arm link in :data:`ARM_CAPSULES` gets its fitted capsules (one or
+    two, each named ``<link>_<side>_capsule_<part>``); anything else — the
+    TCP flange — keeps the single joint-to-joint capsule of
+    :data:`LINK_SEGMENT` / :data:`CAP_RADII`.
+    """
+    if link in ARM_CAPSULES:
+        return "".join(capsule_collision(f"{link}_{side}_capsule_{part}", a, b, r, indent)
+                       for part, a, b, r in ARM_CAPSULES[link])
+    return capsule_collision(f"{link}_{side}_capsule", (0.0, 0.0, 0.0),
+                             LINK_SEGMENT[link], CAP_RADII[link], indent)
 
 
 # ---------------------------------------------------------------- 4x4 rigid

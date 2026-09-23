@@ -41,11 +41,13 @@ WAGON_TOP = (0.5641, 0.0018, 0.169)
 CUBE_SIZE = (0.040, 0.040, 0.040)
 
 #: Far out and almost on the centre line, where the arm has to reach across
+#: (moved from (0.49, -0.01) when the guard got its mesh-fitted capsules and
+#: 5 mm margin, 2026-09-23: that target now fails IK before the guard)
 #: itself. Measured: of 144 candidate clearance points swept for this target,
 #: NONE lets the grasp descent through, and neither does the READY re-seed.
 #: It is here so "the via search fixed everything" cannot quietly become
 #: "the via search says yes to everything".
-NO_VIA_REACHES = (0.49, -0.01, 0.195)
+NO_VIA_REACHES = (0.51, -0.01, 0.195)
 #: A cube the READY re-seed can rescue with the clearance points removed —
 #: the mechanism of last resort, exercised on its own.
 READY_RESCUES = (0.43, 0.07, 0.195)
@@ -143,9 +145,11 @@ def test_a_target_no_via_reaches_is_still_refused_and_says_where(d1_arm):
                                                                  "grasp")
     assert np.isfinite(error.residual_m)
     assert "motion guard" in error.detail
-    # Approach alone gets further than the descent does, which is the honest
-    # answer: the standoff is routable and the grasp point is not.
-    assert Approach(object="block_far").plan(world, d1_arm).ok
+    # (Until 2026-09-23 the standoff alone was routable here and only the
+    # descent was not. With the mesh-fitted arm capsules no target on this
+    # line has that split any more: where the guard refuses the grasp it
+    # already refuses the standoff, so Approach is refused too.)
+    assert not Approach(object="block_far").plan(world, d1_arm).ok
 
 
 def test_the_ready_reseed_is_the_last_resort_when_no_clearance_point_works(

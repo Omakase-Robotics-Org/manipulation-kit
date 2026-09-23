@@ -30,15 +30,15 @@
       <origin xyz="0.08415 0.003 0.495" rpy="0 0 0"/>
       <geometry><box size="0.0323 0.119 0.119"/></geometry>
     </collision>
-    <!-- _omakase body shell, belly band - CAD shell z-slices -310..-50 (X+/-120 Y-127..130) -->
+    <!-- _omakase body shell, belly band - MEASURED on the built robot (Shu, 2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45) -->
     <collision name="torso_belly">
-      <origin xyz="-0.0013 0.003 0.32" rpy="0 0 0"/>
-      <geometry><box size="0.2568 0.2402 0.26"/></geometry>
+      <origin xyz="0.0025 0 0.315" rpy="0 0 0"/>
+      <geometry><box size="0.265 0.22 0.25"/></geometry>
     </collision>
     <!-- body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out -->
     <collision name="torso_shoulder_shell_exempt">
-      <origin xyz="-0.0015 0.003 0.5425" rpy="0 0 0"/>
-      <geometry><box size="0.249 0.3 0.185"/></geometry>
+      <origin xyz="-0.0015 0.003 0.5375" rpy="0 0 0"/>
+      <geometry><box size="0.249 0.3 0.195"/></geometry>
     </collision>
   </link>
   <joint name="torso_mount" type="fixed">
@@ -109,17 +109,17 @@
       <mass value="0.8553322"/>
       <inertia ixx="6.5490e-04" ixy="-1.5e-07" ixz="7.70e-06" iyy="6.6931e-04" iyz="2.01e-06" izz="8.0985e-04"/>
     </inertial>
-    <collision name="Base_R_capsule">
+    <collision name="Base_R_capsule_tube">
       <origin xyz="0 0 0.0793" rpy="-0 0 0"/>
-      <geometry><cylinder radius="0.055" length="0.1586"/></geometry>
+      <geometry><cylinder radius="0.0566" length="0.1586"/></geometry>
     </collision>
-    <collision name="Base_R_capsule_cap_a">
+    <collision name="Base_R_capsule_tube_cap_a">
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.055"/></geometry>
+      <geometry><sphere radius="0.0566"/></geometry>
     </collision>
-    <collision name="Base_R_capsule_cap_b">
+    <collision name="Base_R_capsule_tube_cap_b">
       <origin xyz="0 0 0.1586" rpy="0 0 0"/>
-      <geometry><sphere radius="0.055"/></geometry>
+      <geometry><sphere radius="0.0566"/></geometry>
     </collision>
   </link>
   <link name="Link1_R">
@@ -128,9 +128,17 @@
       <mass value="1.537551"/>
       <inertia ixx="3.66914e-03" ixy="1.77e-06" ixz="1.342e-05" iyy="3.94529e-03" iyz="-2.3437e-04" izz="1.31774e-03"/>
     </inertial>
-    <collision name="Link1_R_capsule">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.05"/></geometry>
+    <collision name="Link1_R_capsule_tube">
+      <origin xyz="0 0 -0.033" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0556" length="0.088"/></geometry>
+    </collision>
+    <collision name="Link1_R_capsule_tube_cap_a">
+      <origin xyz="0 0 -0.077" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0556"/></geometry>
+    </collision>
+    <collision name="Link1_R_capsule_tube_cap_b">
+      <origin xyz="0 0 0.011" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0556"/></geometry>
     </collision>
   </link>
   <link name="Link2_R">
@@ -139,17 +147,29 @@
       <mass value="1.58697"/>
       <inertia ixx="0.00651482" ixy="8.49e-06" ixz="1.19e-06" iyy="0.0018653" iyz="0.00075929" izz="0.00613149"/>
     </inertial>
-    <collision name="Link2_R_capsule">
-      <origin xyz="0 0.132 0" rpy="-1.5708 0 0"/>
-      <geometry><cylinder radius="0.045" length="0.264"/></geometry>
+    <collision name="Link2_R_capsule_housing_j2">
+      <origin xyz="0 0 0" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0485" length="0.0188"/></geometry>
     </collision>
-    <collision name="Link2_R_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.045"/></geometry>
+    <collision name="Link2_R_capsule_housing_j2_cap_a">
+      <origin xyz="0 0 -0.0094" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
     </collision>
-    <collision name="Link2_R_capsule_cap_b">
-      <origin xyz="0 0.264 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.045"/></geometry>
+    <collision name="Link2_R_capsule_housing_j2_cap_b">
+      <origin xyz="0 0 0.0094" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
+    </collision>
+    <collision name="Link2_R_capsule_tube">
+      <origin xyz="0 0.068 0" rpy="-1.5708 0 0"/>
+      <geometry><cylinder radius="0.0425" length="0.039"/></geometry>
+    </collision>
+    <collision name="Link2_R_capsule_tube_cap_a">
+      <origin xyz="0 0.0485 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
+    </collision>
+    <collision name="Link2_R_capsule_tube_cap_b">
+      <origin xyz="0 0.0875 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
     </collision>
   </link>
   <link name="Link3_R">
@@ -158,17 +178,21 @@
       <mass value="1.2915"/>
       <inertia ixx="0.00420137" ixy="-2.925e-05" ixz="0.00054194" iyy="0.00445361" iyz="-0.00016742" izz="0.00106698"/>
     </inertial>
-    <collision name="Link3_R_capsule">
-      <origin xyz="0.009 0 0" rpy="-0 1.5708 0"/>
-      <geometry><cylinder radius="0.04" length="0.018"/></geometry>
-    </collision>
-    <collision name="Link3_R_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
-    </collision>
-    <collision name="Link3_R_capsule_cap_b">
+    <collision name="Link3_R_capsule_housing_j4">
       <origin xyz="0.018 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
+      <geometry><sphere radius="0.0485"/></geometry>
+    </collision>
+    <collision name="Link3_R_capsule_tube">
+      <origin xyz="0 0 -0.04825" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0425" length="0.0965"/></geometry>
+    </collision>
+    <collision name="Link3_R_capsule_tube_cap_a">
+      <origin xyz="0 0 -0.0965" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
+    </collision>
+    <collision name="Link3_R_capsule_tube_cap_b">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
     </collision>
   </link>
   <link name="Link4_R">
@@ -177,17 +201,29 @@
       <mass value="1.03775"/>
       <inertia ixx="0.00308966" ixy="-0.00038612" ixz="7.072e-05" iyy="0.00119659" iyz="-0.00032564" izz="0.0029308"/>
     </inertial>
-    <collision name="Link4_R_capsule">
-      <origin xyz="0.009 -0.132 0" rpy="1.50272 1.5708 0"/>
-      <geometry><cylinder radius="0.04" length="0.264613"/></geometry>
+    <collision name="Link4_R_capsule_housing_j4">
+      <origin xyz="0 0 0" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0485" length="0.0118"/></geometry>
     </collision>
-    <collision name="Link4_R_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
+    <collision name="Link4_R_capsule_housing_j4_cap_a">
+      <origin xyz="0 0 -0.0059" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
     </collision>
-    <collision name="Link4_R_capsule_cap_b">
-      <origin xyz="0.018 -0.264 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
+    <collision name="Link4_R_capsule_housing_j4_cap_b">
+      <origin xyz="0 0 0.0059" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
+    </collision>
+    <collision name="Link4_R_capsule_tube">
+      <origin xyz="0.0004 -0.0533 0" rpy="1.48766 1.5708 0"/>
+      <geometry><cylinder radius="0.0465" length="0.00963328"/></geometry>
+    </collision>
+    <collision name="Link4_R_capsule_tube_cap_a">
+      <origin xyz="0 -0.0485 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0465"/></geometry>
+    </collision>
+    <collision name="Link4_R_capsule_tube_cap_b">
+      <origin xyz="0.0008 -0.0581 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0465"/></geometry>
     </collision>
   </link>
   <link name="Link5_R">
@@ -196,9 +232,17 @@
       <mass value="1.000479"/>
       <inertia ixx="2.17057e-03" ixy="-1.142e-05" ixz="6.68e-06" iyy="1.95131e-03" iyz="-3.059e-05" izz="8.4222e-04"/>
     </inertial>
-    <collision name="Link5_R_capsule">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.035"/></geometry>
+    <collision name="Link5_R_capsule_tube">
+      <origin xyz="0 0 -0.0743" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0482" length="0.0932"/></geometry>
+    </collision>
+    <collision name="Link5_R_capsule_tube_cap_a">
+      <origin xyz="0 0 -0.1209" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0482"/></geometry>
+    </collision>
+    <collision name="Link5_R_capsule_tube_cap_b">
+      <origin xyz="0 0 -0.0277" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0482"/></geometry>
     </collision>
   </link>
   <link name="Link6_R">
@@ -207,9 +251,17 @@
       <mass value="0.3906229"/>
       <inertia ixx="1.9943e-04" ixy="-1.1800e-06" ixz="-3.0000e-07" iyy="1.7163e-04" iyz="3.5300e-06" izz="1.8567e-04"/>
     </inertial>
-    <collision name="Link6_R_capsule">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.03"/></geometry>
+    <collision name="Link6_R_capsule_tube">
+      <origin xyz="0 0.0045 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.0313" length="0.0014"/></geometry>
+    </collision>
+    <collision name="Link6_R_capsule_tube_cap_a">
+      <origin xyz="0 0.0052 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0313"/></geometry>
+    </collision>
+    <collision name="Link6_R_capsule_tube_cap_b">
+      <origin xyz="0 0.0038 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0313"/></geometry>
     </collision>
   </link>
   <link name="Link7_R">
@@ -218,17 +270,17 @@
       <mass value="0.37939"/>
       <inertia ixx="7.0308e-04" ixy="5.97e-06" ixz="7.30e-07" iyy="3.0365e-04" iyz="1.2769e-04" izz="5.8833e-04"/>
     </inertial>
-    <collision name="Link7_R_capsule">
-      <origin xyz="0 -0.0435 0" rpy="1.5708 0 0"/>
-      <geometry><cylinder radius="0.03" length="0.087"/></geometry>
+    <collision name="Link7_R_capsule_tube">
+      <origin xyz="0 -0.0286 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.0345" length="0.0478"/></geometry>
     </collision>
-    <collision name="Link7_R_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.03"/></geometry>
+    <collision name="Link7_R_capsule_tube_cap_a">
+      <origin xyz="0 -0.0047 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0345"/></geometry>
     </collision>
-    <collision name="Link7_R_capsule_cap_b">
-      <origin xyz="0 -0.087 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.03"/></geometry>
+    <collision name="Link7_R_capsule_tube_cap_b">
+      <origin xyz="0 -0.0525 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0345"/></geometry>
     </collision>
   </link>
   <joint name="Joint1_R" type="revolute">
@@ -390,17 +442,17 @@
       <mass value="0.8553322"/>
       <inertia ixx="6.5490e-04" ixy="-1.5e-07" ixz="7.70e-06" iyy="6.6931e-04" iyz="2.01e-06" izz="8.0985e-04"/>
     </inertial>
-    <collision name="Base_L_capsule">
+    <collision name="Base_L_capsule_tube">
       <origin xyz="0 0 0.0793" rpy="-0 0 0"/>
-      <geometry><cylinder radius="0.055" length="0.1586"/></geometry>
+      <geometry><cylinder radius="0.0566" length="0.1586"/></geometry>
     </collision>
-    <collision name="Base_L_capsule_cap_a">
+    <collision name="Base_L_capsule_tube_cap_a">
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.055"/></geometry>
+      <geometry><sphere radius="0.0566"/></geometry>
     </collision>
-    <collision name="Base_L_capsule_cap_b">
+    <collision name="Base_L_capsule_tube_cap_b">
       <origin xyz="0 0 0.1586" rpy="0 0 0"/>
-      <geometry><sphere radius="0.055"/></geometry>
+      <geometry><sphere radius="0.0566"/></geometry>
     </collision>
   </link>
   <link name="Link1_L">
@@ -409,9 +461,17 @@
       <mass value="1.537551"/>
       <inertia ixx="3.66914e-03" ixy="1.77e-06" ixz="1.342e-05" iyy="3.94529e-03" iyz="-2.3437e-04" izz="1.31774e-03"/>
     </inertial>
-    <collision name="Link1_L_capsule">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.05"/></geometry>
+    <collision name="Link1_L_capsule_tube">
+      <origin xyz="0 0 -0.033" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0556" length="0.088"/></geometry>
+    </collision>
+    <collision name="Link1_L_capsule_tube_cap_a">
+      <origin xyz="0 0 -0.077" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0556"/></geometry>
+    </collision>
+    <collision name="Link1_L_capsule_tube_cap_b">
+      <origin xyz="0 0 0.011" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0556"/></geometry>
     </collision>
   </link>
   <link name="Link2_L">
@@ -420,17 +480,29 @@
       <mass value="1.58697"/>
       <inertia ixx="0.00651482" ixy="8.49e-06" ixz="1.19e-06" iyy="0.0018653" iyz="0.00075929" izz="0.00613149"/>
     </inertial>
-    <collision name="Link2_L_capsule">
-      <origin xyz="0 0.132 0" rpy="-1.5708 0 0"/>
-      <geometry><cylinder radius="0.045" length="0.264"/></geometry>
+    <collision name="Link2_L_capsule_housing_j2">
+      <origin xyz="0 0 0" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0485" length="0.0188"/></geometry>
     </collision>
-    <collision name="Link2_L_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.045"/></geometry>
+    <collision name="Link2_L_capsule_housing_j2_cap_a">
+      <origin xyz="0 0 -0.0094" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
     </collision>
-    <collision name="Link2_L_capsule_cap_b">
-      <origin xyz="0 0.264 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.045"/></geometry>
+    <collision name="Link2_L_capsule_housing_j2_cap_b">
+      <origin xyz="0 0 0.0094" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
+    </collision>
+    <collision name="Link2_L_capsule_tube">
+      <origin xyz="0 0.068 0" rpy="-1.5708 0 0"/>
+      <geometry><cylinder radius="0.0425" length="0.039"/></geometry>
+    </collision>
+    <collision name="Link2_L_capsule_tube_cap_a">
+      <origin xyz="0 0.0485 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
+    </collision>
+    <collision name="Link2_L_capsule_tube_cap_b">
+      <origin xyz="0 0.0875 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
     </collision>
   </link>
   <link name="Link3_L">
@@ -439,17 +511,21 @@
       <mass value="1.2915"/>
       <inertia ixx="0.00420137" ixy="-2.925e-05" ixz="0.00054194" iyy="0.00445361" iyz="-0.00016742" izz="0.00106698"/>
     </inertial>
-    <collision name="Link3_L_capsule">
-      <origin xyz="0.009 0 0" rpy="-0 1.5708 0"/>
-      <geometry><cylinder radius="0.04" length="0.018"/></geometry>
-    </collision>
-    <collision name="Link3_L_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
-    </collision>
-    <collision name="Link3_L_capsule_cap_b">
+    <collision name="Link3_L_capsule_housing_j4">
       <origin xyz="0.018 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
+      <geometry><sphere radius="0.0485"/></geometry>
+    </collision>
+    <collision name="Link3_L_capsule_tube">
+      <origin xyz="0 0 -0.04825" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0425" length="0.0965"/></geometry>
+    </collision>
+    <collision name="Link3_L_capsule_tube_cap_a">
+      <origin xyz="0 0 -0.0965" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
+    </collision>
+    <collision name="Link3_L_capsule_tube_cap_b">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0425"/></geometry>
     </collision>
   </link>
   <link name="Link4_L">
@@ -458,17 +534,29 @@
       <mass value="1.03775"/>
       <inertia ixx="0.00308966" ixy="-0.00038612" ixz="7.072e-05" iyy="0.00119659" iyz="-0.00032564" izz="0.0029308"/>
     </inertial>
-    <collision name="Link4_L_capsule">
-      <origin xyz="0.009 -0.132 0" rpy="1.50272 1.5708 0"/>
-      <geometry><cylinder radius="0.04" length="0.264613"/></geometry>
+    <collision name="Link4_L_capsule_housing_j4">
+      <origin xyz="0 0 0" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0485" length="0.0118"/></geometry>
     </collision>
-    <collision name="Link4_L_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
+    <collision name="Link4_L_capsule_housing_j4_cap_a">
+      <origin xyz="0 0 -0.0059" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
     </collision>
-    <collision name="Link4_L_capsule_cap_b">
-      <origin xyz="0.018 -0.264 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.04"/></geometry>
+    <collision name="Link4_L_capsule_housing_j4_cap_b">
+      <origin xyz="0 0 0.0059" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0485"/></geometry>
+    </collision>
+    <collision name="Link4_L_capsule_tube">
+      <origin xyz="0.0004 -0.0533 0" rpy="1.48766 1.5708 0"/>
+      <geometry><cylinder radius="0.0465" length="0.00963328"/></geometry>
+    </collision>
+    <collision name="Link4_L_capsule_tube_cap_a">
+      <origin xyz="0 -0.0485 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0465"/></geometry>
+    </collision>
+    <collision name="Link4_L_capsule_tube_cap_b">
+      <origin xyz="0.0008 -0.0581 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0465"/></geometry>
     </collision>
   </link>
   <link name="Link5_L">
@@ -477,9 +565,17 @@
       <mass value="1.000479"/>
       <inertia ixx="2.17057e-03" ixy="-1.142e-05" ixz="-6.68e-06" iyy="1.95131e-03" iyz="3.059e-05" izz="8.4222e-04"/>
     </inertial>
-    <collision name="Link5_L_capsule">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.035"/></geometry>
+    <collision name="Link5_L_capsule_tube">
+      <origin xyz="0 0 -0.0743" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.0482" length="0.0932"/></geometry>
+    </collision>
+    <collision name="Link5_L_capsule_tube_cap_a">
+      <origin xyz="0 0 -0.1209" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0482"/></geometry>
+    </collision>
+    <collision name="Link5_L_capsule_tube_cap_b">
+      <origin xyz="0 0 -0.0277" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0482"/></geometry>
     </collision>
   </link>
   <link name="Link6_L">
@@ -488,9 +584,17 @@
       <mass value="0.3906229"/>
       <inertia ixx="1.9943e-04" ixy="1.1800e-06" ixz="-3.0000e-07" iyy="1.7163e-04" iyz="-3.5300e-06" izz="1.8567e-04"/>
     </inertial>
-    <collision name="Link6_L_capsule">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.03"/></geometry>
+    <collision name="Link6_L_capsule_tube">
+      <origin xyz="0 0.0045 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.0313" length="0.0014"/></geometry>
+    </collision>
+    <collision name="Link6_L_capsule_tube_cap_a">
+      <origin xyz="0 0.0052 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0313"/></geometry>
+    </collision>
+    <collision name="Link6_L_capsule_tube_cap_b">
+      <origin xyz="0 0.0038 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0313"/></geometry>
     </collision>
   </link>
   <link name="Link7_L">
@@ -499,17 +603,17 @@
       <mass value="0.37939"/>
       <inertia ixx="7.0308e-04" ixy="5.97e-06" ixz="7.30e-07" iyy="3.0365e-04" iyz="1.2769e-04" izz="5.8833e-04"/>
     </inertial>
-    <collision name="Link7_L_capsule">
-      <origin xyz="0 -0.0435 0" rpy="1.5708 0 0"/>
-      <geometry><cylinder radius="0.03" length="0.087"/></geometry>
+    <collision name="Link7_L_capsule_tube">
+      <origin xyz="0 -0.0286 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.0345" length="0.0478"/></geometry>
     </collision>
-    <collision name="Link7_L_capsule_cap_a">
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.03"/></geometry>
+    <collision name="Link7_L_capsule_tube_cap_a">
+      <origin xyz="0 -0.0047 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0345"/></geometry>
     </collision>
-    <collision name="Link7_L_capsule_cap_b">
-      <origin xyz="0 -0.087 0" rpy="0 0 0"/>
-      <geometry><sphere radius="0.03"/></geometry>
+    <collision name="Link7_L_capsule_tube_cap_b">
+      <origin xyz="0 -0.0525 0" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0345"/></geometry>
     </collision>
   </link>
   <joint name="Joint1_L" type="revolute">

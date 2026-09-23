@@ -1,0 +1,287 @@
+{
+ "_comment": "Fit record of the guard's arm capsules (ARM_CAPSULES in generate_d1_urdf.py), written by tools/fit_arm_capsules.py from the vendor arm meshes in manipulation-kit-assets: a tube per link at the link's real tube radius and the 97 mm J2/J4 housings, trimmed to the mesh ends. max_protrusion_mm is the largest distance of any mesh vertex OUTSIDE the link's capsules: the housing cover-plate rims and tube ends the model does not cover, accepted by Shu 2026-09-23. CI checks the committed capsules against this record; with the CAD present it re-measures the meshes and fails past residual + 1 mm.",
+ "links": {
+  "Base": {
+   "capsules": [
+    [
+     "tube",
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.1586
+     ],
+     0.0566
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "268a09e335f69f1509be7cc47e2c039e00647f8fb49c7fafadcf53f164532baa",
+     "vertices": 16618,
+     "max_protrusion_mm": -0.1
+    },
+    "L": {
+     "sha256": "268a09e335f69f1509be7cc47e2c039e00647f8fb49c7fafadcf53f164532baa",
+     "vertices": 16618,
+     "max_protrusion_mm": -0.1
+    }
+   }
+  },
+  "Link1": {
+   "capsules": [
+    [
+     "tube",
+     [
+      0.0,
+      0.0,
+      -0.077
+     ],
+     [
+      0.0,
+      0.0,
+      0.011
+     ],
+     0.0556
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "3e64da8f8dfbd1d1ed4ff9deb41d5ba6a48f28f2fdb7c31cdf68e1ddec191a76",
+     "vertices": 6585,
+     "max_protrusion_mm": -0.013
+    },
+    "L": {
+     "sha256": "d34b22db1280e233435425c8ecc94f4323652458dbae6a767cd04ed18c9b1f81",
+     "vertices": 6585,
+     "max_protrusion_mm": -0.013
+    }
+   }
+  },
+  "Link2": {
+   "capsules": [
+    [
+     "housing_j2",
+     [
+      0.0,
+      0.0,
+      -0.0094
+     ],
+     [
+      0.0,
+      0.0,
+      0.0094
+     ],
+     0.0485
+    ],
+    [
+     "tube",
+     [
+      0.0,
+      0.0485,
+      0.0
+     ],
+     [
+      0.0,
+      0.0875,
+      0.0
+     ],
+     0.0425
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "75e99bb1a7d2ef0d5c4e5bfc30afc5e396acfa6b5cfd3ad9973b01d551550ed0",
+     "vertices": 27717,
+     "max_protrusion_mm": 17.589
+    },
+    "L": {
+     "sha256": "75e99bb1a7d2ef0d5c4e5bfc30afc5e396acfa6b5cfd3ad9973b01d551550ed0",
+     "vertices": 27717,
+     "max_protrusion_mm": 17.589
+    }
+   }
+  },
+  "Link3": {
+   "capsules": [
+    [
+     "housing_j4",
+     [
+      0.018,
+      0.0,
+      0.0
+     ],
+     [
+      0.018,
+      0.0,
+      0.0
+     ],
+     0.0485
+    ],
+    [
+     "tube",
+     [
+      0.0,
+      0.0,
+      -0.0965
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     0.0425
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "5f447ce4639dff4a9ba0e5b6ee1cdead0ad5a06f87f325fae9a0e78cc90d3440",
+     "vertices": 8148,
+     "max_protrusion_mm": 13.835
+    },
+    "L": {
+     "sha256": "4acee6cf5846c46485758edef05659f7b34d2854c0df2fbf5df630a537401b56",
+     "vertices": 8148,
+     "max_protrusion_mm": 13.835
+    }
+   }
+  },
+  "Link4": {
+   "capsules": [
+    [
+     "housing_j4",
+     [
+      0.0,
+      0.0,
+      -0.0059
+     ],
+     [
+      0.0,
+      0.0,
+      0.0059
+     ],
+     0.0485
+    ],
+    [
+     "tube",
+     [
+      0.0,
+      -0.0485,
+      0.0
+     ],
+     [
+      0.0008,
+      -0.0581,
+      0.0
+     ],
+     0.0465
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "aafd2b1869e350979c38f540e4f8c38a948dd3abb043cd66034d87066737ea54",
+     "vertices": 29386,
+     "max_protrusion_mm": 24.035
+    },
+    "L": {
+     "sha256": "aafd2b1869e350979c38f540e4f8c38a948dd3abb043cd66034d87066737ea54",
+     "vertices": 29386,
+     "max_protrusion_mm": 24.035
+    }
+   }
+  },
+  "Link5": {
+   "capsules": [
+    [
+     "tube",
+     [
+      0.0,
+      0.0,
+      -0.1209
+     ],
+     [
+      0.0,
+      0.0,
+      -0.0277
+     ],
+     0.0482
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "5c2b41a04aa6116813990720d07ac9c73b54da427c7bfd004fd6c1441f60a17b",
+     "vertices": 11993,
+     "max_protrusion_mm": 14.982
+    },
+    "L": {
+     "sha256": "f69eaea9cfe6ff92ef49cd7b77ac576a3a1d67aa1e80c8b6ba42dc92833b3884",
+     "vertices": 11033,
+     "max_protrusion_mm": 14.983
+    }
+   }
+  },
+  "Link6": {
+   "capsules": [
+    [
+     "tube",
+     [
+      0.0,
+      0.0052,
+      0.0
+     ],
+     [
+      0.0,
+      0.0038,
+      0.0
+     ],
+     0.0313
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "b358d960a7b48bc01a91ba8595601ba8636eaef6374c440ee47b59d3d94d96c3",
+     "vertices": 5139,
+     "max_protrusion_mm": 11.711
+    },
+    "L": {
+     "sha256": "370d1ca5e176d3661d72acb06805b9e7066380358995ff44612b0f114127820d",
+     "vertices": 5139,
+     "max_protrusion_mm": 11.711
+    }
+   }
+  },
+  "Link7": {
+   "capsules": [
+    [
+     "tube",
+     [
+      0.0,
+      -0.0047,
+      0.0
+     ],
+     [
+      0.0,
+      -0.0525,
+      0.0
+     ],
+     0.0345
+    ]
+   ],
+   "meshes": {
+    "R": {
+     "sha256": "b5800d74d62b8749c6449d8cef9a4ab9e6a78fe32bf2277ee29ca27d4e55a0ff",
+     "vertices": 32598,
+     "max_protrusion_mm": 16.991
+    },
+    "L": {
+     "sha256": "9a304a3eddd05288f92318b3bdab57fe43e6ced8b45ab5c6fe9ed682e85e68e6",
+     "vertices": 33069,
+     "max_protrusion_mm": 16.991
+    }
+   }
+  }
+ }
+}

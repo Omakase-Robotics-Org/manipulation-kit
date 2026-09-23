@@ -560,6 +560,18 @@ times a second, with no daemon in the path. Asking a REST endpoint per IK
 iteration is not a design, and a planner that cannot evaluate a posture without
 a robot is not a planner.
 
+**What it models, and what "margin" means.** Each arm link is a tube at the
+link's real tube radius plus, on Link2/3/4, the 97 mm shoulder and elbow
+housings as radius-48.5 mm capsules on the joint axis, trimmed so their
+rounded ends stop at the mesh's faces (`ARM_CAPSULES`, fitted by
+`tools/fit_arm_capsules.py`); the torso box is the built robot's measured
+220 x 265 mm; distances are exact. So the body margin (default **5 mm**) and
+the arm-arm margin (**45 mm**) are real shell-to-shell air — **except** at the
+housing cover-plate rims and tube ends, which the capsules do not cover: they
+stick out by up to 24 mm (Link4), per link in
+`description/d1/arm_capsule_fit.json`, and `tests/guard/test_arm_capsule_fit.py`
+fails if a mesh ever sticks out further than that.
+
 **The daemon's** is a Rust port, and it is the last word on the wire: it
 re-checks what actually arrives, including commands from processes that never
 touched this library. The two agree because the Rust port was validated against

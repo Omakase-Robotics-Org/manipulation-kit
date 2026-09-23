@@ -276,8 +276,8 @@ def test_the_guard_chest_keepout_is_unchanged():
     """Shoulder-relative, in the dual_base frame, so the offset cannot touch it."""
     from manipulation_kit.guard import guard
     assert guard.DEFAULT_CHEST_KEEPOUT == {
-        "A": ((-0.1245, -0.13, 0.45), (0.1245, 0.06, 0.60)),
-        "B": ((-0.1245, -0.06, 0.45), (0.1245, 0.13, 0.60)),
+        "A": ((-0.1245, -0.13, 0.44), (0.1245, 0.06, 0.60)),
+        "B": ((-0.1245, -0.06, 0.44), (0.1245, 0.13, 0.60)),
     }
 
 
