@@ -40,6 +40,34 @@ print(trace.stop, trace.summary())
   policy has not been exercised on hardware; own the blind grasp for the first
   session and turn the look on once a wrist photo is seen to agree with the
   projection.
+- `run(..., servo=Servo(frame, judge))` — **the look answered by a judge
+  that chooses, not by the model** (`manipulation_kit.agent.servo`; System 1
+  under a System 2 model). When a `grasp` needs a look, the kit takes a fresh
+  wrist photo (`frame(side) -> path`), DRAWS its belief on it — a green cross
+  at the projected centre and a green box, the object's projected outline
+  grown by `tolerance_m` (default 10 mm) on every side — and asks the judge
+  one five-way question — the object is `on` (inside the box), or sticks out
+  `left` / `right` / `above` / `below` it in the image, or `not_visible`
+  (`judge(look) -> {choice: probability}`). A direction becomes
+  one base-frame step through the wrist camera's orientation: the object is
+  re-declared that step away as a sighting (`provenance="observed"`) and the
+  hand is moved by the same step with the kit's `Nudge` (coarse 30 mm, then 10
+  mm once the answer changes sign), within `max_nudges_per_target`. `on`
+  counts as the look and the grasp runs in the same turn; anything else ends
+  the servo with a named outcome (`unsure` below `min_confidence`, `nudge_budget`,
+  `not_visible`, `unmappable_direction`) that the model reads and chooses on.
+  Every judgement and its distribution is in the trace (`record.servo`). The
+  kit's own stand-in is `geometry_judge(truth)`, which answers from where a
+  known point projects; `examples/agent/jev_servo.py` plugs in Jev-Omni, a
+  12B multimodal decision classifier. Why a drawn box and a relative
+  question: on rendered wrist frames that classifier answered an open "which
+  way" with the same option on every frame; against a drawn mark it placed
+  the object correctly, and against the outline box it aligned a block
+  declared 25-60 mm off in one or two steps on 5 of 5 kinematic-mirror runs
+  (residual 5-30 mm — it accepts a block that overlaps the box's edge, so
+  the box is a coarse tolerance, not a fine one; report `jev-servo-loop`).
+  Roll is not asked for — it stays planner-only (`roll_candidates`). **Not
+  yet run on hardware**: the judge has seen rendered frames only.
 - `droop_margin_m` (`--droop-margin-m`): how far the real arm sags below the
   commanded pose, added to the fingertip floor of a descent and to every
   scene clearance (`primitives.clearance.ClearancePolicy`). 0.0 = the rigid

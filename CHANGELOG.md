@@ -7,6 +7,68 @@ in particular what it **breaks** — the repository's rule is a clean break with
 loud reason, not a legacy path kept alive beside the new one.
 
 
+## 0.16.1 — unreleased
+
+### The look before a stroke, answered by a judge that chooses (System 1)
+
+- **NEW `manipulation_kit.agent.servo`** — `Servo(frame, judge)`, passed to
+  `run(..., servo=)`. When a `grasp` needs a wrist look, the kit no longer
+  has to ask the model for a pixel: it takes a fresh wrist photo through the
+  caller's `frame(side) -> path`, DRAWS its belief on it — a green cross at
+  the declared object's projected centre and a green box, the object's
+  projected outline grown by `tolerance_m` (10 mm) on every side — and asks
+  the caller's `judge(look)` one five-way question — the object is `on`
+  (inside the box), or sticks out `left` / `right` / `above` / `below` it in
+  the image (or `not_visible`) — as a probability per choice. The kit maps
+  the chosen image direction to a table-plane step
+  through the wrist camera's orientation, re-declares the object that step
+  away as a sighting (`provenance="observed"`, as the `locate` correction
+  does), moves the hand by the same step with its own `Nudge` (30 mm first,
+  10 mm once the answer changes sign), and looks again — until `on`, which
+  counts as the look so the grasp runs in the same turn, or a named end:
+  `unsure` (best answer below `min_confidence`, default 0.5; no blind step),
+  `nudge_budget` (`OperatorPolicy.max_nudges_per_target`, the same budget the
+  model's nudges spend), `not_visible`, `unmappable_direction` (the image axis
+  is near-vertical in base from this posture). The model reads the outcome
+  and chooses; it never reads a wrist-look question when a servo is set.
+  Without `servo=` nothing changes.
+- **`DecisionRecord.servo`** — every judgement with its distribution, every
+  correction with its plan, run and verdict; `record.look` and
+  `record.distribution` are filled from it.
+- **`geometry_judge(truth)`** — the kit's stand-in judge: answers from where
+  a known point projects. `tests/agent/test_servo.py` proves with it that a
+  block declared 40 mm off is aligned and grasped in one turn, that the budget
+  stops the servo and the stroke, and that the image→base sign is right for
+  both hands' cameras.
+- Why a drawn box and a relative question (measured, report
+  `jev-servo-loop`): Jev-Omni, a 12B multimodal decision classifier, answered
+  an open "which way must the hand move" with the same option on every one of
+  three rendered wrist frames and put a cup outside the jaws "between" them at
+  0.86; with the kit's projected pixel drawn on the frame it placed the cup
+  relative to the mark correctly on 8 of 8, the six displaced cases at 0.93
+  or better. The yes/no form missed both ON cases, so the question is
+  five-way. A bare cross was then hidden under the object in the loop (a
+  block 30 mm off got no answer above 0.36); against the outline box grown by
+  the tolerance, five kinematic-mirror runs with blocks declared 25-60 mm off
+  all aligned in one or two steps (`on` at 0.82-0.97; residual 5-30 mm — the
+  judge accepts a block overlapping the box's edge, so the box is a coarse
+  tolerance). Roll is not asked for: it stays planner-only, and the same
+  classifier answered "clockwise" for a bar tilted either way. **Not run on
+  hardware yet**: rendered frames only.
+
+### Examples and docs
+
+- **NEW `examples/agent/jev_servo.py`** (195 lines): `astra_loop` with a
+  `Servo` — Astra decides the verbs, Jev-Omni judges the look. The words of
+  the question and the option labels are here; the ids, the direction, the
+  step and the budget are the kit's. `--dry-run --misplace-mm 40` runs the
+  geometry stand-in with no model and no photo. Jev's dependencies (torch,
+  torchvision, transformers, huggingface_hub) are the example's, imported
+  on first use, never the wheel's; note the model's own `requirements.txt`
+  omits `torchvision`, which its processor needs.
+- `docs/agent.md`: the servo bullet. `examples/agent/jev_menu.py` no longer
+  says Jev "never sees an image".
+
 ## 0.16.0 — unreleased
 
 The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the

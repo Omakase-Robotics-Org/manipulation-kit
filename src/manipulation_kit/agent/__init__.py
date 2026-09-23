@@ -13,6 +13,9 @@ could not get it and the suite could not see it.
     robot.py    LiveRobot (executor + world source, a context manager),
                 KinematicMirror, the ``--executor`` registry
     tools.py    declare_scene / locate, the observation tools
+    servo.py    Servo: the look before a stroke answered by a judge that
+                CHOOSES (on / left / right / above / below the drawn mark),
+                the kit stepping the hand on its own grid — System 1
     trace.py    DecisionRecord / DecisionTrace: the claim beside the measurement
 
     from manipulation_kit.agent import LiveRobot, OperatorPolicy, run
@@ -35,13 +38,16 @@ from .policy import (DIRECTION_NOT_ALLOWED, LOOK_REQUIRED, LOOK_UNAVAILABLE,
 from .robot import (ENTRY_POINT_GROUP, KinematicMirror, LiveRobot, SceneSource,
                     UnknownExecutor, WorldSource, register_executor,
                     registered_executors, unregister_executor)
+from .servo import (CHOICES as SERVO_CHOICES, Servo, ServoLook, ServoReport,
+                    geometry_judge)
 from .trace import DecisionRecord, DecisionTrace
 
 __all__ = [
     "DIRECTION_NOT_ALLOWED", "ENTRY_POINT_GROUP", "LOOK_REQUIRED",
-    "LOOK_UNAVAILABLE", "NUDGE_LIMIT", "STOP_REASONS",
+    "LOOK_UNAVAILABLE", "NUDGE_LIMIT", "SERVO_CHOICES", "STOP_REASONS",
     "DecisionRecord", "DecisionTrace", "KinematicMirror", "LiveRobot",
     "ObservationError", "OperatorPolicy", "PolicyState", "SceneSource",
-    "Stop", "UnknownExecutor", "WorldSource", "register_executor",
+    "Servo", "ServoLook", "ServoReport", "Stop", "UnknownExecutor",
+    "WorldSource", "geometry_judge", "register_executor",
     "registered_executors", "robot_facts", "run", "unregister_executor",
 ]

@@ -1,9 +1,10 @@
 """Print the typed-choice request a Jev-class model would be sent. No network.
 
-Jev answers by CHOOSING, not by writing. It never sees an image and never emits
-a number, so everything it needs has to be in two strings: the world as text and
-a numbered list of already-bound, already-planned actions — plus the TASK, which
-the old version of this script never sent.
+Jev answers by CHOOSING, not by writing. It never emits a number, so everything
+this menu needs has to be in two strings: the world as text and a numbered list
+of already-bound, already-planned actions — plus the TASK, which the old version
+of this script never sent. (Jev-Omni also takes one image; the example that
+uses that is ``jev_servo.py``, where it judges a wrist photo.)
 
     python examples/agent/jev_menu.py
     python examples/agent/jev_menu.py --task "put the red block in the box" --json

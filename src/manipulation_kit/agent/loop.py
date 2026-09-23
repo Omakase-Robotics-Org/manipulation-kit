@@ -174,7 +174,8 @@ class _Loop:
 
     def __init__(self, *, robot, policy: OperatorPolicy, ask: Ask, goal,
                  task: str, system: str, trace: DecisionTrace,
-                 observe: Optional[Observe], on_side, keep_images: int):
+                 observe: Optional[Observe], on_side, keep_images: int,
+                 servo=None):
         if not isinstance(goal, Place):
             raise TypeError("run() takes the task as a Place(object=, to=) "
                             "goal: its verifier is what decides success")
@@ -188,6 +189,7 @@ class _Loop:
         self.trace = trace
         self.observe = observe
         self.on_side = on_side
+        self.servo = servo
         self.keep_images = int(keep_images)
         self.state = PolicyState()
         #: resolved ONCE (L13): the same numbers the executor was built with
@@ -389,8 +391,27 @@ class _Loop:
             primitive, self.state, side=side,
             joints=None if arm is None else arm.joints)
         if unmet and all(u.code == LOOK_REQUIRED for u in unmet):
-            self._look(primitive, side, world, cameras, record, call_id, unmet)
-            return None
+            if self.servo is None:
+                self._look(primitive, side, world, cameras, record, call_id,
+                           unmet)
+                return None
+            # System 1: the kit aligns the hand by judgement and, aligned,
+            # runs the stroke the model asked for in this same turn
+            aligned = self._servo(primitive, side, record, call_id)
+            if not aligned:
+                return None
+            world = self.robot.world()
+            record.world = world.to_json()
+            primitive = decode(name, arguments, world)
+            if isinstance(primitive, PlanError):
+                record.refused = [primitive.to_json()]
+                _say(self.messages, call_id,
+                     f"after the alignment that call is malformed: {primitive}")
+                return None
+            arm = world.arm(side) if side else None
+            clamped, unmet = self.policy.clamp(
+                primitive, self.state, side=side,
+                joints=None if arm is None else arm.joints)
         if unmet:
             self._refuse(record, call_id, primitive, PlanError(
                 PRECONDITION_UNMET, "; ".join(str(u) for u in unmet),
@@ -492,6 +513,31 @@ class _Loop:
         self.state.moved(side)
 
     # -- the look, and its correction --------------------------------------- #
+    def _servo(self, primitive, side, record, call_id) -> bool:
+        """The look before a stroke, answered by the servo's judge instead of
+        the model. Aligned: the look is taken and the stroke may run. Not
+        aligned: the model is told why and chooses again."""
+        report = self.servo.align(robot=self.robot, policy=self.policy,
+                                  state=self.state, side=side,
+                                  name=primitive.object, settings=self.settings,
+                                  run_plan=run_plan)
+        record.servo = report.to_json()
+        if any(s.step_m is not None for s in report.steps):
+            # the hand and the declaration moved: the record shows the world
+            # the model's next choice is made in, aligned or not
+            record.observation_after = self.robot.world().to_json()
+        if report.steps:
+            record.look = dict(camera=f"{side}_wrist", object=primitive.object,
+                               visible=True, **{k: report.steps[0].look[k]
+                                                for k in ("u", "v", "depth_m")})
+            record.distribution = report.steps[-1].distribution
+        if not report.aligned:
+            record.refused = [PlanError(PRECONDITION_UNMET, report.to_text(),
+                                        primitive=primitive.name(),
+                                        side=side).to_json()]
+            _say(self.messages, call_id, report.to_text())
+        return report.aligned
+
     def _look(self, primitive, side, world, cameras, record, call_id,
               unmet) -> None:
         name = primitive.object
@@ -601,7 +647,7 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
         trace: Optional[DecisionTrace] = None,
         observe: Optional[Observe] = None,
         on_side: Optional[Callable[[str], None]] = None,
-        keep_images: int = 1) -> DecisionTrace:
+        keep_images: int = 1, servo=None) -> DecisionTrace:
     """Run the loop until the goal is MEASURED, the model stops, or a cap.
 
     ``robot``    a :class:`~manipulation_kit.agent.robot.LiveRobot` (enter it
@@ -616,11 +662,15 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
     ``observe``  ``(turn, world) -> content parts`` (photos), or raise
                  :class:`ObservationError`
     ``on_side``  told which arm the planner chose (a scripted stand-in uses it)
+    ``servo``    a :class:`~manipulation_kit.agent.servo.Servo`: the look
+                 before a stroke is then answered by its judge (System 1) and
+                 an aligned stroke runs in the same turn; ``None`` keeps the
+                 look as a question to the model
     """
     return _Loop(robot=robot, policy=policy, ask=ask, goal=goal, task=task,
                  system=system, trace=trace if trace is not None
                  else DecisionTrace(), observe=observe, on_side=on_side,
-                 keep_images=keep_images).run()
+                 keep_images=keep_images, servo=servo).run()
 
 
 __all__ = ["Ask", "ObservationError", "Observe", "STOP_REASONS", "Stop",

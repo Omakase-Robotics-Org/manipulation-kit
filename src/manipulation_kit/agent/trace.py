@@ -46,6 +46,10 @@ class DecisionRecord:
     look: Optional[Dict[str, Any]] = None
     #: per-choice probability, when the model exposes one (Jev does)
     distribution: Optional[Dict[str, float]] = None
+    #: the System 1 alignment taken on this turn in place of the wrist-look
+    #: text (:class:`~manipulation_kit.agent.servo.ServoReport`): every
+    #: judgement with its distribution, every correction with its run
+    servo: Optional[Dict[str, Any]] = None
     plan: Optional[Dict[str, Any]] = None
     run: Optional[Dict[str, Any]] = None
     #: the model's own claim of completion. Recorded, never believed.
