@@ -24,13 +24,14 @@ place the three guarantees are made:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from ..arms import safety
-from ..arms.ik import clamp_joint_step
+from ..arms.ik import DEFAULT_TUNING, IkTuning, clamp_joint_step
 from ..world import ArmView, WorldView
 from . import grasp_geometry as gg
 from . import orientation as ap
@@ -110,6 +111,52 @@ ARRIVE_TOL_RAD = 0.06
 #: ``Grasp.plan``.
 PATH_TOL_M = 0.012
 PATH_TOL_RAD = 0.12
+
+#: THE IK TOLERANCES OF AN EXACT LEG (``Waypoint.exact``: a nudge, the
+#: contact leg of a probe, a press or a fingertip grasp — legs whose line is
+#: what they report), at LINK7, where the solver measures. The default ones (``safety.IK_POS_TOL`` 2 mm / ``IK_ROT_TOL``
+#: 0.05 rad) are Link7's, and the tool point is ``TOOL_Z_M`` = 100 mm further
+#: out: a posture the solver calls converged can leave the TOOL 7-9 mm to the
+#: side, re-solving from it is a no-op (Link7 has arrived), so the knot is
+#: "exhausted" inside :data:`PATH_TOL_M` and the leg walks on — 8.5 mm off
+#: its line, in the SAME direction every time because the READY pull in the
+#: null space biases which side of the tolerance ball the solver stops on.
+#: Measured on the d1-2 probe replay (2026-09-23): every +50 mm Nudge ended
+#: 8.2-8.5 mm off in -y, and ten probe/lift cycles walked the contact point
+#: 73 mm across the table. 0.2 mm / 1 mrad at Link7 is <= 0.3 mm at the
+#: tool; the solver is Gauss-Newton near a solution, so the tighter test
+#: costs one or two iterations, not a failed solve (0 of 272 knots on the
+#: replay's legs, worst 0.17 mm; 1 mm / 5 mrad still left 0.75 mm per lift,
+#: all one way).
+STRAIGHT_IK_POS_TOL_M = 2e-4
+STRAIGHT_IK_ROT_TOL_RAD = 1e-3
+
+#: How far an exact leg's knot, or its end, may be MISSED at the tool point:
+#: the arrival tolerance, not the transit window. Its line is its promise;
+#: walking on 12 mm off it is not keeping it.
+STRAIGHT_PATH_TOL_M = ARRIVE_TOL_M
+
+
+def straight_tuning(arm) -> IkTuning:
+    """The IK tuning an exact leg (``Waypoint.exact``) solves with.
+
+    The arm's own tuning, tightened to :data:`STRAIGHT_IK_POS_TOL_M` /
+    :data:`STRAIGHT_IK_ROT_TOL_RAD` (never loosened: a tuning already tighter
+    keeps its own), and WITHOUT the null-space pull toward READY. Each knot is
+    seeded at the previous knot's solution, so the leg stays in the posture
+    branch it started in; the pull is what drifts the elbow between a
+    descent and the lift after it, and on a short exact leg nothing needs
+    the elbow to go anywhere. (A long straight TRANSIT does: a carry across
+    the wagon without the pull runs the elbow into the body, which is why
+    this is per leg and not every ``allow_via=False`` leg.) A knot this
+    tuning cannot solve falls back to the arm's own: :func:`_solve_straight`.
+    """
+    base = getattr(arm, "tuning", None)
+    base = base if isinstance(base, IkTuning) else DEFAULT_TUNING
+    return replace(base, pos_tol=min(base.pos_tol, STRAIGHT_IK_POS_TOL_M),
+                   rot_tol=min(base.rot_tol, STRAIGHT_IK_ROT_TOL_RAD),
+                   posture_gain=0.0)
+
 
 #: How far the HAND reaches sideways from the tool point, for deciding what a
 #: transit passes over [m]: half the 67 mm palm plus a little. The scene gate
@@ -275,24 +322,30 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
     """
     steps: List[JointStep] = []
     worst_m = worst_rad = 0.0
+    # An EXACT leg (a nudge, a contact leg) is solved tight and without the
+    # READY pull, and judged against the arrival tolerance rather than the
+    # transit window (STRAIGHT_IK_* above: the d1-2 probe drift).
+    tuning = straight_tuning(kin.kin) if wp.exact else None
+    path_tol_m = STRAIGHT_PATH_TOL_M if wp.exact else PATH_TOL_M
     pos_err, rot_err = _pose_error(kin, side, wp.p, wp.r)
     if pos_err <= ARRIVE_TOL_M and rot_err <= ARRIVE_TOL_RAD:
         return steps, None
     p0, r0 = kin.tool_pose(side)
-    plan_knots = list(knots(p0, r0, wp.p, wp.r))
-    if _too_far(p0, r0, wp.p, wp.r):
+    spacing_m = safety.MAX_STEP_M if wp.knot_m is None else float(wp.knot_m)
+    if _too_far(p0, r0, wp.p, wp.r, spacing_m):
         residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
         return steps, PlanError(
             INFEASIBLE,
             f"the leg to {wp.label!r} is {residual * 1000:.0f} mm and "
             f"{np.degrees(rot_residual):.0f} deg long, which needs more than "
             f"the {MAX_KNOTS_PER_WAYPOINT} interpolation knots this planner "
-            f"will spend at its {safety.MAX_STEP_M * 1000:.0f} mm / "
+            f"will spend at its {spacing_m * 1000:.0f} mm / "
             f"{np.degrees(safety.MAX_STEP_RAD):.0f} deg spacing. Split it "
             f"into shorter waypoints rather than widening the spacing",
             waypoint_index=index, waypoint_label=wp.label,
             residual_m=residual, residual_rad=rot_residual, stage="knots",
             primitive=primitive, side=side)
+    plan_knots = list(knots(p0, r0, wp.p, wp.r, max_step_m=spacing_m))
     for knot_index, (p_knot, r_knot) in enumerate(plan_knots):
         converged = False
         for _ in range(MAX_SOLVES_PER_KNOT):
@@ -302,7 +355,8 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                 break
             p7, r7 = ap.link7_from_tool(p_knot, r_knot)
             q_before = kin.joints(side)
-            result = kin.kin.solve_ee(side, p7, r7)
+            result = (kin.kin.solve_ee(side, p7, r7) if tuning is None else
+                      _solve_straight(kin, side, p7, r7, tuning))
             if result.ok and kin.scene is not None:
                 error = _scene_check(kin, side, q_before, kin.joints(side), wp,
                                      primitive=primitive, index=index)
@@ -322,7 +376,7 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                     primitive=primitive, side=side)
             if not wp.allow_via:
                 stray = _off_line_m(kin.tool_pose(side)[0], p0, wp.p)
-                if stray > PATH_TOL_M:
+                if stray > path_tol_m:
                     # A leg whose SHAPE is the promise (a descent, a lift, a
                     # nudge) is walked on its line or refused. ``solve_ee``
                     # reaching the knot is not enough: with the wrist roll
@@ -337,7 +391,7 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                         f"the {side} arm cannot keep the tool on the straight "
                         f"line to {wp.label!r}: the next step leaves it by "
                         f"{stray * 1000:.0f} mm (the solver changed posture "
-                        f"branch), over the {PATH_TOL_M * 1000:.0f} mm path "
+                        f"branch), over the {path_tol_m * 1000:.0f} mm path "
                         f"window",
                         waypoint_index=index, waypoint_label=wp.label,
                         residual_m=residual, residual_rad=rot_residual,
@@ -351,7 +405,7 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
             # tolerance.
             pos_err, rot_err = _pose_error(kin, side, p_knot, r_knot)
             worst_m, worst_rad = max(worst_m, pos_err), max(worst_rad, rot_err)
-            if pos_err > PATH_TOL_M or rot_err > PATH_TOL_RAD:
+            if pos_err > path_tol_m or rot_err > PATH_TOL_RAD:
                 residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
                 return steps, PlanError(
                     IK_FAIL,
@@ -359,13 +413,13 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                     f"{len(plan_knots)} on the way to {wp.label!r}: "
                     f"{pos_err * 1000:.1f} mm and {np.degrees(rot_err):.1f} "
                     f"deg short after {MAX_SOLVES_PER_KNOT} solves, outside "
-                    f"the {PATH_TOL_M * 1000:.0f} mm / "
+                    f"the {path_tol_m * 1000:.0f} mm / "
                     f"{np.degrees(PATH_TOL_RAD):.0f} deg path window",
                     waypoint_index=index, waypoint_label=wp.label,
                     residual_m=residual, residual_rad=rot_residual,
                     stage="knot_exhausted", primitive=primitive, side=side)
     residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
-    if residual > PATH_TOL_M or rot_residual > PATH_TOL_RAD:
+    if residual > path_tol_m or rot_residual > PATH_TOL_RAD:
         return steps, PlanError(
             UNREACHABLE_OBJECT,
             f"the {side} tool point stopped converging on {wp.label!r}: "
@@ -376,6 +430,24 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
             residual_m=residual, residual_rad=rot_residual, stage="arrival",
             primitive=primitive, side=side)
     return steps, None
+
+
+def _solve_straight(kin: Kin, side: str, p7, r7: R, tuning: IkTuning):
+    """One knot of an exact leg: the tight, pull-free solve first; where it
+    does not converge, the arm's ordinary solve.
+
+    The tight solve is what keeps a leg on its line wherever it CAN be solved
+    to the tool point. Near the edge of the workspace it cannot — the solver
+    plateaus mm short of the knot (see :data:`PATH_TOL_M`) and, without the
+    READY pull, can run a joint into its stop — and the ordinary solve is what
+    those legs have always walked on. Nothing is accepted on the fallback's
+    word: the off-line and arrival checks in :func:`_straight` judge whatever
+    posture either solve leaves.
+    """
+    result = kin.kin.solve_ee(side, p7, r7, tuning=tuning)
+    if result.ok:
+        return result
+    return kin.kin.solve_ee(side, p7, r7)
 
 
 def _off_line_m(p, a, b) -> float:
@@ -514,7 +586,7 @@ def _over_the_top(kin: Kin, side: str, wp: Waypoint
     return height, names, routes
 
 
-def _too_far(p0, r0, p1, r1: R) -> bool:
+def _too_far(p0, r0, p1, r1: R, step_m: float = safety.MAX_STEP_M) -> bool:
     """Is this leg longer than the knot budget can cover at its own spacing?
 
     ``knots`` used to CAP the count at 200 by widening the spacing, which
@@ -524,7 +596,7 @@ def _too_far(p0, r0, p1, r1: R) -> bool:
     span_m = float(np.linalg.norm(np.asarray(p1, dtype=float)
                                   - np.asarray(p0, dtype=float)))
     span_rad = float(np.linalg.norm((r0.inv() * r1).as_rotvec()))
-    return (span_m > MAX_KNOTS_PER_WAYPOINT * safety.MAX_STEP_M
+    return (span_m > MAX_KNOTS_PER_WAYPOINT * step_m
             or span_rad > MAX_KNOTS_PER_WAYPOINT * safety.MAX_STEP_RAD)
 
 
@@ -822,6 +894,14 @@ def joint_ramp(kin: Kin, side: str, q_goal, *, primitive: str,
 #: Two consecutive contact-leg knots closer than this on every joint [rad]
 #: are one knot: the solver re-solved without moving.
 DUPLICATE_KNOT_RAD = 1e-9
+
+#: Knot spacing [m] of a contact leg (``Waypoint.knot_m``). The leg is played
+#: until something resists, so the arm stops BETWEEN two knots, where the
+#: daemon's joint-space interpolation bows off the straight line — by 0.18 mm
+#: at the planner's 25-30 mm spacing on the d1-2 probe (2026-09-23), always to
+#: the same side, which ten probe/lift cycles add up to 2.2 mm. The bow goes
+#: with the square of the spacing: at 5 mm it is under 0.01 mm.
+CONTACT_KNOT_M = 0.005
 
 
 def leg_knots(kin: Kin, side: str, q_start, leg_steps, d

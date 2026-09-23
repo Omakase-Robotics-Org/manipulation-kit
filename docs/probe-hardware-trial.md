@@ -286,6 +286,61 @@ if __name__ == "__main__":
 * `stopped_by: "guard"` → the daemon's own guard or slew gate aborted the job,
   or something else cancelled it; its message is in `contact.detail`.
 
+## Result 2026-09-23 — the gate passed
+
+d1-2, 2026-09-23 02:31Z, kit `feat/perceive-head` @ `92c6b78`, d1-firmwared
+0.3.0 @ `897b796` (spec `a9c8b0d2…`), lift 0.205 m, tape at base z 0.166 m.
+Log: `probe-trial-20260923-1031.jsonl`.
+
+| gate | result |
+|---|---|
+| G1 zero controller errors | **true**: no fault, both arms `position`, error code 0 throughout |
+| G2 table contacts | **10/10** `stopped_by: "contact"` |
+| G3 contact height vs tape | mean **−2.13 mm**, max \|dz\| **2.26 mm**, σ **0.09 mm** (all within 3 mm) |
+| G4 free air | 3/3 `max_travel`, largest rises **0.63–0.71 Nm** (threshold 4 Nm) |
+
+Every table contact was on J1, rising **8.1–9.9 Nm** over its pre-motion
+torque. A probe took **~5 s** (5.5–5.7 s from the second on, 8.4 s for the
+first, which travels 78 mm instead of 50).
+
+The −2.1 mm offset is systematic (σ 0.09 mm) — a tool-point / pad-lead /
+lift-offset question, not detection noise — and is inside G3.
+
+### Observed: the contact point walked sideways
+
+The legs are straight down (the probe) and straight up (the +50 mm base-frame
+Nudge after it), so the ten contacts should sit on one spot. They did not:
+
+| | first contact | tenth contact | drift |
+|---|---|---|---|
+| x | 0.3937 | 0.3754 | −18.3 mm (−2.0 mm/cycle) |
+| y | 0.0624 | −0.0259 | −88.3 mm (−0.1 mm/cycle for three cycles, then −13 mm/cycle) |
+
+The air probes, each lifted back 30 mm, walked the same way (y 0.0886 →
+0.0794 → 0.0715). Height (G3) was unaffected.
+
+**Cause** (reproduced on the fake-daemon replay,
+`tests/executors/test_probe_session_replay.py`: 73 mm in y at `92c6b78`):
+every lift ended 8.2–8.5 mm to the side of its own line. The IK converges on
+**Link7** within 2 mm / 0.05 rad, and the tool point is 100 mm further out, so
+a posture the solver calls converged leaves the TOOL 7–9 mm off; re-solving
+from it is a no-op, the knot counts as "exhausted inside the 12 mm path
+window" and the leg walks on — always to the same side, because the null-space
+pull toward READY decides which edge of the tolerance ball the solver stops
+on. The next leg starts where that one ended, so the offsets add up. A second,
+smaller term: the probe leg had 25 mm knots and the daemon interpolates joints
+between them, so a probe that stops between two knots is 0.2 mm off the line
+(again always the same way).
+
+**Fix** (`redesign/fix-xy-drift`): a Nudge and every contact leg are
+`Waypoint.exact` — solved to 0.2 mm / 1 mrad at Link7 (≤ 0.3 mm at the tool)
+with the READY pull off, seeded knot by knot from the previous solution, and
+held to the 3 mm arrival tolerance instead of the 12 mm transit window (or
+refused). A contact leg is knotted every 5 mm. On the replay the ten
+contacts now sit within **0.4 mm** of the first (was 74.9 mm), dz band
+unchanged. To confirm on the robot: rerun the trial and check the xy spread
+of the ten table contacts is ≤ 2 mm.
+
 ## 5. Not part of the gate (do afterwards, if G1–G3 pass)
 
 * Three probes 50 mm apart under one `declare_as="table"`: the published

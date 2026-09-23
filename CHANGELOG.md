@@ -187,6 +187,42 @@ three. Two findings:
   roll's half turn, which is also why yaw 0 is refused rather than planned
   at the other wrist (it plans, J5 +115.5 deg, when a pi candidate is added).
 
+### Straight legs stay on their line: no xy drift over repeated probes (d1-2, 2026-09-23)
+
+The passing probe gate (02:31Z) showed the ten table contacts walking 88 mm
+in y and 18 mm in x although every leg was vertical. The IK converges on
+Link7 within 2 mm / 0.05 rad; the tool point is 100 mm further out, so a
+"converged" posture left the tool 7-9 mm to the side, re-solving from it was
+a no-op, and `_straight` walked on inside the 12 mm transit window — always to
+the same side, because the READY pull biases where the solver stops.
+
+- `Waypoint.exact` (new, `allow_via=False` legs only): the leg's LINE is what
+  it reports. Set on `Nudge` and on the contact leg of `Probe`, `Press` and a
+  fingertip `Grasp`. Such a leg is solved with `planning.straight_tuning(arm)`:
+  the arm's tuning tightened to `STRAIGHT_IK_POS_TOL_M` 0.2 mm /
+  `STRAIGHT_IK_ROT_TOL_RAD` 1 mrad at Link7 (never loosened) with the
+  null-space READY pull OFF, each knot seeded from the previous solution; a
+  knot that tuning cannot solve falls back to the ordinary solve, and the
+  gates below judge the result either way.
+- **Tighter gate:** an exact leg's knots and end are judged against
+  `STRAIGHT_PATH_TOL_M` (= `ARRIVE_TOL_M`, 3 mm) instead of `PATH_TOL_M`
+  (12 mm); one that cannot hold its line within 3 mm is refused
+  (`knot_exhausted` / `off_line` / `arrival`). Other legs are unchanged — a
+  long straight transit (Carry across the wagon, Place into a shelf bin)
+  NEEDS the READY pull to keep the elbow off the body and was refused
+  `guard_reject` / `joint_limit` without it, which is why this is per leg.
+- `Waypoint.knot_m` (new, optional, only finer than `safety.MAX_STEP_M`): every
+  contact leg is knotted every `planning.CONTACT_KNOT_M` = 5 mm, so the
+  joint-space interpolation the daemon plays between knots stays on the line
+  wherever the contact stops it.
+- Golden plans regenerated: only the 20 `nudge` cases change (same step count,
+  final joints within 0.05 rad), because a nudge is now solved exact.
+- `GuardedArm.tuning` (new read-only property): the tuning `solve_ee` uses.
+
+Replay (`tests/executors/test_probe_session_replay.py`): ten probe/lift
+cycles, largest xy offset from the first contact 74.9 mm -> 0.4 mm; a
++50 mm Nudge ends 8.7 mm -> <= 1 mm from its commanded xy.
+
 ### Repeated probes: no wrist flip, no zero-duration knots (d1-2, 2026-09-23)
 
 The d1-2 probe trial (`docs/probe-hardware-trial.md`, fcc2087) stopped at

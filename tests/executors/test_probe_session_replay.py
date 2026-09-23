@@ -433,3 +433,113 @@ def test_the_contact_leg_uploader_refuses_equal_times_without_calling_the_daemon
         robot.move_until([(0.0, q0), (1.0, q1), (1.0, q2)], side="left",
                          criterion=ContactCriterion(), kin=d1_arm)
     assert daemon.uploads == []
+
+
+# --------------------------------------------------------------------------- #
+# the xy drift (d1-2, 2026-09-23 02:31Z: the probe gate passed, and the contact
+# point walked from (0.394, 0.062) to (0.375, -0.026) over ten probe/lift
+# cycles whose legs are all vertical)
+# --------------------------------------------------------------------------- #
+
+#: how far every table contact of the replay may sit from the first one, in xy
+XY_REPEAT_TOL_M = 0.002
+
+
+def test_ten_probe_lift_cycles_touch_the_table_at_the_same_xy(session):
+    """Straight down, straight up, ten times: the same spot. At 92c6b78 the
+    replay walked 73 mm in y (live: 88 mm) because every +50 mm Nudge ended
+    8.5 mm to the side of its own line."""
+    table = [r.contacts[-1] for kind, r in session["lines"] if kind == "table"]
+    assert len(table) == 10
+    xy = np.array([c.p_tool[:2] for c in table], dtype=float)
+    off = np.linalg.norm(xy - xy[0], axis=1)
+    assert off.max() <= XY_REPEAT_TOL_M, np.round(off * 1000, 2).tolist()
+    z = np.array([c.p_tool[2] for c in table], dtype=float)
+    assert np.all(np.abs(z - (TABLE_Z_M + PAD_LEAD_M)) <= 0.002), z
+    # the air probes, lifted back 30 mm each, stay put too
+    air = np.array([r.contacts[-1].p_tool[:2] for kind, r in session["lines"]
+                    if kind == "air"], dtype=float)
+    assert np.linalg.norm(air - air[0], axis=1).max() <= XY_REPEAT_TOL_M
+
+
+def _plan_end_tool(kin, plan):
+    last = [s for s in plan.steps if isinstance(s, JointStep)][-1]
+    kin.set_joints("left", last.q)
+    return tool_from_link7(*kin.ee_pose("left"))[0]
+
+
+def test_a_vertical_nudge_ends_on_its_commanded_xy(d1_arm):
+    """The Link7-tolerance plateau: the IK converges on Link7 within
+    2 mm / 2.9 deg, which is 7-9 mm at the tool 100 mm further out, and
+    re-solving from there is a no-op. A straight leg is solved to the tool."""
+    world = _world_at(d1_arm, STANDOFF_LEFT_DEG)
+    for dz in (0.05, -0.05):
+        plan = Nudge(side="left", dz=dz, frame="base").plan(world, d1_arm)
+        assert plan.ok, str(plan)
+        goal = plan.waypoints[-1].p
+        end = _plan_end_tool(d1_arm, plan)
+        assert np.linalg.norm((end - goal)[:2]) <= 0.001, \
+            np.round((end - goal) * 1000, 2).tolist()
+
+
+def test_a_contact_leg_is_knotted_finely_enough_to_stop_anywhere_on_its_line(
+        d1_arm):
+    """The daemon interpolates JOINTS between knots and a probe stops between
+    two of them: every knot is at most CONTACT_KNOT_M from the next, and the
+    joint-space midpoint of every pair stays within 0.05 mm of the line."""
+    from manipulation_kit.primitives.contact import CONTACT_KNOT_M
+    plan = Probe(side="left", direction="down", max_travel_m=0.05).plan(
+        _world_at(d1_arm, STANDOFF_LEFT_DEG), d1_arm)
+    assert plan.ok, str(plan)
+    (leg,) = [s for s in plan.steps if isinstance(s, ContactStep)]
+
+    def tool(q):
+        d1_arm.set_joints("left", q)
+        return tool_from_link7(*d1_arm.ee_pose("left"))[0]
+    p0 = tool(leg.path[0])
+    for qa, qb in zip(leg.path, leg.path[1:]):
+        pa, pb = tool(qa), tool(qb)
+        assert np.linalg.norm(pb - pa) <= CONTACT_KNOT_M + 1e-3
+        mid = tool((np.asarray(qa) + np.asarray(qb)) / 2.0)
+        assert np.linalg.norm((mid - p0)[:2]) <= 5e-5, (mid - p0) * 1000
+
+
+def test_straight_leg_tuning_tightens_and_never_loosens():
+    from manipulation_kit.arms.ik import DEFAULT_TUNING, IkTuning
+    from manipulation_kit.primitives.planning import (STRAIGHT_IK_POS_TOL_M,
+                                                      STRAIGHT_IK_ROT_TOL_RAD,
+                                                      straight_tuning)
+
+    class _Arm:
+        tuning = DEFAULT_TUNING
+    got = straight_tuning(_Arm())
+    assert got.pos_tol == STRAIGHT_IK_POS_TOL_M < DEFAULT_TUNING.pos_tol
+    assert got.rot_tol == STRAIGHT_IK_ROT_TOL_RAD < DEFAULT_TUNING.rot_tol
+    assert got.posture_gain == 0.0
+    assert (got.iters, got.damping, got.dq_clip) == (
+        DEFAULT_TUNING.iters, DEFAULT_TUNING.damping, DEFAULT_TUNING.dq_clip)
+    tighter = IkTuning(pos_tol=1e-5, rot_tol=1e-5)
+
+    class _Tight:
+        tuning = tighter
+    kept = straight_tuning(_Tight())
+    assert (kept.pos_tol, kept.rot_tol) == (1e-5, 1e-5)
+    # an arm without a tuning of its own gets the default, tightened
+    assert straight_tuning(object()) == got
+
+
+def test_only_legs_whose_line_is_the_report_are_exact(d1_arm):
+    """A nudge and a contact leg are exact; a Carry's straight transit is not
+    (it needs the READY pull to keep the elbow off the body), and an exact
+    leg that may detour is a contradiction."""
+    from scipy.spatial.transform import Rotation as R
+
+    from manipulation_kit.primitives.types import Waypoint
+    world = _world_at(d1_arm, STANDOFF_LEFT_DEG)
+    nudge = Nudge(side="left", dz=0.05, frame="base").plan(world, d1_arm)
+    probe = Probe(side="left", direction="down", max_travel_m=0.05).plan(
+        world, d1_arm)
+    assert [w.exact for w in nudge.waypoints] == [True]
+    assert [w.exact for w in probe.waypoints] == [False, True]
+    with pytest.raises(ValueError):
+        Waypoint("x", (0.4, 0.1, 0.2), R.identity(), allow_via=True, exact=True)
