@@ -38,8 +38,39 @@ from typing import Callable, List, Optional, Sequence
 from ..executor import controller_fault
 from .check import CheckReport, check_gesture
 from .gesture_csv import Gesture, trajectory_points
-from .process import SpeedPolicy
+from .process import SpeedPolicy, segment_peaks_per_joint
 from .record import HOME_TOL_DEG, _q16, move_to, pose_deg
+
+
+#: position-mode ratio of the HOME approach before a gesture: a calm move,
+#: not taught motion
+APPROACH_RATIO = 0.3
+#: the playback ratio: headroom over the gesture's own peak, and its floor
+RATIO_HEADROOM = 1.3
+MIN_PLAY_RATIO = 0.3
+
+
+def playback_ratio(gesture: Gesture, home: Sequence[float]):
+    """``(ratio, why)``: the position-mode ratio that lets the controller
+    track this gesture at the speed it was taught.
+
+    In position mode the controller follows the daemon's 1 ms targets at no
+    more than ``MAX_JOINT_RATE_DEG_S x vel_ratio`` (140 deg/s at 1.0): at the
+    old fixed 0.15 that is ~21 deg/s, and d1-2 task6's 118 deg/s J7 swing
+    was low-passed into a slow, smoothed wave that barely turned the wrist.
+    The ratio must never be a hidden brake — the CSV's
+    :class:`~manipulation_kit.teach.process.SpeedPolicy` is the speed gate —
+    so it is derived from the gesture's own peak on the played spline:
+    ``clamp(1.3 x peak / 140, 0.3, 1.0)``. The daemon's acceleration ratio
+    has no documented physical scale, so it is set equal."""
+    from ..executors.firmware.executor import MAX_JOINT_RATE_DEG_S  # noqa: PLC0415
+    peaks = segment_peaks_per_joint(trajectory_points(gesture, home))
+    peak = max((float(max(v)) for v, _ in peaks), default=0.0)
+    ratio = min(max(RATIO_HEADROOM * peak / MAX_JOINT_RATE_DEG_S, MIN_PLAY_RATIO), 1.0)
+    why = (f"playback ratio {ratio:.2f}: gesture peak {peak:.1f} deg/s x "
+           f"{RATIO_HEADROOM:g} over the controller's {MAX_JOINT_RATE_DEG_S:g} "
+           f"deg/s at ratio 1.0, within [{MIN_PLAY_RATIO:g}, 1]")
+    return ratio, why
 
 
 @dataclass
@@ -82,11 +113,14 @@ def guard_notes(report: Optional[CheckReport]) -> List[str]:
 
 
 def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = False,
-         speed: Optional[SpeedPolicy] = None,
+         speed: Optional[SpeedPolicy] = None, vel_ratio: Optional[float] = None,
          check_kwargs=None, settle_s: float = 2.0,
          announce: Callable[[str], None] = lambda line: None) -> PlayReport:
     """Play on an ENTERED :class:`FirmwareExecutor`. Returns what happened.
-    ``announce`` receives the advisory guard warnings BEFORE anything moves."""
+    ``announce`` receives the advisory guard warnings and the playback ratio
+    BEFORE anything moves. The HOME approach runs at the executor's ratio as
+    entered; the gesture at ``vel_ratio``, or — ``None`` — the one
+    :func:`playback_ratio` derives from the gesture itself."""
     pre = preflight(gesture, home, no_safety=no_safety, speed=speed,
                     check_kwargs=check_kwargs)
     if not pre.ok:
@@ -105,12 +139,18 @@ def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = Fa
     if approached and not arrival.arrived:
         return PlayReport(False, f"did not reach HOME before the gesture: "
                           f"{arrival.detail}", check=pre.check, approached=True)
+    if vel_ratio is None:
+        vel_ratio, why = playback_ratio(gesture, home)
+    else:
+        why = f"playback ratio {vel_ratio:.2f} (--vel-ratio)"
+    announce(f"{why}; HOME approach at {robot.vel_ratio:.2f}")
+    robot.set_ratios(vel_ratio)
     points = trajectory_points(gesture, home)
     measured = pose_deg(robot.state())
     points[0] = {"t": 0.0, "a": measured[:7], "b": measured[7:]}
     sent = robot.play_waypoints(points)
     end = robot.wait_arrived(_q16(home))
-    notes = list(advisory)
+    notes = list(advisory) + [why]
     settle = robot.settle(settle_s)
     if not settle.settled:
         notes.append(f"not settled: {settle.detail}")

@@ -189,6 +189,16 @@ guard") — **breaking for `mkit-teach` callers**:
     `timing: recorded … -> body … (speed cap stretched N knot(s), +x s) +
     HOME connect … + return … = … s` line and per-joint ranges recorded ->
     exported, flagging pinned and LOST joints.
+  - **`play` derives the position-mode ratio from the gesture** (d1-2
+    task6: a correct 117.8 deg/s CSV played slow and smoothed, J7 barely
+    moving, because the fixed 0.15 lets the controller track ~21 deg/s).
+    `play.playback_ratio()` = `clamp(1.3 x spline peak / 140, 0.3, 1.0)`,
+    acc ratio equal; announced with its reason before anything moves;
+    `--vel-ratio` overrides (play's default is now "derived"). The HOME
+    approach before the gesture runs at 0.3. New
+    `FirmwareExecutor.set_ratios()` re-installs position mode (confirmed)
+    and re-times the schedule. The controller ratio is never the speed
+    gate; the CSV's SpeedPolicy is.
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

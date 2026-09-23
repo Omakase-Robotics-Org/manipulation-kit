@@ -520,6 +520,19 @@ class FirmwareExecutor:
                 "acc_ratio": self.acc_ratio}))
             self.wait_for_mode(side, ("position",))
 
+    def set_ratios(self, vel_ratio: float, acc_ratio: Optional[float] = None) -> None:
+        """Re-install position mode at other ratios, confirmed, and re-time
+        the schedule to them (:func:`schedule_rate_deg_s`). For a caller whose
+        motion's own timing decides the ratio (a taught gesture played at its
+        recorded speed, :mod:`manipulation_kit.teach.play`)."""
+        acc_ratio = vel_ratio if acc_ratio is None else acc_ratio
+        for name, ratio in (("vel_ratio", vel_ratio), ("acc_ratio", acc_ratio)):
+            if not (math.isfinite(float(ratio)) and 0.0 < float(ratio) <= 1.0):
+                raise ValueError(f"{name} is a FRACTION in (0, 1], got {ratio!r}")
+        self.vel_ratio, self.acc_ratio = float(vel_ratio), float(acc_ratio)
+        self.max_rate = schedule_rate_deg_s(self.vel_ratio)
+        self.position_mode()
+
     # -- confirmed mode transitions ---------------------------------------- #
     def wait_for_mode(self, side: str, modes: Optional[Collection[str]] = None, *,
                       timeout_s: float = MODE_TIMEOUT_S, poll_s: float = MODE_POLL_S,

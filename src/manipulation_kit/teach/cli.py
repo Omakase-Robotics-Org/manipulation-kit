@@ -128,14 +128,15 @@ def _gesture_name(gesture: Gesture, csv: Path) -> str:
     return stem[:-len("_motion")] if stem.endswith("_motion") else stem
 
 
-def _executor(args, *, lease_class: str):
+def _executor(args, *, lease_class: str, vel_ratio: Optional[float] = None):
     """The executor both robot commands drive. ``recover_on_entry``: teaching
     starts by holding the arms where they ARE, so an arm found idle (or
     faulted) — e.g. left there by hand — is recovered at its measured pose,
     announced, instead of refused (docs/teach.md, "Order of operations")."""
     from ..executors.firmware import FirmwareExecutor  # noqa: PLC0415
     return FirmwareExecutor(base_url=args.url, lease_class=lease_class,
-                            vel_ratio=args.vel_ratio, acc_ratio=args.vel_ratio,
+                            vel_ratio=vel_ratio if vel_ratio is not None else args.vel_ratio,
+                            acc_ratio=vel_ratio if vel_ratio is not None else args.vel_ratio,
                             recover_on_entry=True,
                             announce=lambda line: _say("starting", line))
 
@@ -515,7 +516,7 @@ def cmd_check(args) -> int:
 
 
 def cmd_play(args) -> int:
-    from .play import play, preflight  # noqa: PLC0415
+    from .play import APPROACH_RATIO, play, preflight  # noqa: PLC0415
     gesture = load_csv(Path(args.csv))
     home = load_home(args.home)
     speed = _speed(args, gesture)
@@ -530,9 +531,10 @@ def cmd_play(args) -> int:
     from ..executor import controller_fault  # noqa: PLC0415
     from ..executors.firmware import FirmwareUnavailable  # noqa: PLC0415
     try:
-        with _executor(args, lease_class=args.lease_class) as robot:
+        approach = args.vel_ratio if args.vel_ratio is not None else APPROACH_RATIO
+        with _executor(args, lease_class=args.lease_class, vel_ratio=approach) as robot:
             report = play(robot, gesture, home, no_safety=args.no_safety,
-                          speed=speed,
+                          speed=speed, vel_ratio=args.vel_ratio,
                           announce=lambda line: print(line, flush=True))
             faulted = controller_fault(robot.state()) is not None
     except FirmwareUnavailable as exc:
@@ -560,14 +562,15 @@ def cmd_register(args) -> int:
     return 0
 
 
-def _common(p, *, robot: bool) -> None:
+def _common(p, *, robot: bool, vel_ratio: Optional[float] = 0.15,
+            vel_help: str = "position-mode velocity/acceleration ratio, a FRACTION"
+            ) -> None:
     p.add_argument("--home", default=None,
                    help="home_pose.json (default: the kit's config/home_pose.json)")
     if robot:
         p.add_argument("--url", default=os.environ.get("D1FW_URL", "http://127.0.0.1:4750"),
                        help="d1-firmwared origin (default $D1FW_URL or 127.0.0.1:4750)")
-        p.add_argument("--vel-ratio", type=float, default=0.15,
-                       help="position-mode velocity/acceleration ratio, a FRACTION")
+        p.add_argument("--vel-ratio", type=float, default=vel_ratio, help=vel_help)
 
 
 def _speed_args(p) -> None:
@@ -699,7 +702,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("play", help="play a CSV through FirmwareExecutor")
-    _common(p, robot=True)
+    _common(p, robot=True, vel_ratio=None,
+            vel_help="position-mode ratio, a FRACTION (default: derived from the "
+                     "gesture's own peak speed, 0.3..1.0, so the controller "
+                     "tracks it as taught; the HOME approach runs at 0.3)")
     p.add_argument("csv")
     p.add_argument("--no-safety", action="store_true",
                    help="skip the kit's pre-flight (the daemon still guards)")

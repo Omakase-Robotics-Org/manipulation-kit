@@ -232,7 +232,8 @@ mkit-teach check wave_motion.csv --ascii
 
 ```sh
 mkit-teach play wave_motion.csv --dry-run     # ロボットに触れず事前チェックだけ
-mkit-teach play wave_motion.csv               # policy リース, vel_ratio 0.15
+mkit-teach play wave_motion.csv               # policy リース, 比はジェスチャーから自動
+mkit-teach play wave_motion.csv --vel-ratio 0.5  # 比を固定する
 ```
 
 UNSAFE 印・チェック NG（リミット/速度/時刻）・コントローラ異常のいずれでも何も
@@ -242,6 +243,24 @@ UNSAFE 印・チェック NG（リミット/速度/時刻）・コントロー�
 2 deg 以上離れていれば先に HOME へ移動し、再生後に HOME 到着（計測値）と静止を
 確認する。record と同じく、位置モードでない腕（idle / error）は入口で計測姿勢に
 recover してから始める（表示あり）。
+
+### 再生の速度比（位置モードの vel_ratio）
+
+位置モードのコントローラーは、デーモンの 1 ms ごとの目標を**最大
+140 deg/s × vel_ratio** でしか追わない。旧既定 0.15 では約 21 deg/s で、d1-2
+task6（CSV は正しく L7 70.6 deg・ピーク 117.8 deg/s）はゆっくり丸められて再生され、
+J7 はほとんど動かなかった。**比が隠れたブレーキになってはいけない**。速度の
+関門は CSV の SpeedPolicy だけ。
+
+* `play` はジェスチャー本体の比を、再生するスプライン上のピーク関節速度から
+  決める: `clamp(1.3 × peak / 140, 0.3, 1.0)`（118 deg/s → 1.0、旧 25 deg/s の
+  CSV → 0.3）。加速度比はデーモンに物理的な尺度が無いので同じ値にする。
+* 選んだ比と理由を動かす前に表示する（`playback ratio 1.00: gesture peak
+  117.8 deg/s x 1.3 …; HOME approach at 0.30`）。
+* ジェスチャー前の HOME への事前移動は教示動作ではないので**落ち着いた 0.3**。
+  ジェスチャー内の HOME 接続・復帰区間はジェスチャーと同じ比で再生される。
+* `--vel-ratio` を付けると事前移動・本体とも、その値に固定する。
+* record の HOME 移動は従来どおり 0.15。
 
 ### ガード: デーモンの干渉検査は常に有効
 
