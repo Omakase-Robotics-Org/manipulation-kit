@@ -18,7 +18,8 @@ import perceive
 
 def perceived_scene(source: str, *, trace_path: Optional[Path], obj: str,
                     destination: str, options: str = "", neck=None, lift=None,
-                    snapshotter=None, profile: Optional[str] = None
+                    snapshotter=None, profile: Optional[Path] = None,
+                    allow_failed_calibration: bool = False
                     ) -> Dict[str, Any]:
     """``astra_loop.py --perceive``: MEASURE the scene from one head frame (a
     path, or ``snapshot`` = one grab before turn 0), once, before turn zero;
@@ -39,6 +40,8 @@ def perceived_scene(source: str, *, trace_path: Optional[Path], obj: str,
         tokens += ["--objects", f"{obj}:object,{destination}:container"]
     if profile and "--robot-profile" not in tokens:
         tokens += ["--robot-profile", str(profile)]
+    if allow_failed_calibration and "--allow-failed-calibration" not in tokens:
+        tokens.append("--allow-failed-calibration")
     args = perceive.build_parser().parse_args(["--image", str(image)] + tokens)
     scene = perceive.perceive(args, neck=neck, lift=lift)
     if trace_path is not None:
@@ -61,11 +64,52 @@ def robot_head_state(robot_url: str):
                          f"neck pose: {exc}") from None
 
 
+def add_profile_arguments(parser) -> None:
+    """``--robot-profile PATH`` and ``--allow-failed-calibration``."""
+    parser.add_argument(
+        "--robot-profile", type=Path, default=None, metavar="PATH",
+        help="the robot's omakase.camera_calibration/2 file (hand gap, head "
+             "mount, wrist lenses). Default: "
+             "~/.config/omakase/camera_calibration.json when it exists (on "
+             "the robot), else the file a --scene names, else none")
+    parser.add_argument(
+        "--allow-failed-calibration", action="store_true",
+        help="accept a calibration layer whose gate FAILED (refused "
+             "otherwise, unless the file records an override)")
+
+
+def resolve_profile(args):
+    """The :class:`RobotProfile` of :func:`robot_profile_path`, or ``None``."""
+    from manipulation_kit.description.robot_profile import RobotProfile  # noqa: PLC0415
+    return RobotProfile.resolve(robot_profile_path(args),
+                                allow_failed_gate=args.allow_failed_calibration)
+
+
+def robot_profile_path(args) -> Optional[Path]:
+    """The calibration file a run uses: ``--robot-profile`` when given; else
+    none when ``--scene`` names its own (``"robot": {"profile": PATH}``);
+    else the robot's installed file
+    (``~/.config/omakase/camera_calibration.json``, when it exists); else
+    none."""
+    from manipulation_kit.description.camera_calibration import (  # noqa: PLC0415
+        installed_path)
+    if args.robot_profile is not None:
+        return Path(args.robot_profile)
+    scene = getattr(args, "scene", None)
+    if scene is not None and Path(scene).is_file():
+        named = (json.loads(Path(scene).read_text(encoding="utf-8"))
+                 .get("robot") or {}).get("profile")
+        if named is not None:
+            return None
+    return installed_path()
+
+
 def scene_for_run(args, *, snapshotter=None, profile=None
                   ) -> Optional[Dict[str, Any]]:
     """The scene an ``astra_loop.py`` run starts from: MEASURED from one head
     frame (``--perceive``, with the live neck on ``--executor firmware``),
-    READ from ``--scene`` (resolved against ``--robot-profile``), or ``None``."""
+    READ from ``--scene`` (resolved against ``profile``, the resolved
+    ``--robot-profile``), or ``None``."""
     if args.perceive is not None:
         neck, lift = (robot_head_state(args.robot) if args.executor == "firmware"
                       else (None, None))
@@ -73,8 +117,10 @@ def scene_for_run(args, *, snapshotter=None, profile=None
                                obj=args.object, destination=args.destination,
                                options=args.perceive_opts, neck=neck, lift=lift,
                                snapshotter=snapshotter,
-                               profile=args.robot_profile)
+                               profile=robot_profile_path(args),
+                               allow_failed_calibration=args.allow_failed_calibration)
     if args.scene is not None:
         from manipulation_kit.agent.robot import load_scene  # noqa: PLC0415
-        return load_scene(args.scene, profile=profile)
+        return load_scene(args.scene, profile=profile,
+                          allow_failed_gate=args.allow_failed_calibration)
     return None

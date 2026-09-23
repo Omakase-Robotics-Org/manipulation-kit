@@ -6,13 +6,14 @@ differ, and which pair is built is a flag.
 
 ```python
 from manipulation_kit.agent import DecisionTrace, LiveRobot, OperatorPolicy, run
+from manipulation_kit.description.camera_calibration import DEFAULT_PATH
 from manipulation_kit.description.robot_profile import RobotProfile
 from manipulation_kit.primitives import Place
 
 policy = OperatorPolicy(max_grip="soft", allowed_directions=("down",),
                         vel_ratio=0.15, droop_margin_m=0.012)   # d1-2
 with LiveRobot.from_flag("firmware", url="http://d1-2:4750", policy=policy,
-                         scene=scene, profile=RobotProfile.named("d1-2")) as robot:
+                         scene=scene, profile=RobotProfile.load(DEFAULT_PATH)) as robot:
     trace = run(goal=Place(object="cube", to="cup"), robot=robot,
                 policy=policy, ask=my_model, system=MY_PROMPT,
                 trace=DecisionTrace(run_dir / "trace.jsonl"))
@@ -27,8 +28,8 @@ print(trace.stop, trace.summary())
 - `look_before_stroke` (default on): before every `grasp` stroke the loop
   answers with one wrist look (`WristCamera.project_object`) from the posture
   the stroke closes from, and a `locate` on that wrist camera corrects the
-  hand. It needs **measured wrist intrinsics per robot**: a robot profile's
-  `wrist_cameras` (d1-2's two fisheyes were measured 2026-09-22 with
+  hand. It needs **measured wrist intrinsics per robot**: the robot's
+  calibration file's `left_wrist`/`right_wrist` lenses (d1-2's two fisheyes were measured 2026-09-22 with
   d1-inference `d1-calibrate-wrist`, `calibration/wrist_fisheye.py`), or a
   scene's `robot.wrist_camera`. The lens model is used as measured
   (`model: fisheye`, `k1..k4`, pixels outside `valid_radius_px` not trusted).
@@ -60,17 +61,37 @@ print(trace.stop, trace.summary())
   model composes it — approach the held object with the other hand, grasp
   (looked), release, retreat.
 
-## The robot profile
+## The robot profile — the values live on the robot
 
-One typed file per robot (`manipulation_kit.description.robot_profile`):
-the hand's driven-open gap, the head camera's measured mount, the wrist
-lenses. `RobotProfile.named("d1-2")` is committed with the kit;
-`RobotProfile.from_files(name, head_calibration=..., wrist={"left": ...,
-"right": ...})` reads the d1-inference artefacts verbatim. A scene names one
-(`"robot": {"profile": "d1-2"}`) and may override any of its keys;
-`astra_loop.py --robot-profile NAME|FILE` and `perceive.py --robot-profile`
-do the same from the command line. The head camera applies the mount and
-says `calibrated: true` only then.
+**The kit owns the schema and the reader; the robot holds the values.** No
+robot's numbers ship in the wheel. Each robot keeps ONE
+`omakase.camera_calibration/2` file, `~/.config/omakase/camera_calibration.json`
+(`manipulation_kit.description.camera_calibration`, JSON Schema shipped as
+`description/schemas/omakase.camera_calibration-2.schema.json`), written by
+seiryu-calib: per camera slot (`head`, `left_wrist`, `right_wrist`) a lens
+layer (`intrinsics`, seiryu distortion vocabulary — `kannala_brandt` is the
+kit's `fisheye`) and a mount layer (`mount`: the ABSOLUTE optical-frame pose
+in `parent_link`, with the nominal it was fitted against), plus the hand's
+driven-open gap.
+
+`RobotProfile.load(path)` builds the kit's view of it: the head mount becomes
+the `HeadMountDelta` on its recorded nominal (the head camera applies it and
+says `calibrated: true` only then), the wrist lenses become per-side
+`WristIntrinsics`, `hand` becomes `HandMeasurement`. A measured WRIST mount is
+refused (the kit still uses the nominal plate geometry, and would otherwise
+ignore it silently).
+
+Every layer has a gate. A layer whose gate is **FAIL is refused** unless the
+file records a `gate.override` with a reason, or the caller passes
+`allow_failed_gate=True` (`--allow-failed-calibration` on `astra_loop.py` and
+`perceive.py`); WARN is accepted with a warning.
+
+`astra_loop.py --robot-profile PATH` and `perceive.py --robot-profile PATH`
+default to the robot's `~/.config/omakase/camera_calibration.json` when it
+exists (for `astra_loop.py --scene`, a file the scene names comes first), else none. A scene
+may name a file (`"robot": {"profile": "PATH"}`, relative to the scene) and
+override any of its keys. Offline, d1-2's file is
+`tests/data/d1-2.camera_calibration.json`.
 
 ## The example's one deliberate lie
 

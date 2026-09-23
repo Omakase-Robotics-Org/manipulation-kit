@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Omakase-Robotics-Org/seiryu-calib/schema/omakase.camera_calibration-2.schema.json",
+  "title": "omakase.camera_calibration/2",
+  "description": "One robot's camera calibration, one file per robot. The robot holds the values (~/.config/omakase/camera_calibration.json); seiryu-calib is the only writer of the camera layers; manipulation-kit owns the reader. Layers are independent: re-fitting a lens never erases a mount.",
+  "type": "object",
+  "required": ["schema", "robot", "cameras"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "omakase.camera_calibration/2"},
+    "robot": {"type": "string", "minLength": 1, "description": "robot id, e.g. d1-2"},
+    "updated": {"type": "string", "description": "RFC 3339 UTC time of the last write"},
+    "cameras": {
+      "type": "object",
+      "description": "camera slot (head, left_wrist, right_wrist, ...) -> its layers",
+      "additionalProperties": {"$ref": "#/$defs/camera"}
+    },
+    "hand": {
+      "description": "Non-camera measurement kept next to the cameras so a robot has ONE file. Never written by seiryu-calib; on hardware the daemon's own open_rad wins.",
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/hand"}]
+    },
+    "kinematics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "neck_compensation": {"description": "layer 3 (phase 4+): residual neck kinematics, not folded into the head mount", "type": ["object", "null"]}
+      }
+    }
+  },
+  "$defs": {
+    "camera": {
+      "type": "object",
+      "required": ["stream"],
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"enum": ["v4l2", "realsense", "orbbec"]},
+            "serial": {"type": ["string", "null"]},
+            "by_path": {"type": ["string", "null"]},
+            "model": {"type": ["string", "null"]},
+            "asset_tag": {"type": ["string", "null"]},
+            "seiryu_node": {"type": ["string", "null"], "description": "the seiryu plan node the frames were observed from"}
+          }
+        },
+        "stream": {
+          "type": "object",
+          "required": ["width", "height"],
+          "additionalProperties": false,
+          "properties": {
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1}
+          }
+        },
+        "intrinsics": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/intrinsics"}]},
+        "mount": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/mount"}]}
+      }
+    },
+    "intrinsics": {
+      "description": "layer 1: the lens, for the image AS SEIRYU PUBLISHES IT",
+      "type": "object",
+      "required": ["fx", "fy", "cx", "cy", "distortion", "gate", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "fx": {"type": "number", "exclusiveMinimum": 0},
+        "fy": {"type": "number", "exclusiveMinimum": 0},
+        "cx": {"type": "number"},
+        "cy": {"type": "number"},
+        "distortion": {"$ref": "#/$defs/distortion"},
+        "valid_radius_px": {"type": ["number", "null"], "exclusiveMinimum": 0, "description": "largest radius from (cx, cy) with corner support; beyond it the model is an extrapolation"},
+        "gate": {"$ref": "#/$defs/gate"},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "distortion": {
+      "description": "seiryu-stream DistortionModel vocabulary and coefficient order",
+      "type": "object",
+      "required": ["model", "coefficients"],
+      "additionalProperties": false,
+      "properties": {
+        "model": {"enum": ["none", "brown_conrady", "inverse_brown_conrady", "brown_conrady_rational", "kannala_brandt"]},
+        "coefficients": {"type": "array", "items": {"type": "number"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"model": {"const": "none"}}}, "then": {"properties": {"coefficients": {"maxItems": 0}}}},
+        {"if": {"properties": {"model": {"const": "brown_conrady"}}}, "then": {"properties": {"coefficients": {"minItems": 5, "maxItems": 5}}}},
+        {"if": {"properties": {"model": {"const": "inverse_brown_conrady"}}}, "then": {"properties": {"coefficients": {"minItems": 5, "maxItems": 5}}}},
+        {"if": {"properties": {"model": {"const": "brown_conrady_rational"}}}, "then": {"properties": {"coefficients": {"minItems": 8, "maxItems": 8}}}},
+        {"if": {"properties": {"model": {"const": "kannala_brandt"}}}, "then": {"properties": {"coefficients": {"minItems": 4, "maxItems": 4}}}}
+      ]
+    },
+    "pose": {
+      "type": "object",
+      "required": ["xyz_m", "quat_xyzw"],
+      "additionalProperties": false,
+      "properties": {
+        "xyz_m": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+        "quat_xyzw": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}
+      }
+    },
+    "mount": {
+      "description": "layer 2: T_parent_camera of the OPTICAL frame (ROS optical: x right, y down, z forward) in parent_link, absolute, with the nominal it was fitted against",
+      "type": "object",
+      "required": ["parent_link", "T_parent_camera", "nominal", "gate", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "parent_link": {"type": "string", "minLength": 1},
+        "T_parent_camera": {"$ref": "#/$defs/pose"},
+        "nominal": {
+          "type": "object",
+          "required": ["T_parent_camera"],
+          "additionalProperties": false,
+          "properties": {
+            "T_parent_camera": {"$ref": "#/$defs/pose"},
+            "urdf": {"type": ["string", "null"]},
+            "kit_version": {"type": ["string", "null"]}
+          }
+        },
+        "gate": {"$ref": "#/$defs/gate"},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["verdict", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {"enum": ["PASS", "WARN", "FAIL"]},
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "verdict"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "value": {"type": ["number", "null"]},
+              "warn": {"type": ["number", "null"], "description": "threshold at which the check turns WARN"},
+              "fail": {"type": ["number", "null"], "description": "threshold at which the check turns FAIL"},
+              "direction": {"enum": ["below", "above", null], "description": "below: good values are below the thresholds (RMS); above: good values are above them (coverage)"},
+              "verdict": {"enum": ["PASS", "WARN", "FAIL", "SKIP"]},
+              "detail": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "override": {
+          "description": "set when a FAIL was installed anyway; readers refuse a FAIL without it",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {"reason": {"type": "string", "minLength": 1}, "by": {"type": ["string", "null"]}, "at": {"type": ["string", "null"]}}
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["tool", "date"],
+      "properties": {
+        "tool": {"type": "string", "description": "e.g. seiryu-calib 0.1.0, factory (RealSense), migrated from d1-inference PR #77"},
+        "date": {"type": "string"},
+        "session": {"type": ["string", "null"]},
+        "board": {"type": ["string", "null"]},
+        "square_mm_measured": {"type": ["number", "null"]},
+        "marker_mm_measured": {"type": ["number", "null"]},
+        "views": {"type": ["integer", "null"]},
+        "rms_px": {"type": ["number", "null"]},
+        "coverage": {"type": ["object", "null"]},
+        "migrated_from": {"type": ["string", "null"]},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "hand": {
+      "type": "object",
+      "required": ["open_gap_m"],
+      "additionalProperties": false,
+      "properties": {
+        "open_gap_m": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.2},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    }
+  }
+}

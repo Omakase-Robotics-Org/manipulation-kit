@@ -139,11 +139,17 @@ def build_parser() -> argparse.ArgumentParser:
     robot.add_argument("--lift", type=float, default=None,
                        help="slider height_m; does NOT move the camera in "
                             "base, only reports the table's floor height")
-    robot.add_argument("--robot-profile", default=None, metavar="NAME|FILE",
-                       help="this robot's measured profile (e.g. d1-2): its "
-                            "head-camera MOUNT is applied on top of the URDF "
-                            "nominal and the camera says calibrated. Without "
-                            "it the frame is the nominal one")
+    robot.add_argument("--robot-profile", type=Path, default=None,
+                       metavar="PATH",
+                       help="this robot's omakase.camera_calibration/2 file: "
+                            "its head-camera MOUNT is applied on top of the "
+                            "URDF nominal and the camera says calibrated. "
+                            "Default: "
+                            "~/.config/omakase/camera_calibration.json when "
+                            "it exists (on the robot); without one the frame "
+                            "is the nominal one")
+    robot.add_argument("--allow-failed-calibration", action="store_true",
+                       help="accept a calibration layer whose gate FAILED")
     scene = parser.add_argument_group(
         "OPTIONAL scene numbers — you should not need any of these")
     scene.add_argument("--table-width", type=float, default=None,
@@ -189,9 +195,17 @@ def head_camera(args: argparse.Namespace, width: int, height: int, *,
     executor), else from the recorded frame's joint flags. Both at once is
     two answers to one question, and is refused. ``--robot-profile`` adds the
     robot's MEASURED head mount."""
+    from manipulation_kit.description.camera_calibration import (  # noqa: PLC0415
+        installed_path)
     from manipulation_kit.description.robot_profile import (  # noqa: PLC0415
         RobotProfile)
-    profile = RobotProfile.resolve(getattr(args, "robot_profile", None))
+    ref = getattr(args, "robot_profile", None)
+    try:
+        profile = RobotProfile.resolve(
+            ref if ref is not None else installed_path(),
+            allow_failed_gate=getattr(args, "allow_failed_calibration", False))
+    except (ValueError, LookupError, OSError) as exc:
+        raise SystemExit(f"--robot-profile: {exc}") from None
     mount = None if profile is None else profile.head_mount_delta
     intrinsics = {"fx": args.fx, "fy": args.fy, "cx": args.cx, "cy": args.cy}
     if args.intrinsics is not None:

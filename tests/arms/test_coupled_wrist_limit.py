@@ -186,7 +186,9 @@ def _world(kin, q_deg):
 def _probe_spot_plan(kin, q0_deg, xy=PROBE_SPOT_XY):
     """``pose_for_probe.py``'s Approach on the d1-2 tape/cup scene, offline."""
     scene = load_scene(REPO / "examples" / "agent" / "scenes"
-                       / "d1-2_tape_cup.json")
+                       / "d1-2_tape_cup.json",
+                       profile=REPO / "tests" / "data"
+                       / "d1-2.camera_calibration.json")
     scene["objects"].append({"name": "probe_spot", "kind": "object",
                              "frame_id": "base", "p": [xy[0], xy[1], 0.171],
                              "size": [0.04, 0.04, 0.01], "yaw_rad": 0.0})

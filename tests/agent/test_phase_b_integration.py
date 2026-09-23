@@ -228,8 +228,11 @@ def test_the_scene_source_keeps_contacts_until_the_scene_is_restated(d1_arm):
 # --------------------------------------------------------------------------- #
 
 def test_the_d1_2_wrists_are_measured_and_reach_hardware():
-    scene = json.loads(D1_2_SCENE.read_text(encoding="utf-8"))
-    assert scene["robot"] == {"profile": "d1-2"}
+    from manipulation_kit.agent.robot import load_scene
+    raw = json.loads(D1_2_SCENE.read_text(encoding="utf-8"))
+    assert "robot" not in raw        # the robot's numbers live on the robot
+    scene = load_scene(D1_2_SCENE,
+                       profile=REPO / "tests/data/d1-2.camera_calibration.json")
     measured = wrist_camera_from_scene(scene, measured_only=True)
     assert set(measured) == {"left", "right"}
     assert all(block["model"] == "fisheye" for block in measured.values())

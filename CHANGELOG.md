@@ -6,6 +6,83 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.16.1 — unreleased
+
+### BREAKING: the kit owns the calibration schema and reader; the robot holds the values
+
+Decision (Shu, 2026-09-23): no per-robot number ships in this wheel. Until now
+d1-2's measured profile was committed as `description/profiles/d1-2.json` and
+installed as package data; every robot would have needed a kit release to
+change its own camera. It now lives ON THE ROBOT, in one file in the new
+format **`omakase.camera_calibration/2`**, default
+`~/.config/omakase/camera_calibration.json`, written by seiryu-calib.
+
+(0.16.x is not released; the bump is a patch only so that 0.17 stays the
+release that removes the transitional `RawState` accessors. It breaks every
+caller of the API below, and pip needs a version that moves.)
+
+- **NEW `manipulation_kit.description.camera_calibration`** — the typed reader
+  of `omakase.camera_calibration/2`: `load(path, *, allow_failed_gate=False)`,
+  `parse(doc)`, `validate(doc)` (hand-written, no `jsonschema` dependency:
+  schema string, required and unknown keys, coefficient count per distortion
+  model, finite numbers, unit quaternions, principal point inside the stream,
+  a gate needs at least one check), dataclasses `CameraCalibration` /
+  `Camera` / `Intrinsics` / `Distortion` / `Mount` / `Pose` / `Gate` /
+  `Provenance` / `Hand`, `DEFAULT_PATH` and `installed_path()` (the default
+  file when this machine has one) for entry points. No environment variable:
+  the agent examples read none, by rule. The JSON Schema ships as package data,
+  `description/schemas/omakase.camera_calibration-2.schema.json`.
+- **Gates are enforced by the reader.** Every layer (`intrinsics`, `mount`)
+  carries `gate.verdict PASS|WARN|FAIL`. A FAIL layer raises
+  `FailedCalibrationGate` naming the camera, the layer and the reasons,
+  unless the file's gate records an `override` with a reason or the caller
+  passes `allow_failed_gate=True`. WARN is accepted with a `UserWarning`.
+- **`RobotProfile` is built from that file**:
+  `RobotProfile.from_camera_calibration(path|doc|CameraCalibration,
+  allow_failed_gate=)`, `RobotProfile.load(path)`. The head mount's ABSOLUTE
+  `head_link -> optical` pose becomes the `HeadMountDelta` on the nominal the
+  file records (`delta = nominal^-1 * measured`), so `HeadCamera` behaves
+  exactly as before (round trip to 1e-9 in the tests). `left_wrist` /
+  `right_wrist` become `wrist_cameras["left"|"right"]`: `kannala_brandt` is
+  `fisheye`, `none` (or an all-zero Brown-Conrady) is `pinhole`, a non-zero
+  Brown-Conrady wrist is refused. A measured WRIST mount is refused too: the
+  kit's wrist camera is still the nominal plate geometry and would silently
+  ignore it. `hand.open_gap_m` becomes `HandMeasurement`.
+- **Removed**: `description/profiles/` and its package-data line,
+  `PROFILES`, `RobotProfile.named`, `RobotProfile.from_files`,
+  `RobotProfile.from_json` / `to_json` (seiryu-calib is the writer),
+  `RobotProfile.notes`, `HeadMountDelta.from_json` / `from_head_calibration`,
+  `WristIntrinsics.from_json`. An old `manipulation_kit.robot_profile/1` file
+  is refused with the migration.
+- **`RobotProfile.resolve(ref)` takes a PATH** (tried as given, then relative
+  to `relative_to`) or a profile; `None` stays `None`; a bare name like
+  `"d1-2"` raises `NotACalibrationFile` saying where the values live now.
+  `load_scene(..., allow_failed_gate=)`, `scene_robot_block` / `with_profile`
+  accept a path as `profile=` too; `LiveRobot.from_flag` / `.firmware` take
+  `profile=PATH` and `allow_failed_gate=`.
+- **CLI flags**: `astra_loop.py --robot-profile PATH` and `perceive.py
+  --robot-profile PATH` default to
+  `~/.config/omakase/camera_calibration.json` when it exists (on the robot),
+  else — for `astra_loop.py --scene` — the file the scene names, else none.
+  NEW `--allow-failed-calibration` on both.
+- **Scenes**: `"robot": {"profile": "PATH"}` is a path relative to the scene
+  file. `examples/agent/scenes/d1-2_tape_cup.json` no longer names a profile.
+- d1-2's file (the numbers of the old `profiles/d1-2.json`, verbatim) is the
+  test fixture `tests/data/d1-2.camera_calibration.json`; the old v1 file is
+  kept as `tests/data/robot_profile/d1-2.robot_profile-v1.json`, the
+  reference the v2 file must reproduce.
+
+#### Migration
+
+| old | new |
+|---|---|
+| `RobotProfile.named("d1-2")` | `RobotProfile.load("~/.config/omakase/camera_calibration.json")` (on d1-2), or the path of a copy |
+| `--robot-profile d1-2` | nothing on the robot (the default file); `--robot-profile PATH` elsewhere (offline: `tests/data/d1-2.camera_calibration.json`) |
+| `"robot": {"profile": "d1-2"}` in a scene | drop it (the robot's file is the default), or `"profile": "relative/path.json"` |
+| `RobotProfile.from_files(name, head_calibration=, wrist=)` | `seiryu-calib migrate` those d1-inference files into the robot's v2 file, then `RobotProfile.load` |
+| a `manipulation_kit.robot_profile/1` JSON | the same numbers as an `omakase.camera_calibration/2` file (head mount ABSOLUTE with its nominal) |
+| a FAIL calibration layer used silently | refused; `gate.override` with a reason in the file, or `--allow-failed-calibration` |
+
 ## 0.16.0 — unreleased
 
 The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the

@@ -1,7 +1,9 @@
 """One robot's measured numbers, and the lens models they feed (step 9).
 
-The profile carries d1-2's MEASURED wrist fisheyes (d1-calibrate-wrist,
-2026-09-22), its gripper gap and its head-camera mount; the wrist camera
+The profile is built from d1-2's own ``omakase.camera_calibration/2`` file (a
+copy under ``tests/data`` — the kit ships no robot's numbers): its MEASURED
+wrist fisheyes (d1-calibrate-wrist, 2026-09-22), its gripper gap and its
+head-camera mount; the wrist camera
 projects through the equidistant fisheye model in numpy, and the head camera
 applies the mount — and says ``calibrated`` — only when it has one.
 """
@@ -18,8 +20,8 @@ from scipy.spatial.transform import Rotation as R
 
 from manipulation_kit.agent.robot import (LiveRobot, load_scene,
                                           wrist_camera_from_scene)
-from manipulation_kit.description.robot_profile import (RobotProfile,
-                                                        WristIntrinsics,
+from manipulation_kit.description.robot_profile import (NotACalibrationFile,
+                                                        RobotProfile,
                                                         scene_robot_block)
 from manipulation_kit.perception import HeadCamera, WristCamera
 from manipulation_kit.perception.wrist import (fisheye_distort,
@@ -28,6 +30,11 @@ from manipulation_kit.perception.wrist import (fisheye_distort,
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "tests" / "data" / "robot_profile"
 D1_2_SCENE = ROOT / "examples" / "agent" / "scenes" / "d1-2_tape_cup.json"
+#: d1-2's calibration file, as the robot holds it
+D1_2 = ROOT / "tests" / "data" / "d1-2.camera_calibration.json"
+#: the kit's old committed profile (manipulation_kit.robot_profile/1), kept
+#: as the reference the v2 file must reproduce
+D1_2_V1 = DATA / "d1-2.robot_profile-v1.json"
 K = (-0.033292, -0.016422, 0.008260, -0.002041)       # d1-2 left, rounded
 
 
@@ -83,30 +90,74 @@ def test_the_wrist_camera_trusts_only_its_calibrated_radius():
     assert near.visible
 
 
-def test_the_profile_reads_the_d1_inference_calibration_files_verbatim():
-    built = RobotProfile.from_files(
-        "d1-2", wrist={"left": DATA / "wrist_left_intrinsics.json",
-                       "right": DATA / "wrist_right_intrinsics.json"})
-    committed = RobotProfile.named("d1-2")
-    assert built.wrist_cameras == committed.wrist_cameras
-    left = committed.wrist_cameras["left"]
-    assert (left.model, left.width, left.height) == ("fisheye", 640, 480)
-    assert left.fx == pytest.approx(238.5446, abs=1e-4)
-    assert left.valid_radius_px == pytest.approx(304.3)
-    assert committed.wrist_cameras["right"].cx == pytest.approx(328.3726, abs=1e-4)
-    assert committed.hand.open_gap_m == pytest.approx(0.0605)
-    assert RobotProfile.from_json(committed.to_json()) == committed
-    with pytest.raises(ValueError, match="the left wrist, not the right"):
-        RobotProfile.from_files("x", wrist={"right": DATA / "wrist_left_intrinsics.json"})
-    with pytest.raises(LookupError, match="d1-2"):
-        RobotProfile.named("no-such-robot")
+def test_the_profile_carries_the_wrist_calibration_files_numbers_verbatim():
+    """The v2 file's wrist lenses are d1-calibrate-wrist's
+    ``wrist_<side>_intrinsics.json`` numbers, bit for bit, and the old
+    committed profile's."""
+    profile = RobotProfile.load(D1_2)
+    v1 = json.loads(D1_2_V1.read_text(encoding="utf-8"))
+    assert set(profile.wrist_cameras) == {"left", "right"}
+    for side in ("left", "right"):
+        wrist = profile.wrist_cameras[side]
+        raw = json.loads((DATA / f"wrist_{side}_intrinsics.json").read_text())
+        old = v1["wrist_cameras"][side]
+        for ref in (raw, old):
+            assert (wrist.fx, wrist.fy, wrist.cx, wrist.cy) == (
+                ref["fx"], ref["fy"], ref["cx"], ref["cy"])
+            assert (wrist.width, wrist.height) == (ref["width"], ref["height"])
+            assert wrist.model == ref["model"] == "fisheye"
+            assert list(wrist.k) == ref["k"]
+            assert wrist.valid_radius_px == ref["valid_radius_px"]
+            assert wrist.rms_px == ref["rms_px"]
+    assert profile.name == "d1-2"
+    assert profile.hand.open_gap_m == v1["hand"]["open_gap_m"] == 0.0605
+
+
+def test_per_robot_values_are_not_the_kits():
+    """``named`` and the committed profiles are gone; a bare robot name says
+    where the numbers live now."""
+    assert not hasattr(RobotProfile, "named")
+    import manipulation_kit.description.robot_profile as rp
+    assert not hasattr(rp, "PROFILES")
+    with pytest.raises(NotACalibrationFile, match="camera_calibration.json"):
+        RobotProfile.resolve("d1-2")
+    with pytest.raises(FileNotFoundError):
+        RobotProfile.resolve("no/such/file.json")
+    assert RobotProfile.resolve(None) is None
+    # a relative path resolves against the scene's directory
+    assert RobotProfile.resolve(D1_2.name, relative_to=D1_2.parent).name == "d1-2"
+
+
+def test_the_head_mount_round_trips_to_the_files_absolute_pose():
+    """fixture -> HeadMountDelta -> head_link_to_optical == the file's
+    absolute T_parent_camera, and == what the old delta + nominal produced."""
+    from manipulation_kit.description.robot_profile import HeadMountDelta
+    doc = json.loads(D1_2.read_text(encoding="utf-8"))
+    absolute = doc["cameras"]["head"]["mount"]["T_parent_camera"]
+    mount = RobotProfile.load(D1_2).head_mount_delta
+    p, r = mount.head_link_to_optical()
+    assert np.allclose(p, absolute["xyz_m"], atol=1e-9)
+    q = r.as_quat()
+    q = q if np.dot(q, absolute["quat_xyzw"]) >= 0 else -q
+    assert np.allclose(q, absolute["quat_xyzw"], atol=1e-9)
+    old = json.loads(D1_2_V1.read_text(encoding="utf-8"))["head_mount_delta"]
+    old_mount = HeadMountDelta(tuple(old["xyz_m"]), tuple(old["rpy_deg"]),
+                               tuple(old["nominal_xyz_m"]),
+                               tuple(old["nominal_quat_xyzw"]))
+    p_old, r_old = old_mount.head_link_to_optical()
+    assert np.allclose(p, p_old, atol=1e-9)
+    assert np.allclose(r.as_matrix(), r_old.as_matrix(), atol=1e-9)
+    assert np.allclose(mount.xyz_m, old["xyz_m"], atol=1e-6)
+    assert np.allclose(mount.rpy_deg, old["rpy_deg"], atol=1e-4)
+    assert mount.nominal_quat_xyzw == tuple(old["nominal_quat_xyzw"])
+    assert mount.rms_px == pytest.approx(3.892)
 
 
 def test_the_d1_2_head_mount_is_the_fitted_pose_whatever_the_nominal_is():
     """The delta is kept WITH the nominal it was fitted against (17.25 deg),
     so the rebuilt head_link -> optical is the fit's absolute pose — not the
     delta pasted onto the kit's current 15 deg nominal."""
-    mount = RobotProfile.named("d1-2").head_mount_delta
+    mount = RobotProfile.load(D1_2).head_mount_delta
     p, r = mount.head_link_to_optical()
     assert np.allclose(p, [0.132879, -0.107000, -0.004431], atol=2e-6)
     assert np.allclose(r.as_matrix()[:, 2], [0.978358, 0.202684, -0.041656],
@@ -120,7 +171,7 @@ def test_the_head_camera_with_the_d1_2_profile_moves_a_wagon_point():
     cube's, d1-2 2026-09-22) lands 8 cm further out with the measured mount
     than through the URDF nominal — and only the measured one says
     calibrated."""
-    mount = RobotProfile.named("d1-2").head_mount_delta
+    mount = RobotProfile.load(D1_2).head_mount_delta
     kwargs = dict(width=640, height=480, fx=606.54, fy=605.90, cx=325.76,
                   cy=250.35, neck_pitch=0.62)
     nominal = HeadCamera.from_robot(**kwargs)
@@ -136,16 +187,22 @@ def test_the_head_camera_with_the_d1_2_profile_moves_a_wagon_point():
     assert HeadCamera.from_json(measured.to_json()).calibrated
 
 
-def test_a_scene_naming_the_profile_gets_the_measured_wrists():
-    scene = load_scene(D1_2_SCENE)
+def test_a_scene_resolved_against_the_profile_gets_the_measured_wrists(tmp_path):
+    scene = load_scene(D1_2_SCENE, profile=D1_2)
     wrists = wrist_camera_from_scene(scene, measured_only=True)
     assert set(wrists) == {"left", "right"}
     assert wrists["left"]["model"] == "fisheye" and len(wrists["left"]["k"]) == 4
     # a scene key overrides the profile's, and a placeholder never reaches
     # hardware
     raw = json.loads(D1_2_SCENE.read_text(encoding="utf-8"))
-    raw["robot"]["hand"] = {"open_gap_m": 0.058}
-    assert scene_robot_block(raw)["hand"]["open_gap_m"] == 0.058
+    raw["robot"] = {"hand": {"open_gap_m": 0.058}}
+    assert scene_robot_block(raw, profile=D1_2)["hand"]["open_gap_m"] == 0.058
+    # a scene may name the file itself, relative to the scene
+    (tmp_path / "cal.json").write_text(D1_2.read_text(encoding="utf-8"))
+    named = dict(raw, robot={"profile": "cal.json"})
+    (tmp_path / "scene.json").write_text(json.dumps(named))
+    assert set(wrist_camera_from_scene(load_scene(tmp_path / "scene.json"),
+                                       measured_only=True)) == {"left", "right"}
     placeholder = {"robot": {"wrist_camera": {
         "fx": 320.0, "fy": 320.0, "cx": 320.0, "cy": 240.0, "width": 640,
         "height": 480, "measured": False}}}
@@ -155,12 +212,14 @@ def test_a_scene_naming_the_profile_gets_the_measured_wrists():
 
 def test_a_robot_built_with_the_profile_looks_through_the_fisheye(d1_arm):
     scene = json.loads(D1_2_SCENE.read_text(encoding="utf-8"))
-    del scene["robot"]
+    assert "robot" not in scene                  # the kit's scene carries none
     robot = LiveRobot.from_flag("kinematic", kin=d1_arm, scene=scene,
-                                profile=RobotProfile.named("d1-2"))
+                                profile=RobotProfile.load(D1_2))
     assert robot.profile.name == "d1-2" and robot.has_wrist_camera()
     cameras = robot.cameras()
     assert cameras["left_wrist"].model == "fisheye"
     assert cameras["right_wrist"].valid_radius_px == pytest.approx(326.0, abs=1)
-    assert WristIntrinsics.from_json(
-        json.loads((DATA / "wrist_right_intrinsics.json").read_text())).model == "fisheye"
+    # a path works as well as a profile
+    by_path = LiveRobot.from_flag("kinematic", kin=d1_arm, scene=scene,
+                                  profile=D1_2)
+    assert by_path.profile.name == "d1-2" and by_path.has_wrist_camera()

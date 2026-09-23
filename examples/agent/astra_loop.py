@@ -7,7 +7,7 @@ model as generated ROBOT FACTS, never from this prompt. See examples/README.md::
 
     python examples/agent/astra_loop.py --dry-run          # scripted, no key
     python examples/agent/astra_loop.py --model gpt-6-astra --executor firmware \\
-        --robot http://d1-2:4750 --robot-profile d1-2 --scene my_scene.json
+        --robot http://d1-2:4750 --scene my_scene.json  # + --robot-profile PATH off the robot
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ from manipulation_kit.agent import (DecisionTrace, KinematicMirror,  # noqa: E40
 from manipulation_kit.agent.robot import (frames_from,  # noqa: E402,F401
                                           head_camera_from_scene, objects_from,
                                           with_declared_hand)
-from manipulation_kit.description.robot_profile import RobotProfile  # noqa: E402
 from manipulation_kit.primitives import Place  # noqa: E402
-from run_scene import perceived_scene, robot_head_state, scene_for_run  # noqa: E402,F401
+from run_scene import (add_profile_arguments, perceived_scene,  # noqa: E402,F401
+                       resolve_profile, robot_head_state, scene_for_run)
 from scene import DEMO_WRIST_CAMERA, demo_scene  # noqa: E402
 from scripted import ScriptedModel, two_things_on  # noqa: E402,F401
 
@@ -126,12 +126,12 @@ def build_parser() -> argparse.ArgumentParser:
     for flag, default in (("--task", DEFAULT_TASK), ("--model", None),
                           ("--reasoning", "medium"), ("--executor", "kinematic"),
                           ("--executor-class", None), ("--isaac-url", None),
-                          ("--robot", "http://127.0.0.1:4750"),
-                          ("--robot-profile", None), ("--perceive", None),
+                          ("--robot", "http://127.0.0.1:4750"), ("--perceive", None),
                           ("--perceive-opts", ""), ("--snapshot-cmd", None),
                           ("--object", "red_block"), ("--destination", "box")):
         add(flag, default=default)
     add("--dry-run", action="store_true", help="the scripted stub, whatever --model says")
+    add_profile_arguments(parser)
     add("--max-output-tokens", type=int, default=12000)
     add("--debug", action="store_true")
     add("--trace", type=Path, default=None)
@@ -147,8 +147,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("--scene and --perceive are mutually exclusive")
     try:
         policy = OperatorPolicy.from_args(args)
-        profile = RobotProfile.resolve(args.robot_profile)
-    except (ValueError, LookupError) as exc:
+        profile = resolve_profile(args)
+    except (ValueError, LookupError, OSError) as exc:
         parser.error(str(exc))
     snapshotter = None
     if args.snapshot_cmd:

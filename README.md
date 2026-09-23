@@ -178,7 +178,9 @@ python examples/agent/jev_menu.py --task "put the red block in the box"
 # the loop measuring its own scene from a frame, once, before turn 0
 python examples/agent/astra_loop.py --perceive snapshot --trace /tmp/run/t.jsonl \
     --object charger --destination cup \
-    --perceive-opts "--table-width 0.60 --neck-pitch 0.52 --robot-profile d1-2"
+    --perceive-opts "--table-width 0.60 --neck-pitch 0.52"
+# (on the robot its ~/.config/omakase/camera_calibration.json is read by
+#  default; offline, add --robot-profile tests/data/d1-2.camera_calibration.json)
 ```
 
 `pip install openai` first for the second one — it is not a dependency of this
@@ -548,10 +550,13 @@ policy = OperatorPolicy(max_grip="soft", allowed_directions=("down",),
 
 `look_before_stroke` needs **measured wrist-camera intrinsics per robot**.
 d1-2's two fisheyes were measured on 2026-09-22 (d1-inference
-`d1-calibrate-wrist`, `calibration/wrist_fisheye.py`) and live in its **robot
-profile** (`manipulation_kit.description.robot_profile.RobotProfile.named("d1-2")`,
-with the hand gap and the head camera's measured mount; `--robot-profile`, or
-`"robot": {"profile": "d1-2"}` in a scene). The wrist lens's extrinsic is still
+`d1-calibrate-wrist`, `calibration/wrist_fisheye.py`) and live **on the robot**, in
+its `omakase.camera_calibration/2` file `~/.config/omakase/camera_calibration.json`
+with the hand gap and the head camera's measured mount — the kit ships the
+schema and the reader (`manipulation_kit.description.camera_calibration`,
+`RobotProfile.load(path)`), never a robot's values. `--robot-profile PATH`
+overrides the default (offline: `tests/data/d1-2.camera_calibration.json`); a
+FAILED calibration gate is refused unless `--allow-failed-calibration`. The wrist lens's extrinsic is still
 the nominal plate geometry, so **`--no-look-before-stroke` is the documented
 setting for a robot's first live run**. See [`docs/agent.md`](docs/agent.md).
 
