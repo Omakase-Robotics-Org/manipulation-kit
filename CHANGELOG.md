@@ -139,6 +139,54 @@ caller of the API below, and pip needs a version that moves.)
 
 The consumers are updated in a following sweep, not in this repository.
 
+### Fingertip grasps onto a surface finish by contact (d1-2 tip trial, 2026-09-23)
+
+The d1-2 tip trial (8 mm slab of business cards, 91 x 55 mm, left hand,
+three cycles, zero controller errors) closed the jaws on nothing three of
+three. Two findings:
+
+* **Height — fixed here.** The plan stopped the finger tips 14.9 mm over the
+  wagon: 3 mm `SUPPORT_CLEARANCE_M` + the operator's 12 mm
+  `ClearancePolicy.droop_margin_m`. That margin is the ~1 cm sag of a LONG
+  reach (run 7, x 0.48); at x 0.40 the arm did not sag, so the tips stopped
+  ~7 mm above the slab. A constant sag guess cannot be right for a slab
+  thinner than the guess. **`Grasp(contact="tip")` descending onto a known
+  surface (or onto anything thinner than `TIP_CONTACT_THIN_M` = 58 mm) now
+  finishes BY CONTACT** (`grasp_geometry.descends_by_contact`): the plain
+  descent stops with the tips `TIP_SEARCH_START_M` (15 mm) over the modelled
+  surface, then a `ContactStep` searches along the travel for at most that
+  plus `CONTACT_OVERTRAVEL_M` (5 mm past the modelled top), ending at a
+  `TIP_CONTACT_NM` (3.0 Nm, unmeasured) joint-torque rise; the runner
+  re-commands the measured posture and the jaws close there. The droop
+  margin is not applied on that path; pad grasps (which must not touch)
+  keep the fixed height and the droop margin. A `KinematicExecutor` travels
+  the whole search and reports `made=False, stopped_by="max_travel"` —
+  plans and dry-runs still verify, and say no contact was measured. The
+  plan's waypoints gain a third, `contact_limit`; `plan.contact_steps`
+  appears on those plans (golden cases with a fingertip descent change
+  accordingly). `planning.leg_knots` is the one knot/distance builder for
+  every contact leg (probe, press, fingertip grasp).
+* **Jaw axis — no kit bug; the slab lay 90 deg from its declaration.** Shu's
+  photos show the open jaws spanning the slab's 91 mm side. The recorded
+  plan's grasp quaternion `[0, 1, 0, 0]` puts TCP x (the jaw axis) along base
+  -x; the kit's FK of the executed joints, and an independent walk of the
+  gripper description's prismatic finger joints, both give the finger
+  travel as base (-1, 0.001, 0). The slab was declared at yaw 1.5708 (91 mm
+  along base y), so it presented 55.1 mm along that axis and `fits()` —
+  which measures the same `orientation.jaw_axis` — correctly passed it. The
+  photos are taken from the robot's RIGHT side, where "left-right" is the
+  robot's forward axis: the slab lay long side along base x (yaw 0), where
+  the executed posture presents 91 mm and `fits()` refuses it
+  (`object_too_wide`). Declared as it lay, the left wrist cannot turn the
+  jaws across base y at (0.403, 0.10) (coupled J7 limit) and the plan is
+  refused. `tests/primitives/test_tip_grasp_by_contact.py` pins all of it.
+  **Open, not fixed here:** a quarter-turn slab sits exactly on
+  `align_tool`'s half-turn fold: yaw 1.5708 plans J5 +2.8 deg, yaw
+  `math.pi / 2` plans the other half turn at J5 +173 deg (1 deg from the box
+  that flipped the probe trial). The roll sweep never tries the squared
+  roll's half turn, which is also why yaw 0 is refused rather than planned
+  at the other wrist (it plans, J5 +115.5 deg, when a pi candidate is added).
+
 ### Repeated probes: no wrist flip, no zero-duration knots (d1-2, 2026-09-23)
 
 The d1-2 probe trial (`docs/probe-hardware-trial.md`, fcc2087) stopped at

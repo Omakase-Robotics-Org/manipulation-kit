@@ -817,3 +817,40 @@ def joint_ramp(kin: Kin, side: str, q_goal, *, primitive: str,
         f"the {side} arm did not converge on {label} within the step budget",
         waypoint_label=label, primitive=primitive, side=side,
         stage="joint_ramp")
+
+
+#: Two consecutive contact-leg knots closer than this on every joint [rad]
+#: are one knot: the solver re-solved without moving.
+DUPLICATE_KNOT_RAD = 1e-9
+
+
+def leg_knots(kin: Kin, side: str, q_start, leg_steps, d
+              ) -> Tuple[List[np.ndarray], List[float]]:
+    """``(path, s)`` of a contact leg: its joint knots from ``q_start`` and
+    each knot's distance along the base-frame travel ``d`` [m], measured by
+    forward kinematics on the SOLVED posture (the leg's own geometry, not its
+    ideal). Shared by every verb that ends in a
+    :class:`~.types.ContactStep` (``probe``, ``press``, a fingertip ``grasp``).
+
+    A knot the solver did not move (it re-solved a posture pinned at a limit:
+    d1-2 2026-09-23, J5 held at 173 deg for 35 of 41 knots) is the same
+    sample twice. It is dropped HERE, where it is made: kept, it has the same
+    distance as the one before it, hence the same time, and the daemon
+    refuses the whole leg ("increasing times"). ``kin`` is a borrowed
+    :class:`Kin`; the side's joints are left at the last knot (the caller's
+    ``with`` block restores them).
+    """
+    d = np.asarray(d, dtype=float).reshape(3)
+    path = [np.asarray(q_start, dtype=float)]
+    for s in leg_steps:
+        q = np.asarray(s.q, dtype=float)
+        if np.max(np.abs(q - path[-1])) > DUPLICATE_KNOT_RAD:
+            path.append(q)
+    kin.kin.set_joints(side, path[0])
+    p0 = kin.tool_pose(side)[0]
+    dist = [0.0]
+    for q in path[1:]:
+        kin.kin.set_joints(side, q)
+        along = float(np.dot(kin.tool_pose(side)[0] - p0, d))
+        dist.append(max(dist[-1], along))
+    return path, dist

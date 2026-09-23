@@ -53,6 +53,8 @@ __all__ = [
     "standoff_point", "roll_candidates", "graspable_width_m", "fits",
     "fit_problems",
     "achieved_clearance", "tilted", "own_face_direction",
+    "TIP_CONTACT_THIN_M", "TIP_SEARCH_START_M", "CONTACT_OVERTRAVEL_M",
+    "TIP_CONTACT_NM", "descends_by_contact",
 ]
 
 
@@ -237,8 +239,13 @@ def tool_point(p_contact, d_base, reference: GraspReference) -> np.ndarray:
 
 
 def _contact(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
-             support: Optional[SurfaceView], droop_margin_m: float = 0.0):
-    """``(p_contact, raised, floor_z, floor_note)`` for ``spec``."""
+             support: Optional[SurfaceView], droop_margin_m: float = 0.0,
+             clearance_m: Optional[float] = None):
+    """``(p_contact, raised, floor_z, floor_note)`` for ``spec``.
+
+    The leading tips keep ``clearance_m`` over the floor when it is given
+    (a descent that then SEARCHES for the floor by contact), else the rigid
+    :data:`~.orientation.SUPPORT_CLEARANCE_M` plus ``droop_margin_m``."""
     d = _unit_d(obj, frames, spec)
     p = np.asarray(obj.pose_in_base(frames)[0], dtype=float).reshape(3).copy()
     floor, note = descent_floor(obj, frames, support)
@@ -248,7 +255,8 @@ def _contact(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
         # must stop SUPPORT_CLEARANCE above the floor. Back the contact point
         # out ALONG THE TRAVEL until they do — straight up for ``down``.
         tips_z = float(p[2] + d[2] * spec.reference.lead_m)
-        least = floor + _o.SUPPORT_CLEARANCE_M + float(droop_margin_m)
+        least = floor + (_o.SUPPORT_CLEARANCE_M + float(droop_margin_m)
+                         if clearance_m is None else float(clearance_m))
         if tips_z < least - 1e-9:        # not for a float's last bit
             p = p - d * ((least - tips_z) / -float(d[2]))
             raised = True
@@ -261,7 +269,8 @@ def _unit_d(obj, frames, spec) -> np.ndarray:
 
 def grasp_pose(obj: ObjectView, frames: FrameGraph, spec: GraspSpec, *,
                side: str, support: Optional[SurfaceView],
-               droop_margin_m: float = 0.0
+               droop_margin_m: float = 0.0,
+               clearance_m: Optional[float] = None
                ) -> Tuple[np.ndarray, R, List[str]]:
     """``(p_tool, r_tcp, notes)``: the tool pose at contact.
 
@@ -276,12 +285,14 @@ def grasp_pose(obj: ObjectView, frames: FrameGraph, spec: GraspSpec, *,
 
     ``droop_margin_m`` is how far the real arm sags below the commanded pose
     (``clearance.ClearancePolicy.droop_margin_m``, 0 for the rigid model); it
-    is added to that fingertip clearance.
+    is added to that fingertip clearance. ``clearance_m`` replaces both: the
+    tips' height over the floor for a descent that finishes BY CONTACT
+    (:func:`descends_by_contact`), where no sag has to be guessed.
     """
     d = _unit_d(obj, frames, spec)
     r_tcp = _o.grasp_orientation(side, d, obj, frames, roll_rad=spec.roll_rad)
     p_contact, raised, _floor, floor_note = _contact(obj, frames, spec, support,
-                                                     droop_margin_m)
+                                                     droop_margin_m, clearance_m)
     notes = [floor_note] if float(d[2]) < -1e-3 else []
     if raised:
         centre = np.asarray(obj.pose_in_base(frames)[0], dtype=float)
@@ -434,3 +445,53 @@ def achieved_clearance(p_tool, r_tcp: R, floor_z: float) -> float:
             + r_tcp.apply([0.0, 0.0, PAD_TIP_Z_M - _o.TOOL_Z_M]))
     return float(tips[2]) - float(floor_z)
 
+
+
+# --------------------------------------------------------------------------- #
+# the fingertip descent that finishes by contact
+# --------------------------------------------------------------------------- #
+
+#: An object thinner than this is taken at the tips BY CONTACT even with no
+#: measured surface under it [m]: twice the 29 mm the tips lead the pad
+#: centre. Thinner than that and a fixed fingertip height decides whether the
+#: jaws close on the object or on the air above it.
+TIP_CONTACT_THIN_M = 2.0 * PAD.lead_m
+
+#: Where a contact-finished descent stops BEFORE it searches: the finger tips
+#: this far over the descent floor [m]. Not a sag guess — the search below it
+#: measures the floor — just far enough that a sagging arm (run 7: ~10 mm at
+#: x 0.48) does not meet the table on the plain descent.
+TIP_SEARCH_START_M = 0.015
+
+#: How far PAST the modelled floor the search may travel before it gives up
+#: [m] — the 5 mm a tape-measured / probed table height is published to
+#: (``contact.PROBE_HEIGHT_UNCERTAINTY_M``). A search that reaches it met
+#: nothing: the floor is lower than the scene says, and the run says so.
+CONTACT_OVERTRAVEL_M = 0.005
+
+#: The joint-torque rise that ends the search [Nm]: under the probe's 4 Nm
+#: (the tips should touch, not push), over the < 2 Nm a free-air leg is
+#: expected to show (docs/probe-hardware-trial.md G4). UNMEASURED on
+#: hardware; the tip trial reports the torque it stopped at.
+TIP_CONTACT_NM = 3.0
+
+
+def descends_by_contact(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
+                        support: Optional[SurfaceView]) -> bool:
+    """Does this grasp finish its descent BY CONTACT (a ``ContactStep`` that
+    stops when the tips touch the support), rather than at a fixed height?
+
+    For a fingertip grasp travelling DOWN onto an object that stands on a
+    known surface, or that is thinner than :data:`TIP_CONTACT_THIN_M`. The
+    d1-2 tip trial (2026-09-23) is why: the fixed height put the tips 14.9 mm
+    over the wagon (3 mm clearance + 12 mm droop margin), the arm did not sag
+    in that near posture, and the jaws closed 7 mm above an 8 mm slab —
+    three of three. A pad grasp keeps the fixed height (and the droop margin):
+    its tips are 29 mm past the pads and must not touch anything.
+    """
+    if spec.reference is not TIP:
+        return False
+    d = _unit_d(obj, frames, spec)
+    if not _o.is_descent(d):
+        return False
+    return support is not None or obj.vertical_extent(frames) < TIP_CONTACT_THIN_M

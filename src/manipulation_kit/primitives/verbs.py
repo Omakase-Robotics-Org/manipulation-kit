@@ -35,7 +35,7 @@ from . import verifiers as V
 from .arguments import check_arguments
 from .clearance import SceneGate, policy_of
 from .planning import (IncompleteObservation, Kin, coupled_limit_notes,
-                       joint_ramp, solve_path)
+                       joint_ramp, leg_knots, solve_path)
 from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, INCOMPLETE_OBSERVATION, LearnedPrimitive,
                     LEARNED_POLICY_REQUIRED, NO_FIT, NO_MOTION, NO_SUCH_OBJECT,
@@ -45,7 +45,8 @@ from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     UNREACHABLE_DESTINATION, UNREACHABLE_HANDOVER,
                     UNKNOWN_FRAME, SIDE_CHOICES,
                     UNSUPPORTED_GEOMETRY, Unmet,
-                    Verifier, GripStep, SettleStep, Waypoint)
+                    Verifier, ContactCriterion, ContactStep, GripStep,
+                    JointStep, SettleStep, Waypoint)
 
 #: default gap between the finger tips and the object's silhouette at the
 #: standoff [m] (:func:`.grasp_geometry.standoff_point`)
@@ -637,7 +638,8 @@ def _own_frame(direction: Direction, item: ObjectView, world: WorldView
 
 
 def _meet(world: WorldView, name: str, side_arg: str, direction: Direction,
-          contact: str, standoff_m: float, *, droop_margin_m: float = 0.0
+          contact: str, standoff_m: float, *, droop_margin_m: float = 0.0,
+          clearance_m: Optional[float] = None
           ) -> Tuple[Optional[_Meet], List[Unmet]]:
     """The shared geometry, or the typed reason it cannot be computed.
 
@@ -662,7 +664,7 @@ def _meet(world: WorldView, name: str, side_arg: str, direction: Direction,
         support = gg.support_of(world, name)
         p_grasp, _r_tcp, grasp_notes = gg.grasp_pose(
             item, world.frames, spec, side=side, support=support,
-            droop_margin_m=droop_margin_m)
+            droop_margin_m=droop_margin_m, clearance_m=clearance_m)
         p_stand = gg.standoff_point(item, world.frames, spec, p_grasp)
         hand = world.gripper(side)
         opening = getattr(hand, "open_gap_m", None)
@@ -730,7 +732,7 @@ def _by_roll(primitive: str, world0: WorldView, meet: _Meet, build) -> Verifier:
 
 
 def _first_roll_that_plans(primitive: Primitive, world: WorldView, kin,
-                           meet: _Meet, waypoints_for, check=None):
+                           meet: _Meet, waypoints_for, check=None, solve=None):
     """Try each roll in order; the first whose path solves (and passes
     ``check``) wins. ``(roll, waypoints, steps, detours, extra_notes)`` or
     ``(None, error)`` — the SQUARED roll's refusal when every one failed,
@@ -740,8 +742,8 @@ def _first_roll_that_plans(primitive: Primitive, world: WorldView, kin,
     others: List[str] = []
     for roll in _rolls_in_order(meet, world):
         waypoints = waypoints_for(meet.r_tcp(roll))
-        steps, error, detours = _solve(primitive, world, kin, meet.side,
-                                       waypoints)
+        steps, error, detours = (solve or _solve)(primitive, world, kin,
+                                                  meet.side, waypoints)
         extra: Tuple[str, ...] = ()
         if error is None and check is not None:
             error, extra = check(steps, meet.r_tcp(roll))
@@ -934,10 +936,20 @@ class Grasp(Primitive):
             unmet += problems[0]
         return unmet
 
-    def _meet(self, world: WorldView, *, droop_margin_m: float = 0.0):
+    def _meet(self, world: WorldView, *, droop_margin_m: float = 0.0,
+              clearance_m: Optional[float] = None):
         return _meet(world, self.object, self.side, self.direction,
                      self.contact, self.standoff_m,
-                     droop_margin_m=droop_margin_m)
+                     droop_margin_m=droop_margin_m, clearance_m=clearance_m)
+
+    def by_contact(self, world: WorldView) -> bool:
+        """Does this grasp finish its descent by contact
+        (:func:`.grasp_geometry.descends_by_contact`)?"""
+        meet, unmet = self._meet(world)
+        if unmet or meet is None:
+            return False
+        return gg.descends_by_contact(meet.item, world.frames, meet.spec,
+                                      meet.support)
 
     def resolve_side(self, world: WorldView) -> Optional[str]:
         return self._approach().resolve_side(world)
@@ -946,17 +958,33 @@ class Grasp(Primitive):
         unmet = self.preconditions(world)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
-        # the real arm's sag raises the fingertip floor (F16; the typed
-        # replacement of MKIT_SUPPORT_CLEARANCE_M, see primitives.clearance)
-        droop = policy_of(kin).droop_margin_m
-        meet, unmet = self._meet(world, droop_margin_m=droop)
+        # A FINGERTIP DESCENT ONTO A SURFACE FINISHES BY CONTACT: it stops
+        # with the tips TIP_SEARCH_START_M over the floor and then searches
+        # down (a ContactStep) until they touch it. Every other descent stops
+        # at a fixed height, raised by the real arm's sag (F16; the typed
+        # replacement of MKIT_SUPPORT_CLEARANCE_M, see primitives.clearance).
+        by_contact = self.by_contact(world)
+        droop = 0.0 if by_contact else policy_of(kin).droop_margin_m
+        meet, unmet = self._meet(
+            world, droop_margin_m=droop,
+            clearance_m=gg.TIP_SEARCH_START_M if by_contact else None)
         if unmet:
             return self._unmet_error(unmet, self.resolve_side(world) or "")
         side = meet.side
         floor, _ = gg.descent_floor(meet.item, world.frames, meet.support)
         descends = float(meet.d[2]) < -1e-3
+        #: the search leg: from the tips' start height to CONTACT_OVERTRAVEL_M
+        #: past the modelled floor, along the travel
+        search_m = 0.0
+        if by_contact:
+            r0 = meet.r_tcp(0.0)
+            search_m = (gg.achieved_clearance(meet.p_grasp, r0, floor)
+                        / max(-float(meet.d[2]), 1e-6)
+                        + gg.CONTACT_OVERTRAVEL_M)
 
         def waypoints_for(r_tcp):
+            search = ([Waypoint("contact_limit", meet.p_grasp + meet.d * search_m,
+                                r_tcp, allow_via=False)] if by_contact else [])
             return [
                 # getting to the standoff is free-space transit: a detour is
                 # a better answer than a refusal. THE TOOL IS CHECKED THERE,
@@ -971,7 +999,45 @@ class Grasp(Primitive):
                 # corridor (R10). The tool is checked here too — this is the
                 # pose the jaws close on.
                 Waypoint("grasp", meet.p_grasp, r_tcp, allow_via=False,
-                         arrive=True)]
+                         arrive=True)] + search
+
+        def solve_by_contact(primitive, world_, kin_, side_, waypoints):
+            # the search leg is MEANT to reach the surface: the first thing
+            # its ray meets after the object (the table) is left out of the
+            # scene check, like a probe's; the leg's knots go inside the
+            # ContactStep, so no runner can play them blind
+            scene = SceneGate.for_contact(
+                world_, kin_, meet.p_grasp, meet.d, search_m,
+                exclude=[n for n in (getattr(primitive, f, "")
+                                     for f in SCENE_TARGET_FIELDS) if n])
+            try:
+                with Kin(kin_, world_, scene=scene) as borrowed:
+                    steps, error, notes = solve_path(
+                        borrowed, side_, waypoints, primitive=primitive.name())
+                    if error is not None:
+                        return steps, error, notes
+                    pre = [s for s in steps if s.waypoint in (0, 1)]
+                    leg = [s for s in steps if s.waypoint == 2]
+                    q_start = (pre[-1].q if pre else borrowed.joints(side_))
+                    path, dist = leg_knots(borrowed, side_, q_start, leg,
+                                           meet.d)
+            except IncompleteObservation as exc:
+                return [], _incomplete(primitive, side_, exc), []
+            if len(path) < 2 or dist[-1] <= 1e-4:
+                return [], PlanError(
+                    BAD_ARGUMENT, f"the {side_} fingertip search has no length",
+                    primitive=primitive.name(), side=side_), []
+            contact = ContactStep(
+                side_, Direction(tuple(float(c) for c in meet.d), BASE),
+                float(search_m), ContactCriterion(
+                    joint_torque_nm=gg.TIP_CONTACT_NM),
+                waypoint=2, path=tuple(path), s=tuple(dist))
+            measured = ((f"the {scene.contact_target!r} the tips search for "
+                         f"is left out of the scene check (the search is "
+                         f"meant to touch it)",)
+                        if scene.contact_target else ())
+            return (pre + [contact], None,
+                    list(notes) + list(measured) + list(_unchecked_note(scene)))
 
         def achieved(steps, r_tcp):
             # VALIDATE THE ACHIEVED DESCENT, not the ideal waypoint. The path
@@ -979,9 +1045,10 @@ class Grasp(Primitive):
             # plateaus low lands the finger tips in the table while every
             # waypoint coordinate still reads correct (F5's ten failures in
             # ten). Measured against the SAME floor the grasp point used.
-            if not descends or not steps:
+            joint_steps = [s for s in steps if isinstance(s, JointStep)]
+            if not descends or not joint_steps:
                 return None, ()
-            p_tool = _achieved_tool(kin, world, side, steps[-1].q)
+            p_tool = _achieved_tool(kin, world, side, joint_steps[-1].q)
             if p_tool is None:
                 return None, ()
             clearance = gg.achieved_clearance(p_tool, r_tcp, floor)
@@ -993,7 +1060,7 @@ class Grasp(Primitive):
                     f"stands on, under the "
                     f"{ap.MIN_ACHIEVED_CLEARANCE_M * 1000:.0f} mm this plan "
                     f"has to keep. The waypoint asked for "
-                    f"{(ap.SUPPORT_CLEARANCE_M + droop) * 1000:.0f} mm; the "
+                    f"{(gg.TIP_SEARCH_START_M if by_contact else ap.SUPPORT_CLEARANCE_M + droop) * 1000:.0f} mm; the "
                     f"IK did not "
                     f"get there, and the fingers would jam on the surface "
                     f"before the jaws close",
@@ -1001,11 +1068,22 @@ class Grasp(Primitive):
                     residual_m=float(ap.MIN_ACHIEVED_CLEARANCE_M - clearance),
                     stage="achieved_clearance",
                     primitive=self.name(), side=side), ()
+            if by_contact:
+                return None, (
+                    f"the solved descent stops with the finger tips "
+                    f"{clearance * 1000:.1f} mm off the surface, then SEARCHES "
+                    f"down by contact: at most {search_m * 1000:.1f} mm "
+                    f"({gg.CONTACT_OVERTRAVEL_M * 1000:.0f} mm past the "
+                    f"modelled surface), stopping at a "
+                    f"{gg.TIP_CONTACT_NM:.1f} Nm joint-torque rise, and the "
+                    f"jaws close where the tips touched (no droop margin: "
+                    f"the height is measured, not guessed)",)
             return None, (f"the solved descent keeps the pad tips "
                           f"{clearance * 1000:.1f} mm off the surface",)
 
-        found = _first_roll_that_plans(self, world, kin, meet, waypoints_for,
-                                       check=achieved)
+        found = _first_roll_that_plans(
+            self, world, kin, meet, waypoints_for, check=achieved,
+            solve=solve_by_contact if by_contact else None)
         if found[0] is None:
             return found[1]
         roll, waypoints, steps, detours, clearance_notes = found

@@ -79,12 +79,17 @@ def test_a_6mm_card_is_grasped_at_the_tips_and_refused_at_the_pads(d1_arm):
     assert tips.preconditions(world) == []
     plan = tips.plan(world, d1_arm)
     assert isinstance(plan, Plan), str(plan)
-    grasp = plan.waypoints[-1]
+    grasp = next(w for w in plan.waypoints if w.label == "grasp")
     at = _tips(grasp.p, grasp.r)
-    # the TIPS are on the card's edges: over the table by exactly the support
-    # clearance, and below the card's top face
-    assert at[2] == pytest.approx(TABLE_TOP + ap.SUPPORT_CLEARANCE_M, abs=1e-9)
-    assert at[2] < card.top_face_z(world.frames)
+    # the plain descent stops the TIPS over the card's edges at the search
+    # height, then a contact search takes them down to the table (0.16.0,
+    # d1-2 tip trial: a fixed height closed 7 mm above the slab)
+    assert at[2] == pytest.approx(TABLE_TOP + gg.TIP_SEARCH_START_M, abs=1e-9)
+    end = _tips(plan.waypoints[-1].p, plan.waypoints[-1].r)
+    assert plan.waypoints[-1].label == "contact_limit"
+    assert end[2] == pytest.approx(TABLE_TOP - gg.CONTACT_OVERTRAVEL_M,
+                                   abs=1e-9)
+    assert end[2] < card.top_face_z(world.frames)
     assert np.allclose(at[:2], card.p[:2], atol=1e-9)
     # the waypoint is still the PAD CENTRE, 29 mm up the tool axis
     assert grasp.p[2] == pytest.approx(at[2] + gg.PAD.lead_m, abs=1e-9)
