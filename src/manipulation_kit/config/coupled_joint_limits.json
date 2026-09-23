@@ -1,0 +1,21 @@
+{
+  "_comment": "Joint limits that depend on ANOTHER joint, per arm revision. The URDF / home_pose.json box (J6 +/-60, J7 +/-90 deg on the Lite arm) is the per-joint envelope; a coupled limit narrows one joint as a function of another where the hardware itself is narrower. Read by manipulation_kit.arms.coupled_limits and enforced inside the IK iteration and in GuardedArm.posture_violation (the same place the box is checked). Symmetric in the sign of both joints: the limit on |driven| is a function of |driver|. Between and beyond the measured points the table is interpolated / extrapolated LINEARLY and capped at the nominal box; the region below the first measured point is UNMEASURED.",
+  "default_revision": "d1-lite-7dof-wrist-camera-plate-v2",
+  "revisions": {
+    "d1-lite-7dof-wrist-camera-plate-v2": {
+      "_about": "D1 arm (Marvin 'Lite' 7-DoF) with the V2.0 wrist camera plate and its cable run. The hand, camera plate and cables catch on the J6 link, so the wrist roll J7 reaches less far the more the wrist is pitched (J6).",
+      "coupled": [
+        {
+          "name": "wrist_roll",
+          "driver_joint": 6,
+          "driven_joint": 7,
+          "points_deg": [[30.0, 65.0], [55.0, 39.0]],
+          "margin_deg": 5.0,
+          "nominal_deg": 90.0,
+          "measured_driver_range_deg": [30.0, 55.0],
+          "provenance": "measured d1-2 2026-09-22 by hand, two points (Shu, 23:37-23:44Z): |J7| stops at 65 deg with J6 = 30 deg and at 39 deg with J6 = 55 deg, the same magnitude for + and -. Found after the live Approach of 2026-09-22 22:42Z solved J7 = -90 at J6 = 55.2 and the wrist stopped at -39.5 (tests/data/d1_2_approach_20260922). |J6| < 30 deg is extrapolated, NOT measured."
+        }
+      ]
+    }
+  }
+}

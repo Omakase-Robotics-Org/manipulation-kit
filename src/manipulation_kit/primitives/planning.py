@@ -34,7 +34,7 @@ from ..arms.ik import clamp_joint_step
 from ..world import ArmView, WorldView
 from . import grasp_geometry as gg
 from . import orientation as ap
-from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JointStep, PlanError, UNREACHABLE_OBJECT, Waypoint)
+from .types import (GUARD_REJECT, IK_FAIL, INFEASIBLE, JOINT_LIMIT, JointStep, PlanError, UNREACHABLE_OBJECT, Waypoint)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .clearance import SceneGate
@@ -81,7 +81,10 @@ VIA_OFFSETS_M: Tuple[Tuple[float, float], ...] = (
 #: way is usually the solver stuck in a local basin, which a different approach
 #: direction also moves. ``unreachable_object`` is not here: no via makes an
 #: arm longer.
-VIA_REASONS: Tuple[str, ...] = (GUARD_REJECT, IK_FAIL)
+#: ``joint_limit`` is here for the same reason as ``ik_fail``: a coupled
+#: limit (the D1 wrist roll) binds in one posture branch and not in another,
+#: and a detour arrives in a different one.
+VIA_REASONS: Tuple[str, ...] = (GUARD_REJECT, IK_FAIL, JOINT_LIMIT)
 
 #: How close the tool point must get to a knot before the path moves on.
 #: 3 mm, just above the IK's own 2 mm position tolerance: asking for tighter
@@ -311,7 +314,8 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                 residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
                 return steps, PlanError(
                     _plan_reason(result.reason),
-                    _explain(result.reason, side, wp),
+                    _explain(result.reason, side, wp,
+                             getattr(result, "detail", "")),
                     waypoint_index=index,
                     waypoint_label=wp.label, residual_m=residual,
                     residual_rad=rot_residual, stage="straight",
@@ -668,10 +672,15 @@ def solve_path(kin: Kin, side: str, waypoints: Sequence[Waypoint], *,
 
 def _plan_reason(ik_reason: str) -> str:
     return {"ik_fail": IK_FAIL, "infeasible": INFEASIBLE,
-            "guard_reject": GUARD_REJECT}.get(ik_reason, IK_FAIL)
+            "guard_reject": GUARD_REJECT,
+            "joint_limit": JOINT_LIMIT}.get(ik_reason, IK_FAIL)
 
 
-def _explain(ik_reason: str, side: str, wp: Waypoint) -> str:
+def _explain(ik_reason: str, side: str, wp: Waypoint, detail: str = "") -> str:
+    if ik_reason == "joint_limit":
+        return (f"the {side} arm cannot put the tool on {wp.label!r} inside "
+                f"its coupled joint limits: {detail}. Another roll of the "
+                f"hand, or a spot the wrist reaches with less pitch, may")
     if ik_reason == "guard_reject":
         return (f"the motion guard refused the {side} arm's posture at "
                 f"{wp.label!r} — it would hit the body, the other arm or itself")
@@ -679,6 +688,50 @@ def _explain(ik_reason: str, side: str, wp: Waypoint) -> str:
         return (f"the solver returned a posture for {wp.label!r} that does not "
                 f"reach it; treat as a solver bug, not an unreachable target")
     return (f"no in-limit {side}-arm posture puts the tool on {wp.label!r}")
+
+
+def coupled_limit_notes(kin, steps) -> Tuple[str, ...]:
+    """A note per coupled limit the plan's postures come NEAR.
+
+    The plan is inside every coupled limit by construction (the IK projects
+    onto them); what a reader cannot see from the joints is that the wrist
+    ends up a few degrees from where the hardware stops — the posture where a
+    small calibration error, a cable, or an unmeasured stretch of the table
+    decides. ``kin`` is the arm model (``Kin.kin``); a model without coupled
+    limits gets no notes. The closest posture per limit is reported.
+    """
+    from ..arms.coupled_limits import NEAR_LIMIT_DEG  # noqa: PLC0415
+    from .types import ContactStep  # noqa: PLC0415
+    limits_of = getattr(kin, "coupled_limits", None)
+    if limits_of is None:
+        return ()
+    closest = {}
+    for step in steps:
+        if isinstance(step, JointStep):
+            postures = ((step.side, step.q),)
+        elif isinstance(step, ContactStep):
+            postures = tuple((step.side, q) for q in step.path)
+        else:
+            continue
+        for side, q in postures:
+            for lim in limits_of(side):
+                margin = lim.margin_to_limit_deg(q)
+                key = (side, lim.name)
+                if key not in closest or margin < closest[key][0]:
+                    closest[key] = (margin, np.asarray(q, dtype=float), lim)
+    notes = []
+    for (side, name), (margin, q, lim) in sorted(closest.items(),
+                                                 key=lambda kv: kv[0]):
+        if margin >= NEAR_LIMIT_DEG:
+            continue
+        j6 = float(np.degrees(q[lim.driver_joint - 1]))
+        j7 = float(np.degrees(q[lim.driven_joint - 1]))
+        notes.append(
+            f"near the coupled {name} limit: {side} J{lim.driven_joint}="
+            f"{j7:+.1f} deg at J{lim.driver_joint}={j6:+.1f} deg is "
+            f"{margin:.1f} deg inside +/-{lim.limit_deg(j6):.1f} deg "
+            f"({lim.describe_source(j6)})")
+    return tuple(notes)
 
 
 def joint_ramp(kin: Kin, side: str, q_goal, *, primitive: str,
@@ -695,6 +748,15 @@ def joint_ramp(kin: Kin, side: str, q_goal, *, primitive: str,
     """
     steps: List[JointStep] = []
     q_goal = np.asarray(q_goal, dtype=float).reshape(7)
+    check = getattr(kin.kin, "posture_violation", None)
+    why = check(side, q_goal) if check is not None else None
+    if why is not None:
+        # a joint-space goal did not come through the IK, so the posture
+        # check the IK makes on every solution is made here
+        return steps, PlanError(
+            JOINT_LIMIT, f"the {side} arm cannot hold {label}: {why}",
+            waypoint_label=label, primitive=primitive, side=side,
+            stage="joint_ramp")
     for _ in range(MAX_KNOTS_PER_WAYPOINT):
         q_now = kin.joints(side)
         if float(np.max(np.abs(q_goal - q_now))) <= 1e-6:

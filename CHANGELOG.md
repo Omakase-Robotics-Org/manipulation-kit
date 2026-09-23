@@ -61,6 +61,33 @@ accessor set, removed in 0.17.
 
 The consumers are updated in a following sweep, not in this repository.
 
+### Coupled wrist-roll limit (d1-2 hardware, 2026-09-22)
+
+The per-joint box (J6 +/-60, J7 +/-90 deg) is not the D1 wrist's envelope: the
+hand, wrist camera plate and cables catch on the J6 link, so |J7| stops at
+65 deg with J6 = 30 and at 39 deg with J6 = 55 (measured by hand on d1-2,
+2026-09-22, both signs equal). The live Approach of 22:42Z solved J7 = -90 at
+J6 = 55.2 and the wrist stopped at -39.5.
+
+- `config/coupled_joint_limits.json` holds the table per arm revision
+  (`d1-lite-7dof-wrist-camera-plate-v2`), with provenance; read by
+  `manipulation_kit.arms.coupled_limits` (`CoupledJointLimit`,
+  `wrist_roll_limit_deg(j6_deg)`). Linear between the points, linear beyond
+  them, capped at the box, 5 deg margin. |J6| < 30 is extrapolated and says so.
+- `solve_ik(..., coupled=)` projects every update onto the coupled limits as
+  it does onto the box, so no solution past them is returned; `GuardedArm`
+  (and `D1ArmKinematics`, `build_kinematics(coupled=)`) carries them per side
+  and passes them in. The READY-seed search drops seeds that violate them.
+- `GuardedArm.posture_violation(side, q)`: the box and the coupled limits in
+  one check; `solve_ee` applies it to every solution and `joint_ramp` to its
+  goal. A failure the coupled limit caused is refused `joint_limit` (new in
+  `PLAN_REASONS`, and a via reason) with the limit named in the detail, not
+  `ik_fail`; Approach / Grasp / Probe then try their other rolls.
+- A plan whose postures come within 10 deg of a coupled limit says so in
+  `notes` ("near the coupled wrist_roll limit: ...").
+- **Breaking:** plans that used |J7| past the coupled limit change roll or are
+  refused `joint_limit`.
+
 ### Executor state
 
 ### The last leg is measured (d1-2 Approach miss, 2026-09-22)
