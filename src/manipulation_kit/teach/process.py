@@ -9,8 +9,27 @@ of d1-sdk-workspace @ f142fc6; plus omakase-core
 pauses"). Defaults are gesture_record's: smoothing window 5, epsilon 1.5 deg,
 25 deg/s, 120 deg/s^2, 0.05 s minimum keyframe, wrist locked at HOME.
 
-Order, as in gesture_record: lock wrist -> smooth -> snap HOME -> reduce ->
-build (real elapsed time per keyframe) -> [trim idle] -> limit dynamics.
+Order: trim the release sag -> lock wrist -> smooth -> reduce -> build (real
+elapsed time per keyframe) -> HOME in / HOME out -> [trim idle] -> limit
+dynamics (gesture_record's, plus the two HOME rules below).
+
+HOME RULES (Shu, 2026-09-23), for a hand-guided take:
+
+* **The start sag is not motion.** When the brakes open at HOME the arm drops
+  for a moment before the operator carries it. :func:`settle_index` finds the
+  last sample, within the first ``sag_max_s`` (0.5 s), whose joint speed is
+  above ``sag_vel_deg_s`` (8 deg/s) and cuts the stream there; a take with no
+  such spike loses nothing. The motion then starts at HOME and blends into
+  the first kept sample at the constant ``home_speed_deg_s`` below — after
+  smoothing, so the join is continuous in position, and the daemon's C1
+  Catmull-Rom plus the limiter keep it continuous in velocity.
+* **The return to HOME is a constant speed.** The player replaces the last
+  row with HOME, so the last recorded pose is kept as a real row and a HOME
+  row is APPENDED after it, lasting ``max|pose - HOME| / home_speed_deg_s``
+  (20 deg/s, under the player's 25 deg/s cap): a long return and a short one
+  move at the same joint speed. The HOME-in blend is timed the same way.
+  A stream end (or start) already within ``epsilon_deg`` of HOME is snapped
+  to HOME instead, as gesture_record did.
 
 TWO DELIBERATE DEVIATIONS, both because the player changed underneath:
 
@@ -55,6 +74,12 @@ IDLE_MOVE_EPS_DEG = 0.5
 #: both arms): J5/J6/J7. Under compliance the free wrist droops under gravity
 #: and the raw capture reads as "wrist pointing down".
 WRIST_JOINTS = (4, 5, 6, 11, 12, 13)
+#: joint speed of the HOME-in blend and the appended return to HOME [deg/s]
+HOME_SPEED_DEG_S = 20.0
+#: the start sag: only the first this-many seconds may be cut [s] ...
+SAG_MAX_S = 0.5
+#: ... and a sample is part of the sag while its joint speed exceeds this
+SAG_VEL_DEG_S = 8.0
 #: segment sample count in limitJointDynamics
 _LIMIT_STEPS = 64
 _LIMIT_PASSES = 6
@@ -256,6 +281,42 @@ def limit_joint_dynamics(gesture: Gesture, home: Sequence[float],
     return out
 
 
+def settle_index(times: Sequence[float], samples: np.ndarray,
+                 max_s: float = SAG_MAX_S, vel_deg_s: float = SAG_VEL_DEG_S) -> int:
+    """The index the stream starts at once the release sag is over.
+
+    Within the first ``max_s`` of the take, the LAST sample whose max joint
+    speed (median-filtered, so one encoder spike is not a sag) exceeds
+    ``vel_deg_s``; the stream starts after it. A drop-and-catch has a
+    turnaround with near-zero speed at its bottom, which is why it is the last
+    fast sample and not the first slow one. No fast sample -> 0 (nothing is
+    cut); ``max_s <= 0`` or ``vel_deg_s <= 0`` -> 0 (off).
+    """
+    times = np.asarray(times, dtype=float)
+    q = median_filter(np.asarray(samples, dtype=float), 3)
+    if max_s <= 0 or vel_deg_s <= 0 or len(q) < 3:
+        return 0
+    dt = np.diff(times)
+    dt[dt <= 0] = np.inf
+    speed = np.max(np.abs(np.diff(q, axis=0)), axis=1) / dt   # speed[i]: i -> i+1
+    window = np.nonzero(times[1:] - times[0] <= max_s)[0]
+    fast = [int(i) for i in window if speed[i] > vel_deg_s]
+    if not fast:
+        return 0
+    return min(fast[-1] + 1, len(q) - 2)
+
+
+def home_move_s(pose: Sequence[float], home: Sequence[float],
+                speed_deg_s: float = HOME_SPEED_DEG_S,
+                min_s: float = MIN_KEYFRAME_S) -> float:
+    """Duration of a move between ``pose`` and HOME at a constant joint speed:
+    the largest joint distance over ``speed_deg_s`` (never below ``min_s``)."""
+    distance = float(np.max(np.abs(np.asarray(pose, float) - np.asarray(home, float))))
+    if speed_deg_s <= 0:
+        return max(min_s, 0.0)
+    return max(min_s, distance / speed_deg_s)
+
+
 @dataclass(frozen=True)
 class KeyframeOptions:
     """The knobs of :func:`keyframes_from_samples`, gesture_record's defaults."""
@@ -271,6 +332,11 @@ class KeyframeOptions:
     max_joint_vel_deg_s: float = MAX_JOINT_VEL_DEG_S
     max_joint_acc_deg_s2: float = MAX_JOINT_ACC_DEG_S2
     min_keyframe_s: float = MIN_KEYFRAME_S
+    #: HOME-in blend and appended return speed [deg/s]
+    home_speed_deg_s: float = HOME_SPEED_DEG_S
+    #: start-sag cut (0 = off): window [s] and speed threshold [deg/s]
+    sag_max_s: float = SAG_MAX_S
+    sag_vel_deg_s: float = SAG_VEL_DEG_S
 
 
 def keyframes_from_samples(times: Sequence[float], samples: np.ndarray,
@@ -284,15 +350,35 @@ def keyframes_from_samples(times: Sequence[float], samples: np.ndarray,
         raise ValueError("not enough samples to build a gesture")
     if o.method not in ("collinear", "dp"):
         raise ValueError(f"method must be 'collinear' or 'dp', got {o.method!r}")
+    start = settle_index(times, q, o.sag_max_s, o.sag_vel_deg_s)
+    times, q = times[start:], q[start:]
     if o.lock_wrist:
         q = lock_wrist(q, home)
     q = smooth_samples(q, o.smooth_window)
+    home_arr = np.asarray(home, dtype=float)
+    snap_start = snap_end = False
     if o.pin_home:
-        q[0] = home
-        q[-1] = home
+        snap_start = float(np.max(np.abs(q[0] - home_arr))) <= o.epsilon_deg
+        snap_end = float(np.max(np.abs(q[-1] - home_arr))) <= o.epsilon_deg
+        if snap_start:
+            q[0] = home_arr
+        if snap_end:
+            q[-1] = home_arr
     reduce = reduce_collinear if o.method == "collinear" else reduce_douglas_peucker
     kept = enforce_min_spacing(reduce(q, o.epsilon_deg), times, o.min_spacing_s)
     gesture = build_gesture(q, times, kept, first_duration_s=o.min_keyframe_s)
+    if o.pin_home:
+        frames = list(gesture.keyframes)
+        if not snap_start:
+            first = frames[0]
+            frames[0] = Keyframe(home_move_s(first.positions, home, o.home_speed_deg_s,
+                                             o.min_keyframe_s), first.positions)
+            frames.insert(0, Keyframe(o.min_keyframe_s, list(home_arr)))
+        if not snap_end:
+            frames.append(Keyframe(home_move_s(frames[-1].positions, home,
+                                               o.home_speed_deg_s, o.min_keyframe_s),
+                                   list(home_arr)))
+        gesture = Gesture(frames)
     return finish(gesture, home, o)
 
 
@@ -300,7 +386,8 @@ def keyframes_from_poses(poses: Sequence[Sequence[float]], home: Sequence[float]
                          segment_s: float,
                          options: Optional[KeyframeOptions] = None) -> Gesture:
     """Operator-stepped keyframes (Enter per pose) -> a gesture: HOME pinned
-    before and after (unless ``pin_home`` is off), ``segment_s`` per move,
+    before and after (unless ``pin_home`` is off), ``segment_s`` per move
+    (the last one, back to HOME, at the constant ``home_speed_deg_s``),
     then the same trim/limit as a stream. No smoothing or reduction: every
     pose was chosen."""
     o = options or KeyframeOptions()
@@ -313,6 +400,9 @@ def keyframes_from_poses(poses: Sequence[Sequence[float]], home: Sequence[float]
         raise ValueError("a gesture needs at least two keyframes")
     frames = [Keyframe(o.min_keyframe_s, rows[0])] + [
         Keyframe(segment_s, r) for r in rows[1:]]
+    if o.pin_home:      # the return to HOME at the constant HOME speed
+        frames[-1].duration = home_move_s(rows[-2], home, o.home_speed_deg_s,
+                                          o.min_keyframe_s)
     return finish(Gesture(frames), home, o)
 
 

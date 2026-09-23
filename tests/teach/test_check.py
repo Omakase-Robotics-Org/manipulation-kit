@@ -32,12 +32,35 @@ def test_a_gentle_bump_from_home_is_ok(guard):
     assert max(report.peak_vel_deg_s) < 25.0
 
 
-def test_an_arm_swung_into_the_torso_is_a_violation(guard):
-    """make_joint_test_gesture's --unsafe-demo: A J2 +30 deg into the belly."""
+def test_an_arm_swung_into_the_torso_is_an_advisory_warning_not_a_failure(guard):
+    """make_joint_test_gesture's --unsafe-demo: A J2 +30 deg into the belly.
+    For a taught gesture the guard is advisory: a WARNING with the closest
+    distance, the frames and the time — and the hard checks decide ``ok``."""
     report = check_gesture(_bump(np.r_[0, 30.0, np.zeros(12)]), HOME, guard=guard,
                            step_s=0.05)
+    assert report.ok and not report.violations, report.summary()
+    assert not report.guard_clear
+    body = [f for f in report.guard_findings if f.kind in ("body", "chest")]
+    assert body, report.guard_findings
+    worst = body[0]
+    assert worst.clearance_m < 0.03                    # under the 30 mm margin
+    assert worst.clearance_m == pytest.approx(report.min_body_clearance_m, abs=1e-9) \
+        or worst.kind == "chest"
+    assert "arm A link" in worst.detail and "Link" in worst.detail
+    assert 0.0 < worst.t < report.duration_s and worst.samples >= 1
+    text = report.summary()
+    assert "WARNING: guard (advisory)" in text and "mm at t=" in text
+    assert "VIOLATION" not in text
+    assert "body" in report.clearance_note() and "below margin" in report.clearance_note()
+
+
+def test_non_increasing_times_are_a_hard_failure(guard):
+    g = Gesture([Keyframe(0.05, HOME), Keyframe(1.0, HOME), Keyframe(1.0, HOME)])
+    g.keyframes[1].duration = 0.0                 # built in code, not parsed
+    report = check_gesture(g, HOME, guard=guard, step_s=0.05)
     assert not report.ok
-    assert any("body box" in v or "chest" in v for v in report.violations), report.violations
+    assert any(v.startswith("timing:") and "does not increase" in v
+               for v in report.violations)
 
 
 def test_the_coupled_wrist_limit_is_checked_where_the_box_would_pass(guard):

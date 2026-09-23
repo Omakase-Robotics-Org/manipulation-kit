@@ -12,15 +12,24 @@ Refusals, all BEFORE anything moves:
 
 * a file force-saved as unsafe (``# mkit-teach: UNSAFE=...``) — unless
   ``no_safety`` (the old ``gesture_play --no-safety``);
-* a file that fails :func:`~manipulation_kit.teach.check.check_gesture` —
-  unless ``no_safety``. The daemon re-guards every sample regardless; this
-  flag only skips the kit's pre-flight, never the daemon's;
+* a file that fails :func:`~manipulation_kit.teach.check.check_gesture`'s
+  HARD checks (joint limits incl. the coupled wrist limit, rates, timing) —
+  unless ``no_safety``. This flag only skips the kit's pre-flight, never the
+  daemon's;
 * a latched arm controller.
+
+MotionGuard clearance findings are NOT a refusal here (a taught gesture's
+poses were reached by hand; see :mod:`~manipulation_kit.teach.check`): they
+are announced, through ``announce``, before anything moves. d1-firmwared
+still guards the upload with its own model and margins
+(``arm_trajectory.rs::validate``, every 1 ms sample) and refuses it on a
+clearance violation, so such a gesture fails at ``trajectory/start`` with the
+daemon's message unless that robot's ``[arm]`` margins allow it.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from ..executor import controller_fault
 from .check import CheckReport, check_gesture
@@ -56,12 +65,26 @@ def preflight(gesture: Gesture, home: Sequence[float], *, no_safety: bool = Fals
                       "pre-flight SKIPPED (--no-safety)", check=report)
 
 
+def guard_notes(report: Optional[CheckReport]) -> List[str]:
+    """The advisory guard lines to show an operator before a gesture moves."""
+    if report is None or not report.guard_findings:
+        return []
+    return ([f.summary() for f in report.guard_findings]
+            + ["the daemon guards the upload with its own margins and will "
+               "refuse it if they are not met (docs/teach.md, 'Guard')"])
+
+
 def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = False,
-         check_kwargs=None, settle_s: float = 2.0) -> PlayReport:
-    """Play on an ENTERED :class:`FirmwareExecutor`. Returns what happened."""
+         check_kwargs=None, settle_s: float = 2.0,
+         announce: Callable[[str], None] = lambda line: None) -> PlayReport:
+    """Play on an ENTERED :class:`FirmwareExecutor`. Returns what happened.
+    ``announce`` receives the advisory guard warnings BEFORE anything moves."""
     pre = preflight(gesture, home, no_safety=no_safety, check_kwargs=check_kwargs)
     if not pre.ok:
         return pre
+    advisory = guard_notes(pre.check)
+    for line in advisory:
+        announce(f"WARNING: {line}")
     fault = controller_fault(robot.state())
     if fault is not None:
         return PlayReport(False, f"controller fault before playing: {fault}",
@@ -78,7 +101,7 @@ def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = Fa
     points[0] = {"t": 0.0, "a": measured[:7], "b": measured[7:]}
     sent = robot.play_waypoints(points)
     end = robot.wait_arrived(_q16(home))
-    notes = []
+    notes = list(advisory)
     settle = robot.settle(settle_s)
     if not settle.settled:
         notes.append(f"not settled: {settle.detail}")

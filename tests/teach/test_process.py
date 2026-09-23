@@ -96,3 +96,90 @@ def test_stepped_keyframes_get_home_around_them():
     assert len(rows) == 3
     assert rows[0] == pytest.approx(HOME) and rows[-1] == pytest.approx(HOME)
     assert rows[1][1] == pytest.approx(pose[1])
+
+
+# -- HOME rules for a hand-guided take (Shu, 2026-09-23) --------------------- #
+from manipulation_kit.teach import check_gesture  # noqa: E402
+from manipulation_kit.teach.gesture_csv import sample_path  # noqa: E402
+from manipulation_kit.teach.process import (HOME_SPEED_DEG_S,  # noqa: E402
+                                            segment_peaks_per_joint, settle_index)
+
+
+def _sagged_take(rate_hz=20.0):
+    """Brakes open at HOME: A J2 and J4 drop 3 / 2 deg in 0.2 s, the operator
+    catches it back to HOME by 0.4 s, holds, then swings J2 -10 deg and back
+    (1.0 .. 5.0 s)."""
+    times = np.arange(0.0, 6.0 + 1e-9, 1.0 / rate_hz)
+    q = np.tile(HOME, (len(times), 1))
+    for i, t in enumerate(times):
+        dip = np.sin(np.pi * min(t, 0.4) / 0.4) if t < 0.4 else 0.0
+        q[i, 1] += 3.0 * dip
+        q[i, 3] += 2.0 * dip
+        if 1.0 <= t <= 5.0:
+            q[i, 1] -= 10.0 * np.sin(np.pi * (t - 1.0) / 4.0)
+    return times, q
+
+
+def test_the_release_sag_is_found_and_cut():
+    times, q = _sagged_take()
+    start = settle_index(times, q)
+    assert 0.3 <= times[start] <= 0.5
+    still = np.tile(HOME, (40, 1))
+    assert settle_index(np.arange(40) / 20.0, still) == 0      # no sag, no cut
+
+
+def test_a_sagged_take_exports_from_home_without_the_dip_or_a_spike():
+    times, q = _sagged_take()
+    g = keyframes_from_samples(times, q, HOME)
+    rows = g.array()
+    assert rows[0] == pytest.approx(HOME) and rows[-1] == pytest.approx(HOME)
+    points = trajectory_points(g, HOME)
+    t, poses = sample_path(points, 0.01)
+    early = poses[t <= 0.6]
+    # the +3 deg dip is gone (the swing that follows is -J2)
+    assert np.max(early[:, 1] - HOME[1]) < 0.3
+    assert np.max(np.abs(early[:, 3] - HOME[3])) < 0.6
+    # continuous and capped: no segment is a spike
+    for vel, acc in segment_peaks_per_joint(points):
+        assert np.max(vel) <= 25.0 * 1.03 and np.max(acc) <= 120.0 * 1.03
+    assert check_gesture(g, HOME, step_s=0.05).ok
+    # without the cut the dip IS played
+    raw = keyframes_from_samples(times, q, HOME, KeyframeOptions(sag_max_s=0.0))
+    _, raw_poses = sample_path(trajectory_points(raw, HOME), 0.01)
+    assert np.max(raw_poses[:, 1] - HOME[1]) > 1.5
+
+
+def _ends_away(offset_deg):
+    """A stream that ends held ``offset_deg`` from HOME on A J2."""
+    times = np.arange(0.0, 3.0 + 1e-9, 0.05)
+    q = np.tile(HOME, (len(times), 1))
+    ramp = np.clip((times - 0.5) / 1.5, 0.0, 1.0)
+    q[:, 1] -= offset_deg * ramp
+    return times, q
+
+
+@pytest.mark.parametrize("offset", [6.0, 12.0, 24.0])
+def test_the_return_to_home_is_appended_at_a_constant_speed(offset):
+    times, q = _ends_away(offset)
+    o = KeyframeOptions(speed_limit=False)
+    g = keyframes_from_samples(times, q, HOME, o)
+    rows = g.array()
+    assert rows[-1] == pytest.approx(HOME)
+    assert rows[-2][1] == pytest.approx(HOME[1] - offset, abs=0.05)  # pose kept
+    assert g.keyframes[-1].duration == pytest.approx(offset / HOME_SPEED_DEG_S,
+                                                     rel=0.01)
+
+
+def test_return_duration_is_proportional_to_distance_after_the_limiter_too():
+    durations = []
+    for offset in (8.0, 16.0, 32.0):
+        times, q = _ends_away(offset)
+        durations.append(keyframes_from_samples(times, q, HOME).keyframes[-1].duration)
+    assert durations[0] < durations[1] < durations[2]
+    assert durations[2] / durations[1] == pytest.approx(2.0, rel=0.2)
+
+
+def test_a_keyframe_take_returns_home_at_the_same_speed():
+    far = HOME + np.r_[0, -20.0, np.zeros(12)]
+    g = keyframes_from_poses([far], HOME, 1.5, KeyframeOptions(speed_limit=False))
+    assert g.keyframes[-1].duration == pytest.approx(20.0 / HOME_SPEED_DEG_S)

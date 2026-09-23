@@ -16,37 +16,49 @@ client (:class:`~manipulation_kit.executors.firmware.FirmwareClient`) and the
 kit's :class:`~manipulation_kit.executors.firmware.FirmwareExecutor` (lease,
 position mode, trajectories, arrival barrier).
 
-The capture, step by step as gesture_record did it:
+The capture, step by step (Shu's operator flow, 2026-09-23):
 
 1. **Straight to HOME first** in position mode (not recorded), so the teach
-   starts wrist-up rather than from wherever the arm sagged
-   (``--no-home-start`` skips it).
-2. **Go soft** — the guide mode, per taught arm:
+   starts wrist-up rather than from wherever the arm sagged. The take ALWAYS
+   starts at HOME: with ``--no-home-start`` the operator must have put the
+   arms there, and the start is refused when any taught joint is more than
+   ``HOME_TOL_DEG`` from HOME.
+2. **Countdown** ``3, 2, 1`` (``countdown_s``), printed through ``on_state``.
+3. **Go soft** — the guide mode, per taught arm:
 
-   ``compliance`` (default, gesture_record's own)
+   ``brake`` (default: hand guiding)
+       mode ``idle`` then ``POST /v1/arm/{side}/brake_release`` (d1-firmware
+       PR #92) with the confirm word ``RELEASE_BRAKE``: servos OFF, holding
+       brakes forced open for a timed window the daemon closes itself;
+       re-sent every third of the window while recording, so the daemon's
+       own timer — not this process — is what closes them if this process
+       dies. **The arm drops under gravity unless someone holds it**; the
+       CLI prints the contract and takes ONE typed ``HOLDING`` per session,
+       for all taught arms. Shu, 2026-09-23: moving the arm in compliance
+       was hard; brakes-off is the teaching default.
+   ``compliance`` (``--compliance``, gesture_record's own)
        ``POST /v1/arm/{side}/mode`` ``force_compliance`` with
        ``ForceComplianceConfig::xAxisCompliance(2.0)``: force direction
        ``[1,0,0,0,0,0]``, target force 0, force type 0, adjustment limit
        2 mm, ratios 0.05 (``setForceComplianceMode(c, 5, 5)``), measured pose
        anchored. Servos ON, the arm yields to the hand. Then 1.5 s to settle
        before sampling, so the switch transient is not recorded.
-   ``brake`` (``--hand-guide``)
-       mode ``idle`` then ``POST /v1/arm/{side}/brake_release`` (d1-firmware
-       PR #92): servos OFF, holding brakes forced open for a timed window the
-       daemon closes itself; re-sent every third of the window while
-       recording. **The arm drops under gravity unless someone holds it.**
    ``idle`` (``--no-brake``)
        mode ``idle`` only, for an arm that moves by hand when idle.
 
-3. **Sample** ``GET /v1/arm/{side}/state`` (both arms, degrees) at ``rate_hz``
+4. **Sample** ``GET /v1/arm/{side}/state`` (both arms, degrees) at ``rate_hz``
    with timestamps, plus each gripper's closedness where the daemon publishes
-   ``open_rad`` (kept in the recording; the CSV has no gripper column). Stop on
-   the caller's stop signal, after ``duration_s``, or after ``stationary_s``
-   of < 0.3 deg motion — or, in ``keyframe`` mode, capture one pose per
-   operator request.
-4. **Hold where it is**: brakes engaged (``brake``), then ``POST
-   /v1/arm/{side}/recover`` at 0.05 — measured-pose position hold, the
-   daemon's ``lockCurrentPositionMode(5, 5)``. On EVERY exit path.
+   ``open_rad`` (kept in the recording; the CSV has no gripper column).
+   ``t = 0`` is the instant the (last) release was acknowledged — the brakes
+   are open from the first sample on, and nothing before it is motion. Stop
+   on the caller's stop signal, after ``duration_s``, or after
+   ``stationary_s`` of < 0.3 deg motion — or, in ``keyframe`` mode, capture
+   one pose per operator request.
+5. **Stop = brakes engaged FIRST**: the renewal is stopped under a lock (no
+   release can land after the engage), ``brake_engage`` goes out on every
+   released arm, and only then ``POST /v1/arm/{side}/recover`` at 0.05 —
+   measured-pose position hold, the daemon's ``lockCurrentPositionMode(5,
+   5)`` — and the take is finalised. On EVERY exit path.
 
 The raw recording is kept raw (no wrist lock, no smoothing): the reduction is
 :mod:`~manipulation_kit.teach.process`, run by ``mkit-teach keyframes`` /
@@ -68,7 +80,8 @@ from ..arms import sides
 from ..executor import JOINT_SLICE, WIRE_DIM
 
 SCHEMA = "manipulation_kit.teach.recording/1"
-GUIDES = ("compliance", "brake", "idle")
+GUIDES = ("brake", "compliance", "idle")
+DEFAULT_GUIDE = "brake"
 MODES = ("stream", "keyframe")
 
 DEFAULT_RATE_HZ = 20.0
@@ -86,8 +99,10 @@ STATIONARY_DEG = 0.3
 #: brake window granted per release [s] (the daemon: 1..120, default 30)
 BRAKE_WINDOW_S = 20.0
 #: joint distance [deg] under which the arm counts as AT HOME (omakase-core
-#: firmware_session.HOME_TOLERANCE_DEG)
+#: firmware_session.HOME_TOLERANCE_DEG); also the start-at-HOME gate
 HOME_TOL_DEG = 2.0
+#: seconds counted down (3, 2, 1) before the arms go soft
+COUNTDOWN_S = 3
 
 #: The lifecycle the old /d1_teach panel showed, kept as the CLI's vocabulary.
 IDLE, STARTING, RECORDING, RECORDED, PREVIEWING, SAVED, DISCARDED = (
@@ -97,14 +112,16 @@ BRAKE_CONTRACT = """\
 HAND GUIDING WITH THE HOLDING BRAKES RELEASED (d1-firmware PR #92)
   * The servos are OFF and the brakes are forced OPEN: the arm DROPS under
     gravity the instant they open unless a person is holding it.
-  * A person must hold every released arm BEFORE the release and until the
-    recording ends. Keep hands and faces clear of the arm's fall path.
+  * A person must hold every released arm ({arms}) BEFORE the release and
+    until the recording ends. Keep hands and faces clear of the fall path.
+  * After a 3-2-1 countdown the brakes open and recording starts at once.
+    Stop (Enter) engages the brakes FIRST, then the arm is held in position.
   * The release is timed: the daemon engages the brakes itself when its
     window ({window:g} s, re-sent while recording) runs out.
   * Brakes re-engage on: end of recording (this tool), window elapsed,
     POST /v1/arm/<side>/brake_engage, estop, soft kill, daemon shutdown.
   * While released the daemon refuses mode/recover/trajectory on that arm.
-  * Unverified on hardware as of 2026-09-23 (PR #92's own note)."""
+  * The kit's brake path is unverified on hardware as of 2026-09-23."""
 
 
 @dataclass
@@ -189,27 +206,40 @@ class _BrakeKeeper(threading.Thread):
         super().__init__(name="mkit-teach-brake", daemon=True)
         self.client, self.wires, self.window_s, self.holder = client, wires, window_s, holder
         self.stop_event = threading.Event()
+        #: held for every renewal; :meth:`halt` takes it, so once halt()
+        #: returns no release is in flight and none can follow
+        self.lock = threading.Lock()
         self.error: Optional[BaseException] = None
 
     def run(self) -> None:
         while not self.stop_event.wait(self.window_s / 3.0):
-            try:
-                for wire in self.wires:
-                    self.client.brake_release(wire, seconds=self.window_s,
-                                              holder=self.holder)
-            except BaseException as exc:  # noqa: BLE001 - reported by record()
-                self.error = exc
-                return
+            with self.lock:
+                if self.stop_event.is_set():
+                    return
+                try:
+                    for wire in self.wires:
+                        self.client.brake_release(wire, seconds=self.window_s,
+                                                  holder=self.holder)
+                except BaseException as exc:  # noqa: BLE001 - reported by record()
+                    self.error = exc
+                    return
+
+    def halt(self) -> None:
+        """Stop renewing, and wait out a renewal already on the wire."""
+        self.stop_event.set()
+        with self.lock:
+            pass
 
 
-def record(robot, *, home: Sequence[float], guide: str = "compliance",
+def record(robot, *, home: Sequence[float], guide: str = DEFAULT_GUIDE,
            arms: Sequence[str] = ("left", "right"), mode: str = "stream",
            rate_hz: float = DEFAULT_RATE_HZ, duration_s: Optional[float] = None,
            stationary_s: float = 0.0, stop: Optional[Callable[[], bool]] = None,
            next_keyframe: Optional[Callable[[], bool]] = None,
            home_start: bool = True, brake_window_s: float = BRAKE_WINDOW_S,
            adj_limit_mm: float = COMPLIANCE["adjustment_limit_mm"],
-           allow_bare_flange: bool = False,
+           allow_bare_flange: bool = False, countdown_s: int = COUNTDOWN_S,
+           home_tol_deg: float = HOME_TOL_DEG,
            on_state: Callable[[str, str], None] = lambda state, msg: None,
            sleep=time.sleep, clock=time.monotonic) -> Recording:
     """Capture a teach on an ENTERED :class:`FirmwareExecutor` (lease held).
@@ -243,6 +273,19 @@ def record(robot, *, home: Sequence[float], guide: str = "compliance",
         arrival = move_to(robot, rec.home)
         if arrival is not None and not arrival.arrived:
             raise RuntimeError(f"did not reach HOME before the teach: {arrival.detail}")
+    # The take starts at HOME, always (the exported motion starts there).
+    start = pose_deg(robot.state())
+    off = [(i, start[i] - rec.home[i]) for side in arms
+           for i in (range(0, 7) if side == "left" else range(7, 14))
+           if abs(start[i] - rec.home[i]) > home_tol_deg]
+    if off:
+        worst = max(off, key=lambda item: abs(item[1]))
+        raise RuntimeError(
+            f"the taught arm(s) are not at HOME at Start ({len(off)} joint(s) "
+            f"beyond {home_tol_deg:g} deg; worst index {worst[0]} off by "
+            f"{worst[1]:+.1f} deg). The take must start at HOME: drop "
+            f"--no-home-start, or bring the arms to HOME first.")
+    rec.meta["start_pose"] = [round(v, 4) for v in start]
     if guide == "compliance":
         # gesture_record registered the tool before compliance: an
         # unregistered payload is gravity-compensated as an empty flange and
@@ -259,7 +302,11 @@ def record(robot, *, home: Sequence[float], guide: str = "compliance",
                     f"gravity-compensate an empty flange and the wrist sags. "
                     f"Configure [arm] end_effector on the daemon, or pass "
                     f"allow_bare_flange / --allow-bare-flange if nothing is mounted.")
+    for remaining in range(int(countdown_s), 0, -1):
+        on_state(STARTING, f"{remaining}")
+        sleep(1.0)
     entered: List[str] = []
+    released: List[str] = []
     keeper: Optional[_BrakeKeeper] = None
     problems: List[str] = []
     try:
@@ -271,6 +318,7 @@ def record(robot, *, home: Sequence[float], guide: str = "compliance",
                 client.arm_mode(wire, "idle", holder=holder)
             entered.append(wire)
             if guide == "brake":
+                released.append(wire)      # engaged on exit even if this fails
                 client.brake_release(wire, seconds=brake_window_s, holder=holder)
         if guide == "brake":
             keeper = _BrakeKeeper(client, wires, brake_window_s, holder)
@@ -279,19 +327,22 @@ def record(robot, *, home: Sequence[float], guide: str = "compliance",
             on_state(STARTING, "stabilizing (not recorded)")
             sleep(SETTLE_S)
         on_state(RECORDING, f"{guide}: move the {'/'.join(arms)} arm(s) by hand")
+        # t = 0 is NOW: the release was just acknowledged (brake guide).
         _capture(robot, rec, mode=mode, duration_s=duration_s,
                  stationary_s=stationary_s, stop=stop, next_keyframe=next_keyframe,
                  keeper=keeper, sleep=sleep, clock=clock)
     finally:
+        # Brakes FIRST: nothing else happens before they are engaged.
         if keeper is not None:
-            keeper.stop_event.set()
+            keeper.halt()
+        for wire in released:
+            try:
+                client.brake_engage(wire)
+            except Exception as exc:  # noqa: BLE001 - keep going: recover
+                problems.append(f"brake_engage {wire}: {exc}")
+        if keeper is not None:
             keeper.join(timeout=2.0)
         for wire in entered:
-            if guide == "brake":
-                try:
-                    client.brake_engage(wire)
-                except Exception as exc:  # noqa: BLE001 - keep going: recover
-                    problems.append(f"brake_engage {wire}: {exc}")
             try:
                 client.arm_recover(wire, vel_ratio=HOLD_RATIO, acc_ratio=HOLD_RATIO)
             except Exception as exc:  # noqa: BLE001

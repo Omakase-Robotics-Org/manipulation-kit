@@ -2,9 +2,16 @@
 
 omakase-core ``teach.py::save_teach_session`` ran the Python safety validator
 on the staged CSV and refused an unsafe one unless ``force`` ("Force-save even
-if unsafe (will need --no-safety to play)"). Same rule here; a force-saved
-file carries ``# mkit-teach: UNSAFE=<violation>`` lines, which
-:func:`manipulation_kit.teach.play.play` refuses without ``no_safety``.
+if unsafe (will need --no-safety to play)"). Same rule here for the HARD
+checks (joint limits incl. the coupled wrist limit, velocity/acceleration,
+timing); a force-saved file carries ``# mkit-teach: UNSAFE=<violation>``
+lines, which :func:`manipulation_kit.teach.play.play` refuses without
+``no_safety``.
+
+MotionGuard clearance findings are advisory for a taught gesture (see
+:mod:`~manipulation_kit.teach.check`): they never make a file UNSAFE. The
+file records the minimum clearances as ``# mkit-teach: min_clearance=...``
+and, when a margin was not met, ``# mkit-teach: guard_advisory=...``.
 """
 from __future__ import annotations
 
@@ -46,6 +53,9 @@ def export(gesture: Gesture, home: Sequence[float], *, name: Optional[str] = Non
     meta.update({"sentiment": sentiment,
                  "usage": " ".join(u for u in usage if u in USAGES) or "filler",
                  "source": "teach", "home_sha": home_digest(home)})
+    meta["min_clearance"] = report.clearance_note()
+    if report.guard_findings:
+        meta["guard_advisory"] = " | ".join(f.summary() for f in report.guard_findings)
     meta.update(extra_meta or {})
     out = Gesture([Keyframe(k.duration, k.positions) for k in gesture.keyframes],
                   meta=meta,

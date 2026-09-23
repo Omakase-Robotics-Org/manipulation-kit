@@ -1,6 +1,6 @@
 """``mkit-teach`` — teach an omakaseos gesture by hand, over d1-firmwared.
 
-    mkit-teach record    take.json  --url http://127.0.0.1:4750   # hand-guide
+    mkit-teach record    take.json  --url http://127.0.0.1:4750   # brakes off, hand-guide
     mkit-teach keyframes take.json  take.keys.json                # reduce
     mkit-teach export    take.json  wave_motion.csv --name wave   # check + CSV
     mkit-teach check     wave_motion.csv --ascii                  # pre-flight
@@ -8,7 +8,7 @@
     mkit-teach register  wave --yaml <omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml
 
 The lifecycle the old /d1_teach panel showed — idle -> recording
-(compliance) -> recorded -> previewing -> saved / discarded — is these
+(brakes released; --compliance for gesture_record's mode) -> recorded -> previewing -> saved / discarded — is these
 commands in order; a take you do not export is simply discarded.
 Operator guide: docs/teach.md.
 """
@@ -26,8 +26,9 @@ from . import registry
 from .check import ascii_preview, check_gesture
 from .export import UnsafeGesture, export
 from .gesture_csv import Gesture, Keyframe, load_csv, load_home, save_csv
-from .process import (EPSILON_DEG, MAX_JOINT_ACC_DEG_S2, MAX_JOINT_VEL_DEG_S,
-                      MIN_KEYFRAME_S, SMOOTH_WINDOW, KeyframeOptions,
+from .process import (EPSILON_DEG, HOME_SPEED_DEG_S, MAX_JOINT_ACC_DEG_S2,
+                      MAX_JOINT_VEL_DEG_S, MIN_KEYFRAME_S, SAG_MAX_S,
+                      SAG_VEL_DEG_S, SMOOTH_WINDOW, KeyframeOptions,
                       keyframes_from_poses, keyframes_from_samples)
 from .record import (BRAKE_CONTRACT, BRAKE_WINDOW_S, COMPLIANCE, DEFAULT_RATE_HZ,
                      Recording, record)
@@ -47,25 +48,35 @@ def _executor(args, *, lease_class: str):
 
 
 # -- record ------------------------------------------------------------------ #
+def _guide(args) -> str:
+    """Brake release (hand guiding) unless told otherwise."""
+    if args.compliance and args.no_brake:
+        raise SystemExit("mkit-teach record: --compliance and --no-brake are "
+                         "mutually exclusive")
+    return "compliance" if args.compliance else "idle" if args.no_brake else "brake"
+
+
+def confirm_holding(args, arms, *, ask=input) -> bool:
+    """The brake contract, printed and acknowledged ONCE for the session and
+    all taught arms (one typed HOLDING, not one per arm)."""
+    print(BRAKE_CONTRACT.format(window=args.brake_window_s, arms="/".join(arms)))
+    if args.yes:
+        return True
+    try:
+        answer = ask(f"Type HOLDING when a person is holding the "
+                     f"{'/'.join(arms)} arm(s): ").strip()
+    except EOFError:
+        answer = ""
+    if answer != "HOLDING":
+        print("not confirmed; nothing was moved.", file=sys.stderr)
+        return False
+    return True
+
+
 def cmd_record(args) -> int:
-    guide = args.guide
-    if args.hand_guide:
-        guide = "brake"
-    if args.no_brake:
-        guide = "idle"
-    if guide == "brake":
-        if not args.hand_guide:
-            print("--guide brake releases the holding brakes: pass --hand-guide "
-                  "to confirm you have read the contract (mkit-teach record "
-                  "--hand-guide prints it).", file=sys.stderr)
-            return 2
-        print(BRAKE_CONTRACT.format(window=args.brake_window_s))
-        if not args.yes:
-            answer = input("Type HOLDING when a person is holding every released "
-                           "arm: ").strip()
-            if answer != "HOLDING":
-                print("not confirmed; nothing was moved.", file=sys.stderr)
-                return 2
+    guide = _guide(args)
+    if guide == "brake" and not confirm_holding(args, ARMS[args.arms]):
+        return 2
     home = load_home(args.home)
     stop = threading.Event()
     next_keyframe = None
@@ -99,11 +110,11 @@ def cmd_record(args) -> int:
                          stop=should_stop, next_keyframe=next_keyframe,
                          home_start=not args.no_home_start,
                          brake_window_s=args.brake_window_s,
-                         adj_limit_mm=args.adj_limit_mm,
+                         adj_limit_mm=args.adj_limit_mm, countdown_s=args.countdown,
                          allow_bare_flange=args.allow_bare_flange, on_state=_say)
         except KeyboardInterrupt:
-            print("interrupted; the arms were put back in a position hold",
-                  file=sys.stderr)
+            print("interrupted; brakes engaged and the arms put back in a "
+                  "position hold", file=sys.stderr)
             return 130
     rec.save(Path(args.out))
     print(f"saved {args.out}: {len(rec.samples)} samples. Next: "
@@ -120,7 +131,9 @@ def _options(args) -> KeyframeOptions:
         pin_home=not args.no_home, max_idle_s=args.max_idle_s,
         speed_limit=not args.no_speed_limit,
         max_joint_vel_deg_s=args.max_joint_vel, max_joint_acc_deg_s2=args.max_joint_acc,
-        min_keyframe_s=args.min_keyframe_s)
+        min_keyframe_s=args.min_keyframe_s, home_speed_deg_s=args.home_speed,
+        sag_max_s=0.0 if args.no_sag_trim else args.sag_max_s,
+        sag_vel_deg_s=args.sag_vel)
 
 
 def _gesture_from(path: Path, args):
@@ -182,6 +195,8 @@ def cmd_check(args) -> int:
     gesture = load_csv(Path(args.csv))
     home = load_home(args.home)
     report = check_gesture(gesture, home, step_s=args.step_s)
+    # Exit status: the HARD checks only. Guard clearance findings print as
+    # WARNING lines (advisory for a taught gesture, docs/teach.md "Guard").
     if gesture.unsafe:
         print("this file was force-saved UNSAFE: " + "; ".join(gesture.unsafe))
     print(report.summary())
@@ -199,7 +214,8 @@ def cmd_play(args) -> int:
         print(pre.detail if not pre.check else pre.check.summary())
         return 0 if pre.ok else 1
     with _executor(args, lease_class=args.lease_class) as robot:
-        report = play(robot, gesture, home, no_safety=args.no_safety)
+        report = play(robot, gesture, home, no_safety=args.no_safety,
+                      announce=lambda line: print(line, flush=True))
     print(report.detail)
     for note in report.notes:
         print(f"  note: {note}")
@@ -246,6 +262,15 @@ def _keyframe_args(p) -> None:
     g.add_argument("--max-joint-vel", type=float, default=MAX_JOINT_VEL_DEG_S)
     g.add_argument("--max-joint-acc", type=float, default=MAX_JOINT_ACC_DEG_S2)
     g.add_argument("--min-keyframe-s", type=float, default=MIN_KEYFRAME_S)
+    g.add_argument("--home-speed", type=float, default=HOME_SPEED_DEG_S,
+                   help="joint speed [deg/s] of the HOME-in blend and the "
+                        "appended return to HOME (default 20)")
+    g.add_argument("--sag-max-s", type=float, default=SAG_MAX_S,
+                   help="cut the brake-release sag within this many seconds "
+                        "of the start (default 0.5)")
+    g.add_argument("--sag-vel", type=float, default=SAG_VEL_DEG_S,
+                   help="joint speed [deg/s] above which a start sample is sag")
+    g.add_argument("--no-sag-trim", action="store_true")
     g.add_argument("--segment-s", type=float, default=1.5,
                    help="seconds per move for a keyframe-mode take")
 
@@ -263,15 +288,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("record", help="hand-guide the arms and sample them")
     _common(p, robot=True)
     p.add_argument("out", help="recording JSON to write")
-    p.add_argument("--guide", choices=("compliance", "brake", "idle"),
-                   default="compliance",
-                   help="how the arm goes soft (default compliance = gesture_record)")
-    p.add_argument("--hand-guide", action="store_true",
-                   help="= --guide brake: release the holding brakes (THE ARM DROPS)")
-    p.add_argument("--no-brake", action="store_true",
-                   help="= --guide idle: servos off, brakes untouched")
+    guide = p.add_argument_group(
+        "how the arm goes soft (default: RELEASE THE HOLDING BRAKES — hand "
+        "guiding; the arm drops unless someone holds it)")
+    guide.add_argument("--compliance", action="store_true",
+                       help="force_compliance with gesture_record's parameters "
+                            "instead (servos on, the arm yields)")
+    guide.add_argument("--no-brake", action="store_true",
+                       help="servos off (idle), brakes untouched")
     p.add_argument("--yes", action="store_true",
                    help="skip the typed HOLDING confirmation (scripts only)")
+    p.add_argument("--countdown", type=int, default=3,
+                   help="seconds counted down before the arms go soft (default 3)")
     p.add_argument("--arms", choices=tuple(ARMS), default="both")
     p.add_argument("--mode", choices=("stream", "keyframe"), default="stream",
                    help="stream = sample at --rate-hz; keyframe = Enter per pose")
@@ -280,7 +308,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stationary-s", type=float, default=0.0,
                    help="auto-stop after this long without motion (0 = off)")
     p.add_argument("--stop-file", default=None)
-    p.add_argument("--no-home-start", action="store_true")
+    p.add_argument("--no-home-start", action="store_true",
+                   help="do not drive to HOME first (the arms must already be "
+                        "within 2 deg of HOME, or the start is refused)")
     p.add_argument("--brake-window-s", type=float, default=BRAKE_WINDOW_S)
     p.add_argument("--adj-limit-mm", type=float,
                    default=COMPLIANCE["adjustment_limit_mm"])
@@ -306,7 +336,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--register", default=None, metavar="GESTURE_YAML")
     p.set_defaults(func=cmd_export)
 
-    p = sub.add_parser("check", help="guard + limits + rates on the played spline")
+    p = sub.add_parser("check", help="limits + rates + timing (hard) and guard "
+                                     "clearance (advisory) on the played spline")
     _common(p, robot=False)
     p.add_argument("csv")
     p.add_argument("--ascii", action="store_true", help="print joint strips")

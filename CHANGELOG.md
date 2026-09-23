@@ -53,6 +53,53 @@ the daemon owns it. It comes back here, over the generated client.
   ignored. Row 0 is therefore HOME itself (a deviation from gesture_record,
   whose first row the new player would have dropped).
 
+Follow-up, Shu 2026-09-23 16:52Z / 16:56Z ("teaching is easier with the
+brakes released; compliance was hard to move", "for teaching, drop the
+guard") — **breaking for `mkit-teach` callers**:
+
+- **Recording default = brake release (hand guiding).** `record()` /
+  `mkit-teach record` default to `guide="brake"`: idle, then the generated
+  `brake_release` with `RELEASE_BRAKE` and a timed window the daemon closes
+  itself, renewed every third of the window. The contract is printed and ONE
+  typed `HOLDING` covers the session and all taught arms. `--guide` and
+  `--hand-guide` are gone: `--compliance` selects gesture_record's
+  `force_compliance`, and `--no-brake` gives servos-off-only.
+- **Operator flow**: the take starts at HOME. Without `--no-home-start` the
+  arms are driven there first. The start is refused when a taught joint is
+  more than 2 deg off HOME. Then a 3-2-1 countdown (`--countdown`) runs, and
+  `t = 0` of the take is the instant the release is acknowledged. Stop engages
+  the brakes FIRST, before `recover` or anything else. The renewal thread
+  stops under a lock, so no release can land after the engage.
+- **Export HOME rules** (`process`): the brake-release sag is cut. That is the
+  last sample within 0.5 s of the start whose joint speed exceeds 8 deg/s;
+  `--sag-max-s`, `--sag-vel`, `--no-sag-trim`. The motion starts at HOME and
+  blends into the stream. The last recorded pose is KEPT, and a return-to-HOME
+  row is appended at a constant joint speed (`max|dq| / 20 deg/s`,
+  `--home-speed`), so long and short returns move alike. Ends within epsilon
+  of HOME snap as before. The golden wave take is geometrically unchanged.
+- **Guard is advisory for teaching.** In `check`, MotionGuard clearance
+  (body / chest / arm-arm / self) is now a `GuardFinding` in
+  `CheckReport.guard_findings`, printed as a WARNING with the closest
+  distance, the frames and the time. It is no longer a violation. Joint
+  limits (incl. the coupled wrist limit), velocity / acceleration and
+  timing are still hard; a timing check (finite, 0-based, strictly
+  increasing) is new. `export` never stamps UNSAFE for a guard-only finding
+  and records `# mkit-teach: min_clearance=…` (and `guard_advisory=…`).
+  `play` announces the guard warning before moving and still refuses UNSAFE
+  without `--no-safety`. **d1-firmwared still refuses such an upload.** On
+  main d090ac4 `arm_trajectory.rs::validate` guards every 1 ms sample with
+  the same model and margins. It also does NOT refuse out-of-limit joints:
+  its guard clamps for the check and the raw pose is commanded. See
+  d1-firmware issue #101 (teach-mode relaxation question + that gap).
+- **Bundled client snapshot refreshed** (consumer-sweep item from the probe
+  entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
+  (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2
+  serves at `GET /openapi.json` (fetched 2026-09-23), byte-identical to
+  d1-firmware main d090ac4 `openapi/d1-firmwared.v1.json`. It adds 10
+  generated files and 3 operations. The brake verbs are now real generated
+  operations out of the box, and connecting to d1-2 no longer regenerates.
+  Nothing else on the executor path changed.
+
 ### Grasp: the measured width outranks the declared one
 
 First live Astra run on d1-2 (2026-09-23 03:46Z, trace
@@ -340,11 +387,11 @@ reproduce, and both are fixed at the producer:
   is sent. The daemon's 120 s / 10 000-point ceilings are not in the
   document and are not guessed (d1-firmware issue: publish them as
   `maximum` / `maxItems`).
-- **Bundled client snapshot is behind.** d1-2 now serves spec `a9c8b0d2…`
+- **Bundled client snapshot was behind.** d1-2 now serves spec `a9c8b0d2…`
   (d1-firmware PR #92 added the brake routes); `ensure.py` regenerated the
   client from it at connect time, as designed. The bundled `_client/`
-  snapshot (`388bcd08…`, 0.3.0 before #92) is left as is here and will be
-  refreshed in the consumer sweep.
+  snapshot (`388bcd08…`, 0.3.0 before #92) was refreshed to `a9c8b0d2…` in
+  the teach follow-up above.
 
 ### Coupled wrist-roll limit (d1-2 hardware, 2026-09-22)
 
