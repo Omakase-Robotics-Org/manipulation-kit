@@ -187,6 +187,33 @@ three. Two findings:
   roll's half turn, which is also why yaw 0 is refused rather than planned
   at the other wrist (it plans, J5 +115.5 deg, when a pi candidate is added).
 
+### Straight legs stay on their line: no xy drift over repeated probes (d1-2, 2026-09-23)
+
+The passing probe gate (02:31Z) showed the ten table contacts walking 88 mm
+in y and 18 mm in x although every leg was vertical. The IK converges on
+Link7 within 2 mm / 0.05 rad; the tool point is 100 mm further out, so a
+"converged" posture left the tool 7-9 mm to the side, re-solving from it was
+a no-op, and `_straight` walked on inside the 12 mm transit window — always to
+the same side, because the READY pull biases where the solver stops.
+
+- A leg with `Waypoint.allow_via=False` is solved with
+  `planning.straight_tuning(arm)`: the arm's tuning tightened to
+  `STRAIGHT_IK_POS_TOL_M` 0.2 mm / `STRAIGHT_IK_ROT_TOL_RAD` 1 mrad (never
+  loosened) with the null-space posture pull OFF.
+- **Tighter gate:** such a leg's knots and end are judged against
+  `STRAIGHT_PATH_TOL_M` (= `ARRIVE_TOL_M`, 3 mm) instead of `PATH_TOL_M`
+  (12 mm); a straight leg that cannot hold its line within 3 mm is refused
+  (`knot_exhausted` / `off_line` / `arrival`). Transit legs are unchanged.
+- `Waypoint.knot_m` (new, optional, only finer than `safety.MAX_STEP_M`): the
+  contact leg of `Probe`/`Press` is knotted every `contact.CONTACT_KNOT_M`
+  = 5 mm, so the joint-space interpolation the daemon plays between knots
+  stays on the line wherever the contact stops it.
+- `GuardedArm.tuning` (new read-only property): the tuning `solve_ee` uses.
+
+Replay (`tests/executors/test_probe_session_replay.py`): ten probe/lift
+cycles, largest xy offset from the first contact 74.9 mm -> 0.4 mm; a
++50 mm Nudge ends 8.7 mm -> <= 1 mm from its commanded xy.
+
 ### Repeated probes: no wrist flip, no zero-duration knots (d1-2, 2026-09-23)
 
 The d1-2 probe trial (`docs/probe-hardware-trial.md`, fcc2087) stopped at
