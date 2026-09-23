@@ -329,14 +329,18 @@ def choose_side(world: WorldView, kin, *, obj: str, destination: str,
 #: still has its own). The same idiom as ``verbs.CARRY_CLEARANCE_LADDER_M``: a
 #: fixed ordered list, the first rung whose WHOLE two-arm chain plans wins, so
 #: the choice is a function of the world alone. The rungs are where both
-#: arms' reachable sets overlap on this URDF (surveyed 2026-09-22 with a 40 mm
-#: cube held top-down by the left hand and the right hand travelling ``left``
-#: onto it: x 0.35-0.45, y 0-0.10, z 0.20-0.35 plan; x 0.30 and z 0.15 mostly
-#: do not). A point is a candidate, never a promise; a world no rung reaches
-#: is refused as ``unreachable_handover``.
+#: arms' reachable sets overlap on this URDF. RE-SURVEYED 2026-09-22 under
+#: the coupled wrist-roll limit (``arms.coupled_limits``; the first survey,
+#: x 0.35-0.45 / y 0-0.10 / z 0.20-0.35, was box-only and every one of its
+#: rungs needed a J7 the d1-2 wrist does not have): a 40 mm cube held top-down
+#: by the left hand after Approach/Grasp/Lift at (0.40, 0.15), the right hand
+#: travelling ``left`` onto it, grid x 0.30-0.50, y -0.10..0.15, z 0.20-0.40
+#: in 5 cm steps — these five of 150 plan, all near the chest (x 0.30-0.35)
+#: and low (z 0.20-0.25). A point is a candidate, never a promise; a world no
+#: rung reaches is refused as ``unreachable_handover``.
 HANDOVER_MEETING_POINTS_M: Tuple[Tuple[float, float, float], ...] = (
-    (0.40, 0.05, 0.25), (0.40, 0.00, 0.25), (0.45, 0.05, 0.30),
-    (0.35, 0.10, 0.20), (0.40, 0.05, 0.35))
+    (0.30, 0.05, 0.20), (0.30, 0.10, 0.20), (0.30, 0.00, 0.25),
+    (0.35, 0.15, 0.20), (0.30, 0.15, 0.25))
 #: the held object's underside must be this far above anything under the
 #: meeting point [m] — two hands meet in free air, not over a table edge
 HANDOVER_FLOOR_M = 0.10

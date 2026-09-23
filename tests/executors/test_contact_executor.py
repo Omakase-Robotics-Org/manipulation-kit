@@ -362,7 +362,13 @@ def _observe(kin) -> WorldView:
 def test_a_probe_plan_runs_on_the_firmware_executor_and_reports_its_contact(
         d1_arm):
     """The whole ``run_plan`` path: stroke, standoff upload, the contact leg
-    through the override, and the relieve — on the fake."""
+    through the override, and the relieve — on the fake.
+
+    Starts fingertips-down (the pose ``tests/primitives/test_contact.py``
+    uses): from HOME the probe's in-place turn needs J7 past the coupled
+    wrist-roll limit, which is not what this pins."""
+    d1_arm.set_joints("left", np.radians(
+        [-21.091, -68.997, 37.832, -84.469, -5.509, -34.506, -50.0]))
     world = _observe(d1_arm)
     plan = Probe(side="left", direction="down").plan(world, d1_arm)
     assert plan.ok, str(plan)

@@ -320,6 +320,28 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
                     waypoint_label=wp.label, residual_m=residual,
                     residual_rad=rot_residual, stage="straight",
                     primitive=primitive, side=side)
+            if not wp.allow_via:
+                stray = _off_line_m(kin.tool_pose(side)[0], p0, wp.p)
+                if stray > PATH_TOL_M:
+                    # A leg whose SHAPE is the promise (a descent, a lift, a
+                    # nudge) is walked on its line or refused. ``solve_ee``
+                    # reaching the knot is not enough: with the wrist roll
+                    # held inside the coupled limit the solver can converge
+                    # on another posture branch, and the clamped partial
+                    # steps toward it carry the tool off the line (measured:
+                    # 110 mm on a 17 cm leg across a crate).
+                    kin.kin.set_joints(side, q_before)
+                    residual, rot_residual = _pose_error(kin, side, wp.p, wp.r)
+                    return steps, PlanError(
+                        IK_FAIL,
+                        f"the {side} arm cannot keep the tool on the straight "
+                        f"line to {wp.label!r}: the next step leaves it by "
+                        f"{stray * 1000:.0f} mm (the solver changed posture "
+                        f"branch), over the {PATH_TOL_M * 1000:.0f} mm path "
+                        f"window",
+                        waypoint_index=index, waypoint_label=wp.label,
+                        residual_m=residual, residual_rad=rot_residual,
+                        stage="off_line", primitive=primitive, side=side)
             steps.append(JointStep(side, kin.joints(side), index))
         if not converged:
             # EXHAUSTION IS CHECKED, not shrugged off. Every knot now gets a
@@ -354,6 +376,15 @@ def _straight(kin: Kin, side: str, wp: Waypoint, *, primitive: str,
             residual_m=residual, residual_rad=rot_residual, stage="arrival",
             primitive=primitive, side=side)
     return steps, None
+
+
+def _off_line_m(p, a, b) -> float:
+    """Distance [m] of ``p`` from the SEGMENT ``a``-``b``."""
+    p, a, b = (np.asarray(v, dtype=float) for v in (p, a, b))
+    ab = b - a
+    n = float(np.dot(ab, ab))
+    t = 0.0 if n <= 0.0 else min(max(float(np.dot(p - a, ab)) / n, 0.0), 1.0)
+    return float(np.linalg.norm(p - (a + t * ab)))
 
 
 def _scene_check(kin: Kin, side: str, q_from, q_to, wp: Waypoint, *,

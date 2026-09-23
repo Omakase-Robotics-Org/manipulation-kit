@@ -13,7 +13,7 @@
           "margin_deg": 5.0,
           "nominal_deg": 90.0,
           "measured_driver_range_deg": [30.0, 55.0],
-          "provenance": "measured d1-2 2026-09-22 by hand, two points (Shu, 23:37-23:44Z): |J7| stops at 65 deg with J6 = 30 deg and at 39 deg with J6 = 55 deg, the same magnitude for + and -. Found after the live Approach of 2026-09-22 22:42Z solved J7 = -90 at J6 = 55.2 and the wrist stopped at -39.5 (tests/data/d1_2_approach_20260922). |J6| < 30 deg is extrapolated, NOT measured."
+          "provenance": "measured d1-2 2026-09-22 by hand, two points (Shu, 23:37-23:44Z): |J7| stops at 65 deg with J6 = 30 deg and at 39 deg with J6 = 55 deg, the same magnitude for + and -. Found after the live Approach of 2026-09-22 22:42Z solved J7 = -90 at J6 = 55.2 and the wrist stopped at -39.5 (tests/data/d1_2_approach_20260922). |J6| < 30 deg is extrapolated, NOT measured. d1-3 is UNMEASURED: it carries the same arm, plate and cable run and is given the same table until it is measured on d1-3 itself."
         }
       ]
     }

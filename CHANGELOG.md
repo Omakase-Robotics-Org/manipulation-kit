@@ -85,8 +85,28 @@ J6 = 55.2 and the wrist stopped at -39.5.
   `ik_fail`; Approach / Grasp / Probe then try their other rolls.
 - A plan whose postures come within 10 deg of a coupled limit says so in
   `notes` ("near the coupled wrist_roll limit: ...").
-- **Breaking:** plans that used |J7| past the coupled limit change roll or are
-  refused `joint_limit`.
+- A leg whose shape is the promise (`allow_via=False`: descents, lifts,
+  nudges) is refused (`ik_fail`, stage `off_line`) when a solver step leaves
+  its straight line by more than `PATH_TOL_M` — with the wrist held inside the
+  limit the solver can change posture branch and the clamped steps toward it
+  carried the tool 110 mm off a 17 cm leg.
+- `reach.HANDOVER_MEETING_POINTS_M` re-surveyed under the limit: the old five
+  (x 0.35-0.45, z 0.20-0.35) all needed a wrist roll the hardware does not
+  have; the new five of a 150-point grid are near the chest, x 0.30-0.35,
+  z 0.20-0.25.
+- **Breaking — capability lost.** Side approaches that needed
+  |J7| > limit(J6) are now refused with `joint_limit` (or `guard_reject` on
+  the branch that is left): every side-on approach/grasp of the golden
+  `side_shelf` bottle (cases 139-144) and the d1-2 cube's side grasps (72,
+  76) — recorded as `COUPLED_REFUSED` in `tests/primitives/test_golden_plans.py`.
+  A redesign of the side-approach roll or a hand without the camera plate
+  would restore them. Side approaches still plan close to the chest (golden
+  scene `side_chest`, bottle at x 0.30). Top-down picks on the centre line
+  far out (blocks-eval `block_blue` at (0.451, 0.005)) are refused by both
+  arms; 2 cm nearer / to the left they plan. Plans that used |J7| past the
+  limit otherwise change roll or route (golden: 27 cases replanned).
+- **d1-3 is unmeasured.** The table was measured on d1-2 only; d1-3 carries
+  the same arm and plate and gets the same table until measured.
 
 ### Executor state
 
