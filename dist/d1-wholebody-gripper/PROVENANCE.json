@@ -44,13 +44,13 @@
     "meshes/body_hifi/torso_column_white.obj"
   ],
   "assets_repo": "Omakase-Robotics-Org/manipulation-kit-assets (private)",
-  "exported": "2026-09-21",
+  "exported": "2026-09-23",
   "files": {
-    "d1_wholebody_gripper.urdf": "4e77146630007f654f5cf32fd3b1110c0267434ea3533384656afca1542092dc"
+    "d1_wholebody_gripper.urdf": "fdc702b37c47b4f462f3d74f643086a263864953094f367280b8ae4910fbf1c5"
   },
   "flavour": "d1_wholebody_gripper",
   "mesh_prefix": "",
-  "source_commit": "9f7e3f35507b5d832b1b3692ca5e9f497a0a5a75",
+  "source_commit": "14a0a13b766625be33f20832826765c60b87fd1b",
   "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",

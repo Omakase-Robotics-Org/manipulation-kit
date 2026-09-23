@@ -123,14 +123,56 @@ def point_aabb_distance(p, lo, hi) -> float:
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
-def seg_aabb_distance(a, b, lo, hi, samples: int = 24) -> float:
-    """Min distance from segment [a,b] to an AABB, densely sampled —
-    IDENTICAL sampling to collision_model.h::segBoxDistance (conservative:
-    may slightly over-estimate distance between samples, which the caller's
-    margin absorbs)."""
-    best = 1e9
-    d = sub(b, a)
-    for i in range(samples + 1):
-        s = i / samples
-        best = min(best, point_aabb_distance(add(a, scale(d, s)), lo, hi))
-    return best
+def seg_aabb_distance(a, b, lo, hi) -> float:
+    """Exact minimum distance from segment [a,b] to an AABB [lo,hi].
+
+    The squared distance from a point moving along the segment to a box is a
+    convex, piecewise-quadratic function of the segment parameter s, with its
+    pieces separated by the at most six values of s where one coordinate
+    crosses a face plane. On each piece every axis is either inside its slab
+    (contributing nothing) or outside on a known side (contributing a linear
+    term squared), so the minimum on the piece is a clamped closed form. The
+    result is the global minimum up to floating-point rounding.
+
+    (This replaced 25-point sampling, which could read up to ~2.4 mm too far
+    on a 0.26 m link, i.e. on the unsafe side.)
+    """
+    d = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    cuts = [0.0, 1.0]
+    for k in range(3):
+        if d[k] != 0.0:
+            for w in (lo[k], hi[k]):
+                s = (w - a[k]) / d[k]
+                if 0.0 < s < 1.0:
+                    cuts.append(s)
+    cuts.sort()
+
+    def sq(s):
+        total = 0.0
+        for k in range(3):
+            p = a[k] + s * d[k]
+            e = lo[k] - p if p < lo[k] else (p - hi[k] if p > hi[k] else 0.0)
+            total += e * e
+        return total
+
+    best = sq(0.0)
+    for s0, s1 in zip(cuts, cuts[1:]):
+        if s1 <= s0:
+            continue
+        mid = 0.5 * (s0 + s1)
+        # f(s) = sum_k (c_k + s d_k)^2 over the axes outside their slab.
+        num = 0.0
+        den = 0.0
+        for k in range(3):
+            p = a[k] + mid * d[k]
+            if p < lo[k]:
+                c, dk = a[k] - lo[k], d[k]      # e = lo - p = -(c + s dk)
+            elif p > hi[k]:
+                c, dk = a[k] - hi[k], d[k]      # e = p - hi = c + s dk
+            else:
+                continue
+            num += c * dk
+            den += dk * dk
+        s = s0 if den == 0.0 else min(max(-num / den, s0), s1)
+        best = min(best, sq(s), sq(s1))
+    return math.sqrt(best)
