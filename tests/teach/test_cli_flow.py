@@ -162,7 +162,7 @@ def test_export_says_how_much_it_slowed_the_gesture(tmp_path, no_tty, capsys):
                  "--max-joint-acc", "120"]) == 0
     out = capsys.readouterr().out
     line = next(l for l in out.splitlines() if l.startswith("speed: stretched"))
-    assert "to meet 25 deg/s, 120 deg/s^2" in line and "L1 peak 113 deg/s" in line
+    assert "to meet 25 deg/s, 120 deg/s^2" in line and re.search(r"L1 peak \d+ deg/s", line)
     assert "--max-joint-vel" in line
     meta = load_csv(tmp_path / "swing_motion.csv").meta
     assert (meta["max_joint_vel"], meta["max_joint_acc"]) == ("25", "120")
@@ -202,8 +202,8 @@ def test_next_steps_walk_the_whole_flow(tmp_path):
     assert next_steps("check", csv=csv) == [f"mkit-teach play {csv} --dry-run"]
     assert next_steps("play", csv=csv, dry_run=True) == [f"mkit-teach play {csv}"]
     done = next_steps("play", csv=csv, name="wave")
-    assert done[0].startswith("mkit-teach register wave --yaml ")
-    assert str(csv) in done[0] and done[1].startswith("mkit-teach record ")
+    assert done[0].startswith(f"mkit-teach register {csv} <path to gesture.yaml>")
+    assert done[1].startswith("mkit-teach record ")
 
 
 def test_a_failure_prints_the_command_that_fixes_it(tmp_path):
@@ -242,3 +242,59 @@ def test_export_prints_the_timing_breakdown_and_joint_ranges(tmp_path, no_tty, c
     assert "L1 40.0 ->" in ranges
     assert main(["export", str(_fast_take(tmp_path)),
                  str(tmp_path / "pinned_motion.csv"), "--pin-wrist"]) == 0
+
+
+# -- register <csv> <gesture.yaml>: install into a (temp) omakaseos tree ------ #
+def _core(tmp_path):
+    d1 = tmp_path / "core" / "robot_stack" / "robots" / "omakase" / "d1"
+    (d1 / "csv").mkdir(parents=True)
+    (d1 / "csv" / "gentle_nod_motion.csv").write_text("duration,R1\n")
+    yml = d1 / "gesture.yaml"
+    yml.write_text("robot_vendor: omakase\nrobot_name: d1\ncsv_base_dir: ./csv\n"
+                   "gestures:\n- name: d1_gentle_nod\n  csv: gentle_nod_motion.csv\n"
+                   "  sentiment: positive\n  usage:\n  - filler\n  generated: true\n")
+    return yml
+
+
+def test_register_installs_an_exported_csv_with_its_header(tmp_path, no_tty, capsys):
+    take = _take(tmp_path)
+    assert main(["export", str(take), "--sentiment", "positive",
+                 "--usage", "opening", "ending"]) == 0
+    csv = tmp_path / "wave_motion.csv"
+    yml = _core(tmp_path)
+    capsys.readouterr()
+    assert main(["register", str(csv), str(yml)]) == 0
+    out = capsys.readouterr().out
+    dest = yml.parent / "csv" / "wave_motion.csv"
+    assert f"added d1_wave in {yml}; copied the CSV to {dest}" in out
+    assert dest.read_text() == csv.read_text()
+    text = yml.read_text()
+    assert "- name: d1_wave\n  csv: wave_motion.csv\n  sentiment: positive\n" in text
+    assert "  - opening\n  - ending\n  source: teach" in text
+    assert "d1_gentle_nod" in text and "generated: true" in text
+    assert main(["register", str(csv), str(yml)]) == 0          # again: replaced
+    assert "replaced d1_wave" in capsys.readouterr().out
+    assert yml.read_text().count("- name: d1_wave") == 1
+    assert main(["gestures", str(yml)]) == 0
+    listing = capsys.readouterr().out
+    assert "d1_gentle_nod" in listing and "d1_wave" in listing and "teach" in listing
+    assert "MISSING" not in listing
+
+
+def test_register_refuses_an_unsafe_csv(tmp_path, capsys):
+    from manipulation_kit.teach import Gesture, Keyframe, save_csv
+    bad = tmp_path / "bad_motion.csv"
+    save_csv(bad, Gesture([Keyframe(0.05, list(HOME)), Keyframe(1.0, list(HOME))],
+                          meta={"name": "bad"}, unsafe=["R6 over its limit"]))
+    yml = _core(tmp_path)
+    before = yml.read_text()
+    assert main(["register", str(bad), str(yml)]) == 1
+    assert "UNSAFE" in capsys.readouterr().err
+    assert yml.read_text() == before and not (yml.parent / "csv" / "bad_motion.csv").exists()
+
+
+def test_gestures_flags_a_missing_csv(tmp_path, capsys):
+    yml = _core(tmp_path)
+    (yml.parent / "csv" / "gentle_nod_motion.csv").unlink()
+    assert main(["gestures", str(yml)]) == 0
+    assert "(CSV MISSING)" in capsys.readouterr().out

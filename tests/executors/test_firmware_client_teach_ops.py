@@ -1,7 +1,7 @@
 """The verbs ``manipulation_kit.teach`` adds to FirmwareClient, on the wire.
 
 A loopback daemon serving the BUNDLED document (0.3.0 with d1-firmware PRs
-#92 and #102, spec ``1ec29096…``): ``arm_mode``, ``arm_recover`` and the holding-brake
+#92, #102 and #106, spec ``3b354c25…``): ``arm_mode``, ``arm_recover`` and the holding-brake
 routes go out as the generated ``ArmModeCommand`` / ``ArmRecoverRequest`` /
 ``ArmBrakeReleaseBody`` bodies; an operation a document does not publish is
 refused as :class:`OperationUnavailable` with no request sent, never

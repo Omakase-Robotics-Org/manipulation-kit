@@ -6453,14 +6453,6 @@
         ],
         "type": "object"
       },
-      "TrajectoryGuard": {
-        "description": "Which of the daemon's checks one trajectory is held to.\n\nThe default is the whole guard. `speed_only` exists for taught gestures:\na person moved the arm through every pose of such a trajectory by hand,\nso the operator decided whether it clears the body, and the guard's model\nmargins must not veto what was demonstrated. The speed guard stays on\nfor them; only the clearance (\"range\") guard may be switched off.",
-        "enum": [
-          "full",
-          "speed_only"
-        ],
-        "type": "string"
-      },
       "TrajectoryPhase": {
         "description": "The lifecycle phase of one trajectory job.\n\n`running` is the only non-terminal phase; the other three are final for\nthat job identifier.",
         "enum": [
@@ -6474,10 +6466,6 @@
       "TrajectoryRequest": {
         "description": "A bounded trajectory upload. Mode and tool selection remain explicit verbs.",
         "properties": {
-          "guard": {
-            "$ref": "#/components/schemas/TrajectoryGuard",
-            "description": "Which checks this trajectory is held to. Omitted means `full`.\n`speed_only` skips the clearance checks and is refused unless the\ncaller holds the arm lease."
-          },
           "waypoints": {
             "description": "Two or more absolute-time waypoints, at most 10,000 and 120 seconds.",
             "items": {
@@ -6499,10 +6487,6 @@
             "format": "int64",
             "minimum": 0,
             "type": "integer"
-          },
-          "guard": {
-            "$ref": "#/components/schemas/TrajectoryGuard",
-            "description": "The checks this job was accepted and is being played under.\n\nAlways sent. Published as optional only so that a client generated\nfrom this document still decodes the status of a daemon that predates\nthe field, which played every job under `full`."
           },
           "id": {
             "description": "Monotonic daemon-local job identifier.",
@@ -8147,7 +8131,7 @@
     },
     "/v1/arm/move_joints_both": {
       "post": {
-        "description": "Guarded as one dual-arm pose, so it accepts poses that two single-arm calls in sequence would not. Angles are degrees.\n\nBoth arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If either is not, the call is refused at once with `kind: refused` and no command is written to either arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.",
+        "description": "Angles are degrees. The motion guard checks the straight joint-space path from both arms' current feedback pose to the two targets, sampled at 1 degree per joint, each sample one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins; the targets are checked against the URDF joint limits. Because the two paths are checked together it accepts a coordinated move (arm A going where arm B is while B leaves) that \"A, then B\" as two single-arm calls would refuse. A path that fails is refused with `kind: refused` before anything is written, naming the sample, the moving joints and each pair under its margin with its distance; a path that starts inside a margin is accepted while no clearance gets smaller than at the start. The clearance guard cannot be switched off.\n\nStreaming (teleop sends this route at up to 200 Hz): a refused command is not written, so the arms hold the last accepted target; nothing latches, and the next command whose path is clear is accepted at once, so a streaming client just keeps streaming. A per-tick delta under one degree is one guard check.\n\nBoth arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If either is not, the call is refused at once with `kind: refused` and no command is written to either arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.",
         "operationId": "arm_move_joints_both",
         "requestBody": {
           "content": {
@@ -8288,7 +8272,7 @@
     },
     "/v1/arm/trajectory/start": {
       "post": {
-        "description": "Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists at a time and only the most recent job's status is retained. The arms must already be in a clean position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample is checked against the URDF joint limits and the 350 deg/s per-joint step cap. `guard: \"full\"` (the default) also checks the guard's clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and at playback; `guard: \"speed_only\"` skips those clearances for this job only, for taught gestures whose poses a person demonstrated, and is refused (409) unless the caller holds the arm lease. The job's status reports the guard it runs under. Not available over WebSocket.",
+        "description": "Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists at a time and only the most recent job's status is retained. The arms must already be in a clean position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at playback. The clearance guard cannot be switched off. Not available over WebSocket.",
         "operationId": "arm_trajectory_start",
         "requestBody": {
           "content": {
@@ -9032,7 +9016,7 @@
     },
     "/v1/arm/{side}/move_joint": {
       "post": {
-        "description": "`joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their last commanded targets. Same mode precondition and same `advisory` on refusal as `/v1/arm/{side}/move_joints`.",
+        "description": "`joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints: the other six are the arm's current feedback values, from the same read the guard checks. Same motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as `/v1/arm/{side}/move_joints`.",
         "operationId": "arm_move_joint",
         "parameters": [
           {
@@ -9127,7 +9111,7 @@
     },
     "/v1/arm/{side}/move_joints": {
       "post": {
-        "description": "Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.\n\nThe arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it. Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout waiting for a convergence that servo-off joints cannot reach.",
+        "description": "Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.\n\nThe motion guard checks the straight joint-space path from the arm's current feedback pose to the target, with the other arm at its own feedback pose, sampled at 1 degree per joint: each sample is one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins, and the target is checked against the URDF joint limits. A path that fails is refused with `kind: refused` before anything is written, naming the sample, the moving joints and each pair under its margin with its distance; a path that starts inside a margin is accepted while no clearance gets smaller than at the start. The clearance guard cannot be switched off.\n\nThe arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it. Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout waiting for a convergence that servo-off joints cannot reach.",
         "operationId": "arm_move_joints",
         "parameters": [
           {

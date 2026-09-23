@@ -241,3 +241,47 @@ def test_the_breakdown_adds_up_and_shows_a_lost_joint():
     assert "L1 40.0 ->" in ranges and "L7 30.0 ->" in ranges and "LOST" not in ranges
     pinned = reduce_samples(times, q, HOME, KeyframeOptions(pin_wrist=True))
     assert "L7 30.0 -> 0.0 (pinned: --pin-wrist)" in pinned.range_lines()[0]
+
+
+def _fast_wrist_swing(spike: bool = False):
+    """L7 swings -70 deg and back in 0.3 s, at 20 Hz (d1-2 task7's shape)."""
+    times = np.arange(0.0, 2.0, 0.05)
+    q = np.tile(HOME, (len(times), 1))
+    s = np.clip((times - 0.8) / 0.3, 0.0, 1.0)
+    q[:, 13] -= 70.0 * np.sin(np.pi * s)
+    if spike:
+        q[5, 1] += 6.0                     # one encoder spike on R2, flat around it
+    return times, q
+
+
+def test_a_fast_wrist_peak_survives_smoothing_and_reduction():
+    """task7: recorded L7 -70.0 deg, exported -58.4 (the 5-sample median ->
+    mean shaved 12 deg). The taught extreme must survive within 2 deg."""
+    times, q = _fast_wrist_swing()
+    red = reduce_samples(times, q, HOME)
+    t, poses = sample_path(trajectory_points(red.gesture, HOME), 0.005)
+    recorded = float(np.min(q[:, 13]))
+    exported = float(np.min(poses[:, 13]))
+    assert abs(exported - recorded) <= 2.0, (recorded, exported)
+    assert "peak shaved" not in red.range_lines()[0]
+
+
+def test_a_single_sample_spike_is_still_rejected():
+    times, q = _fast_wrist_swing(spike=True)
+    red = reduce_samples(times, q, HOME)
+    _, poses = sample_path(trajectory_points(red.gesture, HOME), 0.005)
+    assert np.max(poses[:, 1] - HOME[1]) < 1.5
+
+
+def test_a_shaved_peak_is_reported():
+    """A joint whose exported range is > 3 deg under the recorded one is
+    flagged, so a flattened turn is visible in export's output."""
+    import manipulation_kit.teach.process as process
+    times, q = _fast_wrist_swing()
+    red = reduce_samples(times, q, HOME)
+    low = list(HOME)
+    low[13] -= 60.0                                   # 10 deg short of -70
+    red.gesture = process.Gesture([process.Keyframe(0.05, list(HOME)),
+                                   process.Keyframe(1.0, low),
+                                   process.Keyframe(1.0, list(HOME))])
+    assert "(peak shaved 10.0 deg)" in red.range_lines()[0]

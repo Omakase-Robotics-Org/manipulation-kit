@@ -132,9 +132,9 @@ HOME_TOL_DEG = 2.0
 #: seconds counted down (3, 2, 1) before the arms go soft
 COUNTDOWN_S = 3
 
-#: The lifecycle the old /d1_teach panel showed, kept as the CLI's vocabulary.
-IDLE, STARTING, RECORDING, RECORDED, PREVIEWING, SAVED, DISCARDED = (
-    "idle", "starting", "recording", "recorded", "previewing", "saved", "discarded")
+#: The states ``record`` reports through ``on_state`` (the old /d1_teach
+#: panel's words; previewing/saved/discarded are export's business now).
+IDLE, STARTING, RECORDING, RECORDED = "idle", "starting", "recording", "recorded"
 
 BRAKE_CONTRACT = """\
 HAND GUIDING WITH THE HOLDING BRAKES RELEASED (d1-firmware PR #92)

@@ -7,7 +7,6 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.trajectory_guard import TrajectoryGuard
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -22,20 +21,12 @@ class ArmTrajectoryStartBody:
     """
     Attributes:
         waypoints (list[Waypoint]): Two or more absolute-time waypoints, at most 10,000 and 120 seconds.
-        guard (TrajectoryGuard | Unset): Which of the daemon's checks one trajectory is held to.
-
-            The default is the whole guard. `speed_only` exists for taught gestures:
-            a person moved the arm through every pose of such a trajectory by hand,
-            so the operator decided whether it clears the body, and the guard's model
-            margins must not veto what was demonstrated. The speed guard stays on
-            for them; only the clearance ("range") guard may be switched off.
         holder (str | Unset): The arm lease holder issuing this command. Required only while somebody holds the lease:
             with no lease held the field is ignored, and with one held a request whose `holder` does not match is refused
             with 409.
     """
 
     waypoints: list[Waypoint]
-    guard: TrajectoryGuard | Unset = UNSET
     holder: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -44,10 +35,6 @@ class ArmTrajectoryStartBody:
         for waypoints_item_data in self.waypoints:
             waypoints_item = waypoints_item_data.to_dict()
             waypoints.append(waypoints_item)
-
-        guard: str | Unset = UNSET
-        if not isinstance(self.guard, Unset):
-            guard = self.guard.value
 
         holder = self.holder
 
@@ -58,8 +45,6 @@ class ArmTrajectoryStartBody:
                 "waypoints": waypoints,
             }
         )
-        if guard is not UNSET:
-            field_dict["guard"] = guard
         if holder is not UNSET:
             field_dict["holder"] = holder
 
@@ -77,18 +62,10 @@ class ArmTrajectoryStartBody:
 
             waypoints.append(waypoints_item)
 
-        _guard = d.pop("guard", UNSET)
-        guard: TrajectoryGuard | Unset
-        if isinstance(_guard, Unset):
-            guard = UNSET
-        else:
-            guard = TrajectoryGuard(_guard)
-
         holder = d.pop("holder", UNSET)
 
         arm_trajectory_start_body = cls(
             waypoints=waypoints,
-            guard=guard,
             holder=holder,
         )
 

@@ -91,11 +91,9 @@ def sync_detailed(
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
     once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
-    is checked against the URDF joint limits and the 350 deg/s per-joint step cap. `guard: "full"` (the
-    default) also checks the guard's clearances (body and chest keep-out, arm-arm, same-arm self-
-    collision) at upload and at playback; `guard: "speed_only"` skips those clearances for this job
-    only, for taught gestures whose poses a person demonstrated, and is refused (409) unless the caller
-    holds the arm lease. The job's status reports the guard it runs under. Not available over WebSocket.
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):
@@ -130,11 +128,9 @@ def sync(
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
     once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
-    is checked against the URDF joint limits and the 350 deg/s per-joint step cap. `guard: "full"` (the
-    default) also checks the guard's clearances (body and chest keep-out, arm-arm, same-arm self-
-    collision) at upload and at playback; `guard: "speed_only"` skips those clearances for this job
-    only, for taught gestures whose poses a person demonstrated, and is refused (409) unless the caller
-    holds the arm lease. The job's status reports the guard it runs under. Not available over WebSocket.
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):
@@ -164,11 +160,9 @@ async def asyncio_detailed(
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
     once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
-    is checked against the URDF joint limits and the 350 deg/s per-joint step cap. `guard: "full"` (the
-    default) also checks the guard's clearances (body and chest keep-out, arm-arm, same-arm self-
-    collision) at upload and at playback; `guard: "speed_only"` skips those clearances for this job
-    only, for taught gestures whose poses a person demonstrated, and is refused (409) unless the caller
-    holds the arm lease. The job's status reports the guard it runs under. Not available over WebSocket.
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):
@@ -201,11 +195,9 @@ async def asyncio(
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
     once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
-    is checked against the URDF joint limits and the 350 deg/s per-joint step cap. `guard: "full"` (the
-    default) also checks the guard's clearances (body and chest keep-out, arm-arm, same-arm self-
-    collision) at upload and at playback; `guard: "speed_only"` skips those clearances for this job
-    only, for taught gestures whose poses a person demonstrated, and is refused (409) unless the caller
-    holds the arm lease. The job's status reports the guard it runs under. Not available over WebSocket.
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):

@@ -7,9 +7,11 @@ finalize half, after the capture loop) and
 of d1-sdk-workspace @ f142fc6; plus omakase-core
 ``status_server/d1/teach.py::_trim_idle_keyframes`` (the panel's "Trim idle
 pauses"). Defaults are gesture_record's (smoothing window 5, epsilon 1.5 deg,
-0.05 s minimum keyframe, wrist locked at HOME) except the speed ceiling:
-:class:`SpeedPolicy`, 150 deg/s and 600 deg/s^2 (gesture_record's was 25 and
-120, which slowed a hand-taught swing down visibly).
+0.05 s minimum keyframe) except three, each from a d1-2 take on 2026-09-23:
+the speed ceiling (:class:`SpeedPolicy`, 150 deg/s and 600 deg/s^2; 25 and
+120 slowed a hand-taught swing down visibly), the wrist (kept as taught; the
+pin erased deliberate J7 motion) and the smoother (despike + Savitzky–Golay;
+median -> mean shaved a fast J7 turn by 12 deg).
 
 Order: trim the release sag -> lock wrist -> smooth -> reduce -> build (real
 elapsed time per keyframe) -> HOME in / HOME out -> [trim idle] -> limit
@@ -64,8 +66,10 @@ import numpy as np
 from .gesture_csv import (JOINT_NAMES, Gesture, GestureFormatError, Keyframe,
                           N_JOINTS, sample, trajectory_points)
 
-#: gesture_record defaults
+#: gesture_record defaults (the smoother itself is peak-preserving now)
 SMOOTH_WINDOW = 5
+#: a single-sample excursion above this, on flat flanks, is an encoder spike
+SPIKE_DEG = 1.0
 EPSILON_DEG = 1.5
 MIN_KEYFRAME_S = 0.05
 #: buildGesture's floor on a keyframe span before the playability pass
@@ -81,6 +85,8 @@ IDLE_MOVE_EPS_DEG = 0.5
 #: when its recorded range is under ``WRIST_NOISE_DEG`` (sag / noise).
 WRIST_JOINTS = (4, 5, 6, 11, 12, 13)
 WRIST_NOISE_DEG = 2.0
+#: export flags a joint whose exported range is this much under the recorded
+PEAK_SHAVE_DEG = 3.0
 #: joint speed of the HOME-in blend and the appended return to HOME [deg/s]:
 #: by default the take's own peak joint speed after smoothing, clamped to
 #: this band (so the return does not feel slower than the gesture, and a
@@ -281,10 +287,57 @@ def moving_average(samples: np.ndarray, window: int) -> np.ndarray:
                      for i in range(n)])
 
 
+def despike(samples: np.ndarray, spike_deg: float = SPIKE_DEG) -> np.ndarray:
+    """Replace single-sample spikes by the 3-sample median — and nothing else.
+
+    A sample is a spike when it stands more than ``spike_deg`` off its
+    3-sample median while BOTH its flanks are flat (each neighbour within
+    half that of the sample beyond it). The top of a fast taught turn has
+    steep flanks and is kept: a plain median would clip it (d1-2 task7)."""
+    q = np.asarray(samples, dtype=float)
+    out = q.copy()
+    if len(q) < 5:
+        return out
+    m3 = median_filter(q, 3)
+    dev = np.abs(q - m3)
+    for i in range(2, len(q) - 2):
+        left = np.abs(q[i - 1] - q[i - 2])
+        right = np.abs(q[i + 1] - q[i + 2])
+        spike = (dev[i] > spike_deg) & (left < 0.5 * dev[i]) & (right < 0.5 * dev[i])
+        out[i, spike] = m3[i, spike]
+    return out
+
+
+def savitzky_golay(samples: np.ndarray, window: int) -> np.ndarray:
+    """Quadratic least-squares smoothing over ``window`` samples (the window
+    shifted inward at the ends). Low-passes jitter but, unlike a moving mean,
+    keeps the height of a turn: a quadratic fits a peak."""
+    window = _odd(window)
+    q = np.asarray(samples, dtype=float)
+    n = len(q)
+    if window < 5 or n < window:
+        return q.copy()
+    half = window // 2
+    x = np.arange(window, dtype=float) - half
+    pinv = np.linalg.pinv(np.vander(x, 3, increasing=True))    # [3, window]
+    out = np.empty_like(q)
+    for i in range(n):
+        start = min(max(i - half, 0), n - window)
+        at = float(i - (start + half))
+        weights = np.array([1.0, at, at * at]) @ pinv
+        out[i] = weights @ q[start:start + window]
+    return out
+
+
 def smooth_samples(samples: np.ndarray, window: int = SMOOTH_WINDOW) -> np.ndarray:
-    """Median (spike rejection) then mean (jitter low-pass), same window.
-    The old panel's "Smoothing (jitter rejection)"; ``window <= 1`` is off."""
-    return moving_average(median_filter(samples, window), window)
+    """Jitter rejection that keeps taught peaks: :func:`despike`, then a
+    quadratic Savitzky–Golay over ``window`` samples; ``window <= 1`` is off.
+
+    gesture_record's median -> mean over 5 samples shaved fast turns at
+    20 Hz (d1-2 task7: L7 recorded to -70.0 deg, exported to -58.4)."""
+    if _odd(window) <= 1:
+        return np.asarray(samples, dtype=float).copy()
+    return savitzky_golay(despike(samples), window)
 
 
 def _within(samples: np.ndarray, a: int, b: int, eps: float) -> bool:
@@ -586,6 +639,8 @@ class Reduction:
                          f" (pinned: under {WRIST_NOISE_DEG:g} deg, sag/noise)")
             elif rec >= min_deg and out[j] < 0.5 * rec:
                 cell += " (LOST)"
+            elif rec - out[j] > PEAK_SHAVE_DEG:
+                cell += f" (peak shaved {rec - out[j]:.1f} deg)"
             cells.append(cell)
         return ["joint range recorded -> exported [deg]: " + (", ".join(cells) or "none")]
 
@@ -612,7 +667,7 @@ def reduce_samples(times: Sequence[float], samples: np.ndarray,
     if o.method not in ("collinear", "dp"):
         raise ValueError(f"method must be 'collinear' or 'dp', got {o.method!r}")
     recorded_s = float(times[-1] - times[0])
-    recorded_range = _ranges(q)
+    recorded_range = _ranges(despike(q))      # an encoder spike is not taught motion
     start = settle_index(times, q, o.sag_max_s, o.sag_vel_deg_s)
     sag_cut_s = float(times[start] - times[0])
     times, q = times[start:], q[start:]

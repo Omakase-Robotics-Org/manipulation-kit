@@ -93,8 +93,9 @@ def sync_detailed(
 ) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets. Same mode precondition and same `advisory` on refusal as
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
     `/v1/arm/{side}/move_joints`.
 
     Args:
@@ -129,8 +130,9 @@ def sync(
 ) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets. Same mode precondition and same `advisory` on refusal as
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
     `/v1/arm/{side}/move_joints`.
 
     Args:
@@ -160,8 +162,9 @@ async def asyncio_detailed(
 ) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets. Same mode precondition and same `advisory` on refusal as
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
     `/v1/arm/{side}/move_joints`.
 
     Args:
@@ -194,8 +197,9 @@ async def asyncio(
 ) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets. Same mode precondition and same `advisory` on refusal as
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
     `/v1/arm/{side}/move_joints`.
 
     Args:

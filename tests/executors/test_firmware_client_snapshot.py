@@ -106,17 +106,16 @@ def test_the_bundled_client_is_a_real_tree_not_an_empty_directory():
         "tree holds — a partial commit")
 
 
-#: sha256 of d1-firmware ``openapi/d1-firmwared.v1.json`` at 39537a4 (PR #102).
-#: It still carries the optional trajectory ``guard`` field, which the kit no
-#: longer sends (Shu 2026-09-23 21:14Z: clearance guard always on; the field
-#: is being removed in d1-firmware PR #106's follow-up — the snapshot is
-#: refreshed once a document without it exists). Whatever a daemon serves,
-#: ``ensure`` regenerates the client at connect.
-BUNDLED_SPEC_SHA256 = ("1ec29096cdf531d777ed8161d49c3000f74870eac6c2c7d6fdddd26b"
-                       "adc1cd18")
+#: sha256 of d1-firmware ``openapi/d1-firmwared.v1.json`` at 0077deb (PR #106,
+#: branch feat/guard-joint-moves): the always-on guard, with the trajectory
+#: ``guard`` field and ``TrajectoryGuard`` removed. A superset of what d1-2
+#: serves until its daemon is redeployed; against that daemon ``ensure``
+#: regenerates at connect.
+BUNDLED_SPEC_SHA256 = ("3b354c25563e46aabd49c6a42819e5f32de0e5a7e003f3e4d97a3e56"
+                       "7048cfb9")
 
 
-def test_the_bundled_client_is_the_trajectory_guard_document(spec_document):
+def test_the_bundled_client_is_the_always_on_guard_document(spec_document):
     """The snapshot is the pinned document, not an older one.
 
     The hash is computed from the file on disk, so a hand-edited
@@ -125,6 +124,9 @@ def test_the_bundled_client_is_the_trajectory_guard_document(spec_document):
     assert ensure.bundled_spec_sha256() == BUNDLED_SPEC_SHA256
     assert ensure.snapshot()["spec_sha256"] == BUNDLED_SPEC_SHA256
     assert spec_document["info"]["version"] == "0.3.0"
+    schemas = spec_document["components"]["schemas"]
+    assert "TrajectoryGuard" not in schemas
+    assert "guard" not in schemas["TrajectoryRequest"]["properties"]
 
 
 @needs_310

@@ -22,191 +22,69 @@ accessor set, removed in 0.17.
 
 Shu, 2026-09-23: the teaching tool that produced the omakaseos gesture CSVs
 (d1-sdk `gesture_record`, driven by omakase-core's `/d1_teach` panel) stopped
-working at the firmwared migration — playback was ported to daemon
+working at the firmwared migration: playback was ported to daemon
 trajectories, teach was not, and `gesture_record` cannot reach the arm while
-the daemon owns it. It comes back here, over the generated client.
+the daemon owns it. It comes back here, over the generated client, and was
+brought up live on d1-2 the same day (seven runs; `docs/teach.md`, *実機ログ*).
 
-- **New `manipulation_kit.teach`** (`docs/teach.md`): `record` (hand-guide in
-  `force_compliance` — gesture_record's own parameters — or with the holding
-  brakes released for a timed window, or idle; sample both arms at 20 Hz with
-  timestamps and gripper closedness; always engage + `recover` on exit),
-  `process` (gesture_record's smoothing / collinear reduction / HOME snap /
-  `limitJointDynamics`, plus Douglas–Peucker, min spacing and the panel's idle
-  trim), `check` (the DAEMON's Catmull-Rom through `MotionGuard` with limits
-  unclamped, the coupled wrist-roll limit, and per-segment velocity /
-  acceleration caps; FK flange sweep; ASCII joint strips), `export`
-  (check-then-write; `--force` stamps `# mkit-teach: UNSAFE=`), `play`
-  (through `FirmwareExecutor`: lease, approach to HOME, measured first knot,
-  arrival barrier, settle; refuses UNSAFE without `--no-safety`), `registry`
-  (the `gesture.yaml` entry, `source: teach`).
-- **New CLI `mkit-teach`** — `record | keyframes | export | check | play | register`.
-- **New `FirmwareExecutor.play_waypoints(points)`**: upload an already-timed
-  dual-arm trajectory with the plan path's contract checks, polling and
-  cancel-on-exit (`_play` now shares `_run_job` with it).
-- **New `FirmwareClient` verbs** over generated operations: `arm_mode`
-  (`ArmModeCommand`), `arm_recover`, `arm_tool_state`, `brake_release` /
-  `brake_engage` / `brake_state` (d1-firmware PR #92), and `operation()`,
-  which raises the new **`OperationUnavailable`** when the client's document
-  lacks a route — the bundled 0.3.0 document has no brake routes.
-- The CSV contract is pinned from the firmware reader: 15 columns, degrees,
-  R = physical LEFT, row 0 / last row replaced by HOME and row 0's duration
-  ignored. Row 0 is therefore HOME itself (a deviation from gesture_record,
-  whose first row the new player would have dropped).
-
-Follow-up, Shu 2026-09-23 16:52Z / 16:56Z ("teaching is easier with the
-brakes released; compliance was hard to move", "for teaching, drop the
-guard") — **breaking for `mkit-teach` callers**:
-
-- **Recording default = brake release (hand guiding).** `record()` /
-  `mkit-teach record` default to `guide="brake"`: idle, then the generated
-  `brake_release` with `RELEASE_BRAKE` and a timed window the daemon closes
-  itself, renewed every third of the window. The contract is printed and ONE
-  typed `HOLDING` covers the session and all taught arms. `--guide` and
-  `--hand-guide` are gone: `--compliance` selects gesture_record's
-  `force_compliance`, and `--no-brake` gives servos-off-only.
-- **Operator flow**: the take starts at HOME. Without `--no-home-start` the
-  arms are driven there first. The start is refused when a taught joint is
-  more than 2 deg off HOME. Then a 3-2-1 countdown (`--countdown`) runs, and
-  `t = 0` of the take is the instant the release is acknowledged. Stop engages
-  the brakes FIRST, before `recover` or anything else. The renewal thread
-  stops under a lock, so no release can land after the engage.
-- **Export HOME rules** (`process`): the brake-release sag is cut. That is the
-  last sample within 0.5 s of the start whose joint speed exceeds 8 deg/s;
-  `--sag-max-s`, `--sag-vel`, `--no-sag-trim`. The motion starts at HOME and
-  blends into the stream. The last recorded pose is KEPT, and a return-to-HOME
-  row is appended at a constant joint speed (`max|dq| / 20 deg/s`,
-  `--home-speed`), so long and short returns move alike. Ends within epsilon
-  of HOME snap as before. The golden wave take is geometrically unchanged.
-- **Guard is advisory for teaching.** In `check`, MotionGuard clearance
-  (body / chest / arm-arm / self) is now a `GuardFinding` in
-  `CheckReport.guard_findings`, printed as a WARNING with the closest
-  distance, the frames and the time. It is no longer a violation. Joint
-  limits (incl. the coupled wrist limit), velocity / acceleration and
-  timing are still hard; a timing check (finite, 0-based, strictly
-  increasing) is new. `export` never stamps UNSAFE for a guard-only finding
-  and records `# mkit-teach: min_clearance=…` (and `guard_advisory=…`).
-  `play` announces the guard warning before moving and still refuses UNSAFE
-  without `--no-safety`. **d1-firmwared still refuses such an upload.** On
-  main d090ac4 `arm_trajectory.rs::validate` guards every 1 ms sample with
-  the same model and margins. It also does NOT refuse out-of-limit joints:
-  its guard clamps for the check and the raw pose is commanded. See
-  d1-firmware issue #101 (teach-mode relaxation question + that gap).
-- **The daemon's clearance guard is always on** (Shu 2026-09-23 21:14Z,
-  reversing 17:50Z). `mkit-teach play` sends no `guard` field; there is no
-  `--guard`, no `play(guard=)`, no `FirmwareExecutor.play_waypoints(guard=)`
-  and no `trajectory_guards()`. The daemon checks every sample with its
-  realistic geometry and 20 mm margin; the kit's `check` clearance findings
-  stay advisory WARNINGs, printed before anything moves together with the
-  fact that the daemon will refuse the same violations. (The per-job
-  relaxation d1-firmware PR #102 added is being removed from the daemon API
-  in PR #106's follow-up.)
-- **Bundled client snapshot → d1-firmware PR #102** (`1ec29096…`, branch
-  `feat/trajectory-guard-speed-only` @ 39537a4), superseding the
-  `a9c8b0d2…` snapshot below. It still carries the optional trajectory
-  `guard` field, which the kit no longer sends; PR #106's head (9ac6677)
-  still has it too, so the snapshot is refreshed once a document without it
-  exists. d1-2 serves `a9c8b0d2…` until
-  its daemon is redeployed with PR #102, so connecting to it regenerates the
-  client again, as designed. `guard` is optional in the status schema, so a
-  bundled client still decodes an older daemon's status.
-- **Confirmed mode transitions + a teardown the controller accepts** (first
-  live `mkit-teach record` on d1-2, 2026-09-23 20:16Z, d1-firmware main
-  5e7e23a). The idle request answered in 0 ms and the brake release 5 ms
-  later was refused (the controller reported idle only 11 ms after the
-  request); the recover 2 ms after the engage was refused (`RESET1` code 8,
-  mode flapping idle/error); an arm left idle by hand 40.2 deg from its
-  command stopped the session in `FirmwareExecutor.__enter__`. Now:
-  new `FirmwareExecutor.wait_for_mode()` (poll the generated `ArmState`
-  until the REPORTED mode matches; `ModeUnconfirmed`, new, on timeout or an
-  unexpected `error`), used by `position_mode()` and by `record` after every
-  mode request; order **idle → confirmed → 3-2-1 → release = t 0**; teardown
-  = brakes engaged → steady mode + stationary for 0.3 s → `recover_arm()`
-  (confirmed `position`, 3 attempts 1 s apart) → else the arm is left idle
-  with the brakes engaged and `exit_problems` / a WARNING line say how to
-  recover (console Arms → Recover, `POST /v1/arm/{side}/recover`);
-  `FirmwareExecutor(recover_on_entry=True, announce=)` (`recover_idle_arms()`)
-  recovers every non-position arm at its measured pose before position mode,
-  announced — set by `mkit-teach record` and `play` only; the agent loop's
-  executor still refuses. `record.HOLD_RATIO` is gone (`RECOVER_RATIO` in the
-  executor).
-- **Every firmware request waits the document's `x-timeout-seconds`**
-  (second live run, dc51dbe, 20:46Z: the take recorded fine, then the
-  teardown recover was cancelled by the daemon at exactly 2.0 s — the
-  client's blanket timeout hung up on a route declared at 65 s).
-  `FirmwareClient.timeout_for(method, path)` maps a concrete path to its
-  route's documented bound, floored at the client's `timeout`; `_send` uses
-  it for every generated operation and `request()`. New `ClientTimeout`
-  ("the kit gave up", not a refusal) and `RecoverFailed` (per-attempt
-  reason); `recover_arm` never re-issues after a client timeout, and
-  `exit_problems` says whether the daemon refused or the kit gave up.
-- **Teach operator flow after d1-2 take2** (Shu 2026-09-23 21:09Z / 21:12Z)
-  — **breaking for `mkit-teach` callers**:
-  - **Speed: one `process.SpeedPolicy`**, used by export (stretch), check and
-    play (judge); `MAX_JOINT_VEL_DEG_S` / `MAX_JOINT_ACC_DEG_S2` and
-    `check_gesture(max_vel_deg_s=, max_acc_deg_s2=)` are gone
-    (`speed=SpeedPolicy(...)`; `KeyframeOptions.speed`). **Default ceiling
-    150 deg/s, 600 deg/s^2** (was gesture_record's 25 / 120, now
-    `LEGACY_SPEED`): take2's ~130 deg/s J1 swing had been stretched 3.83 s ->
-    5.52 s. The caps travel in the CSV (`# mkit-teach: max_joint_vel=…
-    max_joint_acc=…`, plus `speed_stretch=…` when it stretched), and
-    `check` / `play` hold a CSV to its own caps unless `--max-joint-vel` /
-    `--max-joint-acc` override. Export prints the stretch only when it
-    stretched. This ceiling is the only gesture speed policy (the daemon
-    caps 350 deg/s per step, the omakaseos player none). HOME connect /
-    return stays a constant 20 deg/s.
-  - **Named takes**: `mkit-teach record` asks the gesture name first
-    (before the HOLDING contract) or takes `--name`; the take is
-    `<teach dir>/<name>.json` (`$MKIT_TEACH_DIR`, default `~/teach`), an
-    existing one is overwritten only on request (`--yes` in scripts); a
-    positional path still works. The name is stored in the recording.
-  - **`export` writes beside the take** when `out` is omitted:
-    `<take dir>/<name>_motion.csv`, the name from the recording or `--name`,
-    printed as an absolute path. Sentiment / usage are asked for on a
-    terminal when omitted, else neutral / filler.
-  - `[saved]` and `check` print the same duration (the daemon spline's end;
-    new `Gesture.played_s` replaces `total_duration_s`, which counted row
-    0's ignored duration).
-  - **Every subcommand ends with `Next:`** — the recommended next command
-    with absolute paths (`next_steps()`), or `To fix:` with the recover /
-    re-run command on a failure.
-  - `record` also asks **which arm(s)** after the name (`both/left/right`,
-    b/l/r; `--arms` skips it) and names only those in the contract.
-    **Ctrl-C while recording is a Stop** that keeps the take (new
-    `RecordAborted` when fewer than two samples); `To fix:` appears only
-    when an arm was left without a position hold or the run failed, and
-    **no hint ever suggests `--yes`** (it skips the HOLDING confirmation;
-    the retry is `mkit-teach record --name <name> --arms <arms>`).
-  - **The wrist is kept as taught** (Shu 21:51Z: task4's L7 35.7 deg was
-    exported as 0.0). `KeyframeOptions.lock_wrist` / `--free-wrist` are
-    replaced by `pin_wrist` / `--pin-wrist` (off by default) and
-    `wrist_noise_deg` (2 deg): a wrist joint that moved less than that is
-    pinned to HOME, and export says so.
-  - **HOME legs at the take's own speed**: `home_speed_deg_s=None` (default)
-    = the take's peak joint speed after smoothing, clamped to 20..90 deg/s;
-    `--home-speed` overrides; keyframe mode keeps 20.
-  - **Export prints where the time went and what each joint kept**: new
-    `process.Reduction` (`reduce_samples` / `reduce_poses`) with a
-    `timing: recorded … -> body … (speed cap stretched N knot(s), +x s) +
-    HOME connect … + return … = … s` line and per-joint ranges recorded ->
-    exported, flagging pinned and LOST joints.
-  - **`play` derives the position-mode ratio from the gesture** (d1-2
-    task6: a correct 117.8 deg/s CSV played slow and smoothed, J7 barely
-    moving, because the fixed 0.15 lets the controller track ~21 deg/s).
-    `play.playback_ratio()` = `clamp(1.3 x spline peak / 140, 0.3, 1.0)`,
-    acc ratio equal; announced with its reason before anything moves;
-    `--vel-ratio` overrides (play's default is now "derived"). The HOME
-    approach before the gesture runs at 0.3. New
-    `FirmwareExecutor.set_ratios()` re-installs position mode (confirmed)
-    and re-times the schedule. The controller ratio is never the speed
-    gate; the CSV's SpeedPolicy is.
-- **Bundled client snapshot refreshed** (consumer-sweep item from the probe
-  entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
-  (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2
-  serves at `GET /openapi.json` (fetched 2026-09-23), byte-identical to
-  d1-firmware main d090ac4 `openapi/d1-firmwared.v1.json`. It adds 10
-  generated files and 3 operations. The brake verbs are now real generated
-  operations out of the box, and connecting to d1-2 no longer regenerates.
-  Nothing else on the executor path changed.
+- **New `manipulation_kit.teach` and CLI `mkit-teach`**:
+  `record | export | check | play | register | gestures | keyframes`.
+  Every command ends with `Next:` (the next command, absolute paths) or
+  `To fix:` (only when something needs fixing); no hint ever suggests `--yes`.
+- **record**: asks the gesture name (take = `<teach dir>/<name>.json`,
+  `$MKIT_TEACH_DIR` or `~/teach`) and the arm(s) (`--name` / `--arms` for
+  scripts), prints the brake contract for those arms and takes ONE typed
+  `HOLDING`. Default guide = **holding brakes released** (d1-firmware PR
+  #92); `--compliance` (gesture_record's `force_compliance`) and
+  `--no-brake` remain. Sequence: lease -> recover any non-position arm at its
+  measured pose (teach's explicit `recover_on_entry`; the agent loop still
+  refuses) -> HOME -> idle, confirmed -> 3-2-1 -> release (= t 0) -> sample
+  20 Hz -> Stop (Enter or Ctrl-C, the take is kept) -> brakes engaged FIRST
+  -> steady 0.3 s -> recover (confirmed, 3 attempts; a client timeout is
+  never re-sent) -> else the arm is left idle with brakes engaged and the
+  operator is told how to recover and who gave up (daemon or kit).
+- **export**: writes `<take dir>/<name>_motion.csv` by default; cuts the
+  release sag; keeps the **wrist as taught** (`--pin-wrist` for
+  gesture_record's pin; a wrist joint under 2 deg is pinned as noise);
+  smooths **without shaving peaks** (single-sample despike, then a
+  quadratic Savitzky–Golay; gesture_record's median -> mean had cut task7's
+  L7 from -70.0 to -58.4 deg) and reduces; HOME connect/return at the take's own peak speed
+  (20..90 deg/s); stretches only what exceeds the **SpeedPolicy** (default
+  150 deg/s, 600 deg/s^2; gesture_record's 25 / 120 is `LEGACY_SPEED`);
+  checks, then writes the CSV with `max_joint_vel` / `max_joint_acc`
+  (and `speed_stretch`, `min_clearance`) in its header. Prints a `timing:`
+  breakdown and per-joint ranges recorded -> exported (pinned / LOST /
+  `peak shaved X deg` when more than 3 deg short).
+- **check**: the daemon's spline, every 10 ms: joint limits, the coupled
+  J6/J7 limit, the CSV's own speed ceiling and timing are hard; MotionGuard
+  clearance is an advisory warning (the daemon still refuses it).
+- **play**: pre-flight, recover-on-entry, HOME approach at ratio 0.3, then
+  the gesture at a position-mode ratio derived from its own peak
+  (`clamp(1.3 x peak / 140, 0.3, 1.0)`, printed; `--vel-ratio` overrides),
+  no `guard` field (the daemon's clearance guard is always on, d1-firmware
+  PR #106), arrival barrier and settle.
+- **register**: `register <csv> <gesture.yaml>` copies the CSV beside the
+  yaml (`csv_base_dir`) and adds / replaces its entry from the CSV header;
+  refuses UNSAFE. `gestures <gesture.yaml>` lists entries and flags missing
+  CSVs. The kit knows no omakaseos path; the yaml is always given.
+- **Firmware executor / client** (used by teach, available to all):
+  `FirmwareExecutor.wait_for_mode()` (the mode route answers on acceptance;
+  the reported mode is waited for, `ModeUnconfirmed`), `position_mode()`
+  confirms, `recover_arm()` (`RecoverFailed` with a reason per attempt),
+  `recover_idle_arms()` / `recover_on_entry=`, `set_ratios()`,
+  `play_waypoints()`; `FirmwareClient.timeout_for()` — every request waits
+  the document's `x-timeout-seconds` for its route (recover 65 s), floored at
+  2 s, and `ClientTimeout` says the kit gave up; new client verbs
+  `arm_mode`, `arm_recover`, `arm_tool_state`, `brake_release` /
+  `brake_engage` / `brake_state`, `operation()` (`OperationUnavailable`).
+- **Bundled client** regenerated from d1-firmware PR #106's document
+  (0077deb, spec `3b354c25…`: always-on guard, no `TrajectoryGuard`).
+  d1-2 serves an older document until its daemon is redeployed; `ensure`
+  regenerates at connect, as designed.
+- **Known limits** (`docs/teach.md`): playback fidelity is bounded by the
+  controller's position-mode planner until PD-mode / daemon streaming lands
+  (d1-firmware #96 and the PD-mode issue); the 600 deg/s^2 cap stretches very
+  snappy takes; the coupled J6/J7 limit is checked only by the kit (#99).
 
 ### Grasp: the measured width outranks the declared one
 
@@ -498,8 +376,8 @@ reproduce, and both are fixed at the producer:
 - **Bundled client snapshot was behind.** d1-2 now serves spec `a9c8b0d2…`
   (d1-firmware PR #92 added the brake routes); `ensure.py` regenerated the
   client from it at connect time, as designed. The bundled `_client/`
-  snapshot (`388bcd08…`, 0.3.0 before #92) was refreshed to `a9c8b0d2…` in
-  the teach follow-up above.
+  snapshot (`388bcd08…`, 0.3.0 before #92) is now `3b354c25…` (d1-firmware
+  PR #106; see the teach entry above).
 
 ### Coupled wrist-roll limit (d1-2 hardware, 2026-09-22)
 

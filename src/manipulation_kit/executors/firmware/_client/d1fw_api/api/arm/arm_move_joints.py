@@ -95,6 +95,14 @@ def sync_detailed(
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
 
+    The motion guard checks the straight joint-space path from the arm's current feedback pose to the
+    target, with the other arm at its own feedback pose, sampled at 1 degree per joint: each sample is
+    one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the
+    configured margins, and the target is checked against the URDF joint limits. A path that fails is
+    refused with `kind: refused` before anything is written, naming the sample, the moving joints and
+    each pair under its margin with its distance; a path that starts inside a margin is accepted while
+    no clearance gets smaller than at the start. The clearance guard cannot be switched off.
+
     The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
     is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
     merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.
@@ -135,6 +143,14 @@ def sync(
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
 
+    The motion guard checks the straight joint-space path from the arm's current feedback pose to the
+    target, with the other arm at its own feedback pose, sampled at 1 degree per joint: each sample is
+    one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the
+    configured margins, and the target is checked against the URDF joint limits. A path that fails is
+    refused with `kind: refused` before anything is written, naming the sample, the moving joints and
+    each pair under its margin with its distance; a path that starts inside a margin is accepted while
+    no clearance gets smaller than at the start. The clearance guard cannot be switched off.
+
     The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
     is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
     merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.
@@ -169,6 +185,14 @@ async def asyncio_detailed(
     """Command one arm to a joint target
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
+
+    The motion guard checks the straight joint-space path from the arm's current feedback pose to the
+    target, with the other arm at its own feedback pose, sampled at 1 degree per joint: each sample is
+    one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the
+    configured margins, and the target is checked against the URDF joint limits. A path that fails is
+    refused with `kind: refused` before anything is written, naming the sample, the moving joints and
+    each pair under its margin with its distance; a path that starts inside a margin is accepted while
+    no clearance gets smaller than at the start. The clearance guard cannot be switched off.
 
     The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
     is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is
@@ -207,6 +231,14 @@ async def asyncio(
     """Command one arm to a joint target
 
      Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.
+
+    The motion guard checks the straight joint-space path from the arm's current feedback pose to the
+    target, with the other arm at its own feedback pose, sampled at 1 degree per joint: each sample is
+    one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the
+    configured margins, and the target is checked against the URDF joint limits. A path that fails is
+    refused with `kind: refused` before anything is written, naming the sample, the moving joints and
+    each pair under its margin with its distance; a path that starts inside a margin is accepted while
+    no clearance gets smaller than at the start. The clearance guard cannot be switched off.
 
     The arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it
     is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is

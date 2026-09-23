@@ -4,9 +4,11 @@ The same path the omakaseos firmware player takes (omakase-core
 ``firmware_session.py``: approach, then ``trajectory_from_csv`` knots with the
 first one re-anchored to the measured pose, one ``/v1/arm/trajectory/start``),
 but through the executor, so the lease (class ``policy`` by default, ``operator``
-for a person at the robot), position mode at THIS run's ``vel_ratio``, the
-knot contract, the cancel-on-any-exit and the arrival barrier are the kit's
-own rather than re-derived here.
+for a person at the robot), position mode, the knot contract, the
+cancel-on-any-exit and the arrival barrier are the kit's own rather than
+re-derived here. The HOME approach runs at the executor's ratio as entered
+(``mkit-teach play``: 0.3); the gesture at :func:`playback_ratio`, derived
+from its own peak speed so the controller is not a hidden brake.
 
 Refusals, all BEFORE anything moves:
 
@@ -15,8 +17,8 @@ Refusals, all BEFORE anything moves:
 * a file that fails :func:`~manipulation_kit.teach.check.check_gesture`'s
   HARD checks (joint limits incl. the coupled wrist limit, rates, timing) —
   unless ``no_safety``. Rates are held to the ceiling the CSV was exported
-  with (``# mkit-teach: max_joint_vel/max_joint_acc``), or ``speed``. This flag only skips the kit's pre-flight, never the
-  daemon's;
+  with (``# mkit-teach: max_joint_vel/max_joint_acc``), or ``speed``. The
+  flag only skips the kit's pre-flight, never the daemon's;
 * a latched arm controller.
 
 MotionGuard clearance findings are NOT a refusal here (a taught gesture's
@@ -24,11 +26,9 @@ poses were reached by hand; see :mod:`~manipulation_kit.teach.check`): they
 are announced, through ``announce``, before anything moves.
 
 The daemon does NOT follow that rule: it checks every sample of the upload
-against its own guard — realistic geometry, 20 mm margin, clearance always on
-(Shu 2026-09-23 21:14Z: the guard is on everywhere; the daemon API's
-per-job relaxation is being removed, d1-firmware PR #106 and follow-up) —
-and refuses the upload
-on the same violations ``check`` warns about. No ``guard`` field is sent.
+against its own always-on guard (its realistic geometry and margins,
+d1-firmware PR #106; Shu 2026-09-23 21:14Z) and refuses the upload on the
+same violations ``check`` warns about. No ``guard`` field is sent.
 """
 from __future__ import annotations
 
@@ -108,8 +108,8 @@ def guard_notes(report: Optional[CheckReport]) -> List[str]:
         return []
     return [f.summary() for f in report.guard_findings] + [
         "the daemon checks clearance on every sample with its own geometry and "
-        "20 mm margin, always, and will refuse the upload on the same "
-        "violations (docs/teach.md, 'Guard')"]
+        "margins, always, and will refuse the upload on the same violations "
+        "(docs/teach.md, 'Guard')"]
 
 
 def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = False,

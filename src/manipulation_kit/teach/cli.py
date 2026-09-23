@@ -1,16 +1,16 @@
 """``mkit-teach`` — teach an omakaseos gesture by hand, over d1-firmwared.
 
-    mkit-teach record    take.json  --url http://127.0.0.1:4750   # brakes off, hand-guide
-    mkit-teach keyframes take.json  take.keys.json                # reduce
-    mkit-teach export    take.json  --name wave                   # check + <take dir>/wave_motion.csv
-    mkit-teach check     wave_motion.csv --ascii                  # pre-flight
-    mkit-teach play      wave_motion.csv --url http://127.0.0.1:4750
-    mkit-teach register  wave --yaml <omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml
+    mkit-teach record                      # asks name + arm(s) -> ~/teach/<name>.json
+    mkit-teach export   ~/teach/<name>.json            # -> ~/teach/<name>_motion.csv
+    mkit-teach check    ~/teach/<name>_motion.csv --ascii
+    mkit-teach play     ~/teach/<name>_motion.csv --dry-run
+    mkit-teach play     ~/teach/<name>_motion.csv
+    mkit-teach register ~/teach/<name>_motion.csv <path to gesture.yaml>
+    mkit-teach gestures <path to gesture.yaml>
+    mkit-teach keyframes <take>.json <take>.keys.json  # the reduction alone
 
-The lifecycle the old /d1_teach panel showed — idle -> recording
-(brakes released; --compliance for gesture_record's mode) -> recorded -> previewing -> saved / discarded — is these
-commands in order; a take you do not export is simply discarded.
-Operator guide: docs/teach.md.
+Every command ends by printing the next one (``Next:``) with absolute paths,
+or how to fix what failed (``To fix:``). Operator guide: docs/teach.md.
 """
 from __future__ import annotations
 
@@ -100,9 +100,8 @@ def next_steps(step: str, *, ok: bool = True, take: Optional[Path] = None,
         if ok and dry_run:
             lines.append(f"mkit-teach play {csv}")
         elif ok:
-            lines += [f"mkit-teach register {name_arg} --yaml "
-                      f"<omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml"
-                      f"   # then copy {csv} to csv/ beside it",
+            lines += [f"mkit-teach register {csv} <path to gesture.yaml>"
+                      f"   # copies the CSV beside it and adds the entry",
                       "mkit-teach record   # the next take (asks for its name)"]
         else:
             lines.append(f"mkit-teach check {csv} --ascii   # see what was refused"
@@ -263,7 +262,7 @@ def cmd_record(args) -> int:
         return 2
     home = load_home(args.home)
     stop = threading.Event()
-    next_keyframe = None
+    should_stop = next_keyframe = None
     if args.mode == "stream":
         if args.stop_file:
             stop_path = Path(args.stop_file)
@@ -279,13 +278,14 @@ def cmd_record(args) -> int:
             threading.Thread(target=wait_enter, daemon=True).start()
             print("Press Enter to stop (Ctrl-C while recording also stops and keeps the take).")
 
-        def should_stop() -> bool:
+        def stream_stop() -> bool:
             return stop.is_set() or bool(stop_path and stop_path.exists())
+        should_stop = stream_stop
     else:
-        def next_keyframe() -> bool:
+        def ask_keyframe() -> bool:
             line = input("Enter = capture this pose, q + Enter = done: ").strip()
             return line.lower() not in ("q", "quit", "done")
-        should_stop = None
+        next_keyframe = ask_keyframe
     from ..executors.firmware import FirmwareUnavailable  # noqa: PLC0415
     out = take
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -552,13 +552,41 @@ def cmd_play(args) -> int:
 
 
 def cmd_register(args) -> int:
-    sentiment, usage = ask_labels(args)
-    print(registry.entry_yaml(args.name, sentiment=sentiment, usage=usage), end="")
-    if args.yaml:
-        how = registry.register(Path(args.yaml), args.name,
-                                sentiment=sentiment, usage=usage)
-        print(f"{how} d1_{args.name} in {args.yaml}")
-    print_next(next_steps("register", name=args.name))
+    """``register NAME [gesture.yaml]`` prints (and splices) the entry;
+    ``register CSV gesture.yaml`` installs the exported CSV into that
+    omakaseos checkout (``registry.install``)."""
+    if args.target.endswith(".csv"):
+        if not args.yaml:
+            raise SystemExit("mkit-teach register <csv> needs the gesture.yaml to install into")
+        try:
+            how, name, dest = registry.install(Path(args.target), Path(args.yaml),
+                                               sentiment=args.sentiment, usage=args.usage)
+        except registry.UnsafeCsv as exc:
+            print(str(exc), file=sys.stderr)
+            print_next([f"mkit-teach record --name {Path(args.target).stem.replace('_motion', '')}"
+                        f"   # re-teach it"], ok=False)
+            return 1
+        print(f"{how} d1_{name} in {Path(args.yaml).expanduser().resolve()}; "
+              f"copied the CSV to {dest}")
+    else:
+        name = registry.check_name(args.target)
+        sentiment, usage = ask_labels(args)
+        print(registry.entry_yaml(name, sentiment=sentiment, usage=usage), end="")
+        if args.yaml:
+            how = registry.register(Path(args.yaml).expanduser(), name,
+                                    sentiment=sentiment, usage=usage)
+            print(f"{how} d1_{name} in {args.yaml}")
+    print_next(next_steps("register", name=name))
+    return 0
+
+
+def cmd_gestures(args) -> int:
+    rows = registry.entries(Path(args.yaml))
+    width = max([len(r.name) for r in rows] + [4])
+    for r in rows:
+        print(f"{r.name:<{width}}  {r.source:<9} {r.sentiment:<10} {r.csv}"
+              + ("" if r.present else "   (CSV MISSING)"))
+    print(f"{len(rows)} gesture(s) in {Path(args.yaml).expanduser().resolve()}")
     return 0
 
 
@@ -714,18 +742,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lease-class", choices=("operator", "policy"), default="policy")
     p.set_defaults(func=cmd_play)
 
-    p = sub.add_parser("register", help="print / splice the gesture.yaml entry")
-    p.add_argument("name")
-    _meta_args(p)
-    p.add_argument("--yaml", default=None)
+    p = sub.add_parser("register", help="install a CSV into omakaseos, or "
+                                        "print / splice a gesture.yaml entry")
+    p.add_argument("target", help="an exported <name>_motion.csv (installed: copied "
+                                  "to the yaml's csv dir, entry from its header), "
+                                  "or a gesture name (entry only)")
+    p.add_argument("yaml", nargs="?", default=None,
+                   help="<omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml")
+    p.add_argument("--sentiment", choices=registry.SENTIMENTS, default=None)
+    p.add_argument("--usage", nargs="+", choices=registry.USAGES, default=None)
     p.set_defaults(func=cmd_register)
+
+    p = sub.add_parser("gestures", help="list a gesture.yaml's entries")
+    p.add_argument("yaml")
+    p.set_defaults(func=cmd_gestures)
     return ap
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    if getattr(args, "cmd", None) == "register":
-        args.name = registry.check_name(args.name)
     return int(args.func(args) or 0)
 
 

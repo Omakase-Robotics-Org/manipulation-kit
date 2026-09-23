@@ -1,12 +1,12 @@
 # Teach: hand-taught gestures for omakaseos (`mkit-teach`)
 
-`manipulation_kit.teach` + the `mkit-teach` CLI record a D1 gesture by moving
+`manipulation_kit.teach` and the `mkit-teach` CLI record a D1 gesture by moving
 the arms by hand, reduce it to keyframes, check it, and write the omakaseos
-gesture CSV. It replaces d1-sdk `gesture_record` and omakase-core's
+gesture CSV. They replace d1-sdk `gesture_record` and omakase-core's
 `/d1_teach` panel, which stopped working when `d1-firmwared` took over the arm
-link (see *Where the old tool went* below). Everything goes through the
-daemon's REST API — the generated client and `FirmwareExecutor` — so it works
-with omakaseos running, over `ssh -L 4750:127.0.0.1:4750`.
+link (see *Where the old tool went*). Everything goes through the daemon's REST
+API — the generated client and `FirmwareExecutor` — so it works with omakaseos
+running, over `ssh -L 4750:127.0.0.1:4750`.
 
 ---
 
@@ -16,290 +16,251 @@ with omakaseos running, over `ssh -L 4750:127.0.0.1:4750`.
 `ssh -L 4750:127.0.0.1:4750 d1-2` でトンネルし、`pip install
 'manipulation-kit[firmware]'` 済みの環境で実行する（`--url` の既定は
 `$D1FW_URL` または `http://127.0.0.1:4750`）。**腕を動かすのは record と play
-だけ**。keyframes / export / check / register はロボットに触れない。
+だけ**。export / check / register / keyframes はロボットに触れない。
+
+### 全体の流れ
+
+```sh
+mkit-teach record                                   # 名前 → 腕 → HOLDING → 記録 → ~/teach/<name>.json
+mkit-teach export ~/teach/<name>.json               # → ~/teach/<name>_motion.csv
+mkit-teach check  ~/teach/<name>_motion.csv --ascii
+mkit-teach play   ~/teach/<name>_motion.csv --dry-run
+mkit-teach play   ~/teach/<name>_motion.csv
+mkit-teach register ~/teach/<name>_motion.csv <gesture.yaml のパス>
+```
+
+**各コマンドは最後に `Next:` として次に打つコマンドを絶対パス入りで表示する**。
+失敗したときは `To fix:` として直し方（recover の方法、再実行のコマンド）を出す。
+`To fix:` が出るのは本当に直すものがある時だけ。**ヒントが `--yes` を勧めることは
+無い**（`--yes` は HOLDING の確認を飛ばすスクリプト専用）。
 
 ### 1. 録る（record）
 
 ```sh
-mkit-teach record                           # 名前を聞かれる → ~/teach/<name>.json。既定: 両腕, ブレーキ解放, 20 Hz
-mkit-teach record --name wave --arms left   # 片腕だけ解放する（反対側は位置保持）
+mkit-teach record                              # 名前と腕を聞く。既定: ブレーキ解放, 20 Hz
+mkit-teach record --name wave --arms left      # 聞かずに始める（片腕: 反対側は位置保持）
 mkit-teach record --name wave --mode keyframe  # Enter ごとに 1 ポーズ、q+Enter で終了
-mkit-teach record --name wave --compliance  # 旧 gesture_record の force_compliance で録る
-mkit-teach record /path/take.json           # 保存先を直接指定（スクリプト向け）
+mkit-teach record --name wave --compliance     # 旧 gesture_record の force_compliance
+mkit-teach record --name wave --no-brake       # サーボ OFF のみ、ブレーキに触らない
+mkit-teach record /path/take.json --arms both  # 保存先を直接指定（スクリプト向け）
 ```
 
-**名前が最初**（Shu 2026-09-23）: 引数なしで起動すると、安全契約より前に
-`Gesture name (a-z, 0-9, _, -):` と聞く。テイクは `<teach dir>/<name>.json`
-（teach dir = `$MKIT_TEACH_DIR`、既定 `~/teach`）、CSV の既定は
-`<teach dir>/<name>_motion.csv`。同名のテイクがあれば上書きか別名かを聞く
-（端末でなければ拒否、`--yes` なら上書き）。名前は記録に残るので export で
-`--name` は不要。
-
-続けて**どちらの腕を教えるか**を聞く: `Arms to teach [both/left/right] (default
-both):`（b / l / r も可）。`--arms` を付ければ聞かない。安全契約は選んだ腕だけを
-名指しして表示する。選択は記録の `arms` に残る。
-
-**録画中の Ctrl-C は Enter と同じ「停止」**で、テイクは保存される（ブレーキ締結 →
-位置保持の順も同じ）。サンプルが 2 未満ならテイクは破棄され、録り直しの
-コマンドを表示する。録画開始前（HOME 移動・カウントダウン中）の Ctrl-C は何も
-保存しない。
-
-`To fix:` が出るのは本当に直すものがある時だけ（位置保持に戻せなかった腕、
-デーモンの拒否、キット側のタイムアウトなど）。**ヒントが `--yes` を勧めることは
-無い**（`--yes` は HOLDING の確認を飛ばすスクリプト専用）。録り直しは
-`mkit-teach record --name <name> --arms <arms>`。
-
-**各コマンドは最後に「Next:」として次に打つコマンドを絶対パス入りで表示する**
-（record → `export <take>`、export → `check <csv> --ascii` と `play <csv> --dry-run`、
-check OK → `play --dry-run`、dry-run OK → `play`、play OK → `register` と次の
-テイク）。失敗時は「To fix:」として直し方（recover の方法・再実行コマンド）を出す。
-
-既定は**ブレーキ解放（ハンドガイド）**。Shu 2026-09-23:「コンプライアンスだと
-動かすのが難しかった」ため、サーボ OFF + 保持ブレーキ解放で直接手で動かす方式を
-既定にした。
-
-流れ:
-
-1. 下記「ブレーキ解放の安全契約」を表示し、**`HOLDING` と 1 回だけ**打つ
-   （両腕でも 1 回。腕ごとには聞かない。`--yes` はスクリプト専用）。
-2. アームリースを `operator` クラスで取る（テレオペ・コンソールと同格。
-   `policy` の自律動作より優先）。
-3. **入口の recover**: 位置モードでない腕（idle / error など。手で動かして
-   idle のまま置いた腕を含む）があれば、その腕を**計測姿勢で** recover して
-   位置保持にする（`[starting] recovering arm b (idle, 40.2 deg from its
-   command)` と表示）。教えない側の腕も対象（位置モードと HOME 移動は両腕を
-   動かすため）。これは teach の明示的な選択で、エージェント実行の経路では
-   従来どおり拒否する。
-4. 位置モードでまっすぐ HOME へ移動（記録しない）。**ジェスチャーは必ず HOME
-   から始まる**: `--no-home-start` で移動を省いた場合、教える腕のどれかの関節が
-   HOME から 2 deg を超えていれば開始を拒否する。
-5. 柔らかくする（順序は下の「動作の順序」）:
-   * 既定（ブレーキ解放）: `idle`（サーボ OFF）を要求し、**腕が idle と報告する
-     まで待つ**（ブレーキは保持したままなので安全）→ **カウントダウン 3, 2, 1**
-     （`--countdown N`、0 で無し）→ "0" で `brake_release`（確認語
-     `RELEASE_BRAKE`、時限窓 20 s、記録中は窓の 1/3 ごとに再送）。
-     **解放が受理された瞬間が t = 0**。そこから即記録開始（解放前の姿勢は記録
-     しない）。idle の代わりに error と報告されたら故障として止める
-     （ブレーキは解放しない）。
-   * `--compliance`（旧 gesture_record と同じ）: カウントダウンの後に
-     `force_compliance`（力方向 `[1,0,0,0,0,0]`、目標力 0、調整上限 2 mm、
-     速度/加速度比 0.05）。モード遷移と静止を確認してから 1.5 秒待って記録開始。
-     サーボは入ったまま、手で押すと逃げる。
-     デーモンにツール（エンドエフェクタ）が登録されていないと拒否する
-     （空フランジとして重力補償され手首が垂れるため。何も付けていない時だけ
-     `--allow-bare-flange`）。
-   * `--no-brake`: カウントダウンの後にサーボ OFF のみ（idle を確認）、
-     ブレーキには触らない（idle で手で動かせる個体向け）。
-6. 手で腕を動かす。**Enter** で停止（Ctrl-C でも停止し保存される）。
-   `--duration-s N` で自動停止、`--stationary-s N` で N 秒静止したら停止、
-   `--stop-file PATH` でファイルが現れたら停止。
-7. 停止時は（例外時も必ず）**まずブレーキ締結**（他の何よりも先。再送スレッドは
-   ロックで止めるので、締結の後に解放が飛ぶことはない）→ 腕が**静止し、同じ
-   モードを 0.3 s 保つまで待つ** → `recover`（計測姿勢で位置保持、比 0.05 =
-   旧 `lockCurrentPositionMode(5,5)`。position と報告されるまで確認）。
-   recover はデーモン内で確認ループ（最大 500 ms × 8）を回すので、キットは
-   文書の `x-timeout-seconds`（recover は 65 s）まで答えを待つ。
-   コントローラが拒否したら 1 秒おきに計 3 回まで試す（キット側が待ちきれずに
-   諦めた場合は、デーモンがまだ実行中かもしれないので再送しない）。
-   メッセージは「デーモンが拒否した（DAEMON REFUSED）」と「キットが待つのを
-   やめた（KIT GAVE UP、拒否ではない）」を区別する。それでも駄目なら腕は
-   **idle・ブレーキ締結のまま（安全）**残し、`WARNING: arm b was not put back
-   in a position hold …` と表示して記録の `meta.exit_problems` に残す。復帰は
-   コンソールの Arms → Recover か `POST /v1/arm/b/recover`。→ リース返却 →
-   テイク確定。
-
-### 動作の順序（2026-09-23 d1-2 初回実機で確定）
+1. **名前**: `Gesture name (a-z, 0-9, _, -):`。テイクは `<teach dir>/<name>.json`
+   （teach dir = `$MKIT_TEACH_DIR`、既定 `~/teach`）。同名があれば上書きか別名かを
+   聞く（端末でなければ拒否、`--yes` なら上書き）。名前は記録に残るので export に
+   `--name` は要らない。
+2. **腕**: `Arms to teach [both/left/right] (default both):`（b / l / r も可）。
+   `--arms` を付ければ聞かない。選択は記録の `arms` に残る。
+3. **安全契約**（下記）を、選んだ腕だけを名指しして表示し、**`HOLDING` と 1 回だけ**
+   打つ（両腕でも 1 回）。
+4. アームリースを `operator` クラスで取る。**入口の recover**: 位置モードでない腕
+   （idle / error。手で動かして idle のまま置いた腕を含む。教えない側の腕も）を
+   計測姿勢で recover して位置保持にする（`recovering arm b (idle, 40.2 deg from
+   its command)` と表示）。これは teach だけの明示的な選択で、エージェント実行の
+   経路では従来どおり拒否する。
+5. 位置モード（比 0.15）でまっすぐ HOME へ（記録しない）。**ジェスチャーは必ず
+   HOME から始まる**（`--no-home-start` なら、教える腕が HOME から 2 deg 超で拒否）。
+6. **サーボ OFF → 確認 → 3, 2, 1 → ブレーキ解放**: `idle` を要求し、腕が idle と
+   **報告するまで待つ**（ブレーキ保持中なので安全。error と報告されたら故障として
+   止め、解放しない）。カウントダウン（`--countdown N`）の "0" で `brake_release`
+   （確認語 `RELEASE_BRAKE`、時限窓 20 s、記録中は 1/3 ごとに再送）。
+   **解放が受理された瞬間が t = 0**。`--compliance` / `--no-brake` はカウントダウンの
+   後にそのモードへ入り、モードを確認してから記録する（compliance はさらに 1.5 s
+   安定待ち。ツール未登録の空フランジは拒否、`--allow-bare-flange` で許可）。
+7. 手で腕を動かす。**Enter** で停止。**録画中の Ctrl-C も停止で、テイクは保存
+   される**。`--duration-s` / `--stationary-s` / `--stop-file` でも止まる。サンプルが
+   2 未満ならテイクは破棄し、録り直しのコマンド
+   （`mkit-teach record --name <name> --arms <arms>`）を出す。録画開始前の Ctrl-C は
+   何も保存しない。
+8. **停止時は（例外時も必ず）まずブレーキ締結** → 腕が静止し同じモードを 0.3 s
+   保つまで待つ → `recover`（計測姿勢で位置保持、比 0.05。position の報告まで確認。
+   デーモンの確認ループのため文書の `x-timeout-seconds` = 65 s まで待つ）。拒否
+   されたら 1 秒おきに計 3 回。キット側が待ちきれなかった場合は再送しない。それでも
+   駄目なら腕は **idle・ブレーキ締結のまま（安全）** 残し、「デーモンが拒否した
+   （DAEMON REFUSED）」か「キットが待つのをやめた（KIT GAVE UP）」かを区別して
+   `To fix:` に復帰方法（コンソールの Arms → Recover、`POST /v1/arm/<side>/recover`）
+   を出す。
+9. `[recorded] <take>: N samples, T s` と `Next: mkit-teach export <take>`。
 
 ```
-lease → [入口 recover: idle/error の腕] → position（報告を確認）→ HOME
-      → idle 要求 → idle と報告されるまで待つ（ブレーキ保持中＝安全）
-      → 3, 2, 1 → brake_release（"0"＝t = 0）→ 記録
-      → 停止: brake_engage → 静止＋モード安定 0.3 s → recover（最大 3 回, 1 s 間隔）
+lease → [入口 recover] → position（確認）→ HOME
+      → idle 要求 → idle の報告を確認（ブレーキ保持中）→ 3, 2, 1 → brake_release（t = 0）→ 記録
+      → 停止（Enter / Ctrl-C）: brake_engage → 静止＋モード安定 0.3 s → recover（最大 3 回）
       → position を確認 → リース返却
 ```
 
-初回（kit 3fad724）で起きたこと: `POST /v1/arm/{side}/mode` はデーモンが要求を
-**受け付けた時点で**返る（0 ms）。コントローラが idle と報告したのは 11 ms 後で、
-キットはその 5 ms 前に `brake_release` を送り、デーモンは「位置モードの腕は
-解放しない」と 409 で拒否した。続く `recover` はブレーキ締結の 2 ms 後で、
-モードが idle/error を往復する間にコントローラが `RESET1`（code 8）を拒否した。
-コンソールの Brakes 画面で解放できたのは、その時点で腕がすでに idle だった
-から（デーモンの規則は一貫しており、キットが競走していただけ）。もう 1 回は、
-オペレーターが手で idle にして動かした腕（指令と計測が 40.2 deg ずれていた）で
-`FirmwareExecutor.__enter__` が停止した。今は 3. の入口 recover で始められる。
-
-2 回目（kit dc51dbe, 20:46Z）: 記録自体は成功（idle 確認 → 解放 20:46:13 →
-5.44 s / 63 サンプル → Enter → brake_engage 20:46:19.037）。ところが recover
-（20:46:19.363 受信）が 20:46:21.366 にデーモン側で `phase=cancelled`。ちょうど
-2.0 s = クライアントの既定タイムアウトで接続を切ったため、デーモンが確認ループの
-途中で取り消した。文書は recover に `x-timeout-seconds: 65` を宣言している。
-今は全リクエストがルートごとの文書の値（下限は既定の 2 s）まで待つ。
-
 記録ファイル（JSON）は生データのまま（平滑化も手首固定もしていない）なので、
-設定を変えて何度でも 2 以降をやり直せる。グリッパーの閉度も記録されるが、
-CSV には列が無い（omakaseos のプレーヤーは 15 列以外を拒否する）。
-
-### 2. キーフレーム化して書き出す（export）
-
-```sh
-mkit-teach export ~/teach/wave.json          # → ~/teach/wave_motion.csv（絶対パスで表示）
-mkit-teach export take.json out.csv --name wave --sentiment neutral --usage filler
-```
-
-出力先を省くと**テイクと同じディレクトリ**の `<name>_motion.csv`（名前は記録の
-ものか `--name`）。sentiment / usage を省くと端末なら聞き、そうでなければ
-neutral / filler。
-
-旧パネルの Review & Save と同じ処理を順に行う:
-
-| 手順 | 既定 | オプション |
-|---|---|---|
-| 開始時の「落ち込み」を捨てる（ブレーキ解放直後、最初の 0.5 s 以内で関節速度 8 deg/s を超えた最後のサンプルまで） | on | `--sag-max-s` / `--sag-vel` / `--no-sag-trim` |
-| 手首 J5–J7 は**教えたまま残す**。記録中の可動範囲が 2 deg 未満の手首関節だけ（垂れ・ノイズ）HOME に固定し、その旨を表示する（Shu 2026-09-23: task4 の L7 35.7 deg が旧既定の固定で 0 になった） | off | `--pin-wrist`（旧 gesture_record の固定） |
-| 平滑化（中央値→平均、ジッタ除去） | 5 サンプル | `--smooth-window N` / `--no-smooth` |
-| HOME から始め、落ち込み後の最初の姿勢へ一定速度でつなぐ | テイク自身のピーク関節速度（平滑化後）を 20–90 deg/s に収めた値 | `--home-speed` |
-| 最後の姿勢を残し、そこから HOME へ戻る区間を**一定の関節速度**で追加（時間 = 最大関節差 / HOME 速度。戻りがジェスチャーより遅く感じないように） | 同上（キーフレームモードは 20 deg/s） | `--home-speed` / `--no-home` |
-| キーフレーム削減（直線から ε 以内を間引き） | 1.5 deg, collinear | `--epsilon-deg` / `--method dp` / `--min-spacing-s` |
-| 停止区間の短縮（Trim idle pauses） | Off | `--max-idle-s 0.25/0.5/1` |
-| 再生可能化（速度 150 deg/s・加速度 600 deg/s² 以下になるまで時間だけ延ばす。下記「速度」） | on | `--max-joint-vel` / `--max-joint-acc` / `--no-speed-limit`（教えたタイミングのまま。上限超えは check で NG） |
-| 安全チェック（下記 check）→ 関節リミット・速度・時刻が NG なら書かない | — | `--force`（UNSAFE 印付きで保存、play は `--no-safety` が必要） |
-| ガード（干渉）の所見は**警告のみ**。UNSAFE にはしない。最小クリアランスを `# mkit-teach: min_clearance=…`、マージン割れを `# mkit-teach: guard_advisory=…` として CSV に残す | — | — |
-
-始点・終点が HOME から ε（1.5 deg）以内ならその姿勢を HOME にスナップする
-（旧 gesture_record と同じ。区間を足さない）。
-
-### 速度（SpeedPolicy）
-
-**ジェスチャーの速度を制限しているのはキットのこの上限だけ**。デーモンは
-1 ステップ 350 deg/s を上限にするだけで、omakaseos のプレーヤーは速度を一切
-検査しない。上限は `process.SpeedPolicy` の 1 か所で、export（伸ばす）・check
-（判定）・play（事前チェック）が同じものを使う。
-
-* 既定 **150 deg/s・600 deg/s²**（Shu 2026-09-23 21:09Z「案 c」: 教えた速さで
-  再生し、それより速い部分だけ上限まで伸ばす）。旧 gesture_record の 25 deg/s・
-  120 deg/s² では d1-2 take2（J1 の振りが平滑化後で約 130 deg/s）が 3.83 s →
-  5.52 s に伸び、目に見えて遅くなった。
-* 伸ばしたときだけ export が `speed: stretched 3.83 s -> 5.52 s to meet … (J1
-  peak 130 deg/s … recorded)` と表示する。加速度上限が効くことが多い
-  （キーフレームの角で Catmull-Rom の加速度が大きくなるため）。
-* 使った上限は CSV に `# mkit-teach: max_joint_vel=… max_joint_acc=…`
-  （伸ばした場合は `speed_stretch=…` も）として残り、**check と play はその
-  CSV 自身の上限で判定する**（`--max-joint-vel` / `--max-joint-acc` で上書き
-  可）。キーが無い古い CSV は既定値で判定。
-* HOME への接続・復帰は一定の関節速度で、既定はそのテイク自身のピーク関節速度
-  （平滑化後）を 20–90 deg/s に収めた値（`--home-speed` で指定可）。
-* export（と keyframes）は時間の内訳と関節ごとの可動範囲を必ず表示する:
-  `timing: recorded 5.24 s -> body 5.10 s (speed cap stretched 3 knot(s),
-  +0.20 s) + HOME connect 0.40 s + return 0.60 s (at 45 deg/s) = 6.35 s`、
-  `joint range recorded -> exported [deg]: L1 40.0 -> 39.2, L7 35.7 -> 35.1, …`。
-  固定した関節には `(pinned: …)`、半分未満に減った関節には `(LOST)` が付く。
-* `[saved]` と `check` が表示する時間はどちらも**デーモンのスプラインの長さ**
-  （0 行目の duration はプレーヤーが無視するので含めない）。
-
-### gesture.yaml
-
-`--name`（または記録の名前）があれば omakaseos の `gesture.yaml` 用エントリを表示する。
-`--register <omakase-core>/robot_stack/robots/omakase/d1/gesture.yaml` で
-そのファイルに追加/置換まで行う（CSV は同じ階層の `csv/` にコピーする）。
-
-### 3. 確認する（check）
-
-```sh
-mkit-teach check wave_motion.csv --ascii
-```
-
-デーモンが実際に再生するスプライン（HOME から始まる Catmull-Rom）を 10 ms
-刻みでたどる。
-
-* **不合格（exit 1）になるもの**: 関節リミット（クリップせず違反扱い）、
-  手首ロールの連成リミット（J6 に応じた |J7| 上限）、速度・加速度（その CSV
-  の `max_joint_vel` / `max_joint_acc`、無ければ 150 deg/s・600 deg/s²）、
-  時刻（有限・0 始まり・単調増加）と角度の有限性。
-* **警告だけのもの（exit 0）**: MotionGuard の胴体・胸・両腕間・自己干渉。
-  `WARNING: guard (advisory) body: closest -40.0 mm at t=2.60s — arm A link
-  Link2_R within … of body box torso_belly …` のように、最も近づいた距離・
-  フレーム名・時刻・マージン割れのサンプル数を出す。
-
-ガードを警告に下げた理由: 教示はオペレーターが**手で腕を導いて実際に通った姿勢**
-なので、ガードのカプセルモデルがその姿勢の可否を裁く立場にない（Shu
-2026-09-23「teaching に関しては、ガードを外した方がいいかも」）。ただし
-**デーモンは同じ違反で再生を拒否する**（干渉ガードは常に有効）。下の「ガード」節を参照。
-
-`--ascii` は関節ごとの帯グラフ。動画で見たい時は
-`python examples/preview_gesture.py wave_motion.csv`（mujoco）。
-
-### 4. 再生する（play）
-
-```sh
-mkit-teach play wave_motion.csv --dry-run     # ロボットに触れず事前チェックだけ
-mkit-teach play wave_motion.csv               # policy リース, 比はジェスチャーから自動
-mkit-teach play wave_motion.csv --vel-ratio 0.5  # 比を固定する
-```
-
-UNSAFE 印・チェック NG（リミット/速度/時刻）・コントローラ異常のいずれでも何も
-動かさない（`--no-safety` でキットの事前チェックを飛ばせるが、デーモンの検査は
-飛ばせない）。キットのガード警告は**動かす前に表示**してから再生に進む
-（「デーモンは同じ違反でアップロードを拒否する」旨も表示する）。HOME から
-2 deg 以上離れていれば先に HOME へ移動し、再生後に HOME 到着（計測値）と静止を
-確認する。record と同じく、位置モードでない腕（idle / error）は入口で計測姿勢に
-recover してから始める（表示あり）。
-
-### 再生の速度比（位置モードの vel_ratio）
-
-位置モードのコントローラーは、デーモンの 1 ms ごとの目標を**最大
-140 deg/s × vel_ratio** でしか追わない。旧既定 0.15 では約 21 deg/s で、d1-2
-task6（CSV は正しく L7 70.6 deg・ピーク 117.8 deg/s）はゆっくり丸められて再生され、
-J7 はほとんど動かなかった。**比が隠れたブレーキになってはいけない**。速度の
-関門は CSV の SpeedPolicy だけ。
-
-* `play` はジェスチャー本体の比を、再生するスプライン上のピーク関節速度から
-  決める: `clamp(1.3 × peak / 140, 0.3, 1.0)`（118 deg/s → 1.0、旧 25 deg/s の
-  CSV → 0.3）。加速度比はデーモンに物理的な尺度が無いので同じ値にする。
-* 選んだ比と理由を動かす前に表示する（`playback ratio 1.00: gesture peak
-  117.8 deg/s x 1.3 …; HOME approach at 0.30`）。
-* ジェスチャー前の HOME への事前移動は教示動作ではないので**落ち着いた 0.3**。
-  ジェスチャー内の HOME 接続・復帰区間はジェスチャーと同じ比で再生される。
-* `--vel-ratio` を付けると事前移動・本体とも、その値に固定する。
-* record の HOME 移動は従来どおり 0.15。
-
-### ガード: デーモンの干渉検査は常に有効
-
-Shu 2026-09-23 21:14Z: 干渉ガードはどこでも常に有効。`mkit-teach play` は
-ジェスチャーを `POST /v1/arm/trajectory/start` に **`guard` フィールド無しで**
-送り、再生だけ干渉検査を緩める経路は無い（デーモン API からも削除予定:
-d1-firmware PR #106 とその後続）。
-
-* デーモンはアップロード時と再生中の 1 ms ごとに、**実形状に近いジオメトリ +
-  20 mm マージン**で干渉を検査し、関節リミット・350 deg/s・時刻・最初の点
-  （計測から 3 deg 以内）も検査する。違反があれば拒否 / 停止する。
-* キットの `check` の干渉所見は**警告（advisory）**のままだが、デーモンは同じ
-  違反を拒否する。警告が出たジェスチャーは、再生前に教え直すか HOME 付近の
-  姿勢を見直すこと。
-* 手首の連成リミット（J6 に応じた |J7| 上限）はデーモンではまだ検査していない
-  （d1-firmware issue #99）。これを止めているのはキットの `check` だけなので、
-  `--no-safety` は使わないこと。
-* 同梱クライアントのスナップショット（`1ec29096…`）には旧 `guard` フィールドが
-  まだ残っているが、キットは使わない。`ensure.py` は接続時にデーモンが配信する
-  ドキュメントから生成し直す。
+設定を変えて何度でも export をやり直せる。グリッパーの閉度も記録されるが、CSV には
+列が無い（omakaseos のプレーヤーは 15 列以外を拒否する）。
 
 ### ブレーキ解放の安全契約（record の既定）
 
 * サーボ OFF・ブレーキ強制開放: **支えていない腕はその瞬間に重力で落ちる。**
 * 解放する腕は、解放前から記録終了まで**必ず人が支える**。落下経路に手や顔を
-  入れない。確認（`HOLDING`）はセッションに 1 回、教える腕すべてに対して。
-* サーボ OFF（idle と報告されるまで確認）→ カウントダウン 3, 2, 1 → ブレーキ
-  が開き、その瞬間から記録。停止（Enter）で**まずブレーキ締結**、腕が静止して
-  から位置保持（recover）。recover できなければ idle・ブレーキ締結のまま残す。
+  入れない。確認（`HOLDING`）はセッションに 1 回、選んだ腕すべてに対して。
 * 解放は時限式: デーモン自身が窓（既定 20 s、記録中は 1/3 ごとに再送）の
   終わりに締結する。このツールが落ちても窓で必ず締まる。
 * 締結されるのは: 記録終了（このツール）、窓切れ、`brake_engage`、estop、
-  ソフトキル、デーモン停止。
-* 解放中はその腕への mode / recover / trajectory をデーモンが拒否する。
-* ブレーキ状態はデーモンの指令記録でありセンサではない。キットのブレーキ経路は
-  2026-09-23 時点で実機未検証。
-* バンドルしたクライアントは d1-2 が配信する文書（spec `a9c8b0d2…`、PR #92
-  入り）から生成済み。PR #92 より古いデーモンでは `OperationUnavailable` で
-  止まる（その時は `--compliance` か `--no-brake`）。
+  ソフトキル、デーモン停止。解放中はその腕への mode / recover / trajectory を
+  デーモンが拒否する。
+* ブレーキ状態はデーモンの指令記録でありセンサではない。ブレーキ経路は
+  2026-09-23 に d1-2 で実機確認済み（BRAK1=2 で解放 → Enter で締結 → recover）。
+* d1-firmware PR #92 より古いデーモンは `OperationUnavailable` で止まる（その時は
+  `--compliance` か `--no-brake`）。
+
+### 2. 書き出す（export）
+
+```sh
+mkit-teach export ~/teach/wave.json                   # → ~/teach/wave_motion.csv
+mkit-teach export take.json out.csv --name wave --sentiment neutral --usage filler
+```
+
+出力先を省くと**テイクと同じディレクトリ**の `<name>_motion.csv`（名前は記録の
+ものか `--name`）で、絶対パスで表示する。sentiment / usage を省くと端末なら聞き、
+そうでなければ neutral / filler。処理は旧パネルの Review & Save と同じ順:
+
+| 手順 | 既定 | オプション |
+|---|---|---|
+| 開始時の落ち込みを捨てる（ブレーキ解放直後、最初の 0.5 s 以内で 8 deg/s を超えた最後のサンプルまで） | on | `--sag-max-s` / `--sag-vel` / `--no-sag-trim` |
+| 手首 J5–J7 は**教えたまま残す**。可動範囲が 2 deg 未満の手首関節だけ（垂れ・ノイズ）HOME に固定し、その旨を表示 | 固定しない | `--pin-wrist`（旧 gesture_record の全固定） |
+| 平滑化: 1 サンプルだけの飛び（両側が平ら）を除去 → 2 次の Savitzky–Golay。**速い折り返しの高さを削らない**（旧 gesture_record の中央値 → 平均は task7 の L7 −70.0 deg を −58.4 deg に削っていた） | 5 サンプル | `--smooth-window N` / `--no-smooth` |
+| HOME から最初の姿勢へつなぐ区間と、最後の姿勢から HOME へ戻る区間を一定の関節速度で追加 | テイク自身のピーク関節速度（平滑化後）を 20–90 deg/s に収めた値（キーフレームモードは 20） | `--home-speed` / `--no-home` |
+| キーフレーム削減（直線から ε 以内を間引き） | 1.5 deg, collinear | `--epsilon-deg` / `--method dp` / `--min-spacing-s` |
+| 停止区間の短縮 | off | `--max-idle-s 0.25/0.5/1` |
+| 速度上限まで時間だけ延ばす（下記「速度」） | 150 deg/s・600 deg/s² | `--max-joint-vel` / `--max-joint-acc` / `--no-speed-limit` |
+| 安全チェック（check と同じ）→ 関節リミット・速度・時刻が NG なら書かない | — | `--force`（UNSAFE 印付き、play は `--no-safety` が必要） |
+| 干渉の所見は警告のみ。`# mkit-teach: min_clearance=…` / `guard_advisory=…` を残す | — | — |
+
+export は必ず**時間の内訳**と**関節ごとの可動範囲**を表示する:
+
+```
+timing: recorded 5.24 s -> body 5.10 s (speed cap stretched 3 knot(s), +0.20 s) + HOME connect 0.40 s + return 0.60 s (at 45 deg/s) = 6.35 s
+joint range recorded -> exported [deg]: L1 40.0 -> 39.2, L7 35.7 -> 35.1, R5 1.2 -> 0.0 (pinned: under 2 deg, sag/noise)
+```
+
+半分未満に減った関節には `(LOST)`、3 deg 以上小さくなった関節には
+`(peak shaved X deg)` が付く（記録側の範囲はエンコーダの 1 サンプルの飛びを除いて測る）。速度上限で延ばした時だけ `speed:
+stretched …` の行も出る。`[saved]` と check の時間はどちらも**デーモンの
+スプラインの長さ**（0 行目の duration はプレーヤーが無視するので含めない）。
+
+#### 速度（SpeedPolicy）
+
+**ジェスチャーの速度を制限しているのはキットのこの上限だけ**（デーモンは 1 ステップ
+350 deg/s を見るだけ、omakaseos のプレーヤーは何も見ない）。`process.SpeedPolicy`
+の 1 か所で、export（延ばす）・check（判定）・play（事前チェック）が同じものを使う。
+
+* 既定 **150 deg/s・600 deg/s²**（Shu 2026-09-23「案 c」: 教えた速さで再生し、
+  それより速い部分だけ延ばす）。旧 gesture_record の 25 deg/s・120 deg/s² は
+  `process.LEGACY_SPEED`。
+* 使った上限は CSV に `# mkit-teach: max_joint_vel=… max_joint_acc=…`（延ばした
+  場合は `speed_stretch=…` も）として残り、**check と play はその CSV 自身の上限で
+  判定する**（`--max-joint-vel` / `--max-joint-acc` で上書き可）。キーが無い CSV は
+  既定値で判定。
+
+### 3. 確認する（check）
+
+```sh
+mkit-teach check ~/teach/wave_motion.csv --ascii
+```
+
+デーモンが実際に再生するスプライン（HOME から始まる Catmull-Rom）を 10 ms 刻みで
+たどる。
+
+* **不合格（exit 1）**: 関節リミット（クリップせず違反扱い）、手首ロールの連成
+  リミット（J6 に応じた |J7| 上限）、速度・加速度（CSV の上限）、時刻と角度の
+  有限性。
+* **警告だけ（exit 0）**: MotionGuard の胴体・胸・両腕間・自己干渉。最も近づいた
+  距離・フレーム名・時刻を出す。教示は手で実際に通った姿勢なので、キットの
+  カプセルモデルは裁かない（Shu 2026-09-23）。ただし**デーモンは同じ違反で再生を
+  拒否する**（下記「ガード」）。
+
+`--ascii` は関節ごとの帯グラフ。動画は `python examples/preview_gesture.py
+wave_motion.csv`（mujoco）。
+
+### 4. 再生する（play）
+
+```sh
+mkit-teach play ~/teach/wave_motion.csv --dry-run       # 事前チェックだけ（ロボットに触れない）
+mkit-teach play ~/teach/wave_motion.csv                 # policy リース, 比はジェスチャーから自動
+mkit-teach play ~/teach/wave_motion.csv --vel-ratio 0.5 # 比を固定する
+```
+
+UNSAFE 印・チェック NG・コントローラ異常のいずれでも何も動かさない
+（`--no-safety` はキットの事前チェックだけを飛ばす。デーモンの検査は飛ばせない）。
+位置モードでない腕は入口で recover する（表示あり）。HOME から 2 deg 以上離れて
+いれば先に HOME へ移動し、再生後に HOME 到着（計測値）と静止を確認する。
+
+**速度比**: 位置モードのコントローラーはデーモンの 1 ms ごとの目標を最大
+140 deg/s × vel_ratio でしか追わない（旧固定 0.15 では約 21 deg/s で、task6 の
+118 deg/s の手首の振りが丸められた）。**比が隠れたブレーキになってはいけない**。
+速度の関門は CSV の SpeedPolicy だけ。
+
+* ジェスチャー本体の比 = `clamp(1.3 × スプライン上のピーク / 140, 0.3, 1.0)`
+  （118 deg/s → 1.0、25 deg/s の旧 CSV → 0.3）。加速度比も同じ値。
+* 選んだ比と理由を動かす前に表示する（`playback ratio 1.00: gesture peak 117.8
+  deg/s x 1.3 …; HOME approach at 0.30`）。
+* ジェスチャー前の HOME への事前移動は**落ち着いた 0.3**。ジェスチャー内の HOME
+  接続・復帰区間は本体と同じ比。`--vel-ratio` は両方をその値に固定する。
+
+### 5. 登録する（register）
+
+```sh
+mkit-teach register ~/teach/wave_motion.csv <omakaseos の checkout>/robot_stack/robots/omakase/d1/gesture.yaml
+mkit-teach gestures <gesture.yaml のパス>      # 登録済みの一覧（source と CSV の有無）
+```
+
+CSV を渡すと、その `gesture.yaml` の `csv_base_dir`（無ければ横の `csv/`）へ
+`<name>_motion.csv` としてコピーし、CSV のヘッダーにある name / sentiment / usage で
+エントリ（`name: d1_<name>`, `source: teach`）を追加または置換する。UNSAFE 印の
+CSV は入れない。キットは omakaseos の場所を知らないので、`gesture.yaml` のパスは
+毎回明示する（omakase-core 側に Makefile のショートカットを置く予定）。
+名前だけを渡す `mkit-teach register wave [gesture.yaml]` はエントリの表示・追加だけ。
+登録後は omakaseos 側で `git status` を見てコミットする。
+
+### ガード: デーモンの干渉検査は常に有効
+
+Shu 2026-09-23 21:14Z: 干渉ガードはどこでも常に有効。`play` は
+`POST /v1/arm/trajectory/start` に `guard` フィールドを**送らない**。再生だけ
+干渉検査を緩める経路は無い（d1-firmware PR #106 でデーモン API からも削除）。
+
+* デーモンはアップロード時と再生中の 1 ms ごとに、実形状に基づくモデルとその
+  マージン（PR #106）で干渉を検査し、関節リミット・350 deg/s・時刻・最初の点
+  （計測から 3 deg 以内）も検査する。違反があれば拒否 / 停止する。
+* キットの `check` の干渉所見は警告のままだが、デーモンは同じ違反を拒否する。
+  警告が出たら、再生前に教え直すか姿勢を見直す。
+
+### Known limits (2026-09-23)
+
+* **再生の忠実度はコントローラの位置モードのプランナーで頭打ち**。task7 は比 1.00
+  で再生したが（キットは設計どおり）、112 deg/s の振りは位置モードで丸められ、
+  終了 3.3 s 後でも 16.2 deg 遅れていた。これはデーモン／コントローラ側の制約で、
+  PD モードのファームウェアとデーモンのストリーミング再生が入るまで残る。追跡:
+  d1-firmware issue #96（TrajectoryStatus should report playback position and
+  per-joint tracking/final error）と、PD モード再生について別エージェントが起票
+  する issue（controller PD mode / daemon-side streaming for taught gestures）。
+* **加速度上限 600 deg/s² が、とても切れのよいテイクを延ばす**。キーフレームの角で
+  Catmull-Rom の加速度が大きくなるため、速度が 150 deg/s 未満でも延びることがある
+  （例: 113 deg/s の振りが 2.95 s → 3.18 s）。`timing:` 行に何秒延びたかが出る。
+  必要なら `--max-joint-acc` で上げる。
+* **J6/J7 の連成リミットを見ているのはキットだけ**（d1-firmware issue #99）。
+  `--no-safety` は使わないこと。
+* 平滑化とキーフレーム化の後の再生スプライン（デーモンの一様 Catmull-Rom）は、
+  間隔の違うキーフレームの隣で速度が跳ねたり、折り返しをわずかに行き過ぎたり
+  する。跳ねは速度上限で時間を延ばして抑える（`timing:` 行に出る）。
+* ブレーキ解放の経路は 2026-09-23 に実機で確認済み。mode の報告待ち（#103）と
+  締結直後の recover 拒否（#104）はキット側で吸収している。
+
+### 実機ログ（2026-09-23, d1-2）
+
+| # | kit | 起きたこと | 対応 |
+|---|---|---|---|
+| 1 | 3fad724 | idle 要求の 5 ms 後の brake_release が拒否（コントローラの idle 報告は 11 ms 後）。締結 2 ms 後の recover が RESET1 code 8 で拒否。手で idle にした腕（指令と 40.2 deg 差）で開始不能 | dc51dbe: モードの報告を待つ、安定待ち＋recover 再試行、入口 recover |
+| 2 | dc51dbe | 記録成功（63 サンプル, 5.44 s）。recover がクライアントの 2 s タイムアウトで取り消された | 5956e9e: 文書の `x-timeout-seconds` を使う |
+| 3 | 5956e9e | take2: CSV がカレントディレクトリへ。25/120 の上限で 3.83 → 5.52 s | 40a0b6d: テイク横に書く、SpeedPolicy 150/600、上限を CSV に |
+| 4 | ba9a642 | Ctrl-C 後のヒントが `--yes` を勧めた、不要な `To fix:`、腕を聞いてほしい | 279d877 |
+| 5 | ba9a642 | task3/task4: 手首固定で L7 35.7 deg → 0、5.24 → 6.35 s | ba4c931: 手首は教えたまま、HOME 区間をテイクの速さで、内訳表示 |
+| 6 | ba4c931 | task6: CSV は正しいが比 0.15（約 21 deg/s）で丸められた | 2f9f7ad: 比をジェスチャーから決める |
+| 7 | 2f9f7ad | task7: 比 1.00 で再生。位置モードの丸めは残る（16.2 deg 遅れ）。export の平滑化も L7 の −70.0 deg を −58.4 deg に削っていた | 平滑化を山を削らない方式に（下記 0.16.0）。追従の遅れは Known limits（コントローラ側） |
 
 ---
 
@@ -321,10 +282,12 @@ Reader of record: omakase-core `robot_stack/robots/omakase/d1/firmware_session.p
   (`config/home_pose.json`), starts the spline at HOME at t = 0 and ignores row
   0's duration; row k plays at `sum(duration_1..k)`. The daemon samples those
   knots as uniform Catmull-Rom on a linear time base and checks every 1 ms
-  (limits + speed always; clearances only under `guard: full`).
+  (limits, speed and clearances, always).
 * Teach metadata travels as `# mkit-teach: key=value` comments (name,
   sentiment, usage, source, `home_sha` = fingerprint of the HOME pinned,
-  `min_clearance`, and `guard_advisory` when a guard margin was not met);
+  `max_joint_vel` / `max_joint_acc` = the speed ceiling, `speed_stretch` when
+  it slowed the take, `min_clearance`, and `guard_advisory` when a guard
+  margin was not met);
   a force-saved file carries `# mkit-teach: UNSAFE=<violation>` lines —
   only for HARD findings (limits, rates, timing), never for the guard.
 
@@ -354,23 +317,28 @@ was deleted; it simply stopped being able to reach the arm.
   limiter keep it continuous in velocity and under the caps.
 * The player replaces the LAST row with HOME, so the last recorded pose is kept
   as a real row and a HOME row is appended after it, lasting
-  `max|q_last - HOME| / home_speed_deg_s` (20 deg/s, well under the ceiling): the
-  return is at the same joint speed whether it is long or short. The limiter
+  `max|q_last - HOME| / home_speed_deg_s` (by default the take's own peak
+  joint speed after smoothing, clamped to 20..90 deg/s): the return is at the
+  same joint speed whether it is long or short. The limiter
   may still stretch it (acceleration), never shorten it. Keyframe-mode takes
   time their last move the same way.
 * A start/end already within `epsilon_deg` of HOME is snapped to HOME, as
-  gesture_record did (the golden wave take is such a take and is unchanged
-  apart from its new `min_clearance` line).
+  gesture_record did (the golden wave take is such a take).
+* The wrist is kept as taught: gesture_record pinned J5–J7 to HOME against
+  compliance sag, which erased deliberate wrist motion under brake release
+  (task4). `pin_wrist` restores that; otherwise only a wrist joint whose
+  recorded range is under 2 deg is pinned.
 
 ### What was ported, and the two deviations
 
 `teach/process.py` ports `smoothSamples`, `reduceSamples`, `buildGesture`,
 `limitJointDynamics` (gesture_csv.h) and `_trim_idle_keyframes` (teach.py)
-with gesture_record's defaults. `teach/record.py` ports the capture sequence
+with gesture_record's defaults except the speed ceiling (150 / 600, see
+*速度*) and the wrist (free). `teach/record.py` ports the capture sequence
 (HOME first, compliance with `xAxisCompliance(2.0)` at 5 %, 1.5 s settle,
 sampling, stationary auto-stop, hold on exit); brake release is the default
-guide now, gesture_record's compliance is `--compliance`. Deviations, both because the
-player changed:
+guide, gesture_record's compliance is `--compliance`. Deviations, both
+because the player changed:
 
 1. Row 0 **is** HOME. gesture_record wrote the first kept sample as row 0
    (gesture_play prepended HOME); the firmware player overwrites row 0, which
@@ -437,22 +405,22 @@ now does the same, in one place:
 `GET /v1/arm/{side}/state`, `GET /v1/gripper/{side}/state`,
 `GET /v1/arm/{side}/tool`, `POST /v1/arm/{side}/mode` (`ArmModeCommand`),
 `POST /v1/arm/{side}/recover`, `POST /v1/arm/{side}/brake_release` /
-`brake_engage`, `GET /v1/arm/{side}/brake` (PR #92 — generated operations in
-the bundled snapshot since spec `a9c8b0d2…`; `OperationUnavailable` against an
-older daemon), and — through `FirmwareExecutor` — the lease,
-`/v1/arm/trajectory/*`. `FirmwareExecutor.play_waypoints` is the new public
-entry for an already-timed trajectory (the plan path `_play` derives its own
-timing).
+`brake_engage`, `GET /v1/arm/{side}/brake` (PR #92; `OperationUnavailable`
+against an older daemon), and — through `FirmwareExecutor` — the lease,
+`/v1/arm/trajectory/*` (no `guard` field). `FirmwareExecutor.play_waypoints`
+is the public entry for an already-timed trajectory (the plan path `_play`
+derives its own timing); `FirmwareExecutor.set_ratios` re-installs position
+mode at the ratio a gesture needs. The bundled client is generated from
+d1-firmware PR #106's document (spec `3b354c25…`, the always-on guard); `ensure`
+regenerates from whatever the daemon serves at connect.
 
-### Known sharp edge: HOME sits on the body margin — now the daemon's call
+### Known sharp edge: HOME near the body margin — the daemon's call
 
-At HOME the left arm's closest link is **30.3 mm** from `torso_belly`
-against the guard's 30 mm margin, and only J2+ / J1− (A; mirrored on B) eat
-into it (+2 deg on J2 → 28.2 mm). A Catmull-Rom that returns to HOME from an
-outward J2 swing overshoots HOME by a fraction of a degree. The kit's `check`
-now reports that as an advisory `guard (advisory) body … Link2_R …
-torso_belly` warning and lets it pass. The daemon decides: its clearance
-guard is always on (Shu 2026-09-23 21:14Z; the per-job relaxation of
-d1-firmware PR #102 is being removed), with its realistic geometry and 20 mm
-margin, so whether a gesture that grazes HOME plays is the daemon's call, and
-`play` says before it moves that the daemon will refuse such violations.
+At HOME the left arm's closest link is 30.3 mm from `torso_belly` against
+the kit guard's 30 mm margin, and only J2+ / J1− (A; mirrored on B) eat into
+it. A Catmull-Rom returning to HOME from an outward J2 swing overshoots HOME
+by a fraction of a degree, which the kit's `check` reports as an advisory
+`guard (advisory) body … torso_belly` warning. Whether such a gesture plays
+is the daemon's decision: its guard is always on, with its realistic model
+and margins (d1-firmware PR #106, which gives HOME 26.7 mm of headroom), and
+`play` says before it moves that the daemon refuses such violations.
