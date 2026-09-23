@@ -103,6 +103,90 @@
         ],
         "type": "string"
       },
+      "ArmBrakeEngageReason": {
+        "description": "Why the brakes were last engaged.",
+        "enum": [
+          "operator",
+          "window_elapsed",
+          "emergency_stop",
+          "soft_kill",
+          "release_aborted"
+        ],
+        "type": "string"
+      },
+      "ArmBrakeReleaseRequest": {
+        "description": "`POST /v1/arm/{side}/brake_release`.",
+        "properties": {
+          "confirm": {
+            "description": "Must be exactly `RELEASE_BRAKE`. Anything else is a `400`, and the body\nis required: the arm drops under gravity the moment the brakes open,\nand an empty POST is how a console button or a curl retry reaches a\nroute by accident.",
+            "type": "string"
+          },
+          "seconds": {
+            "description": "How long the brakes stay open before the daemon engages them itself,\nin seconds, `1..=120`. Omitted is `30`. Sending the request again while\nreleased restarts the window.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "ArmBrakeReport": {
+        "description": "One arm's holding-brake state as this daemon commanded it.",
+        "properties": {
+          "holder": {
+            "description": "The arm-lease holder that asked for the current release, when the\nrequest named one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_engage_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ArmBrakeEngageReason",
+                "description": "Why the brakes were last engaged by this daemon, if they ever were."
+              }
+            ]
+          },
+          "released": {
+            "description": "Whether this daemon has forced this arm's holding brakes OPEN and not\nclosed them since. While `true`, nothing holds the arm but whoever is\nsupporting it.\n\nThe controller acknowledges brake writes but does not report the brake\nstate back, so this is the daemon's command record, not a sensor.",
+            "type": "boolean"
+          },
+          "remaining_s": {
+            "description": "Seconds left before the daemon re-engages the brakes itself. `None`\nwhile engaged; `0` if the window ran out and the re-engage has not\nbeen confirmed yet (see the daemon log).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "side": {
+            "$ref": "#/components/schemas/ArmSide",
+            "description": "The arm this describes."
+          },
+          "window_s": {
+            "description": "The window the current release was granted, in seconds. `None` while\nengaged.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "side",
+          "released"
+        ],
+        "type": "object"
+      },
       "ArmCalibration": {
         "description": "One arm's calibration block from `robot.ini` (e.g. `R.A0`).",
         "properties": {
@@ -824,6 +908,10 @@
                 "description": "An INFO-level suggestion about the state above, when it earns one.\n\nAdditive and absent when it does not, so a consumer that has never\nheard of it reads exactly the state it always read.\n\nThis is the one field on this struct the arm BACKEND never fills: it\nfolds in the arm soft-kill latch, which is the daemon's own state and\nnot anything a controller reports, so it is attached where the daemon\nhands an [`ArmState`] out ([`crate::D1::arm_state`],\n[`crate::D1::arm_preflight`] and the `/v1/state` snapshot) and is\n`None` on every read taken straight from the device. See\n[`crate::arm_advisory`]."
               }
             ]
+          },
+          "brakes_released": {
+            "description": "Whether this daemon has forced this arm's holding brakes OPEN for hand\nguiding (`POST /v1/arm/{side}/brake_release`) and not engaged them\nsince. While `true` nothing holds the arm but whoever is supporting\nit; `GET /v1/arm/{side}/brake` has the window and who asked.\n\nLike [`Self::advisory`], this is the daemon's own record and not\nsomething the controller reports, so it is attached where the daemon\nhands an [`ArmState`] out and is `false` on a read taken straight from\nthe device. It is NOT [`ArmMode::Release`], which is a controller mode.",
+            "type": "boolean"
           },
           "command_joints": {
             "$ref": "#/components/schemas/Joints7",
@@ -8400,6 +8488,235 @@
           "arm"
         ],
         "x-rest-only": true
+      }
+    },
+    "/v1/arm/{side}/brake": {
+      "get": {
+        "description": "The daemon's own record of what it commanded, not a sensor: whether the brakes are released, the window, the seconds left before the daemon engages them, who asked, and why they were last engaged.",
+        "operationId": "arm_brake",
+        "parameters": [
+          {
+            "description": "Which arm: `a` is the robot's physical LEFT arm, `b` its physical RIGHT arm.",
+            "in": "path",
+            "name": "side",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArmSide"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArmBrakeReport"
+                    },
+                    "message": {
+                      "description": "Always null on success.",
+                      "type": "null"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "data",
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The success envelope."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
+          }
+        },
+        "summary": "Read one arm's holding-brake release state",
+        "tags": [
+          "arm"
+        ],
+        "x-ws-method": "arm.{side}.brake"
+      }
+    },
+    "/v1/arm/{side}/brake_engage": {
+      "post": {
+        "description": "Forces the holding brakes closed (`BRAK0`/`BRAK1` = 1) and ends any release. Stop-shaped, so like `estop` it is gated by nothing — not the soft kill, not the lease — and takes no body. Always sent, even when this daemon's record says the brakes are engaged: the controller does not report them back, and an earlier daemon process may have died with them open.",
+        "operationId": "arm_brake_engage",
+        "parameters": [
+          {
+            "description": "Which arm: `a` is the robot's physical LEFT arm, `b` its physical RIGHT arm.",
+            "in": "path",
+            "name": "side",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArmSide"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArmBrakeReport"
+                    },
+                    "message": {
+                      "description": "Always null on success.",
+                      "type": "null"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "data",
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The success envelope."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
+          }
+        },
+        "summary": "Engage one arm's holding brakes",
+        "tags": [
+          "arm"
+        ],
+        "x-timeout-seconds": 10.0,
+        "x-ws-method": "arm.{side}.brake_engage"
+      }
+    },
+    "/v1/arm/{side}/brake_release": {
+      "post": {
+        "description": "DANGEROUS. Forces this arm's holding brakes OPEN (the controller's `BRAK0`/`BRAK1` = 2 override, the vendor's recovery recipe for an arm twisted outside its limits) so a person can move it by hand. The servos are off, so **nothing holds the arm: it falls under gravity the instant the brakes open unless somebody is supporting it.**\n\nThe body must carry `{\"confirm\": \"RELEASE_BRAKE\"}` (otherwise `400`). Accepted only while the arm's servos are off — mode `idle` or `error`; any other mode is a `409` naming the call that idles it. Gated by the arm soft-kill latch and, while somebody holds it, by the arm lease (`x-arm-lease`). REST-only.\n\nThe release is TIMED: `seconds` (`1..=120`, default `30`) after it lands the daemon engages the brakes itself. Sending it again while released restarts the window. The brakes are also engaged by `/v1/arm/{side}/brake_engage`, by `/v1/arm/{side}/estop`, and by the soft kill (which the daemon also runs on shutdown). While released, `mode`, `recover` and a trajectory are refused on this arm, `ArmState` carries `brakes_released: true` and preflight lists it as blocking.",
+        "operationId": "arm_brake_release",
+        "parameters": [
+          {
+            "description": "Which arm: `a` is the robot's physical LEFT arm, `b` its physical RIGHT arm.",
+            "in": "path",
+            "name": "side",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArmSide"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ArmBrakeReleaseRequest"
+                  },
+                  {
+                    "description": "Operator arbitration. See `POST /v1/arm/lease`.",
+                    "properties": {
+                      "holder": {
+                        "description": "The arm lease holder issuing this command. Required only while somebody holds the lease: with no lease held the field is ignored, and with one held a request whose `holder` does not match is refused with 409.",
+                        "type": "string"
+                      }
+                    },
+                    "title": "ArmLeaseHolder",
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArmBrakeReport"
+                    },
+                    "message": {
+                      "description": "Always null on success.",
+                      "type": "null"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "data",
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The success envelope."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
+          }
+        },
+        "summary": "Release one arm's holding brakes for hand guiding (the arm DROPS)",
+        "tags": [
+          "arm"
+        ],
+        "x-arm-lease": true,
+        "x-rest-only": true,
+        "x-timeout-seconds": 10.0
       }
     },
     "/v1/arm/{side}/clamp_pose": {

@@ -44,6 +44,15 @@ class ArmState:
             The normalized arm feedback mode.
         stationary (bool): Whether the arm reports low-speed/stationary motion.
         advisory (Advisory | None | Unset):
+        brakes_released (bool | Unset): Whether this daemon has forced this arm's holding brakes OPEN for hand
+            guiding (`POST /v1/arm/{side}/brake_release`) and not engaged them
+            since. While `true` nothing holds the arm but whoever is supporting
+            it; `GET /v1/arm/{side}/brake` has the window and who asked.
+
+            Like [`Self::advisory`], this is the daemon's own record and not
+            something the controller reports, so it is attached where the daemon
+            hands an [`ArmState`] out and is `false` on a read taken straight from
+            the device. It is NOT [`ArmMode::Release`], which is a controller mode.
         controller_version (int | None | Unset): The arm controller's firmware version, or `None` until it has been
             read.
 
@@ -100,6 +109,7 @@ class ArmState:
     )
     stationary: bool
     advisory: Advisory | None | Unset = UNSET
+    brakes_released: bool | Unset = UNSET
     controller_version: int | None | Unset = UNSET
     frame_miss_count: int | Unset = UNSET
     max_frame_miss_count: int | Unset = UNSET
@@ -147,6 +157,8 @@ class ArmState:
         else:
             advisory = self.advisory
 
+        brakes_released = self.brakes_released
+
         controller_version: int | None | Unset
         if isinstance(self.controller_version, Unset):
             controller_version = UNSET
@@ -178,6 +190,8 @@ class ArmState:
         )
         if advisory is not UNSET:
             field_dict["advisory"] = advisory
+        if brakes_released is not UNSET:
+            field_dict["brakes_released"] = brakes_released
         if controller_version is not UNSET:
             field_dict["controller_version"] = controller_version
         if frame_miss_count is not UNSET:
@@ -297,6 +311,8 @@ class ArmState:
 
         advisory = _parse_advisory(d.pop("advisory", UNSET))
 
+        brakes_released = d.pop("brakes_released", UNSET)
+
         def _parse_controller_version(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -327,6 +343,7 @@ class ArmState:
             mode=mode,
             stationary=stationary,
             advisory=advisory,
+            brakes_released=brakes_released,
             controller_version=controller_version,
             frame_miss_count=frame_miss_count,
             max_frame_miss_count=max_frame_miss_count,

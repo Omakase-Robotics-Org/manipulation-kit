@@ -1,17 +1,17 @@
 {
-  "spec_sha256": "388bcd087a2426a8a8c61ca767439cfed6e094f8bc9e059029ed6c62002cf275",
+  "spec_sha256": "a9c8b0d2bb16df16fbb03652d77b9d2efd4824e47c085ae48f06679827efb297",
   "spec_version": "0.3.0",
   "spec_source": {
     "repository": "Omakase-Robotics-Org/d1-firmware (private)",
-    "path": "GET /openapi.json",
-    "commit": "bd660a0 (d1-firmwared 0.3.0 build installed on d1-2, as reported by the daemon on 2026-09-21)",
-    "commit_date": "unknown (document fetched 2026-09-22)",
-    "obtained_via": "d1-firmwared 0.3.0 running on d1-2, fetched 2026-09-22 via GET /openapi.json",
-    "note": "The firmware repository is private; the document is the one the running daemon serves byte for byte at GET /openapi.json, which is what makes the sha256 comparison in ensure.py meaningful. Regenerated with `mkit-firmware-client refresh --spec` using openapi-python-client 0.29.1 found on PATH (run on Python 3.12; the generator's output does not depend on its interpreter)."
+    "path": "openapi/d1-firmwared.v1.json (= GET /openapi.json)",
+    "commit": "d090ac4 (main, merge of d1-firmware PR #92 feat/arm-brake-release)",
+    "commit_date": "2026-09-23",
+    "obtained_via": "d1-firmwared 0.3.0 running on d1-2 after PR #92 was deployed: GET /openapi.json fetched 2026-09-23 has sha256 a9c8b0d2..., byte-identical to the repository file at d090ac4",
+    "note": "The firmware repository is private; the document is the one the running daemon serves byte for byte at GET /openapi.json, which is what makes the sha256 comparison in ensure.py meaningful. Regenerated with `mkit-firmware-client refresh --spec` (openapi-python-client 0.29.1 via uv, Python 3.11)."
   },
   "package": "d1fw_api",
   "generator": "openapi-python-client==0.29.1",
   "generator_python": "3.11",
   "post_process": "manipulation_kit/executors/firmware/_gen/compat.py \u2014 StrEnum/Self lowered to Python 3.10",
-  "files": 576
+  "files": 586
 }

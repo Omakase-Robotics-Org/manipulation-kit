@@ -1,10 +1,11 @@
 """The verbs ``manipulation_kit.teach`` adds to FirmwareClient, on the wire.
 
-A loopback daemon serving the BUNDLED document (0.3.0): ``arm_mode`` and
-``arm_recover`` go out as the generated ``ArmModeCommand`` /
-``ArmRecoverRequest`` bodies, and the holding-brake routes — which that
-document does not publish (they arrived in d1-firmware PR #92) — are refused
-as :class:`OperationUnavailable` with no request sent, never hand-built.
+A loopback daemon serving the BUNDLED document (0.3.0 with d1-firmware PR
+#92, spec ``a9c8b0d2…``): ``arm_mode``, ``arm_recover`` and the holding-brake
+routes go out as the generated ``ArmModeCommand`` / ``ArmRecoverRequest`` /
+``ArmBrakeReleaseBody`` bodies; an operation a document does not publish is
+refused as :class:`OperationUnavailable` with no request sent, never
+hand-built.
 """
 from __future__ import annotations
 
@@ -107,11 +108,40 @@ def test_recover_sends_the_hold_ratios(connect):
                                {"vel_ratio": 0.05, "acc_ratio": 0.05})
 
 
-def test_the_brake_routes_are_refused_when_the_document_lacks_them(connect):
+def test_brake_release_goes_out_as_the_generated_body(connect):
+    report = {"side": "a", "released": True, "window_s": 20.0, "remaining_s": 20.0,
+              "holder": "me", "last_engage_reason": None}
+    with _Daemon({"/v1/arm/a/brake_release": report}) as daemon, \
+            connect(daemon) as client:
+        got = client.brake_release("a", seconds=20, holder="me")
+    assert daemon.seen[-1] == ("POST", "/v1/arm/a/brake_release",
+                               {"confirm": "RELEASE_BRAKE", "seconds": 20.0,
+                                "holder": "me"})
+    assert got.released is True and got.window_s == 20.0
+
+
+def test_brake_engage_and_state_are_generated_operations(connect):
+    engaged = {"side": "b", "released": False, "window_s": None, "remaining_s": None,
+               "holder": None, "last_engage_reason": "operator"}
+    with _Daemon({"/v1/arm/b/brake_engage": engaged, "/v1/arm/b/brake": engaged}) \
+            as daemon, connect(daemon) as client:
+        assert client.brake_engage("b").released is False
+        state = client.brake_state("b")
+    assert daemon.seen[-2] == ("POST", "/v1/arm/b/brake_engage", None)
+    assert daemon.seen[-1] == ("GET", "/v1/arm/b/brake", None)
+    assert state.last_engage_reason.value == "operator"
+
+
+def test_brake_release_refuses_a_window_outside_the_documents_bounds(connect):
     with _Daemon({}) as daemon, connect(daemon) as client:
-        for call in (lambda: client.brake_release("a", seconds=20),
-                     lambda: client.brake_engage("a"),
-                     lambda: client.brake_state("a")):
-            with pytest.raises(OperationUnavailable, match="brake"):
-                call()
+        for seconds in (0.5, 121, float("nan")):
+            with pytest.raises(ValueError):
+                client.brake_release("a", seconds=seconds)
     assert not [s for s in daemon.seen if "brake" in s[1]]
+
+
+def test_an_operation_the_document_lacks_is_refused_before_the_wire(connect):
+    with _Daemon({}) as daemon, connect(daemon) as client:
+        with pytest.raises(OperationUnavailable, match="not in the OpenAPI"):
+            client.operation("arm.arm_no_such_route", "POST /v1/arm/{side}/nope")
+    assert not [s for s in daemon.seen if s[0] == "POST"]

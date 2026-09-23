@@ -518,9 +518,10 @@ class FirmwareClient:
     def operation(self, dotted: str, route: str):
         """One generated operation module, or :class:`OperationUnavailable`.
 
-        For the operations a daemon may or may not publish yet (the holding
-        brake arrived in d1-firmware PR #92, after the bundled 0.3.0
-        document). The client in use is generated from THIS daemon's document
+        For the operations a daemon may or may not publish (the holding brake
+        arrived in d1-firmware PR #92; the bundled snapshot carries it since
+        spec ``a9c8b0d2…``, but an older daemon's regenerated client does
+        not). The client in use is generated from THIS daemon's document
         when ``ensure`` could regenerate it, so a missing module means the
         daemon — or the tree this machine could produce for it — does not
         offer the route. That is said, not worked around with a hand-built
@@ -599,7 +600,7 @@ class FirmwareClient:
         Sends the document's confirm word ``RELEASE_BRAKE``; the daemon engages
         the brakes itself after ``seconds`` (1..120, its own bounds). Returns
         the generated ``ArmBrakeReport``. :class:`OperationUnavailable` on a
-        daemon whose document does not publish the route.
+        daemon whose document does not publish the route (before PR #92).
         """
         wire = side_name(side)
         seconds = float(seconds)

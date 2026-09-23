@@ -107,9 +107,11 @@ def test_the_bundled_client_is_a_real_tree_not_an_empty_directory():
 
 
 #: sha256 of the OpenAPI document d1-firmwared 0.3.0 served on d1-2 at
-#: ``GET /openapi.json`` on 2026-09-22 — the daemon the kit is driven against.
-D1_2_SPEC_SHA256 = ("388bcd087a2426a8a8c61ca767439cfed6e094f8bc9e059029ed6c62"
-                    "002cf275")
+#: ``GET /openapi.json`` on 2026-09-23, after d1-firmware PR #92 (holding-brake
+#: release) was deployed — byte-identical to d1-firmware main d090ac4
+#: ``openapi/d1-firmwared.v1.json``. The daemon the kit is driven against.
+D1_2_SPEC_SHA256 = ("a9c8b0d2bb16df16fbb03652d77b9d2efd4824e47c085ae48f06679827"
+                    "efb297")
 
 
 def test_the_bundled_client_matches_the_d1_2_document(spec_document):
@@ -123,3 +125,14 @@ def test_the_bundled_client_matches_the_d1_2_document(spec_document):
     assert ensure.bundled_spec_sha256() == D1_2_SPEC_SHA256
     assert ensure.snapshot()["spec_sha256"] == D1_2_SPEC_SHA256
     assert spec_document["info"]["version"] == "0.3.0"
+
+
+@needs_310
+def test_the_bundled_document_publishes_the_brake_routes(spec_document):
+    """mkit-teach's default guide releases the holding brakes; the bundled
+    client has to carry those operations, not regenerate for them."""
+    for route in ("/v1/arm/{side}/brake_release", "/v1/arm/{side}/brake_engage",
+                  "/v1/arm/{side}/brake"):
+        assert route in spec_document["paths"], route
+    from manipulation_kit.executors.firmware._client.d1fw_api.api.arm import (  # noqa: F401
+        arm_brake, arm_brake_engage, arm_brake_release)
