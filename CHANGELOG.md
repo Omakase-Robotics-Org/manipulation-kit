@@ -91,25 +91,21 @@ guard") — **breaking for `mkit-teach` callers**:
   the same model and margins. It also does NOT refuse out-of-limit joints:
   its guard clamps for the check and the raw pose is commanded. See
   d1-firmware issue #101 (teach-mode relaxation question + that gap).
-- **`mkit-teach play` asks the daemon for `guard: speed_only`** (Shu
-  2026-09-23 17:50Z: keep the speed guard, the range guard may be off for
-  gesture playback; d1-firmware PR #102, closing issue #101). The gesture
-  upload carries `guard: "speed_only"`. The daemon then skips its clearance
-  checks for that job and keeps joint limits (newly enforced by PR #102), the
-  350 deg/s cap, timing, the 3 deg first knot and every stop path. The
-  approach to HOME stays a plan move under the daemon's `full` guard.
-  `--guard full` opts back. The kit's own `check` warnings are still printed
-  before anything moves, and under `speed_only` they say the daemon will not
-  check clearances. New `FirmwareExecutor.play_waypoints(..., guard=)` and
-  `FirmwareExecutor.trajectory_guards()` / `FirmwareClient.trajectory_guards()`
-  (the document's `TrajectoryGuard` values, `()` before PR #102). A guard the
-  connected document does not publish raises `OperationUnavailable` before
-  anything is sent. `play` instead warns and plays under the daemon's full
-  guard.
+- **The daemon's clearance guard is always on** (Shu 2026-09-23 21:14Z,
+  reversing 17:50Z). `mkit-teach play` sends no `guard` field; there is no
+  `--guard`, no `play(guard=)`, no `FirmwareExecutor.play_waypoints(guard=)`
+  and no `trajectory_guards()`. The daemon checks every sample with its
+  realistic geometry and 20 mm margin; the kit's `check` clearance findings
+  stay advisory WARNINGs, printed before anything moves together with the
+  fact that the daemon will refuse the same violations. (The per-job
+  relaxation d1-firmware PR #102 added is being removed from the daemon API
+  in PR #106's follow-up.)
 - **Bundled client snapshot → d1-firmware PR #102** (`1ec29096…`, branch
-  `feat/trajectory-guard-speed-only` @ 39537a4). It adds `TrajectoryGuard`,
-  `TrajectoryRequest.guard` and the optional `TrajectoryStatus.guard`, and
-  supersedes the `a9c8b0d2…` snapshot below. d1-2 serves `a9c8b0d2…` until
+  `feat/trajectory-guard-speed-only` @ 39537a4), superseding the
+  `a9c8b0d2…` snapshot below. It still carries the optional trajectory
+  `guard` field, which the kit no longer sends; PR #106's head (9ac6677)
+  still has it too, so the snapshot is refreshed once a document without it
+  exists. d1-2 serves `a9c8b0d2…` until
   its daemon is redeployed with PR #102, so connecting to it regenerates the
   client again, as designed. `guard` is optional in the status schema, so a
   bundled client still decodes an older daemon's status.

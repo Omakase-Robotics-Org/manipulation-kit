@@ -43,8 +43,6 @@ class FakeDaemon:
     fail_on: Optional[str] = None
     _job: Optional[list] = None
     spec_sha256: str = "f" * 64
-    #: the document's TrajectoryGuard values; () = a daemon before PR #102
-    guards: Tuple[str, ...] = ("full", "speed_only")
     #: state reads before a requested mode is reported
     mode_lag: int = 0
     #: arms whose reported mode never changes
@@ -80,8 +78,7 @@ class FakeDaemon:
             return None
         if path == "/v1/arm/trajectory/start":
             self._job = body["waypoints"]
-            return {"id": 9, "phase": "running", "elapsed_ms": 0,
-                    "guard": body.get("guard", "full")}
+            return {"id": 9, "phase": "running", "elapsed_ms": 0}
         if path.endswith("/cancel"):
             self._job = None
             return None
@@ -92,9 +89,6 @@ class FakeDaemon:
                 self._job = None
             return {"id": 9, "phase": "completed", "elapsed_ms": 1}
         raise AssertionError(f"unexpected {method} {path}")
-
-    def trajectory_guards(self) -> Tuple[str, ...]:
-        return tuple(self.guards)
 
     # -- generated-model reads ---------------------------------------------- #
     def arm_state(self, wire: str):

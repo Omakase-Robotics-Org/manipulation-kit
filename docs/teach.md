@@ -203,8 +203,8 @@ mkit-teach check wave_motion.csv --ascii
 
 ガードを警告に下げた理由: 教示はオペレーターが**手で腕を導いて実際に通った姿勢**
 なので、ガードのカプセルモデルがその姿勢の可否を裁く立場にない（Shu
-2026-09-23「teaching に関しては、ガードを外した方がいいかも」）。デーモン側も
-`play` の既定（`guard: speed_only`）では干渉検査をしない。下の「ガード」節を参照。
+2026-09-23「teaching に関しては、ガードを外した方がいいかも」）。ただし
+**デーモンは同じ違反で再生を拒否する**（干渉ガードは常に有効）。下の「ガード」節を参照。
 
 `--ascii` は関節ごとの帯グラフ。動画で見たい時は
 `python examples/preview_gesture.py wave_motion.csv`（mujoco）。
@@ -213,50 +213,36 @@ mkit-teach check wave_motion.csv --ascii
 
 ```sh
 mkit-teach play wave_motion.csv --dry-run     # ロボットに触れず事前チェックだけ
-mkit-teach play wave_motion.csv               # policy リース, vel_ratio 0.15, guard speed_only
-mkit-teach play wave_motion.csv --guard full  # デーモンの干渉検査も有効にする
+mkit-teach play wave_motion.csv               # policy リース, vel_ratio 0.15
 ```
 
 UNSAFE 印・チェック NG（リミット/速度/時刻）・コントローラ異常のいずれでも何も
 動かさない（`--no-safety` でキットの事前チェックを飛ばせるが、デーモンの検査は
 飛ばせない）。キットのガード警告は**動かす前に表示**してから再生に進む
-（`speed_only` のときは「デーモンは干渉を検査しない＝教示どおりに再生する」旨も
-表示する）。HOME から
+（「デーモンは同じ違反でアップロードを拒否する」旨も表示する）。HOME から
 2 deg 以上離れていれば先に HOME へ移動し、再生後に HOME 到着（計測値）と静止を
 確認する。record と同じく、位置モードでない腕（idle / error）は入口で計測姿勢に
 recover してから始める（表示あり）。
 
-### ガード: ジェスチャー再生は speed_only（d1-firmware PR #102）
+### ガード: デーモンの干渉検査は常に有効
 
-Shu 2026-09-23 17:50Z「gesture 再生の時はスピードガードはあっても、範囲のガードは
-オフにしていいかと」。`mkit-teach play` はジェスチャー本体を
-`POST /v1/arm/trajectory/start` に **`guard: "speed_only"`** 付きで送る
-（`--guard full` で従来どおり）。HOME への事前移動は通常の計画移動なので
-`guard` を付けず、デーモン既定の `full` のまま。
+Shu 2026-09-23 21:14Z: 干渉ガードはどこでも常に有効。`mkit-teach play` は
+ジェスチャーを `POST /v1/arm/trajectory/start` に **`guard` フィールド無しで**
+送り、再生だけ干渉検査を緩める経路は無い（デーモン API からも削除予定:
+d1-firmware PR #106 とその後続）。
 
-| デーモンの検査（1 ms ごと、アップロード時と再生中） | `full`（デーモン既定） | `speed_only`（play 既定） |
-| --- | --- | --- |
-| 干渉: 胴体/胸 30 mm、両腕間 60 mm、自己干渉 | 拒否 / 停止 | **検査しない** |
-| URDF 関節リミット（PR #102 で追加。以前はクリップ後の姿勢しか見ていなかった） | 拒否 / 停止 | 拒否 / 停止 |
-| 関節速度 350 deg/s | 拒否 / 停止 | 拒否 / 停止 |
-| 点数 2..10000・t=0 始まり・単調増加・120 s 以下・有限 | 拒否 | 拒否 |
-| 最初の点が計測姿勢から 3 deg 以内、エラー無しの position/torque 保持 | 拒否 | 拒否 |
-| cancel・estop・ソフトキル・古いフィードバック検出 | 停止 | 停止 |
-
-* `speed_only` を頼めるのは**アームリースの保持者だけ**（リース無しは 409、
-  他人がリース中はリース拒否）。`play` は executor がリースを取るので該当する。
-* デーモンは受理した軌道ごとに `arm_trajectory_guard`（guard と holder）を INFO で
-  ログし、`GET /v1/arm/trajectory/{id}/status` の `guard` に記録する。
+* デーモンはアップロード時と再生中の 1 ms ごとに、**実形状に近いジオメトリ +
+  20 mm マージン**で干渉を検査し、関節リミット・350 deg/s・時刻・最初の点
+  （計測から 3 deg 以内）も検査する。違反があれば拒否 / 停止する。
+* キットの `check` の干渉所見は**警告（advisory）**のままだが、デーモンは同じ
+  違反を拒否する。警告が出たジェスチャーは、再生前に教え直すか HOME 付近の
+  姿勢を見直すこと。
 * 手首の連成リミット（J6 に応じた |J7| 上限）はデーモンではまだ検査していない
   （d1-firmware issue #99）。これを止めているのはキットの `check` だけなので、
   `--no-safety` は使わないこと。
-* **デーモンが PR #102 より古い場合**（d1-2 は再デプロイまで `a9c8b0d2…` を配信）、
-  そのドキュメントには `TrajectoryGuard` が無い。`play` は「このデーモンは
-  guard=speed_only を提供していない」と警告し、`guard` を付けずに送る。つまり
-  デーモンの `full` で再生され、HOME の 30.3 mm 問題のような干渉所見がある
-  ジェスチャーは従来どおり拒否される。同梱クライアントは PR #102 のドキュメント
-  （`1ec29096…`）から生成してあるが、`ensure.py` は接続時にデーモンが配信する
-  ドキュメントから生成し直す。そのため、何を送れるかは常に接続先で決まる。
+* 同梱クライアントのスナップショット（`1ec29096…`）には旧 `guard` フィールドが
+  まだ残っているが、キットは使わない。`ensure.py` は接続時にデーモンが配信する
+  ドキュメントから生成し直す。
 
 ### ブレーキ解放の安全契約（record の既定）
 
@@ -427,8 +413,8 @@ against the guard's 30 mm margin, and only J2+ / J1− (A; mirrored on B) eat
 into it (+2 deg on J2 → 28.2 mm). A Catmull-Rom that returns to HOME from an
 outward J2 swing overshoots HOME by a fraction of a degree. The kit's `check`
 now reports that as an advisory `guard (advisory) body … Link2_R …
-torso_belly` warning and lets it pass. Resolved by d1-firmware PR #102 (issue
-#101, Shu 2026-09-23): `play` uploads with `guard: speed_only`, so a daemon
-with PR #102 does not refuse it on clearance. A daemon without it still
-refuses the upload under its full guard (`arm_trajectory.rs::validate`), and
-`play` says so before it moves.
+torso_belly` warning and lets it pass. The daemon decides: its clearance
+guard is always on (Shu 2026-09-23 21:14Z; the per-job relaxation of
+d1-firmware PR #102 is being removed), with its realistic geometry and 20 mm
+margin, so whether a gesture that grazes HOME plays is the daemon's call, and
+`play` says before it moves that the daemon will refuse such violations.

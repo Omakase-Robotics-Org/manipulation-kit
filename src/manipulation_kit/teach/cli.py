@@ -457,7 +457,7 @@ def cmd_play(args) -> int:
     try:
         with _executor(args, lease_class=args.lease_class) as robot:
             report = play(robot, gesture, home, no_safety=args.no_safety,
-                          guard=args.guard, speed=speed,
+                          speed=speed,
                           announce=lambda line: print(line, flush=True))
             faulted = controller_fault(robot.state()) is not None
     except FirmwareUnavailable as exc:
@@ -627,11 +627,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="pre-flight only")
     _speed_args(p)
     p.add_argument("--lease-class", choices=("operator", "policy"), default="policy")
-    p.add_argument("--guard", choices=("speed_only", "full"), default="speed_only",
-                   help="daemon trajectory guard: speed_only (default) skips its "
-                        "clearance checks for this gesture, keeping limits, the "
-                        "speed cap and timing; full has it refuse clearance "
-                        "violations too")
     p.set_defaults(func=cmd_play)
 
     p = sub.add_parser("register", help="print / splice the gesture.yaml entry")

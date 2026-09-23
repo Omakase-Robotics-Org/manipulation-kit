@@ -237,7 +237,7 @@ def test_end_to_end_the_taught_wave_exports_checks_and_plays(daemon, robot_facto
     assert [w["t"] for w in sent] == pytest.approx([p["t"] for p in expected])
     assert sent[0]["a"] == pytest.approx(HOME[:7])      # re-anchored to measured
     assert uploads[0]["holder"] == robot.holder
-    assert uploads[0]["guard"] == "speed_only", "gesture playback relaxes the range guard"
+    assert "guard" not in uploads[0], "the daemon's clearance guard is always on"
 
 
 def test_a_force_saved_unsafe_csv_does_not_play_without_no_safety(daemon, robot_factory):
@@ -282,50 +282,24 @@ def test_a_guard_only_finding_warns_before_playing_and_is_not_a_refusal(
     assert said[0].startswith("WARNING: guard (advisory) body")
     assert said.index("UPLOAD") > 0                # warned BEFORE the upload
     assert any("guard (advisory)" in n for n in result.notes)
-    assert any("will NOT check clearances" in line for line in said), said
-    assert daemon.posts("/v1/arm/trajectory/start")[-1][1]["guard"] == "speed_only"
-
-
-def test_guard_full_opts_back_into_the_daemons_clearance_checks(daemon, robot_factory):
-    pose = list(np.array(HOME) + np.r_[0, 30.0, np.zeros(12)])
-    g = Gesture([Keyframe(0.05, HOME), Keyframe(3.0, pose), Keyframe(3.0, HOME)])
-    said = []
-    with robot_factory() as robot:
-        result = play(robot, g, HOME, check_kwargs={"step_s": 0.05}, guard="full",
-                      announce=said.append)
-    assert result.ok, result.detail
-    assert daemon.posts("/v1/arm/trajectory/start")[-1][1]["guard"] == "full"
-    assert any("will refuse it" in line for line in said), said
-    with robot_factory() as robot, pytest.raises(ValueError):
-        play(robot, g, HOME, guard="off")
-
-
-def test_a_daemon_without_the_guard_field_plays_under_its_full_guard_and_says_so(
-        daemon, robot_factory):
-    daemon.guards = ()
-    g = Gesture([Keyframe(0.05, HOME), Keyframe(2.0, HOME)])
-    said = []
-    with robot_factory() as robot:
-        result = play(robot, g, HOME, check_kwargs={"step_s": 0.05},
-                      announce=said.append)
-    assert result.ok, result.detail
-    assert said and "does not offer trajectory guard=speed_only" in said[0], said
+    assert any("will refuse the upload on the same violations" in line
+               for line in said), said
     assert "guard" not in daemon.posts("/v1/arm/trajectory/start")[-1][1]
-    assert any("does not offer" in n for n in result.notes)
 
 
-def test_play_waypoints_refuses_a_guard_the_document_does_not_publish(
-        daemon, robot_factory):
-    from manipulation_kit.executors.firmware import OperationUnavailable
-    daemon.guards = ("full",)
+def test_play_has_no_guard_relaxation(daemon, robot_factory):
+    """Shu 2026-09-23 21:14Z: the clearance guard is always on. Neither play
+    nor play_waypoints takes a guard, and no upload carries one."""
+    import inspect
+
+    from manipulation_kit.executors.firmware import FirmwareExecutor
+    assert "guard" not in inspect.signature(play).parameters
+    assert "guard" not in inspect.signature(FirmwareExecutor.play_waypoints).parameters
     points = [{"t": 0.0, "a": HOME[:7], "b": HOME[7:]},
               {"t": 1.0, "a": HOME[:7], "b": HOME[7:]}]
     with robot_factory() as robot:
-        with pytest.raises(OperationUnavailable, match="speed_only"):
-            robot.play_waypoints(points, guard="speed_only")
-        assert not daemon.posts("/v1/arm/trajectory/start")
-        robot.play_waypoints(points, guard="full")
-    assert daemon.posts("/v1/arm/trajectory/start")[-1][1]["guard"] == "full"
+        robot.play_waypoints(points)
+    assert "guard" not in daemon.posts("/v1/arm/trajectory/start")[-1][1]
 
 
 def test_play_approaches_home_first_when_the_arms_are_elsewhere(daemon, robot_factory):
@@ -336,5 +310,4 @@ def test_play_approaches_home_first_when_the_arms_are_elsewhere(daemon, robot_fa
     assert result.ok and result.approached
     assert len(daemon.posts("/v1/arm/trajectory/start")) == 2
     approach, gesture = [b for _, b in daemon.posts("/v1/arm/trajectory/start")]
-    assert "guard" not in approach, "the approach is a plan move: the daemon's full guard"
-    assert gesture["guard"] == "speed_only"
+    assert "guard" not in approach and "guard" not in gesture

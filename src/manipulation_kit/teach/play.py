@@ -23,25 +23,17 @@ MotionGuard clearance findings are NOT a refusal here (a taught gesture's
 poses were reached by hand; see :mod:`~manipulation_kit.teach.check`): they
 are announced, through ``announce``, before anything moves.
 
-The daemon's own guard follows the same rule by default. ``play`` uploads the
-gesture with ``guard="speed_only"`` (d1-firmware PR #102, Shu 2026-09-23:
-keep the speed guard, the range guard may be off for gesture playback): the
-daemon skips its clearance checks for this one job and still refuses joint
-limits, the 350 deg/s step cap, bad timing and a first knot more than 3
-degrees from feedback, and still stops on cancel / estop / soft kill.
-``guard="full"`` opts back into the daemon's clearance checks, which then
-refuse a gesture that dips under that robot's ``[arm]`` margins. A daemon
-that predates the field publishes no ``TrajectoryGuard``; ``play`` then says
-so and plays under that daemon's full guard.
+The daemon does NOT follow that rule: it checks every sample of the upload
+against its own guard — realistic geometry, 20 mm margin, clearance always on
+(Shu 2026-09-23 21:14Z: the guard is on everywhere; the daemon API's
+per-job relaxation is being removed, d1-firmware PR #106 and follow-up) —
+and refuses the upload
+on the same violations ``check`` warns about. No ``guard`` field is sent.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
-
-#: The daemon trajectory guard ``play`` asks for unless told otherwise.
-DEFAULT_GUARD = "speed_only"
-GUARDS = ("speed_only", "full")
 
 from ..executor import controller_fault
 from .check import CheckReport, check_gesture
@@ -79,47 +71,27 @@ def preflight(gesture: Gesture, home: Sequence[float], *, no_safety: bool = Fals
                       "pre-flight SKIPPED (--no-safety)", check=report)
 
 
-def guard_notes(report: Optional[CheckReport],
-                guard: str = DEFAULT_GUARD) -> List[str]:
+def guard_notes(report: Optional[CheckReport]) -> List[str]:
     """The advisory guard lines to show an operator before a gesture moves."""
     if report is None or not report.guard_findings:
         return []
-    if guard == "speed_only":
-        tail = ("the daemon will NOT check clearances for this gesture "
-                "(guard=speed_only): it plays these poses as taught; pass "
-                "--guard full to have the daemon refuse them instead "
-                "(docs/teach.md, 'Guard')")
-    else:
-        tail = ("the daemon guards the upload with its own margins "
-                "(guard=full) and will refuse it if they are not met "
-                "(docs/teach.md, 'Guard')")
-    return [f.summary() for f in report.guard_findings] + [tail]
+    return [f.summary() for f in report.guard_findings] + [
+        "the daemon checks clearance on every sample with its own geometry and "
+        "20 mm margin, always, and will refuse the upload on the same "
+        "violations (docs/teach.md, 'Guard')"]
 
 
 def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = False,
          speed: Optional[SpeedPolicy] = None,
-         check_kwargs=None, settle_s: float = 2.0, guard: str = DEFAULT_GUARD,
+         check_kwargs=None, settle_s: float = 2.0,
          announce: Callable[[str], None] = lambda line: None) -> PlayReport:
     """Play on an ENTERED :class:`FirmwareExecutor`. Returns what happened.
-    ``announce`` receives the advisory guard warnings BEFORE anything moves.
-    ``guard`` is the daemon trajectory guard for the upload (module doc)."""
-    if guard not in GUARDS:
-        raise ValueError(f"guard must be one of {GUARDS}, not {guard!r}")
+    ``announce`` receives the advisory guard warnings BEFORE anything moves."""
     pre = preflight(gesture, home, no_safety=no_safety, speed=speed,
                     check_kwargs=check_kwargs)
     if not pre.ok:
         return pre
-    send_guard: Optional[str] = guard
-    fallback = None
-    if guard not in robot.trajectory_guards():
-        send_guard = None
-        fallback = (f"this daemon does not offer trajectory guard={guard} "
-                    f"(d1-firmware PR #102 is not deployed); the gesture plays "
-                    f"under the daemon's full guard, which refuses clearance "
-                    f"violations")
-    advisory = guard_notes(pre.check, guard if send_guard else "full")
-    if fallback:
-        advisory.insert(0, fallback)
+    advisory = guard_notes(pre.check)
     for line in advisory:
         announce(f"WARNING: {line}")
     fault = controller_fault(robot.state())
@@ -136,7 +108,7 @@ def play(robot, gesture: Gesture, home: Sequence[float], *, no_safety: bool = Fa
     points = trajectory_points(gesture, home)
     measured = pose_deg(robot.state())
     points[0] = {"t": 0.0, "a": measured[:7], "b": measured[7:]}
-    sent = robot.play_waypoints(points, guard=send_guard)
+    sent = robot.play_waypoints(points)
     end = robot.wait_arrived(_q16(home))
     notes = list(advisory)
     settle = robot.settle(settle_s)

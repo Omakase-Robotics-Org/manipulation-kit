@@ -631,19 +631,6 @@ class FirmwareClient:
         return self._read("arm.arm_tool_state", "ArmToolStatus",
                           f"/v1/arm/{wire}/tool", side=self.model("ArmSide")(wire))
 
-    def trajectory_guards(self) -> Tuple[str, ...]:
-        """The ``TrajectoryGuard`` values this daemon's document publishes.
-
-        ``()`` for a document without the enum: a daemon before d1-firmware
-        PR #102 knows only its full guard and would ignore a ``guard`` field
-        rather than honour it, so a caller must not believe it sent one.
-        """
-        try:
-            enum = self.model("TrajectoryGuard")
-        except (AttributeError, ImportError):
-            return ()
-        return tuple(str(member.value) for member in enum)
-
     def brake_release(self, side: str, *, seconds: float,
                       holder: Optional[str] = None) -> Any:
         """``POST /v1/arm/{side}/brake_release`` — THE ARM DROPS.

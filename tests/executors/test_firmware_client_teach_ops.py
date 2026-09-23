@@ -161,19 +161,6 @@ def test_an_operation_the_document_lacks_is_refused_before_the_wire(connect):
     assert not [s for s in daemon.seen if s[0] == "POST"]
 
 
-def test_the_bundled_document_offers_both_trajectory_guards(connect):
-    """d1-firmware PR #102: ``TrajectoryGuard`` is what ``mkit-teach play``
-    checks before sending ``guard: speed_only``."""
-    with _Daemon({}) as daemon, connect(daemon) as client:
-        assert client.trajectory_guards() == ("full", "speed_only")
-
-
-# --------------------------------------------------------------------------- #
-# x-timeout-seconds: the document's bound, never the 2 s default (d1-2
-# 2026-09-23 20:46Z: recover received 20:46:19.363, cancelled 21.366 = the
-# client's blanket 2.0 s, while the daemon's confirm loop was still running)
-# --------------------------------------------------------------------------- #
-
 def test_every_request_waits_the_documents_bound_for_its_route(connect):
     spec = json.loads(ensure.bundled_spec_bytes())["paths"]
     with _Daemon({}) as daemon, connect(daemon) as client:
