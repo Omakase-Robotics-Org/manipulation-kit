@@ -35,7 +35,8 @@ from . import verifiers as V
 from .arguments import check_arguments
 from .clearance import SceneGate, policy_of
 from .planning import (IncompleteObservation, Kin, coupled_limit_notes,
-                       joint_ramp, leg_knots, solve_path)
+                       joint_ramp, leg_knots, solve_path,
+                       CONTACT_KNOT_M)
 from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     FRAME_STALE, GOHOME_SIDE_CHOICES, GRIPPER_UNKNOWN, INCOMPLETE_OBSERVATION, LearnedPrimitive,
                     LEARNED_POLICY_REQUIRED, NO_FIT, NO_MOTION, NO_SUCH_OBJECT,
@@ -984,7 +985,8 @@ class Grasp(Primitive):
 
         def waypoints_for(r_tcp):
             search = ([Waypoint("contact_limit", meet.p_grasp + meet.d * search_m,
-                                r_tcp, allow_via=False)] if by_contact else [])
+                                r_tcp, allow_via=False, knot_m=CONTACT_KNOT_M)]
+                      if by_contact else [])
             return [
                 # getting to the standoff is free-space transit: a detour is
                 # a better answer than a refusal. THE TOOL IS CHECKED THERE,

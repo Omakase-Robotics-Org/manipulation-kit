@@ -47,7 +47,8 @@ from . import verifiers as V
 from .arguments import ROLE_ANY, check_arguments
 from .clearance import SceneGate
 from .planning import (DUPLICATE_KNOT_RAD, IncompleteObservation, Kin,  # noqa: F401
-                       coupled_limit_notes, leg_knots, solve_path)
+                       coupled_limit_notes, CONTACT_KNOT_M, leg_knots,
+                       solve_path)
 from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN, JOINT_LIMIT,
                     ContactCriterion, ContactStep, GripStep, JointStep, Plan,
                     PlanBinding, PlanError, Primitive, SIDES, SettleStep,
@@ -301,7 +302,7 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
         Waypoint(standoff_label, p_standoff, r_tool, allow_via=standoff_via,
                  arrive=standoff_arrive),
         Waypoint("contact_limit", p_standoff + d * float(travel_m), r_tool,
-                 allow_via=False)]
+                 allow_via=False, knot_m=CONTACT_KNOT_M)]
     # The scene gates the standoff transit and the leg — except the surface
     # the leg is MEANT to reach: the first obstacle its ray meets (and a
     # press's named target), which a probe ends past by construction.

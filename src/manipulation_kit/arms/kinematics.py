@@ -136,6 +136,11 @@ class GuardedArm:
         return self._lock
 
     @property
+    def tuning(self) -> IkTuning:
+        """The IK tuning :meth:`solve_ee` uses when it is given none."""
+        return self._tuning
+
+    @property
     def gate(self) -> GuardGate:
         return self._gate
 

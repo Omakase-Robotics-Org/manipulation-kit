@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..arms import sides
+from ..arms import safety, sides
 from ..world import WorldView
 from ..world.direction import BASE as _BASE, TOOL as _TOOL
 
@@ -233,8 +233,19 @@ class Waypoint:
     #: transit legs (and ``Approach``, whose verifier already measures the
     #: tool point) do not set it.
     arrive: bool = False
+    #: The spacing [m] of this leg's interpolation knots; ``None`` = the
+    #: planner's ``safety.MAX_STEP_M``. Only ever FINER: a contact leg is
+    #: played until something resists, so the arm stops BETWEEN knots, where
+    #: the joint-space interpolation bows off the line (0.2 mm at 25 mm
+    #: spacing on the d1-2 probe, in the same direction every probe).
+    knot_m: Optional[float] = None
 
     def __post_init__(self) -> None:
+        if self.knot_m is not None and not (0.0 < float(self.knot_m)
+                                            <= safety.MAX_STEP_M):
+            raise ValueError(
+                f"knot_m must be in (0, {safety.MAX_STEP_M}] m, got "
+                f"{self.knot_m!r}")
         p = np.array(self.p, dtype=float).reshape(3)
         p.setflags(write=False)
         object.__setattr__(self, "p", p)
@@ -244,7 +255,9 @@ class Waypoint:
                 "p": [round(float(v), 4) for v in self.p],
                 "quat_xyzw": [round(float(v), 4) for v in self.r.as_quat()],
                 "allow_via": bool(self.allow_via),
-                "arrive": bool(self.arrive)}
+                "arrive": bool(self.arrive),
+                **({} if self.knot_m is None else
+                   {"knot_m": round(float(self.knot_m), 4)})}
 
 
 @dataclass(frozen=True)
