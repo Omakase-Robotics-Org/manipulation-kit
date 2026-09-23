@@ -55,6 +55,19 @@ class RateRefused(FirmwareUnavailable):
     """
 
 
+class TrajectoryInvalid(FirmwareUnavailable):
+    """A trajectory the kit built breaks the document's own ``Waypoint``
+    contract ("seconds, starting at zero, strictly increasing"; finite
+    joints) and was NOT uploaded.
+
+    Checked before the upload, so the refusal names the offending knots
+    instead of the daemon's one-line HTTP 400 (d1-2 2026-09-23: "trajectory
+    values must be finite with increasing times <=120 seconds", which says
+    neither which knot nor which rule). It is a bug in whatever produced the
+    points, never a reason to retry.
+    """
+
+
 class ProtocolError(FirmwareUnavailable):
     """The daemon answered, but not in the shape its own spec advertises."""
 

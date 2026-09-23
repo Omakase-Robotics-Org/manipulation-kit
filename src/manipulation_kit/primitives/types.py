@@ -340,6 +340,10 @@ class ContactCriterion:
         return out
 
 
+#: The least time between two knots of a contact leg [s]: one 50 Hz tick.
+CONTACT_KNOT_MIN_DT_S = 0.02
+
+
 @dataclass(frozen=True)
 class ContactStep:
     """A straight leg that STOPS ON WHATEVER RESISTS, and reports where.
@@ -396,6 +400,15 @@ class ContactStep:
         if len(path) < 2:
             raise ValueError("ContactStep: a contact leg needs its start and at "
                              "least one knot")
+        for k, q in enumerate(path):
+            if not np.all(np.isfinite(q)):
+                raise ValueError(f"ContactStep: knot {k} is not finite: "
+                                 f"{q.tolist()}")
+        for k, (a, b) in enumerate(zip(self.s, self.s[1:])):
+            if not math.isfinite(b) or b < a:
+                raise ValueError(f"ContactStep: the distance along the leg "
+                                 f"must not decrease, knot {k + 1} is {b!r} "
+                                 f"after {a!r}")
         if getattr(self.direction, "frame", _BASE) != _BASE:
             raise ValueError("ContactStep.direction must be resolved into the "
                              "base frame at plan time")
@@ -410,12 +423,26 @@ class ContactStep:
 
     def timed_path(self) -> Tuple[Tuple[float, np.ndarray], ...]:
         """``(t, q)`` per knot, ``t`` seconds from the leg start at
-        :attr:`speed_m_s` — the one timing every transport plays."""
-        return tuple((max(0.0, s) / self.speed_m_s, q)
-                     for s, q in zip(self.s, self.path))
+        :attr:`speed_m_s` — the one timing every transport plays.
+
+        STRICTLY INCREASING. A knot that moves the joints without advancing
+        along the direction (the solver correcting the wrist, not the tool
+        point) has the distance of the knot before it; timed by distance
+        alone it had the same TIME, and d1-firmwared refuses a trajectory
+        whose times do not increase — the whole leg, at upload (d1-2
+        2026-09-23, table probe 4 of 10). Such a knot is given
+        :data:`CONTACT_KNOT_MIN_DT_S` after the one before it.
+        """
+        out: List[Tuple[float, np.ndarray]] = []
+        for s, q in zip(self.s, self.path):
+            t = max(0.0, s) / self.speed_m_s
+            if out and t < out[-1][0] + CONTACT_KNOT_MIN_DT_S:
+                t = out[-1][0] + CONTACT_KNOT_MIN_DT_S
+            out.append((t, q))
+        return tuple(out)
 
     def duration_s(self) -> float:
-        return max(0.0, self.s[-1]) / self.speed_m_s
+        return self.timed_path()[-1][0]
 
 
 #: The closed set of things a plan can contain. Spelt as a Union rather than

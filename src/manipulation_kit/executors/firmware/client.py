@@ -48,7 +48,8 @@ import numpy as np
 from ...executor import HandState, JointState, LiftState, NeckState
 from ...hands.d1.parallel_gripper.description import gap_from_motor_rad
 from .ensure import ClientTree, document_bytes, ensure_client
-from .errors import DeviceUnavailable, FirmwareError, ProtocolError
+from .errors import (DeviceUnavailable, FirmwareError, ProtocolError,
+                     TrajectoryInvalid)
 
 #: The wire spelling of a side, as the daemon names them.
 SIDES: Tuple[str, str] = ("a", "b")
@@ -121,6 +122,44 @@ def _finite(value: Any, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite")
     return number
+
+
+def check_waypoints(points: Sequence[Tuple[float, Sequence[float],
+                                           Sequence[float]]]) -> None:
+    """Refuse ``(t_s, a_deg, b_deg)`` points the document's ``Waypoint``
+    contract forbids, BEFORE they are uploaded.
+
+    The contract is the document's own words for ``Waypoint.t`` — "Seconds,
+    starting at zero, strictly increasing" — plus finite numbers for every
+    time and joint. The daemon checks the same and answers a bare HTTP 400
+    for the whole upload; this names the knots, so the producer can be found.
+    (The daemon's 120 s and 10 000-point ceilings are NOT in the document and
+    are not guessed here; a d1-firmware issue asks for them to be published.)
+    """
+    problems = []
+    if len(points) < 2:
+        problems.append(f"{len(points)} point(s); a trajectory needs a start "
+                        f"and at least one more")
+    for k, (t, a, b) in enumerate(points):
+        t = float(t)
+        if not math.isfinite(t):
+            problems.append(f"knot {k}: t={t!r} is not finite")
+        elif k == 0 and t != 0.0:
+            problems.append(f"knot 0: t={t!r}, the first time must be 0")
+        elif k > 0 and not t > float(points[k - 1][0]):
+            problems.append(f"knot {k}: t={t:.6f} s does not increase after "
+                            f"knot {k - 1} (t={float(points[k - 1][0]):.6f} s)")
+        bad = [f"{arm}{j + 1}={v!r}" for arm, q in (("a", a), ("b", b))
+               for j, v in enumerate(q) if not math.isfinite(float(v))]
+        if bad:
+            problems.append(f"knot {k}: non-finite joint(s) {', '.join(bad)}")
+    if problems:
+        shown = "; ".join(problems[:5])
+        more = (f"; and {len(problems) - 5} more" if len(problems) > 5 else "")
+        raise TrajectoryInvalid(
+            f"trajectory of {len(points)} points refused before upload "
+            f"(Waypoint.t must start at zero and strictly increase, every "
+            f"value finite): {shown}{more}")
 
 
 def joint_state(arm: Any) -> JointState:
@@ -446,6 +485,7 @@ class FirmwareClient:
         ``ArmTrajectoryStartBody`` of generated ``Waypoint``s and the answer a
         generated ``TrajectoryStatus``.
         """
+        check_waypoints(points)
         waypoint = self.model("Waypoint")
         fields: Dict[str, Any] = {"waypoints": [
             waypoint(a=[float(v) for v in joints7(a)],
