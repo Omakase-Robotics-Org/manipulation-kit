@@ -9,7 +9,9 @@ from manipulation_kit.teach import (KeyframeOptions, Keyframe, Gesture, load_hom
                                     keyframes_from_poses, keyframes_from_samples,
                                     limit_joint_dynamics, smooth_samples, trim_idle,
                                     trajectory_points)
-from manipulation_kit.teach.process import (DEFAULT_SPEED, LEGACY_SPEED, WRIST_JOINTS,
+from manipulation_kit.teach.process import (DEFAULT_SPEED, HOME_SPEED_DEG_S,
+                                            HOME_SPEED_MAX_DEG_S, LEGACY_SPEED,
+                                            WRIST_JOINTS, reduce_samples,
                                             enforce_min_spacing,
                                             reduce_collinear,
                                             reduce_douglas_peucker, segment_peaks)
@@ -55,17 +57,29 @@ def test_min_spacing_drops_crowded_interior_keyframes():
     assert enforce_min_spacing([0, 1, 2, 3, 9], times, 0.1) == [0, 2, 9]
 
 
-def test_a_stream_pins_home_and_locks_the_wrist():
-    c1 = HOME + np.r_[0, 12.0, 0, 0, 20.0, 5.0, 9.0, 0, 0, 0, 0, 0, 0, 0]
+def test_a_stream_pins_home_and_keeps_the_taught_wrist():
+    """d1-2 task4 (2026-09-23): L7 35.7 deg taught, 0.0 exported under the
+    old default pin. The wrist is free by default; ``pin_wrist`` pins it;
+    a wrist joint that moved under 2 deg (sag/noise) is pinned either way."""
+    c1 = HOME + np.r_[0, 12.0, 0, 0, 20.0, 5.0, 9.0, 0, 0, 0, 0, 0, 0, 1.2]
     q = _ramp([HOME + 3.0, c1, HOME + 2.0])
     times = np.arange(len(q)) / 20.0
-    g = keyframes_from_samples(times, q, HOME)
-    rows = g.array()
+    red = reduce_samples(times, q, HOME)
+    rows = red.gesture.array()
     assert rows[0] == pytest.approx(HOME) and rows[-1] == pytest.approx(HOME)
+    assert np.max(rows[:, 4]) > HOME[4] + 10.0              # R5 kept as taught
+    assert np.ptp(rows[:, 6]) > 5.0                          # R7 kept
+    # L7 only drifted +3 -> +1.2 -> +2 (range 1.8 deg, under 2): sag/noise,
+    # pinned to HOME; L5/L6 span the 3 deg start offset and are kept
+    assert red.pinned == [13] and not red.pin_all
+    assert rows[:, 13] == pytest.approx(np.full(len(rows), HOME[13]))
+    pinned = reduce_samples(times, q, HOME, KeyframeOptions(pin_wrist=True))
+    assert set(pinned.pinned) == set(WRIST_JOINTS) and pinned.pin_all
     for j in WRIST_JOINTS:
-        assert rows[:, j] == pytest.approx(np.full(len(rows), HOME[j]))
-    free = keyframes_from_samples(times, q, HOME, KeyframeOptions(lock_wrist=False))
-    assert np.max(free.array()[:, 4]) > HOME[4] + 10.0
+        assert pinned.gesture.array()[:, j] == pytest.approx(
+            np.full(len(pinned.gesture.keyframes), HOME[j]))
+    lines = "\n".join(pinned.lines())
+    assert "R5 " in lines and "(pinned: --pin-wrist)" in lines
 
 
 @pytest.mark.parametrize("speed", [DEFAULT_SPEED, LEGACY_SPEED])
@@ -188,3 +202,42 @@ def test_a_keyframe_take_returns_home_at_the_same_speed():
     far = HOME + np.r_[0, -20.0, np.zeros(12)]
     g = keyframes_from_poses([far], HOME, 1.5, KeyframeOptions(speed_limit=False))
     assert g.keyframes[-1].duration == pytest.approx(20.0 / HOME_SPEED_DEG_S)
+
+
+def test_the_home_legs_run_at_the_takes_own_speed_clamped():
+    """The return must not feel slower than the gesture: the HOME legs run
+    at the take's peak joint speed after smoothing, within [20, 90] deg/s."""
+    def take(peak_amp, seconds):
+        times = np.arange(0.0, seconds + 2.0, 0.05)
+        s = np.clip((times - 0.5) / seconds, 0, 1)
+        q = np.tile(HOME, (len(times), 1))
+        q[:, 7] += peak_amp * np.sin(np.pi * s / 2)          # out, and stays
+        return times, q
+    slow = reduce_samples(*take(10.0, 4.0), HOME)
+    assert slow.home_speed_deg_s == HOME_SPEED_DEG_S          # floor
+    mid = reduce_samples(*take(40.0, 1.0), HOME)
+    assert HOME_SPEED_DEG_S < mid.home_speed_deg_s < HOME_SPEED_MAX_DEG_S
+    fast = reduce_samples(*take(60.0, 0.3), HOME)
+    assert fast.home_speed_deg_s == HOME_SPEED_MAX_DEG_S      # ceiling
+    assert mid.ret and mid.return_s == pytest.approx(
+        max(40.0 / mid.home_speed_deg_s, mid.return_s), rel=0.05)
+    forced = reduce_samples(*take(40.0, 1.0), HOME, KeyframeOptions(home_speed_deg_s=20.0))
+    assert forced.home_speed_deg_s == 20.0 and forced.return_s > mid.return_s
+
+
+def test_the_breakdown_adds_up_and_shows_a_lost_joint():
+    times = np.arange(0.0, 3.0, 0.05)
+    q = np.tile(HOME, (len(times), 1))
+    q[:, 7] += 40.0 * np.sin(np.pi * np.clip((times - 0.8) / 1.0, 0.0, 1.0))
+    q[:, 13] += 30.0 * np.sin(np.pi * np.clip((times - 0.8) / 1.0, 0.0, 1.0))
+    red = reduce_samples(times, q, HOME)
+    assert red.body_s + red.connect_s + red.return_s == pytest.approx(red.gesture.played_s)
+    count, added = red.stretched_knots()
+    assert count >= 1 and added > 0                           # acc cap at corners
+    text = red.breakdown()
+    assert text.startswith(f"recorded {times[-1]:.2f} s -> body ")
+    assert f"= {red.gesture.played_s:.2f} s" in text and f"+{added:.2f} s" in text
+    ranges = red.range_lines()[0]
+    assert "L1 40.0 ->" in ranges and "L7 30.0 ->" in ranges and "LOST" not in ranges
+    pinned = reduce_samples(times, q, HOME, KeyframeOptions(pin_wrist=True))
+    assert "L7 30.0 -> 0.0 (pinned: --pin-wrist)" in pinned.range_lines()[0]

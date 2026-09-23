@@ -26,10 +26,10 @@ from . import registry
 from .check import ascii_preview, check_gesture
 from .export import UnsafeGesture, export
 from .gesture_csv import Gesture, Keyframe, load_csv, load_home, save_csv
-from .process import (DEFAULT_SPEED, EPSILON_DEG, HOME_SPEED_DEG_S,
+from .process import (DEFAULT_SPEED, EPSILON_DEG,
                       MIN_KEYFRAME_S, SAG_MAX_S, SAG_VEL_DEG_S, SMOOTH_WINDOW,
                       STRETCH_KEY, KeyframeOptions, SpeedPolicy,
-                      keyframes_from_poses, keyframes_from_samples)
+                      reduce_poses, reduce_samples)
 from .record import (BRAKE_CONTRACT, BRAKE_WINDOW_S, COMPLIANCE, DEFAULT_RATE_HZ,
                      RecordAborted, Recording, record)
 
@@ -357,7 +357,7 @@ def _options(args) -> KeyframeOptions:
     return KeyframeOptions(
         smooth_window=0 if args.no_smooth else args.smooth_window,
         epsilon_deg=args.epsilon_deg, method=args.method,
-        min_spacing_s=args.min_spacing_s, lock_wrist=not args.free_wrist,
+        min_spacing_s=args.min_spacing_s, pin_wrist=args.pin_wrist,
         pin_home=not args.no_home, max_idle_s=args.max_idle_s,
         speed_limit=not args.no_speed_limit, speed=_speed(args),
         min_keyframe_s=args.min_keyframe_s, home_speed_deg_s=args.home_speed,
@@ -373,33 +373,44 @@ def _speed(args, gesture: Optional[Gesture] = None) -> SpeedPolicy:
 
 
 def _gesture_from(path: Path, args):
-    """A recording -> keyframes (with ``args``'s options); a keyframes JSON or
-    a CSV -> as stored."""
+    """``(gesture, home, reduction)``: a recording -> keyframes with
+    ``args``'s options and its :class:`Reduction` report; a keyframes JSON or
+    a CSV -> as stored, and no report."""
     home = load_home(args.home)
     if path.suffix == ".csv":
-        return load_csv(path), home
+        return load_csv(path), home, None
     doc = json.loads(path.read_text(encoding="utf-8"))
     if doc.get("schema") == KEYFRAMES_SCHEMA:
         return Gesture([Keyframe(r[0], r[1:]) for r in doc["keyframes"]],
-                       meta=dict(doc.get("meta") or {})), home
+                       meta=dict(doc.get("meta") or {})), home, None
     rec = Recording.from_json(doc)
     o = _options(args)
     if rec.mode == "keyframe":
-        gesture = keyframes_from_poses(rec.samples, home, args.segment_s, o)
+        reduction = reduce_poses(rec.samples, home, args.segment_s, o)
     else:
-        gesture = keyframes_from_samples(rec.times, rec.samples, home, o)
+        reduction = reduce_samples(rec.times, rec.samples, home, o)
+    gesture = reduction.gesture
     if rec.meta.get("name"):
         gesture.meta.setdefault("name", rec.meta["name"])
-    return gesture, home
+    return gesture, home, reduction
+
+
+def _say_reduction(reduction) -> None:
+    """Where the time went and which joints kept their motion."""
+    if reduction is None:
+        return
+    for line in reduction.lines():
+        print(line)
 
 
 def cmd_keyframes(args) -> int:
-    gesture, home = _gesture_from(Path(args.recording), args)
+    gesture, home, reduction = _gesture_from(Path(args.recording), args)
     doc = {"schema": KEYFRAMES_SCHEMA, "home": home, "meta": gesture.meta,
            "keyframes": [[round(k.duration, 4)] + [round(v, 4) for v in k.positions]
                          for k in gesture.keyframes]}
     out = Path(args.out).expanduser().resolve()
     out.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    _say_reduction(reduction)
     _say_speed(gesture)
     print(f"{len(gesture.keyframes)} keyframes, {gesture.played_s:.2f} s -> {out}")
     print_next(next_steps("keyframes", take=out))
@@ -443,7 +454,7 @@ def ask_labels(args, *, ask=None, interactive: Optional[bool] = None):
 
 def cmd_export(args) -> int:
     source = Path(args.source).expanduser().resolve()
-    gesture, home = _gesture_from(source, args)
+    gesture, home, reduction = _gesture_from(source, args)
     name = args.name or gesture.meta.get("name")
     if name:
         name = registry.check_name(name)
@@ -453,6 +464,7 @@ def cmd_export(args) -> int:
     target = (Path(args.out).expanduser().resolve() if args.out is not None
               else default_csv(source, name))
     sentiment, usage = ask_labels(args)
+    _say_reduction(reduction)
     _say_speed(gesture)
     try:
         out, report = export(gesture, home, name=name, sentiment=sentiment,
@@ -577,8 +589,10 @@ def _keyframe_args(p) -> None:
     g.add_argument("--epsilon-deg", type=float, default=EPSILON_DEG)
     g.add_argument("--method", choices=("collinear", "dp"), default="collinear")
     g.add_argument("--min-spacing-s", type=float, default=0.0)
-    g.add_argument("--free-wrist", action="store_true",
-                   help="keep J5-J7 as dragged (default: locked at HOME)")
+    g.add_argument("--pin-wrist", action="store_true",
+                   help="pin J5-J7 to HOME (gesture_record's anti-sag rule). "
+                        "Default: the wrist is kept as taught; only a wrist "
+                        "joint that moved less than 2 deg (sag/noise) is pinned")
     g.add_argument("--no-home", action="store_true",
                    help="do not pin HOME first/last (the omakaseos player "
                         "still replaces those rows with HOME)")
@@ -590,9 +604,10 @@ def _keyframe_args(p) -> None:
                         "refuses what exceeds the ceiling")
     _speed_args(g)
     g.add_argument("--min-keyframe-s", type=float, default=MIN_KEYFRAME_S)
-    g.add_argument("--home-speed", type=float, default=HOME_SPEED_DEG_S,
+    g.add_argument("--home-speed", type=float, default=None,
                    help="joint speed [deg/s] of the HOME-in blend and the "
-                        "appended return to HOME (default 20)")
+                        "appended return to HOME (default: the take's own peak "
+                        "joint speed, clamped to 20..90; keyframe mode 20)")
     g.add_argument("--sag-max-s", type=float, default=SAG_MAX_S,
                    help="cut the brake-release sag within this many seconds "
                         "of the start (default 0.5)")

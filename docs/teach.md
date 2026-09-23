@@ -155,10 +155,10 @@ neutral / filler。
 | 手順 | 既定 | オプション |
 |---|---|---|
 | 開始時の「落ち込み」を捨てる（ブレーキ解放直後、最初の 0.5 s 以内で関節速度 8 deg/s を超えた最後のサンプルまで） | on | `--sag-max-s` / `--sag-vel` / `--no-sag-trim` |
-| 手首 J5–J7 を HOME に固定（重力で垂れた手首を記録しない） | on | `--free-wrist` |
+| 手首 J5–J7 は**教えたまま残す**。記録中の可動範囲が 2 deg 未満の手首関節だけ（垂れ・ノイズ）HOME に固定し、その旨を表示する（Shu 2026-09-23: task4 の L7 35.7 deg が旧既定の固定で 0 になった） | off | `--pin-wrist`（旧 gesture_record の固定） |
 | 平滑化（中央値→平均、ジッタ除去） | 5 サンプル | `--smooth-window N` / `--no-smooth` |
-| HOME から始め、落ち込み後の最初の姿勢へ一定速度でつなぐ | 20 deg/s | `--home-speed` |
-| 最後の姿勢を残し、そこから HOME へ戻る区間を**一定の関節速度**で追加（時間 = 最大関節差 / 20 deg/s。遠くても近くても同じ速さ） | 20 deg/s | `--home-speed` / `--no-home` |
+| HOME から始め、落ち込み後の最初の姿勢へ一定速度でつなぐ | テイク自身のピーク関節速度（平滑化後）を 20–90 deg/s に収めた値 | `--home-speed` |
+| 最後の姿勢を残し、そこから HOME へ戻る区間を**一定の関節速度**で追加（時間 = 最大関節差 / HOME 速度。戻りがジェスチャーより遅く感じないように） | 同上（キーフレームモードは 20 deg/s） | `--home-speed` / `--no-home` |
 | キーフレーム削減（直線から ε 以内を間引き） | 1.5 deg, collinear | `--epsilon-deg` / `--method dp` / `--min-spacing-s` |
 | 停止区間の短縮（Trim idle pauses） | Off | `--max-idle-s 0.25/0.5/1` |
 | 再生可能化（速度 150 deg/s・加速度 600 deg/s² 以下になるまで時間だけ延ばす。下記「速度」） | on | `--max-joint-vel` / `--max-joint-acc` / `--no-speed-limit`（教えたタイミングのまま。上限超えは check で NG） |
@@ -186,8 +186,13 @@ neutral / filler。
   （伸ばした場合は `speed_stretch=…` も）として残り、**check と play はその
   CSV 自身の上限で判定する**（`--max-joint-vel` / `--max-joint-acc` で上書き
   可）。キーが無い古い CSV は既定値で判定。
-* HOME への接続・復帰は教示動作ではないので、従来どおり一定 20 deg/s
-  （`--home-speed`）。
+* HOME への接続・復帰は一定の関節速度で、既定はそのテイク自身のピーク関節速度
+  （平滑化後）を 20–90 deg/s に収めた値（`--home-speed` で指定可）。
+* export（と keyframes）は時間の内訳と関節ごとの可動範囲を必ず表示する:
+  `timing: recorded 5.24 s -> body 5.10 s (speed cap stretched 3 knot(s),
+  +0.20 s) + HOME connect 0.40 s + return 0.60 s (at 45 deg/s) = 6.35 s`、
+  `joint range recorded -> exported [deg]: L1 40.0 -> 39.2, L7 35.7 -> 35.1, …`。
+  固定した関節には `(pinned: …)`、半分未満に減った関節には `(LOST)` が付く。
 * `[saved]` と `check` が表示する時間はどちらも**デーモンのスプラインの長さ**
   （0 行目の duration はプレーヤーが無視するので含めない）。
 

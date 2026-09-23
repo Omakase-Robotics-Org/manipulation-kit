@@ -176,6 +176,19 @@ guard") — **breaking for `mkit-teach` callers**:
     when an arm was left without a position hold or the run failed, and
     **no hint ever suggests `--yes`** (it skips the HOLDING confirmation;
     the retry is `mkit-teach record --name <name> --arms <arms>`).
+  - **The wrist is kept as taught** (Shu 21:51Z: task4's L7 35.7 deg was
+    exported as 0.0). `KeyframeOptions.lock_wrist` / `--free-wrist` are
+    replaced by `pin_wrist` / `--pin-wrist` (off by default) and
+    `wrist_noise_deg` (2 deg): a wrist joint that moved less than that is
+    pinned to HOME, and export says so.
+  - **HOME legs at the take's own speed**: `home_speed_deg_s=None` (default)
+    = the take's peak joint speed after smoothing, clamped to 20..90 deg/s;
+    `--home-speed` overrides; keyframe mode keeps 20.
+  - **Export prints where the time went and what each joint kept**: new
+    `process.Reduction` (`reduce_samples` / `reduce_poses`) with a
+    `timing: recorded … -> body … (speed cap stretched N knot(s), +x s) +
+    HOME connect … + return … = … s` line and per-joint ranges recorded ->
+    exported, flagging pinned and LOST joints.
 - **Bundled client snapshot refreshed** (consumer-sweep item from the probe
   entry below, done here): `_client/` is regenerated from spec `a9c8b0d2…`
   (0.3.0 with d1-firmware PR #92's brake routes). That document is what d1-2

@@ -74,10 +74,20 @@ BUILD_MIN_DURATION_S = 0.02
 IDLE_MOVE_EPS_DEG = 0.5
 #: the wrist joints gesture_record pinned at HOME while recording (0-based,
 #: both arms): J5/J6/J7. Under compliance the free wrist droops under gravity
-#: and the raw capture reads as "wrist pointing down".
+#: and the raw capture reads as "wrist pointing down". Hand-guided with the
+#: brakes released, the operator moves the wrist ON PURPOSE (d1-2 task4:
+#: L7 35.7 deg taught, 0.0 exported under the old pin), so the wrist is free
+#: by default: pinned only with ``pin_wrist`` (``--pin-wrist``), or per joint
+#: when its recorded range is under ``WRIST_NOISE_DEG`` (sag / noise).
 WRIST_JOINTS = (4, 5, 6, 11, 12, 13)
-#: joint speed of the HOME-in blend and the appended return to HOME [deg/s]
+WRIST_NOISE_DEG = 2.0
+#: joint speed of the HOME-in blend and the appended return to HOME [deg/s]:
+#: by default the take's own peak joint speed after smoothing, clamped to
+#: this band (so the return does not feel slower than the gesture, and a
+#: fast flick does not make it a lunge); a keyframe-mode take has no timing
+#: and uses the floor.
 HOME_SPEED_DEG_S = 20.0
+HOME_SPEED_MAX_DEG_S = 90.0
 #: the start sag: only the first this-many seconds may be cut [s] ...
 SAG_MAX_S = 0.5
 #: ... and a sample is part of the sag while its joint speed exceeds this
@@ -207,11 +217,42 @@ def speed_stretch(before: Gesture, after: Gesture, home: Sequence[float],
     return SpeedStretch(before.played_s, after.played_s, policy, vel, acc)
 
 
-def lock_wrist(samples: np.ndarray, home: Sequence[float]) -> np.ndarray:
+def pin_wrist(samples: np.ndarray, home: Sequence[float], *, pin_all: bool = False,
+              noise_deg: float = WRIST_NOISE_DEG):
+    """Pin wrist joints to HOME: all of them with ``pin_all``, else only those
+    whose recorded range is under ``noise_deg`` (sag / noise, not taught
+    motion; ``0`` = none). Returns ``(samples, pinned joint indices)``."""
     out = np.array(samples, dtype=float, copy=True)
+    pinned = []
     for j in WRIST_JOINTS:
-        out[:, j] = float(home[j])
-    return out
+        span = float(np.ptp(out[:, j])) if len(out) else 0.0
+        if pin_all or (noise_deg > 0 and span < noise_deg):
+            out[:, j] = float(home[j])
+            pinned.append(j)
+    return out, pinned
+
+
+def peak_speed_deg_s(times: Sequence[float], samples: np.ndarray) -> float:
+    """The largest joint speed between consecutive samples [deg/s]."""
+    times = np.asarray(times, dtype=float)
+    q = np.asarray(samples, dtype=float)
+    if len(q) < 2:
+        return 0.0
+    dt = np.diff(times)
+    dt[dt <= 0] = np.inf
+    return float(np.max(np.max(np.abs(np.diff(q, axis=0)), axis=1) / dt))
+
+
+def auto_home_speed(times: Sequence[float], smoothed: np.ndarray) -> float:
+    """The HOME-leg speed a take gets by default: its own peak joint speed,
+    clamped to ``[HOME_SPEED_DEG_S, HOME_SPEED_MAX_DEG_S]``."""
+    return float(min(max(peak_speed_deg_s(times, smoothed), HOME_SPEED_DEG_S),
+                     HOME_SPEED_MAX_DEG_S))
+
+
+def _ranges(rows: np.ndarray) -> List[float]:
+    rows = np.asarray(rows, dtype=float).reshape(-1, N_JOINTS)
+    return [float(v) for v in np.ptp(rows, axis=0)] if len(rows) else [0.0] * N_JOINTS
 
 
 def _odd(window: int) -> int:
@@ -446,7 +487,11 @@ class KeyframeOptions:
     epsilon_deg: float = EPSILON_DEG
     method: str = "collinear"
     min_spacing_s: float = 0.0
-    lock_wrist: bool = True
+    #: pin every wrist joint (J5-J7) to HOME (gesture_record's anti-sag rule;
+    #: ``--pin-wrist``). Off: the wrist is kept as taught, except a joint whose
+    #: recorded range is under ``wrist_noise_deg`` (0 = keep even those).
+    pin_wrist: bool = False
+    wrist_noise_deg: float = WRIST_NOISE_DEG
     pin_home: bool = True
     max_idle_s: float = 0.0
     #: stretch to ``speed`` (off: keep the taught timing; ``export``'s check
@@ -454,17 +499,111 @@ class KeyframeOptions:
     speed_limit: bool = True
     speed: SpeedPolicy = DEFAULT_SPEED
     min_keyframe_s: float = MIN_KEYFRAME_S
-    #: HOME-in blend and appended return speed [deg/s]
-    home_speed_deg_s: float = HOME_SPEED_DEG_S
+    #: HOME-in blend and appended return speed [deg/s]; ``None`` = the take's
+    #: own peak joint speed, clamped to [20, 90] (:func:`auto_home_speed`)
+    home_speed_deg_s: Optional[float] = None
     #: start-sag cut (0 = off): window [s] and speed threshold [deg/s]
     sag_max_s: float = SAG_MAX_S
     sag_vel_deg_s: float = SAG_VEL_DEG_S
+
+
+@dataclass
+class Reduction:
+    """A take reduced to a gesture, and how: where the time went and which
+    joints kept their motion. What ``export`` prints, so a slowed-down or an
+    erased joint is visible at once (d1-2 task3/task4, 2026-09-23)."""
+
+    before: Gesture              #: before the speed ceiling (and idle trim)
+    gesture: Gesture             #: the result
+    recorded_s: Optional[float]  #: span of the raw take (None: keyframe mode)
+    sag_cut_s: float
+    pinned: List[int]            #: joints pinned to HOME
+    pin_all: bool                #: ``pin_wrist`` (else: the noise rule)
+    home_speed_deg_s: float
+    connect: bool                #: a HOME -> first pose leg was added
+    ret: bool                    #: a last pose -> HOME leg was appended
+    recorded_range_deg: List[float] = field(default_factory=list)
+    home: List[float] = field(default_factory=list)
+
+    def _legs(self, g: Gesture):
+        played = [k.duration for k in g.keyframes[1:]]
+        connect = played[0] if self.connect and played else 0.0
+        ret = played[-1] if self.ret and len(played) > (1 if self.connect else 0) else 0.0
+        return connect, ret, sum(played) - connect - ret
+
+    @property
+    def connect_s(self) -> float:
+        return self._legs(self.gesture)[0]
+
+    @property
+    def return_s(self) -> float:
+        return self._legs(self.gesture)[1]
+
+    @property
+    def body_s(self) -> float:
+        return self._legs(self.gesture)[2]
+
+    def stretched_knots(self):
+        """``(count, seconds)`` the speed ceiling added inside the body."""
+        lo = 2 if self.connect else 1
+        hi = len(self.gesture.keyframes) - (1 if self.ret else 0)
+        grew = [a.duration - b.duration for a, b in
+                zip(self.gesture.keyframes[lo:hi], self.before.keyframes[lo:hi])
+                if a.duration > b.duration + 1e-4]
+        return len(grew), float(sum(grew))
+
+    def exported_range_deg(self, step_s: float = 0.01) -> List[float]:
+        from .gesture_csv import sample_path  # noqa: PLC0415
+        _, poses = sample_path(trajectory_points(self.gesture, self.home), step_s)
+        return _ranges(poses)
+
+    def breakdown(self) -> str:
+        count, added = self.stretched_knots()
+        notes = []
+        if self.sag_cut_s > 0:
+            notes.append(f"start sag cut {self.sag_cut_s:.2f} s")
+        notes.append(f"speed cap stretched {count} knot(s), +{added:.2f} s" if count
+                     else "timing as taught")
+        head = (f"recorded {self.recorded_s:.2f} s -> " if self.recorded_s is not None
+                else "")
+        legs = (f" (at {self.home_speed_deg_s:.0f} deg/s)"
+                if self.connect or self.ret else "")
+        return (f"{head}body {self.body_s:.2f} s ({'; '.join(notes)}) + HOME connect "
+                f"{self.connect_s:.2f} s + return {self.return_s:.2f} s{legs} "
+                f"= {self.gesture.played_s:.2f} s")
+
+    def range_lines(self, min_deg: float = 1.0) -> List[str]:
+        """Per joint, range recorded -> exported; pinned and lost joints flagged."""
+        out = self.exported_range_deg()
+        cells = []
+        for j, name in enumerate(JOINT_NAMES):
+            rec = self.recorded_range_deg[j] if self.recorded_range_deg else 0.0
+            if rec < min_deg and out[j] < min_deg:
+                continue
+            cell = f"{name} {rec:.1f} -> {out[j]:.1f}"
+            if j in self.pinned:
+                cell += (" (pinned: --pin-wrist)" if self.pin_all else
+                         f" (pinned: under {WRIST_NOISE_DEG:g} deg, sag/noise)")
+            elif rec >= min_deg and out[j] < 0.5 * rec:
+                cell += " (LOST)"
+            cells.append(cell)
+        return ["joint range recorded -> exported [deg]: " + (", ".join(cells) or "none")]
+
+    def lines(self) -> List[str]:
+        return [f"timing: {self.breakdown()}"] + self.range_lines()
 
 
 def keyframes_from_samples(times: Sequence[float], samples: np.ndarray,
                            home: Sequence[float],
                            options: Optional[KeyframeOptions] = None) -> Gesture:
     """A dense stream (``times`` s, ``samples[N, 14]`` deg) -> a gesture."""
+    return reduce_samples(times, samples, home, options).gesture
+
+
+def reduce_samples(times: Sequence[float], samples: np.ndarray,
+                   home: Sequence[float],
+                   options: Optional[KeyframeOptions] = None) -> Reduction:
+    """:func:`keyframes_from_samples`, with the :class:`Reduction` report."""
     o = options or KeyframeOptions()
     times = np.asarray(times, dtype=float)
     q = np.asarray(samples, dtype=float).reshape(-1, N_JOINTS)
@@ -472,11 +611,15 @@ def keyframes_from_samples(times: Sequence[float], samples: np.ndarray,
         raise ValueError("not enough samples to build a gesture")
     if o.method not in ("collinear", "dp"):
         raise ValueError(f"method must be 'collinear' or 'dp', got {o.method!r}")
+    recorded_s = float(times[-1] - times[0])
+    recorded_range = _ranges(q)
     start = settle_index(times, q, o.sag_max_s, o.sag_vel_deg_s)
+    sag_cut_s = float(times[start] - times[0])
     times, q = times[start:], q[start:]
-    if o.lock_wrist:
-        q = lock_wrist(q, home)
+    q, pinned = pin_wrist(q, home, pin_all=o.pin_wrist, noise_deg=o.wrist_noise_deg)
     q = smooth_samples(q, o.smooth_window)
+    home_speed = (o.home_speed_deg_s if o.home_speed_deg_s is not None
+                  else auto_home_speed(times, q))
     home_arr = np.asarray(home, dtype=float)
     snap_start = snap_end = False
     if o.pin_home:
@@ -489,43 +632,61 @@ def keyframes_from_samples(times: Sequence[float], samples: np.ndarray,
     reduce = reduce_collinear if o.method == "collinear" else reduce_douglas_peucker
     kept = enforce_min_spacing(reduce(q, o.epsilon_deg), times, o.min_spacing_s)
     gesture = build_gesture(q, times, kept, first_duration_s=o.min_keyframe_s)
+    connect = ret = False
     if o.pin_home:
         frames = list(gesture.keyframes)
         if not snap_start:
             first = frames[0]
-            frames[0] = Keyframe(home_move_s(first.positions, home, o.home_speed_deg_s,
+            frames[0] = Keyframe(home_move_s(first.positions, home, home_speed,
                                              o.min_keyframe_s), first.positions)
             frames.insert(0, Keyframe(o.min_keyframe_s, list(home_arr)))
+            connect = True
         if not snap_end:
             frames.append(Keyframe(home_move_s(frames[-1].positions, home,
-                                               o.home_speed_deg_s, o.min_keyframe_s),
+                                               home_speed, o.min_keyframe_s),
                                    list(home_arr)))
+            ret = True
         gesture = Gesture(frames)
-    return finish(gesture, home, o)
+    before = Gesture([Keyframe(k.duration, k.positions) for k in gesture.keyframes])
+    return Reduction(before, finish(gesture, home, o), recorded_s, sag_cut_s, pinned,
+                     o.pin_wrist, home_speed, connect, ret, recorded_range,
+                     [float(v) for v in home])
 
 
 def keyframes_from_poses(poses: Sequence[Sequence[float]], home: Sequence[float],
                          segment_s: float,
                          options: Optional[KeyframeOptions] = None) -> Gesture:
+    """Operator-stepped keyframes (Enter per pose) -> a gesture."""
+    return reduce_poses(poses, home, segment_s, options).gesture
+
+
+def reduce_poses(poses: Sequence[Sequence[float]], home: Sequence[float],
+                 segment_s: float,
+                 options: Optional[KeyframeOptions] = None) -> Reduction:
     """Operator-stepped keyframes (Enter per pose) -> a gesture: HOME pinned
     before and after (unless ``pin_home`` is off), ``segment_s`` per move
-    (the last one, back to HOME, at the constant ``home_speed_deg_s``),
-    then the same trim/limit as a stream. No smoothing or reduction: every
-    pose was chosen."""
+    (the last one, back to HOME, at ``home_speed_deg_s``, default the floor
+    — a keyframe take has no taught speed), then the same trim/limit as a
+    stream. No smoothing or reduction: every pose was chosen."""
     o = options or KeyframeOptions()
-    rows = [list(map(float, p)) for p in poses]
-    if o.lock_wrist:
-        rows = [list(r) for r in lock_wrist(np.array(rows).reshape(-1, N_JOINTS), home)]
+    rows = np.array([list(map(float, p)) for p in poses]).reshape(-1, N_JOINTS)
+    recorded_range = _ranges(np.vstack([np.asarray(home, float), rows]))
+    rows, pinned = pin_wrist(rows, home, pin_all=o.pin_wrist, noise_deg=o.wrist_noise_deg)
+    rows = [list(r) for r in rows]
+    home_speed = o.home_speed_deg_s if o.home_speed_deg_s is not None else HOME_SPEED_DEG_S
     if o.pin_home:
         rows = [list(home)] + rows + [list(home)]
     if len(rows) < 2:
         raise ValueError("a gesture needs at least two keyframes")
     frames = [Keyframe(o.min_keyframe_s, rows[0])] + [
         Keyframe(segment_s, r) for r in rows[1:]]
-    if o.pin_home:      # the return to HOME at the constant HOME speed
-        frames[-1].duration = home_move_s(rows[-2], home, o.home_speed_deg_s,
-                                          o.min_keyframe_s)
-    return finish(Gesture(frames), home, o)
+    if o.pin_home:      # the return to HOME at the HOME speed
+        frames[-1].duration = home_move_s(rows[-2], home, home_speed, o.min_keyframe_s)
+    gesture = Gesture(frames)
+    before = Gesture([Keyframe(k.duration, k.positions) for k in gesture.keyframes])
+    return Reduction(before, finish(gesture, home, o), None, 0.0, pinned, o.pin_wrist,
+                     home_speed, False, o.pin_home, recorded_range,
+                     [float(v) for v in home])
 
 
 def finish(gesture: Gesture, home: Sequence[float], o: KeyframeOptions) -> Gesture:
