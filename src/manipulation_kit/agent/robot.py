@@ -208,7 +208,7 @@ WRIST_INTRINSICS = ("fx", "fy", "cx", "cy", "width", "height")
 WRIST_LENS_KEYS = ("model", "k", "valid_radius_px")
 
 
-def _wrist_kwargs(block: Mapping[str, Any]) -> Dict[str, Any]:
+def _wrist_kwargs(block: Mapping[str, Any], side: str) -> Dict[str, Any]:
     missing = [k for k in WRIST_INTRINSICS if k not in block]
     if missing:
         raise ValueError(f"scene robot.wrist_camera needs {list(WRIST_INTRINSICS)}"
@@ -220,6 +220,11 @@ def _wrist_kwargs(block: Mapping[str, Any]) -> Dict[str, Any]:
         out["k"] = tuple(float(c) for c in block["k"])
     if block.get("valid_radius_px") is not None:
         out["valid_radius_px"] = float(block["valid_radius_px"])
+    if block.get("mount") is not None:
+        from ..description.robot_profile import WristMount  # noqa: PLC0415
+        mount = block["mount"]
+        out["mount"] = (mount if isinstance(mount, WristMount)
+                        else WristMount.from_json(side, mount))
     return out
 
 
@@ -245,8 +250,11 @@ def wrist_camera_from_scene(scene: Optional[Dict[str, Any]], *,
     The block is either per side (``{"left": {...}, "right": {...}}`` — what
     a :class:`~manipulation_kit.description.robot_profile.RobotProfile`
     carries, fisheye ``model``/``k``/``valid_radius_px`` included) or one flat
-    block for both hands. The mount is the kit's
-    (:mod:`manipulation_kit.perception.wrist`); the focal length is the
+    block for both hands. A per-side block's ``mount`` is that camera's
+    MEASURED plate -> optical transform
+    (:class:`~manipulation_kit.description.robot_profile.WristMount`, as the
+    profile writes it); without one the mount is the kit's nominal
+    (:mod:`manipulation_kit.perception.wrist`). The focal length is the
     stream's and is NOT defaulted anywhere — without it there is no wrist
     camera model, and a policy that requires a look before a stroke refuses
     to start rather than grasping blind.
@@ -263,7 +271,7 @@ def wrist_camera_from_scene(scene: Optional[Dict[str, Any]], *,
     for side, one in per_side_wrist(block).items():
         if measured_only and one.get("measured", True) is False:
             continue
-        out[side] = _wrist_kwargs(one)
+        out[side] = _wrist_kwargs(one, side)
     return out or None
 
 
