@@ -66,6 +66,29 @@ def observe():
     return _observe
 
 
+@pytest.fixture
+def at_grasp():
+    """``at_grasp(kin, world0, world1, verb)``: ``world1`` with the grasp's
+    arm MEASURED at the pose the grasp closes the jaws at — its own geometry
+    (``Grasp._meet``: the grasp point, the squared wrist), no IK and no
+    guard. A grasp verdict grades where the fingers got to, so an "after"
+    world whose arm never left the start pose is a hand that closed in the
+    air, not a hold."""
+    return _at_grasp
+
+
+def _at_grasp(kin, world0, world1, verb):
+    from manipulation_kit.world import ArmView
+    meet, unmet = verb._meet(world0)
+    assert meet is not None, unmet
+    arms = dict(world1.arms)
+    arm = arms[meet.side]
+    arms[meet.side] = ArmView(meet.side, joints=arm.joints,
+                              tool_p=meet.p_grasp, tool_r=meet.r_tcp(0.0),
+                              mode=arm.mode)
+    return world1.with_(arms=arms)
+
+
 def _observe(kin, *, block_p=(0.38, 0.25, 0.05), box_p=(0.33, 0.34, 0.03),
             closed=None, held=None, block_size=(0.05, 0.04, 0.05), stamp=0.0,
             frames=None, gap=None, stalled=None):

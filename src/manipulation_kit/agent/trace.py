@@ -74,6 +74,11 @@ class DecisionRecord:
     #: measurements that REPLACED a declaration this turn — a grasp that
     #: measured the object's width along the jaws (``width_correction``)
     corrections: List[Dict[str, Any]] = field(default_factory=list)
+    #: a look at an object a hand holds, graded against the hold
+    #: (:class:`~manipulation_kit.agent.hold.HoldSighting`):
+    #: ``holding_verified`` false when the photo puts it back at the grasp
+    #: site while its attached pose rides the hand
+    hold_evidence: Optional[Dict[str, Any]] = None
     stamp: float = field(default_factory=time.time)
 
     def to_json(self) -> Dict[str, Any]:

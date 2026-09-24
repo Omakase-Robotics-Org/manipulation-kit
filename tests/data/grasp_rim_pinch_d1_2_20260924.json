@@ -1,0 +1,874 @@
+{
+ "source": "d1-2 2026-09-24, servo-judgeonly-2 (judge-only run), a grasp(tape, right, down, soft, tip) and the two wrist locates after the lift. Records trimmed to what the verifiers read.",
+ "grasp": {
+  "iteration": 6,
+  "choice": {
+   "name": "grasp",
+   "arguments": {
+    "object": "tape",
+    "side": "right",
+    "direction": "down",
+    "grip": "soft",
+    "contact": "tip"
+   },
+   "call_id": "call_4SCOqap5FXQMVYaQy7qtVPFd"
+  },
+  "world_before": {
+   "stamp": 1910.35,
+   "revision": 14,
+   "frames_now": 1910.35,
+   "frames": {},
+   "objects": [
+    {
+     "name": "table",
+     "kind": "surface",
+     "frame_id": "base",
+     "p": [
+      0.506,
+      0.0,
+      0.156
+     ],
+     "size": [
+      0.4,
+      0.6,
+      0.02
+     ],
+     "quat_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "confidence": 1.0,
+     "stamp": 0.0,
+     "provenance": "declared",
+     "plane_source": "declared"
+    },
+    {
+     "name": "tape",
+     "kind": "object",
+     "frame_id": "base",
+     "p": [
+      0.351,
+      -0.118,
+      0.179
+     ],
+     "size": [
+      0.05,
+      0.05,
+      0.026
+     ],
+     "quat_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "confidence": 0.65,
+     "stamp": 1901.892,
+     "provenance": "observed"
+    },
+    {
+     "name": "cup",
+     "kind": "container",
+     "frame_id": "base",
+     "p": [
+      0.562,
+      -0.195,
+      0.219
+     ],
+     "size": [
+      0.085,
+      0.085,
+      0.106
+     ],
+     "quat_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "confidence": 0.55,
+     "stamp": 0.0,
+     "provenance": "declared",
+     "interior": [
+      0.07,
+      0.07,
+      0.095
+     ],
+     "interior_measured": true
+    }
+   ],
+   "arms": [
+    {
+     "side": "left",
+     "joints_deg": [
+      -52.3,
+      87.4,
+      88.3,
+      -114.3,
+      86.7,
+      -1.1,
+      13.1
+     ],
+     "mode": "position",
+     "error_code": 0,
+     "stationary": true,
+     "tool_p": [
+      0.292,
+      0.209,
+      0.201
+     ],
+     "tool_quat_xyzw": [
+      0.5006,
+      -0.5021,
+      0.5027,
+      -0.4945
+     ]
+    },
+    {
+     "side": "right",
+     "joints_deg": [
+      32.1,
+      -64.9,
+      -46.1,
+      -98.9,
+      63.7,
+      43.3,
+      44.1
+     ],
+     "mode": "position",
+     "error_code": 0,
+     "stationary": true,
+     "tool_p": [
+      0.363,
+      -0.121,
+      0.301
+     ],
+     "tool_quat_xyzw": [
+      0.7071,
+      0.7071,
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "grippers": [
+    {
+     "side": "left",
+     "closedness": 0.0,
+     "holding": false,
+     "grip": "firm",
+     "jaw_gap_m": 0.064,
+     "open_gap_m": 0.064
+    },
+    {
+     "side": "right",
+     "closedness": 0.0,
+     "holding": false,
+     "grip": "firm",
+     "jaw_gap_m": 0.064,
+     "jaw_stalled": false,
+     "open_gap_m": 0.064
+    }
+   ]
+  },
+  "run": {
+   "primitive": "grasp",
+   "side": "right",
+   "completed": true,
+   "steps_sent": 13,
+   "settled": true,
+   "stop_reason": "",
+   "stopped_at": -1,
+   "arrivals": [
+    {
+     "arrived": true,
+     "worst_error_deg": 0.002,
+     "tool_error_m": 0.0,
+     "tool_rot_error_deg": 0.001,
+     "waited_s": 0.014,
+     "detail": "the right tool point is 0.0 mm across the approach axis and -0.0 mm along it from the pose commanded at standoff, 0.0 deg off",
+     "waypoint_label": "standoff",
+     "tool_across_m": 0.0,
+     "tool_along_m": -0.0,
+     "settled": true
+    },
+    {
+     "arrived": true,
+     "worst_error_deg": 0.0,
+     "tool_error_m": 0.0,
+     "tool_rot_error_deg": 0.001,
+     "waited_s": 0.285,
+     "detail": "the right tool point is 0.0 mm across the approach axis and +0.0 mm along it from the pose commanded at grasp, 0.0 deg off",
+     "waypoint_label": "grasp",
+     "tool_across_m": 0.0,
+     "tool_along_m": 0.0,
+     "settled": true
+    },
+    {
+     "arrived": true,
+     "worst_error_deg": 0.001,
+     "tool_error_m": null,
+     "tool_rot_error_deg": null,
+     "waited_s": 0.296,
+     "detail": "measured at the commanded posture"
+    }
+   ],
+   "strokes": [
+    {
+     "settled": true,
+     "closedness": 0.0,
+     "holding": false,
+     "stalled": null,
+     "waited_s": 0.028,
+     "detail": "the jaws stopped moving",
+     "kind": "blind"
+    },
+    {
+     "settled": true,
+     "closedness": 0.257,
+     "holding": true,
+     "stalled": true,
+     "waited_s": 0.004,
+     "detail": "the stroke ended grasp",
+     "kind": "grasp"
+    }
+   ],
+   "error": "",
+   "contacts": [
+    {
+     "made": true,
+     "stopped_by": "contact",
+     "side": "right",
+     "p_tool": [
+      0.3512,
+      -0.118,
+      0.1964
+     ],
+     "travel_m": 0.0135,
+     "normal_hint": [
+      -0.0,
+      -0.0,
+      1.0
+     ],
+     "torque_nm": 6.843,
+     "leg_t_s": 1.418,
+     "elapsed_s": 1.623,
+     "detail": "joint 1 rose 6.84 Nm over its pre-motion torque (threshold 3.00 Nm)",
+     "joint": 0
+    }
+   ]
+  },
+  "world_after": {
+   "stamp": 1929.111,
+   "revision": 16,
+   "frames_now": 1929.111,
+   "frames": {},
+   "objects": [
+    {
+     "name": "table",
+     "kind": "surface",
+     "frame_id": "base",
+     "p": [
+      0.506,
+      0.0,
+      0.156
+     ],
+     "size": [
+      0.4,
+      0.6,
+      0.02
+     ],
+     "quat_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "confidence": 1.0,
+     "stamp": 0.0,
+     "provenance": "declared",
+     "plane_source": "declared"
+    },
+    {
+     "name": "tape",
+     "kind": "object",
+     "frame_id": "base",
+     "p": [
+      0.351,
+      -0.118,
+      0.179
+     ],
+     "size": [
+      0.05,
+      0.05,
+      0.026
+     ],
+     "quat_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "confidence": 0.65,
+     "stamp": 1929.111,
+     "provenance": "attached"
+    },
+    {
+     "name": "cup",
+     "kind": "container",
+     "frame_id": "base",
+     "p": [
+      0.562,
+      -0.195,
+      0.219
+     ],
+     "size": [
+      0.085,
+      0.085,
+      0.106
+     ],
+     "quat_xyzw": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "confidence": 0.55,
+     "stamp": 0.0,
+     "provenance": "declared",
+     "interior": [
+      0.07,
+      0.07,
+      0.095
+     ],
+     "interior_measured": true
+    }
+   ],
+   "arms": [
+    {
+     "side": "left",
+     "joints_deg": [
+      -52.3,
+      87.4,
+      88.3,
+      -114.3,
+      86.7,
+      -1.1,
+      13.0
+     ],
+     "mode": "position",
+     "error_code": 0,
+     "stationary": true,
+     "tool_p": [
+      0.292,
+      0.209,
+      0.201
+     ],
+     "tool_quat_xyzw": [
+      0.5006,
+      -0.5021,
+      0.5027,
+      -0.4945
+     ]
+    },
+    {
+     "side": "right",
+     "joints_deg": [
+      16.2,
+      -67.4,
+      -48.1,
+      -96.6,
+      65.7,
+      41.1,
+      27.6
+     ],
+     "mode": "position",
+     "error_code": 0,
+     "stationary": true,
+     "tool_p": [
+      0.351,
+      -0.118,
+      0.196
+     ],
+     "tool_quat_xyzw": [
+      0.7071,
+      0.7072,
+      0.0002,
+      0.0001
+     ]
+    }
+   ],
+   "grippers": [
+    {
+     "side": "left",
+     "closedness": 0.0,
+     "holding": false,
+     "grip": "firm",
+     "jaw_gap_m": 0.064,
+     "open_gap_m": 0.064
+    },
+    {
+     "side": "right",
+     "closedness": 0.261,
+     "holding": true,
+     "grip": "firm",
+     "jaw_gap_m": 0.048,
+     "jaw_stalled": true,
+     "open_gap_m": 0.064,
+     "held_object": "tape"
+    }
+   ],
+   "contacts": [
+    {
+     "side": "right",
+     "made": true,
+     "stopped_by": "contact",
+     "p": [
+      0.3512,
+      -0.118,
+      0.1674
+     ],
+     "normal": [
+      -0.0,
+      -0.0,
+      1.0
+     ],
+     "travel_m": 0.0135,
+     "torque_nm": 6.843,
+     "verb": "grasp"
+    }
+   ]
+  },
+  "verdict_recorded": {
+   "verdict": "true",
+   "reason": "the right gripper is holding 'tape' at a 48.0 mm gap",
+   "measured": {
+    "holding": true,
+    "closedness": 0.261,
+    "jaw_stalled": true,
+    "held_object": "tape",
+    "named_object": "tape",
+    "jaw_gap_m": 0.048,
+    "fit": "held",
+    "declared_width_m": 0.05,
+    "width_band_m": [
+     0.025,
+     0.062
+    ],
+    "width_window_m": [
+     0.046,
+     0.054
+    ],
+    "matches_declaration": true,
+    "open_gap_m": 0.064,
+    "contact": "tip",
+    "object_width_m": 0.05,
+    "association": "producer"
+   }
+  }
+ },
+ "post_lift_locates": [
+  {
+   "iteration": 9,
+   "choice": {
+    "name": "locate",
+    "arguments": {
+     "u": 328,
+     "v": 218,
+     "camera": "right_wrist",
+     "size": [
+      0.05,
+      0.05,
+      0.026
+     ],
+     "yaw_rad": 0
+    },
+    "call_id": "call_StdCnASoSig5ZCUZggqG1uUV"
+   },
+   "world": {
+    "stamp": 1944.865,
+    "revision": 20,
+    "frames_now": 1944.865,
+    "frames": {},
+    "objects": [
+     {
+      "name": "table",
+      "kind": "surface",
+      "frame_id": "base",
+      "p": [
+       0.506,
+       0.0,
+       0.156
+      ],
+      "size": [
+       0.4,
+       0.6,
+       0.02
+      ],
+      "quat_xyzw": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "confidence": 1.0,
+      "stamp": 0.0,
+      "provenance": "declared",
+      "plane_source": "declared"
+     },
+     {
+      "name": "tape",
+      "kind": "object",
+      "frame_id": "base",
+      "p": [
+       0.358,
+       -0.114,
+       0.329
+      ],
+      "size": [
+       0.05,
+       0.05,
+       0.026
+      ],
+      "quat_xyzw": [
+       -0.0,
+       -0.0139,
+       0.0,
+       0.9999
+      ],
+      "confidence": 0.65,
+      "stamp": 1944.865,
+      "provenance": "attached"
+     },
+     {
+      "name": "cup",
+      "kind": "container",
+      "frame_id": "base",
+      "p": [
+       0.562,
+       -0.195,
+       0.219
+      ],
+      "size": [
+       0.085,
+       0.085,
+       0.106
+      ],
+      "quat_xyzw": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "confidence": 0.55,
+      "stamp": 0.0,
+      "provenance": "declared",
+      "interior": [
+       0.07,
+       0.07,
+       0.095
+      ],
+      "interior_measured": true
+     }
+    ],
+    "arms": [
+     {
+      "side": "left",
+      "joints_deg": [
+       -52.3,
+       87.4,
+       88.3,
+       -114.3,
+       86.7,
+       -1.1,
+       13.1
+      ],
+      "mode": "position",
+      "error_code": 0,
+      "stationary": true,
+      "tool_p": [
+       0.292,
+       0.209,
+       0.201
+      ],
+      "tool_quat_xyzw": [
+       0.5006,
+       -0.5021,
+       0.5027,
+       -0.4945
+      ]
+     },
+     {
+      "side": "right",
+      "joints_deg": [
+       41.6,
+       -65.7,
+       -47.9,
+       -102.0,
+       67.8,
+       43.1,
+       46.4
+      ],
+      "mode": "position",
+      "error_code": 0,
+      "stationary": true,
+      "tool_p": [
+       0.355,
+       -0.118,
+       0.347
+      ],
+      "tool_quat_xyzw": [
+       0.707,
+       0.7071,
+       0.0101,
+       0.01
+      ]
+     }
+    ],
+    "grippers": [
+     {
+      "side": "left",
+      "closedness": 0.0,
+      "holding": false,
+      "grip": "firm",
+      "jaw_gap_m": 0.064,
+      "open_gap_m": 0.064
+     },
+     {
+      "side": "right",
+      "closedness": 0.304,
+      "holding": true,
+      "grip": "firm",
+      "jaw_gap_m": 0.0452,
+      "jaw_stalled": true,
+      "open_gap_m": 0.064,
+      "held_object": "tape"
+     }
+    ],
+    "contacts": [
+     {
+      "side": "right",
+      "made": true,
+      "stopped_by": "contact",
+      "p": [
+       0.3512,
+       -0.118,
+       0.1674
+      ],
+      "normal": [
+       -0.0,
+       -0.0,
+       1.0
+      ],
+      "travel_m": 0.0135,
+      "torque_nm": 6.843,
+      "verb": "grasp"
+     }
+    ]
+   },
+   "answer_recorded": "re-measured 'tape' from the right_wrist: centre (0.352, -0.116, 0.329) m, -5 / -2 mm from where it was declared (24 mm uncertain). Corrected: nudge the right hand -5mm x, -2mm y (base frame) \u2014 transport ok, measured true. Call grasp when the photo agrees"
+  },
+  {
+   "iteration": 10,
+   "choice": {
+    "name": "locate",
+    "arguments": {
+     "u": 328,
+     "v": 208,
+     "camera": "right_wrist",
+     "size": [
+      0.05,
+      0.05,
+      0.026
+     ],
+     "yaw_rad": 0
+    },
+    "call_id": "call_gUnnIwfCruAKtfTAwZCd7WEl"
+   },
+   "world": {
+    "stamp": 1954.526,
+    "revision": 22,
+    "frames_now": 1954.526,
+    "frames": {},
+    "objects": [
+     {
+      "name": "table",
+      "kind": "surface",
+      "frame_id": "base",
+      "p": [
+       0.506,
+       0.0,
+       0.156
+      ],
+      "size": [
+       0.4,
+       0.6,
+       0.02
+      ],
+      "quat_xyzw": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "confidence": 1.0,
+      "stamp": 0.0,
+      "provenance": "declared",
+      "plane_source": "declared"
+     },
+     {
+      "name": "tape",
+      "kind": "object",
+      "frame_id": "base",
+      "p": [
+       0.342,
+       -0.116,
+       0.329
+      ],
+      "size": [
+       0.05,
+       0.05,
+       0.026
+      ],
+      "quat_xyzw": [
+       -0.0003,
+       -0.014,
+       0.0003,
+       0.9999
+      ],
+      "confidence": 0.65,
+      "stamp": 1954.526,
+      "provenance": "attached"
+     },
+     {
+      "name": "cup",
+      "kind": "container",
+      "frame_id": "base",
+      "p": [
+       0.562,
+       -0.195,
+       0.219
+      ],
+      "size": [
+       0.085,
+       0.085,
+       0.106
+      ],
+      "quat_xyzw": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "confidence": 0.55,
+      "stamp": 0.0,
+      "provenance": "declared",
+      "interior": [
+       0.07,
+       0.07,
+       0.095
+      ],
+      "interior_measured": true
+     }
+    ],
+    "arms": [
+     {
+      "side": "left",
+      "joints_deg": [
+       -52.3,
+       87.4,
+       88.3,
+       -114.3,
+       86.7,
+       -1.1,
+       13.0
+      ],
+      "mode": "position",
+      "error_code": 0,
+      "stationary": true,
+      "tool_p": [
+       0.292,
+       0.209,
+       0.201
+      ],
+      "tool_quat_xyzw": [
+       0.5006,
+       -0.5021,
+       0.5027,
+       -0.4945
+      ]
+     },
+     {
+      "side": "right",
+      "joints_deg": [
+       42.4,
+       -64.5,
+       -47.5,
+       -104.9,
+       68.7,
+       44.4,
+       44.8
+      ],
+      "mode": "position",
+      "error_code": 0,
+      "stationary": true,
+      "tool_p": [
+       0.345,
+       -0.118,
+       0.347
+      ],
+      "tool_quat_xyzw": [
+       0.7068,
+       0.7073,
+       0.0099,
+       0.0102
+      ]
+     }
+    ],
+    "grippers": [
+     {
+      "side": "left",
+      "closedness": 0.0,
+      "holding": false,
+      "grip": "firm",
+      "jaw_gap_m": 0.064,
+      "open_gap_m": 0.064
+     },
+     {
+      "side": "right",
+      "closedness": 0.326,
+      "holding": true,
+      "grip": "firm",
+      "jaw_gap_m": 0.0438,
+      "jaw_stalled": true,
+      "open_gap_m": 0.064,
+      "held_object": "tape"
+     }
+    ],
+    "contacts": [
+     {
+      "side": "right",
+      "made": true,
+      "stopped_by": "contact",
+      "p": [
+       0.3512,
+       -0.118,
+       0.1674
+      ],
+      "normal": [
+       -0.0,
+       -0.0,
+       1.0
+      ],
+      "travel_m": 0.0135,
+      "torque_nm": 6.843,
+      "verb": "grasp"
+     }
+    ]
+   },
+   "answer_recorded": "re-measured 'tape' from the right_wrist: centre (0.353, -0.116, 0.329) m, +10 / +0 mm from where it was declared (23 mm uncertain). Corrected: nudge the right hand +10mm x, +0mm y (base frame) \u2014 transport ok, measured true. Call grasp when the photo agrees"
+  }
+ ]
+}
