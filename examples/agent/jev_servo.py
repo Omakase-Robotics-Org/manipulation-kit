@@ -45,6 +45,7 @@ from jev_judge import LABELS, JevJudge, RemoteJudge, rejudge  # noqa: E402,F401
 from manipulation_kit.agent import (DecisionTrace, LiveRobot,  # noqa: E402
                                     OperatorPolicy, Servo, UnknownExecutor,
                                     geometry_judge, run)
+from manipulation_kit.agent.servo import servo_line  # noqa: E402
 from manipulation_kit.agent.robot import (  # noqa: E402
     frames_from, head_camera_from_scene, objects_from,
     wrist_camera_from_scene, with_declared_hand)
@@ -52,6 +53,16 @@ from manipulation_kit.primitives import Place  # noqa: E402
 from run_scene import resolve_profile, scene_for_run  # noqa: E402
 from scene import DEMO_WRIST_CAMERA, demo_scene  # noqa: E402
 from scripted import ScriptedModel, two_things_on  # noqa: E402
+
+class SaidTrace(DecisionTrace):
+    """The trace, and one line per judged stroke as it happens."""
+
+    def write(self, record):
+        if record.servo is not None:
+            print(f"turn {record.iteration}: {servo_line(record.servo)}",
+                  flush=True)
+        return super().write(record)
+
 
 def wrist_frames(snapshotter):
     """``Servo``'s frame seam over the example's camera-grab contract: one
@@ -172,18 +183,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     with robot:
         trace = run(goal=Place(object=args.object, to=args.destination),
                     robot=robot, policy=policy, ask=model, task=args.task,
-                    system=astra_loop.SYSTEM, trace=DecisionTrace(args.trace),
+                    system=astra_loop.SYSTEM, trace=SaidTrace(args.trace),
                     observe=snapshotter.observe if snapshotter else None,
                     on_side=getattr(model, "use_side", None), servo=servo)
     for record in trace.records:
-        servo_line = ""
-        if record.servo:
-            n = sum(1 for s in record.servo["steps"] if s["step_m"])
-            servo_line = f"  [servo {record.servo['outcome']}, {n} step(s)]"
-        verdict = record.verdict or {}
+        said = f"  [{servo_line(record.servo)}]" if record.servo else ""
         print(f"turn {record.iteration}: "
               f"{(record.choice or {}).get('name') or '(no call)':9s} -> "
-              f"{verdict.get('verdict', '-')}{servo_line}")
+              f"{(record.verdict or {}).get('verdict', '-')}{said}")
     print("\n" + json.dumps(trace.summary(), indent=2))
     return 0
 

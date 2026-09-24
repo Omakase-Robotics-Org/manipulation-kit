@@ -387,35 +387,36 @@ class _Loop:
             return None
         side = _side_of(primitive, world)
         arm = world.arm(side) if side else None
+        if self.servo is not None and _servo_target(primitive) and side:
+            # System 1 before EVERY stroke, whatever the model looked at
+            # first: a wrist locate satisfies the policy's look, and the
+            # servo is still asked (d1-2 2026-09-24: it was not, twelve
+            # records had servo: null, the tape was cm off the jaws)
+            report = self._servo(primitive, side, record, call_id)
+            if not (self.servo.observe_only or report.skipped):
+                if not report.aligned:
+                    return None
+                # aligned: the stroke runs in this same turn, planned in the
+                # world the alignment left (the judged declaration)
+                world = self.robot.world()
+                record.world = world.to_json()
+                primitive = decode(name, arguments, world)
+                if isinstance(primitive, PlanError):
+                    record.refused = [primitive.to_json()]
+                    _say(self.messages, call_id,
+                         f"after the alignment that call is malformed: "
+                         f"{primitive}")
+                    return None
+                arm = world.arm(side)
         clamped, unmet = self.policy.clamp(
             primitive, self.state, side=side,
             joints=None if arm is None else arm.joints)
         if unmet and all(u.code == LOOK_REQUIRED for u in unmet):
-            if self.servo is None or self.servo.observe_only:
-                if self.servo is not None:
-                    # judge-only: the judge's answer is RECORDED beside the
-                    # model's own look; nothing is moved or re-declared
-                    self._servo(primitive, side, record, call_id)
-                self._look(primitive, side, world, cameras, record, call_id,
-                           unmet)
-                return None
-            # System 1: the kit aligns the hand by judgement and, aligned,
-            # runs the stroke the model asked for in this same turn
-            aligned = self._servo(primitive, side, record, call_id)
-            if not aligned:
-                return None
-            world = self.robot.world()
-            record.world = world.to_json()
-            primitive = decode(name, arguments, world)
-            if isinstance(primitive, PlanError):
-                record.refused = [primitive.to_json()]
-                _say(self.messages, call_id,
-                     f"after the alignment that call is malformed: {primitive}")
-                return None
-            arm = world.arm(side) if side else None
-            clamped, unmet = self.policy.clamp(
-                primitive, self.state, side=side,
-                joints=None if arm is None else arm.joints)
+            # the model's own look: no servo, a judge-only servo, or a
+            # servo with no wrist photo
+            self._look(primitive, side, world, cameras, record, call_id,
+                       unmet)
+            return None
         if unmet:
             self._refuse(record, call_id, primitive, PlanError(
                 PRECONDITION_UNMET, "; ".join(str(u) for u in unmet),
@@ -517,14 +518,17 @@ class _Loop:
         self.state.moved(side)
 
     # -- the look, and its correction --------------------------------------- #
-    def _servo(self, primitive, side, record, call_id) -> bool:
-        """The look before a stroke, answered by the servo's judge instead of
-        the model. Aligned: the look is taken and the stroke may run. Not
-        aligned: the model is told why and chooses again."""
-        report = self.servo.align(robot=self.robot, policy=self.policy,
-                                  state=self.state, side=side,
-                                  name=primitive.object, settings=self.settings,
-                                  run_plan=run_plan)
+    def _servo(self, primitive, side, record, call_id):
+        """The look before a stroke, answered by the servo's judge. Always
+        recorded (``record.servo``: the judgement, or why none was made).
+        Live and aligned: the look is taken and the stroke may run. Live and
+        not aligned: the model is told why and chooses again. Judge-only or
+        skipped: nothing moved, the model's own look rule follows."""
+        report = self.servo.align(
+            robot=self.robot, policy=self.policy, state=self.state, side=side,
+            name=_servo_target(primitive), settings=self.settings,
+            run_plan=run_plan, turn=record.iteration,
+            out_dir=None if self.trace.path is None else self.trace.path.parent)
         record.servo = report.to_json()
         if any(s.step_m is not None for s in report.steps):
             # the hand and the declaration moved: the record shows the world
@@ -532,18 +536,22 @@ class _Loop:
             record.observation_after = self.robot.world().to_json()
         looks = [s for s in report.steps if s.kind == "look"]
         if looks:
-            record.look = dict(camera=f"{side}_wrist", object=primitive.object,
-                               visible=True, **{k: looks[0].look[k]
-                                                for k in ("u", "v", "depth_m")})
             record.distribution = looks[-1].distribution
-        if self.servo.observe_only:
-            return False
+        if self.servo.observe_only or report.skipped:
+            return report
+        if looks:
+            # the servo's look IS the look before this stroke
+            record.look = dict(camera=f"{side}_wrist",
+                               object=_servo_target(primitive), visible=True,
+                               mount=looks[0].look.get("mount"),
+                               **{k: looks[0].look[k]
+                                  for k in ("u", "v", "depth_m")})
         if not report.aligned:
             record.refused = [PlanError(PRECONDITION_UNMET, report.to_text(),
                                         primitive=primitive.name(),
                                         side=side).to_json()]
             _say(self.messages, call_id, report.to_text())
-        return report.aligned
+        return report
 
     def _look(self, primitive, side, world, cameras, record, call_id,
               unmet) -> None:
@@ -651,6 +659,14 @@ class _Loop:
                 f"agrees")
 
 
+def _servo_target(primitive) -> str:
+    """The object a :data:`~manipulation_kit.agent.servo.SERVO_VERBS` stroke
+    acts on ("" for every other verb)."""
+    from .servo import SERVO_VERBS  # noqa: PLC0415
+    field_name = SERVO_VERBS.get(primitive.name())
+    return str(getattr(primitive, field_name, "") or "") if field_name else ""
+
+
 def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
         task: str = "", system: str = "",
         trace: Optional[DecisionTrace] = None,
@@ -671,12 +687,18 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
     ``observe``  ``(turn, world) -> content parts`` (photos), or raise
                  :class:`ObservationError`
     ``on_side``  told which arm the planner chose (a scripted stand-in uses it)
-    ``servo``    a :class:`~manipulation_kit.agent.servo.Servo`: the look
-                 before a stroke is then answered by its judge (System 1) and
-                 an aligned stroke runs in the same turn; ``None`` keeps the
-                 look as a question to the model. A servo built with
-                 ``observe_only=True`` only records its judge's answer
-                 (``record.servo``) and the look stays the model's question
+    ``servo``    a :class:`~manipulation_kit.agent.servo.Servo`: its judge
+                 is asked before EVERY stroke of
+                 :data:`~manipulation_kit.agent.servo.SERVO_VERBS` (System 1),
+                 whether or not the model looked or located from the wrist
+                 first, and an aligned stroke runs in the same turn; ``None``
+                 keeps the look as a question to the model. A servo built
+                 with ``observe_only=True`` only records its judge's answer
+                 (``record.servo``) and the model's own look rule follows; a
+                 photo judge with no wrist photo records ``{"skipped": "no
+                 wrist frame"}`` and the model's look rule follows. The
+                 marked photos are ``turn{N}_servo_{side}.png`` beside the
+                 trace (or in the servo's ``out_dir``)
     """
     return _Loop(robot=robot, policy=policy, ask=ask, goal=goal, task=task,
                  system=system, trace=trace if trace is not None

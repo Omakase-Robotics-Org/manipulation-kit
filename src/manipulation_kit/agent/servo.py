@@ -24,6 +24,18 @@ relative to the mark correctly on 8 of 8 frames, the displaced six at 0.93 or
 better. The yes/no form of the same question missed the two ON cases, so the
 question is five-way, never yes/no.
 
+WHEN IT RUNS: before EVERY stroke of :data:`SERVO_VERBS` (``grasp`` on its
+``object``, ``press`` on its ``target``), whether or not the model looked or
+``locate``-d from the wrist first. d1-2, 2026-09-24 01:47Z (``--judge-only``):
+the model called ``locate`` on the wrist camera before each grasp, that
+satisfied the operator policy's look, and a servo that ran only on an unmet
+look was never asked — twelve records, ``servo: null`` on every one, and the
+tape several cm off the jaws when the stroke closed. The servo is the System 1
+alignment before the stroke; the model's own look does not replace it.
+``probe`` has no named target to align on (it measures where the surface
+is), ``handover`` closes at a posture reached inside its own plan, and
+``approach`` is the move that brings the hand to the look — none is judged.
+
 Two seams, and the wheel owns everything between them::
 
     frame(side) -> Path | None      a FRESH photo from that hand's wrist camera
@@ -31,14 +43,21 @@ Two seams, and the wheel owns everything between them::
                                     answer from geometry, as a test stub does)
     judge(look) -> {choice: prob}   a probability per :data:`CHOICES` id
 
+A judge READS THE PHOTO unless it says otherwise (:func:`photoless`, which
+:func:`geometry_judge` is): when ``frame(side)`` gives no photo, a photo
+judge is not asked at all and the report says ``skipped: "no wrist frame"``
+— recorded, never a silent ``null``.
+
 Two optional behaviours, both off by default until real wrist photos have
 characterised the judge:
 
 ``observe_only=True``  the servo photographs, marks and asks, records the
                        distribution in ``DecisionRecord.servo``, and never
-                       steps or re-declares; the loop then asks the model the
-                       ordinary wrist-look question. The judge rides along on
-                       a live run without moving anything.
+                       steps or re-declares; the loop then goes on with the
+                       model's own look rule (the ordinary wrist-look
+                       question when the policy's look is unmet, else the
+                       stroke). The judge rides along on a live run without
+                       moving anything.
 ``refine=True``        after ``on``, bring the residual (up to the tolerance,
                        10-21 mm in the mirror runs) under ``refine_m``
                        (5 mm) WITHOUT moving the hand: the same photo is
@@ -74,6 +93,12 @@ from ..primitives import Nudge
 from ..primitives.offer import check, label_for
 from ..primitives.types import NUDGE_GRID_M
 from .policy import OperatorPolicy, PolicyState
+
+#: the verbs the servo judges before, -> the argument naming what the stroke
+#: acts on. Explicit, not derived: a stroke is judged only where the hand
+#: already stands at the posture it acts from and a named thing is there to
+#: be marked (see the module docstring for the verbs left out, and why).
+SERVO_VERBS: Dict[str, str] = {"grasp": "object", "press": "target"}
 
 #: what the judge chooses among. The object, relative to the drawn mark, IN
 #: THE IMAGE: ``on`` is the answer that lets the stroke run.
@@ -111,6 +136,7 @@ ALIGNED = "aligned"
 #: observe_only: judged, recorded, nothing moved
 OBSERVED = "judged_only"
 NOT_VISIBLE = "not_visible"
+#: a photo judge, and ``frame(side)`` gave no photo: not asked
 NO_FRAME = "no_frame"
 UNSURE = "unsure"
 BUDGET = "nudge_budget"
@@ -147,6 +173,8 @@ class ServoLook:
     def to_json(self) -> Dict[str, Any]:
         return {"side": self.side, "object": self.object, "u": self.u,
                 "v": self.v, "depth_m": self.depth_m,
+                #: which wrist mount the mark was projected through
+                "mount": getattr(self.camera, "mount", None),
                 "radius_px": self.radius_px, "tolerance_m": self.tolerance_m,
                 "declared_p": (None if self.declared_p is None
                                else [round(float(x), 5) for x in self.declared_p]),
@@ -190,13 +218,24 @@ class ServoReport:
     def aligned(self) -> bool:
         return self.outcome == ALIGNED
 
+    @property
+    def skipped(self) -> bool:
+        """No judgement was made (no wrist photo for a photo judge)."""
+        return self.outcome == NO_FRAME
+
     def to_json(self) -> Dict[str, Any]:
-        return {"side": self.side, "object": self.object,
-                "outcome": self.outcome, "detail": self.detail,
-                "steps": [s.to_json() for s in self.steps]}
+        out = {"side": self.side, "object": self.object,
+               "outcome": self.outcome, "detail": self.detail,
+               "steps": [s.to_json() for s in self.steps]}
+        if self.skipped:
+            out["skipped"] = "no wrist frame"
+        return out
 
     def to_text(self) -> str:
         n = sum(1 for s in self.steps if s.step_m is not None)
+        if self.skipped:
+            return (f"the wrist look's judge was not asked about "
+                    f"{self.object!r}: {self.detail}")
         if self.outcome == OBSERVED:
             return (f"the wrist look's judge said {self.detail} for "
                     f"{self.object!r} (recorded only; nothing moved)")
@@ -206,6 +245,36 @@ class ServoReport:
         return (f"the wrist look could not align the {self.side} hand on "
                 f"{self.object!r}: {self.outcome} — {self.detail} "
                 f"({n} correction{'s' if n != 1 else ''} made)")
+
+
+def servo_line(servo: Optional[Mapping[str, Any]]) -> str:
+    """One line per judged stroke, for an operator watching a run: what the
+    judge said and what the kit did with it (from ``record.servo``)::
+
+        servo judged: on 0.81 (left 0.12, right 0.04, ...) — recorded only
+        servo aligned: on 0.97 after 2 step(s)
+        servo skipped: no wrist frame
+    """
+    if not servo:
+        return "servo: not run"
+    if servo.get("skipped"):
+        return f"servo skipped: {servo['skipped']}"
+    looks = [s for s in servo.get("steps", []) if s.get("kind", "look") == "look"]
+    said = ""
+    if looks:
+        dist = looks[-1]["distribution"]
+        ranked = sorted(dist.items(), key=lambda kv: -kv[1])
+        said = (f"{ranked[0][0]} {ranked[0][1]:.2f} ("
+                + ", ".join(f"{c} {p:.2f}" for c, p in ranked[1:]) + ")")
+    moved = sum(1 for s in servo.get("steps", []) if s.get("step_m"))
+    outcome = servo.get("outcome")
+    if outcome == OBSERVED:
+        return f"servo judged: {said} — recorded only"
+    if outcome == ALIGNED:
+        return f"servo aligned: {said} after {moved} step(s)"
+    return (f"servo {outcome}: {servo.get('detail', '')}"
+            + (f"; last judged {said}" if said else "")
+            + f" ({moved} step(s))")
 
 
 def footprint_px(camera: Any, obj: Any, frames: Any, *,
@@ -314,6 +383,8 @@ class Servo:
             raise ValueError("refine_m is a positive distance no larger than "
                              "tolerance_m")
         self.frame, self.judge = frame, judge
+        #: whether the judge needs the photo (:func:`photoless` says no)
+        self.reads_photo = bool(getattr(judge, "reads_photo", True))
         self.steps_m = tuple(float(s) for s in steps_m)
         self.min_confidence = float(min_confidence)
         self.tolerance_m = float(tolerance_m)
@@ -321,6 +392,11 @@ class Servo:
         self.observe_only, self.refine = bool(observe_only), bool(refine)
         self.refine_m = float(refine_m)
         self._n = 0
+        #: the turn and directory of the current :meth:`align` (the marked
+        #: photos are named ``turn{N}_servo_{side}[ _k].png`` beside the trace)
+        self._turn: Optional[int] = None
+        self._where: Optional[Path] = None
+        self._in_turn = 0
 
     # -- one look ------------------------------------------------------------ #
     def look(self, robot, world, side: str, name: str) -> Tuple[Optional[ServoLook], str]:
@@ -335,6 +411,8 @@ class Servo:
             return None, (f"{name!r} is not in the {side}_wrist frame from "
                           f"this posture ({seen.reason})")
         photo = self.frame(side)
+        if photo is None and self.reads_photo:
+            return None, NO_FRAME
         return self.look_at(camera, item, world.frames, photo, side=side), ""
 
     def look_at(self, camera, item, frames, photo: Optional[Path], *,
@@ -355,10 +433,8 @@ class Servo:
         box = footprint_px(camera, item, frames, margin_m=tolerance)
         image = None
         if photo is not None:
-            self._n += 1
-            out_dir = self.out_dir or Path(photo).parent
             image = mark(Path(photo), seen.u, seen.v,
-                         out_dir / f"servo{self._n:03d}_{side}_wrist{tag}_marked.jpg",
+                         self._marked_path(Path(photo), side, tag),
                          box_px=box, radius_px=radius)
         p = np.asarray(item.pose_in_base(frames)[0], dtype=float)
         return ServoLook(side=side, object=item.name, camera=camera,
@@ -368,6 +444,18 @@ class Servo:
                          radius_px=radius, box_px=box,
                          declared_p=tuple(float(x) for x in p),
                          tolerance_m=tolerance)
+
+    def _marked_path(self, photo: Path, side: str, tag: str) -> Path:
+        """``turn{N}_servo_{side}.png`` for a turn's first marked photo (the
+        next ``_2``, ``_3``, ...), beside the trace; outside a turn
+        ``servo{n:03d}_{side}{tag}.png`` next to ``out_dir`` or the photo."""
+        self._n += 1
+        out_dir = self.out_dir or self._where or photo.parent
+        if self._turn is None:
+            return out_dir / f"servo{self._n:03d}_{side}{tag}.png"
+        self._in_turn += 1
+        suffix = "" if self._in_turn == 1 else f"_{self._in_turn}"
+        return out_dir / f"turn{self._turn}_servo_{side}{tag}{suffix}.png"
 
     def ask(self, look: ServoLook) -> Tuple[Dict[str, float], str, float]:
         raw = dict(self.judge(look))
@@ -385,13 +473,35 @@ class Servo:
     # -- the loop ------------------------------------------------------------ #
     def align(self, *, robot, policy: OperatorPolicy, state: PolicyState,
               side: str, name: str, settings: Mapping[str, Any],
-              run_plan: Callable[..., Any]) -> ServoReport:
+              run_plan: Callable[..., Any], turn: Optional[int] = None,
+              out_dir: Optional[Path] = None) -> ServoReport:
+        """Judge (and, unless ``observe_only``, align) ``side`` on ``name``.
+        ``turn`` / ``out_dir`` name the marked photos (``out_dir`` is used
+        when the servo was built without one — the loop passes the trace's
+        directory)."""
+        self._turn, self._in_turn = turn, 0
+        self._where = None if out_dir is None else Path(out_dir)
+        try:
+            return self._align(robot=robot, policy=policy, state=state,
+                               side=side, name=name, settings=settings,
+                               run_plan=run_plan)
+        finally:
+            self._turn, self._where = None, None
+
+    def _align(self, *, robot, policy, state, side, name, settings,
+               run_plan) -> ServoReport:
         report = ServoReport(side=side, object=name, outcome=UNSURE)
         signs: Dict[str, float] = {}       # axis -> sign of the last step
         fine = False
         while True:
             world = robot.world()
             look, why = self.look(robot, world, side, name)
+            if look is None and why == NO_FRAME:
+                report.outcome = NO_FRAME
+                report.detail = (f"no {side}_wrist photo from the frame source "
+                                 f"(no snapshotter, or the grab gave none), and "
+                                 f"this judge reads the photo")
+                return report
             if look is None:
                 report.outcome, report.detail = NOT_VISIBLE, why
                 return report
@@ -528,6 +638,22 @@ class Servo:
 GEOMETRY_SLACK_M = 1e-4
 
 
+def photoless(judge: Judge) -> Judge:
+    """Mark ``judge`` as answering WITHOUT the photo (from geometry, a
+    recorded answer, a test stub): the servo asks it even when the frame
+    source gives none. Every other judge reads the photo, and is not asked
+    without one."""
+    try:
+        judge.reads_photo = False            # type: ignore[attr-defined]
+    except AttributeError:                   # a builtin or a bound method
+        inner = judge
+
+        def judge(look):                     # noqa: F811
+            return inner(look)
+        judge.reads_photo = False            # type: ignore[attr-defined]
+    return judge
+
+
 def geometry_judge(truth: Mapping[str, Sequence[float]], *,
                    tol_m: Optional[float] = None) -> Judge:
     """A judge that answers from geometry instead of a photo: "on" when the
@@ -555,11 +681,12 @@ def geometry_judge(truth: Mapping[str, Sequence[float]], *,
         if abs(du) >= abs(dv):
             return {"left" if du < 0 else "right": 1.0}
         return {"above" if dv < 0 else "below": 1.0}
-    return judge
+    return photoless(judge)
 
 
 __all__ = ["ALIGNED", "BUDGET", "CHOICES", "DEFAULT_MIN_CONFIDENCE",
            "DEFAULT_REFINE_M", "DEFAULT_STEPS_M", "DEFAULT_TOLERANCE_M",
-           "Frame", "Judge", "NOT_VISIBLE", "OBSERVED", "Servo",
-           "ServoLook", "ServoReport", "ServoStep", "UNSURE",
-           "geometry_judge", "image_direction_in_base", "mark"]
+           "Frame", "Judge", "NOT_VISIBLE", "NO_FRAME", "OBSERVED",
+           "SERVO_VERBS", "Servo", "ServoLook", "ServoReport", "ServoStep",
+           "UNSURE", "geometry_judge", "image_direction_in_base", "mark",
+           "photoless", "servo_line"]

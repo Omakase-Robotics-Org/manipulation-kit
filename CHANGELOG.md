@@ -141,6 +141,32 @@ accessor set, removed in 0.17.
 - `docs/agent.md`: the servo bullet. `examples/agent/jev_menu.py` no longer
   says Jev "never sees an image".
 
+### The servo judges before EVERY stroke (d1-2 judge-only, 2026-09-24)
+
+d1-2's first `--judge-only` run (01:47Z, kit eeeda35): twelve records,
+`servo: null` on every one. The loop ran the servo only when the operator
+policy's look was unmet, and the model called `locate` on the wrist camera
+right before each grasp, which satisfied it — so the judge was never asked
+and the stroke closed with the tape several cm off the jaws.
+
+- The loop now runs the servo before every stroke of the new, explicit
+  `agent.servo.SERVO_VERBS` (`grasp` -> `object`, `press` -> `target`),
+  regardless of what the model looked at first. Live: align, then the stroke
+  in the same turn (as before). `observe_only`: judge and record, then the
+  model's own look rule.
+- A judge reads the photo unless marked `photoless(judge)`
+  (`geometry_judge` is); with no wrist photo a photo judge is not asked and
+  `record.servo` is `{"skipped": "no wrist frame", "outcome": "no_frame", ...}`
+  — never a silent null. **Breaking** for a custom judge that answers
+  without a photo: wrap it in `photoless`.
+- The marked photo is `turn{N}_servo_{side}.png` beside the trace (was
+  `servoNNN_<side>_wrist_marked.jpg`); `Servo.align(turn=, out_dir=)`.
+  Outside a turn (`--rejudge`) it is `servoNNN_<side>.png`.
+- `agent.servo.servo_line(record.servo)`: the per-stroke one-liner
+  (`servo judged: on 0.81 (left 0.12, ...) — recorded only`), printed by
+  `jev_servo.py` as each stroke is judged. `ServoLook.to_json()` and the
+  servo's `record.look` carry the wrist `mount` it was projected through.
+
 ### Wrist camera: the measured mount (issue #28)
 
 d1-2's calibration file now carries each wrist camera's MEASURED mount

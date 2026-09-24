@@ -46,7 +46,10 @@ print(trace.stop, trace.summary())
   projection.
 - `run(..., servo=Servo(frame, judge))` — **the look answered by a judge
   that chooses, not by the model** (`manipulation_kit.agent.servo`; System 1
-  under a System 2 model). When a `grasp` needs a look, the kit takes a fresh
+  under a System 2 model). Before EVERY stroke of `SERVO_VERBS` (`grasp` on
+  its `object`, `press` on its `target`; not `probe`, which has no named
+  target, `handover`, which closes inside its own plan, or `approach`, the
+  move to the look) the kit takes a fresh
   wrist photo (`frame(side) -> path`), DRAWS its belief on it — a green cross
   at the projected centre and a green box, the object's projected outline
   grown by `tolerance_m` (default 10 mm) on every side — and asks the judge
@@ -71,11 +74,33 @@ print(trace.stop, trace.summary())
   declared 25-60 mm off in one or two steps on 5 of 5 kinematic-mirror runs
   (residual 5-30 mm — it accepts a block that overlaps the box's edge, so
   the box is a coarse tolerance, not a fine one; report `jev-servo-loop`).
-  Roll is not asked for — it stays planner-only (`roll_candidates`). **Not
-  yet run on hardware**: the judge has seen rendered frames only.
+  Roll is not asked for — it stays planner-only (`roll_candidates`).
+  **The model's own wrist look does not replace the servo.** The model may
+  `locate` on a wrist camera before a stroke, as before: its re-measurement
+  re-declares the object and nudges the hand, and it satisfies the operator
+  policy's look. The servo is STILL asked when the stroke comes, on the
+  declaration the model left (the trace keeps it: the locate turn's answer and
+  world, and the servo's first mark, `declared_p`). If the judge steps, the
+  object is re-declared `provenance="judged"` and that is what the stroke
+  plans to — the judged pose wins for the alignment; if it says `on`, the
+  model's declaration stands. (d1-2, 2026-09-24 01:47Z, `--judge-only`: the
+  servo ran only when the look was unmet, the model located before each
+  grasp, and all twelve records had `servo: null` while the tape sat cm off
+  the jaws.) Every judged stroke is recorded — `record.servo` is never null
+  when a servo is configured and the verb is a servo verb; a photo judge
+  with no wrist photo (no snapshotter, or a grab without that hand's file)
+  is not asked and records `{"skipped": "no wrist frame", ...}`, and the
+  model's look rule follows. A judge that answers without a photo says so
+  (`photoless(judge)`; `geometry_judge` is one). The marked photo is saved
+  beside the trace as `turn{N}_servo_{side}.png` (`_2`, `_3` for later
+  steps of the same turn), and `servo_line(record.servo)` is the operator's
+  one-liner, which `jev_servo.py` prints per stroke as it happens
+  (`servo judged: on 0.81 (left 0.12, ...) — recorded only`). **Not yet
+  aligned on hardware**: the judge has been run judge-only on d1-2 once.
   - `Servo(observe_only=True)` (`jev_servo.py --judge-only`): judge and
-    record every look, never step; the model answers the look as without a
-    servo. The first live sessions run this way.
+    record before every stroke, never step; the model's look rule then
+    applies as without a servo (the look question when the policy's look is
+    unmet, else the stroke runs). The first live sessions run this way.
   - `Servo(refine=True)` (`--refine`, off by default): after `on`, the same
     photo is re-marked on a 3 x 3 grid of 5 mm shifts and the DECLARATION
     moves to the best-judged one (only if it beats the unshifted mark); the
