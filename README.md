@@ -556,9 +556,14 @@ with the hand gap and the head camera's measured mount — the kit ships the
 schema and the reader (`manipulation_kit.description.camera_calibration`,
 `RobotProfile.load(path)`), never a robot's values. `--robot-profile PATH`
 overrides the default (offline: `tests/data/d1-2.camera_calibration.json`); a
-FAILED calibration gate is refused unless `--allow-failed-calibration`. The wrist lens's extrinsic is still
-the nominal plate geometry, so **`--no-look-before-stroke` is the documented
-setting for a robot's first live run**. See [`docs/agent.md`](docs/agent.md).
+FAILED calibration gate is refused unless `--allow-failed-calibration` (a
+WARN gate is accepted and printed). The wrist lens's extrinsic is the file's
+MEASURED wrist mount when it carries one (`cameras.<side>_wrist.mount`,
+seiryu-calib's plate -> optical fit), else the nominal plate geometry — the
+wrist camera model and the trace's `look` records say `mount: measured |
+nominal`. Without a measured wrist mount, **`--no-look-before-stroke` is the
+documented setting for a robot's first live run**. See
+[`docs/agent.md`](docs/agent.md).
 
 **Isaac** is an executor, registered by d1-isaaclab rather than imported:
 

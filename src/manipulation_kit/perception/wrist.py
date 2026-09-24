@@ -1,26 +1,32 @@
 """The D1 wrist camera: a :class:`~.camera.PinholeCamera` on the gripper —
-with the FISHEYE model its lens actually has, when it has been measured.
+with the FISHEYE model its lens actually has, when it has been measured, and
+the MOUNT it actually has, when that has been measured.
 
-The mount is ALREADY in the kit — the V2.0 arm-end plate in
+The nominal mount is in the kit — the V2.0 arm-end plate in
 :mod:`manipulation_kit.hands.d1.parallel_gripper.description`
 (``CAMERA_MOUNT_XYZ_M``, ``CAMERA_TILT_RAD``, ``CAMERA_ARM_YAW_RAD``) and the
-``wrist_camera_optical`` frame of ``gripper_with_camera.urdf`` — so this module
-only composes it with the arm's forward kinematics:
+``gripper_<R|L>_wrist_cam_optical_frame`` of ``d1_wholebody_gripper.urdf`` —
+and this module composes it with the arm's forward kinematics:
 
-    link7 --TCP_P/TCP_R--> flange (+z = approach) --yaw(side)--> gripper
-    base_link --mount xyz, Rx(15 deg)--> wrist_camera --Rz(pi)--> optical
+    link7 --TCP_P/TCP_R--> flange (+z = approach) --yaw(side)--> camera plate
+    camera plate --mount xyz, Rx(15 deg)--> wrist_camera --Rz(pi)--> optical
 
-The per-arm clocking is robot composition, not URDF: both cameras sit on top
-of the wrist, so the physical LEFT arm mounts the description yawed pi.
+The per-arm clocking is robot composition: both cameras sit on top of the
+wrist, so the physical LEFT arm mounts the description yawed pi (the URDF's
+``gripper_R_flange``). The camera plate IS the gripper base, so ``flange ->
+plate`` is that yaw alone.
 
-What it is for (design C.7, requirement 2): after an ``Approach``,
-:meth:`WristCamera.project_object` says whether the object is in the wrist
-frame and where — the "look before the stroke" a policy can require
-(step 7) — and :meth:`~.camera.PinholeCamera.locate` on the same model turns
-a wrist pixel into a base-frame correction.
+MEASURED MOUNT (kit issue #28). A robot's calibration file carries each wrist
+camera's fitted ``plate -> optical`` transform
+(:class:`manipulation_kit.description.robot_profile.WristMount`, seiryu-calib's
+wrist solve). Given one, the camera replaces the nominal ``plate -> optical``
+with it — ABSOLUTELY, not as a delta, so a later change of the nominal cannot
+move a measured camera — and says so: ``mount: "measured"`` and
+``calibrated: true`` in :meth:`WristCamera.to_json`, the source in its notes.
+Without one it is the nominal (``mount: "nominal"``). On d1-2 the measured
+mounts sit 16-20 mm from the nominal (the lens is not on the plate's face,
+the module is clamped by hand), which at a 10 cm standoff is tens of pixels.
 
-NOMINAL, like the head camera: vendor plate geometry, a placeholder lens
-position inside the module (see the URDF's comment), no per-robot extrinsic.
 The intrinsics are NOT defaulted — a wide-angle UVC module's focal length is
 the stream's; pass it, from the robot's profile
 (:class:`manipulation_kit.description.robot_profile.WristIntrinsics`).
@@ -80,18 +86,41 @@ def fisheye_undistort(theta_d, k) -> np.ndarray:
     return theta
 
 
-def optical_in_flange(side: str) -> Tuple[np.ndarray, R]:
-    """``(p, r)`` of the wrist camera's OPTICAL frame in the arm's flange
-    (TCP) frame, for ``side``. Composition of the kit's own mount constants."""
+#: which ``plate -> optical`` a :class:`WristCamera` was built with
+MOUNT_KINDS = ("nominal", "measured")
+
+
+def nominal_optical_in_plate() -> Tuple[np.ndarray, R]:
+    """``(p, r)`` of the NOMINAL optical frame in the gripper's camera plate —
+    the URDF's ``gripper_*_wrist_cam_mount`` + optical joint, from the hand
+    description's constants."""
     from ..hands.d1.parallel_gripper.description import (  # noqa: PLC0415
-        CAMERA_ARM_YAW_RAD, CAMERA_MOUNT_XYZ_M, CAMERA_TILT_RAD)
+        CAMERA_MOUNT_XYZ_M, CAMERA_TILT_RAD)
+    return (np.asarray(CAMERA_MOUNT_XYZ_M, dtype=float),
+            R.from_euler("x", CAMERA_TILT_RAD) * R.from_euler("z", math.pi))
+
+
+def optical_in_flange(side: str, mount: Any = None) -> Tuple[np.ndarray, R]:
+    """``(p, r)`` of the wrist camera's OPTICAL frame in the arm's flange
+    (TCP) frame, for ``side``: the side's clocking yaw (flange -> camera
+    plate), then ``mount``'s measured ``plate -> optical`` when given (a
+    :class:`~manipulation_kit.description.robot_profile.WristMount`), else the
+    nominal (:func:`nominal_optical_in_plate`)."""
+    from ..hands.d1.parallel_gripper.description import (  # noqa: PLC0415
+        CAMERA_ARM_YAW_RAD)
     if side not in CAMERA_ARM_YAW_RAD:
         raise ValueError(f"side must be one of {sorted(CAMERA_ARM_YAW_RAD)}, "
                          f"got {side!r}")
     clock = R.from_euler("z", CAMERA_ARM_YAW_RAD[side])
-    mount = R.from_euler("x", CAMERA_TILT_RAD) * R.from_euler("z", math.pi)
-    return (clock.apply(np.asarray(CAMERA_MOUNT_XYZ_M, dtype=float)),
-            clock * mount)
+    if mount is None:
+        p_plate, r_plate = nominal_optical_in_plate()
+    else:
+        if mount.side != side:
+            raise ValueError(f"the {mount.side} wrist camera's mount given "
+                             f"for the {side} arm")
+        p_plate = np.asarray(mount.xyz_m, dtype=float)
+        r_plate = R.from_quat(mount.quat_xyzw)
+    return clock.apply(p_plate), clock * r_plate
 
 
 @dataclass(frozen=True)
@@ -124,6 +153,8 @@ class WristCamera(PinholeCamera):
     k: Tuple[float, ...] = ()
     #: pixels farther than this from the principal point are not trusted
     valid_radius_px: Optional[float] = None
+    #: which ``plate -> optical`` this pose was built with (:data:`MOUNT_KINDS`)
+    mount: str = "nominal"
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -135,6 +166,9 @@ class WristCamera(PinholeCamera):
             raise ValueError(f"a fisheye needs k = [k1, k2, k3, k4], got "
                              f"{list(self.k)}")
         _finite("fisheye coefficients", *self.k)
+        if self.mount not in MOUNT_KINDS:
+            raise ValueError(f"mount must be one of {MOUNT_KINDS}, got "
+                             f"{self.mount!r}")
 
     @classmethod
     def from_flange(cls, side: str, flange_p, flange_r: R, *, fx: float,
@@ -142,15 +176,30 @@ class WristCamera(PinholeCamera):
                     height: int, model: str = "pinhole",
                     k: Tuple[float, ...] = (),
                     valid_radius_px: Optional[float] = None,
+                    mount: Any = None,
                     **_ignored: Any) -> "WristCamera":
         """From the flange (TCP) pose in base, as ``tool_from_link7`` minus
         the tool offset gives it. The intrinsics are a
         :meth:`~manipulation_kit.description.robot_profile.WristIntrinsics.camera_kwargs`
-        (extra provenance keys such as ``source`` are ignored)."""
-        p_off, r_off = optical_in_flange(side)
+        (extra provenance keys such as ``source`` are ignored); ``mount`` is
+        the side's measured
+        :class:`~manipulation_kit.description.robot_profile.WristMount`, or
+        ``None`` for the nominal plate geometry."""
+        p_off, r_off = optical_in_flange(side, mount)
         flange_p = np.asarray(flange_p, dtype=float).reshape(3)
         lens = ("pinhole intrinsics" if model == "pinhole" else
                 "MEASURED fisheye intrinsics (cv2.fisheye, equidistant)")
+        if mount is None:
+            frame = ("NOMINAL wrist-camera frame: the V2.0 plate's mount "
+                     "constants composed with the arm's FK; not a per-robot "
+                     "extrinsic.")
+        else:
+            frame = ("MEASURED wrist-camera mount: this robot's fitted "
+                     "camera-plate -> optical transform "
+                     f"({mount.source or 'robot profile'}"
+                     + (f", RMS {mount.rms_px:.2f} px" if mount.rms_px
+                        is not None else "")
+                     + ") composed with the arm's FK.")
         return cls(fx=float(fx), fy=float(fy), cx=float(cx), cy=float(cy),
                    width=int(width), height=int(height),
                    p=flange_p + flange_r.apply(p_off), r=flange_r * r_off,
@@ -159,9 +208,9 @@ class WristCamera(PinholeCamera):
                                     else float(valid_radius_px)),
                    lens_uncertainty_m=WRIST_LENS_UNCERTAINTY_M,
                    aim_uncertainty_deg=WRIST_AIM_UNCERTAINTY_DEG,
-                   notes=("NOMINAL wrist-camera frame: the V2.0 plate's mount "
-                          "constants composed with the arm's FK; not a "
-                          "per-robot extrinsic.", f"lens: {lens}."))
+                   calibrated=mount is not None,
+                   mount="nominal" if mount is None else "measured",
+                   notes=(frame, f"lens: {lens}."))
 
     # -- the lens ------------------------------------------------------------
     def _local_ray(self, u: float, v: float) -> np.ndarray:
@@ -243,6 +292,7 @@ class WristCamera(PinholeCamera):
     def to_json(self) -> Dict[str, Any]:
         out = super().to_json()
         out["side"] = self.side
+        out["mount"] = self.mount
         out["model"] = self.model
         if self.model == "fisheye":
             out["k"] = [float(c) for c in self.k]
@@ -251,6 +301,7 @@ class WristCamera(PinholeCamera):
         return out
 
 
-__all__ = ["FISHEYE_ITERATIONS", "InFrame", "WRIST_AIM_UNCERTAINTY_DEG",
-           "WRIST_LENS_UNCERTAINTY_M", "WristCamera", "fisheye_distort",
-           "fisheye_undistort", "optical_in_flange"]
+__all__ = ["FISHEYE_ITERATIONS", "InFrame", "MOUNT_KINDS",
+           "WRIST_AIM_UNCERTAINTY_DEG", "WRIST_LENS_UNCERTAINTY_M",
+           "WristCamera", "fisheye_distort", "fisheye_undistort",
+           "nominal_optical_in_plate", "optical_in_flange"]

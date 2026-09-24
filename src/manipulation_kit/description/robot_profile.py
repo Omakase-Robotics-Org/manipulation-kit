@@ -17,6 +17,13 @@ wrist lenses have their own focal lengths and fisheye distortion. A
                       it and says ``calibrated: true`` only then.
 ``wrist_cameras``     side -> :class:`WristIntrinsics` (``model:
                       fisheye|pinhole``, ``k: [k1..k4]``, ``valid_radius_px``).
+``wrist_mounts``      side -> :class:`WristMount` — the wrist camera's MEASURED
+                      optical frame in its gripper's camera plate
+                      (``gripper_R_camera_plate`` for the logical left arm,
+                      ``gripper_L_camera_plate`` for the right).
+                      :class:`manipulation_kit.perception.WristCamera` uses it
+                      in place of the URDF nominal and says ``mount:
+                      measured`` only then.
 
 **The kit owns the schema and the reader; the robot holds the values.** No
 profile ships in this wheel. A robot keeps ONE ``omakase.camera_calibration/2``
@@ -25,7 +32,8 @@ file (:mod:`manipulation_kit.description.camera_calibration`, default
 (:meth:`RobotProfile.load` / :meth:`RobotProfile.from_camera_calibration`):
 the head mount's ABSOLUTE ``head_link -> optical`` pose becomes the delta on
 the nominal it records, the ``left_wrist`` / ``right_wrist`` lenses become the
-kit's per-side intrinsics, ``hand`` becomes :class:`HandMeasurement`. A layer
+kit's per-side intrinsics and their mounts the per-side plate -> optical
+transforms, ``hand`` becomes :class:`HandMeasurement`. A layer
 whose gate FAILED is refused unless overridden (``allow_failed_gate``). A scene
 file's ``robot`` block may name a file (``"robot": {"profile": "PATH"}``,
 relative to the scene) and override any part of it (:func:`scene_robot_block`).
@@ -40,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
+from ..arms.sides import URDF_SUFFIX
 from . import camera_calibration as cc
 
 #: the lens models a wrist intrinsics block may name
@@ -47,6 +56,12 @@ WRIST_MODELS = ("pinhole", "fisheye")
 
 #: the link a head mount is expressed in
 HEAD_PARENT_LINK = "head_link"
+
+#: logical side -> the link a wrist mount is expressed in: the gripper's
+#: camera plate, which IS the gripper base (the tool flange, yawed pi on the
+#: logical left arm). NOTE the crossed suffix (:mod:`manipulation_kit.arms.sides`).
+WRIST_PARENT_LINKS = {side: f"gripper_{suffix}_camera_plate"
+                      for side, suffix in URDF_SUFFIX.items()}
 
 
 class NotACalibrationFile(LookupError):
@@ -230,6 +245,103 @@ class WristIntrinsics:
 
 
 @dataclass(frozen=True)
+class WristMount:
+    """One wrist camera's MEASURED mount: the ABSOLUTE pose of its optical
+    frame (ROS: x right, y down, z forward) in the gripper's camera plate
+    (:data:`WRIST_PARENT_LINKS`), with the URDF nominal it was fitted against.
+
+    It is absolute on purpose, like the head's: ``base <- plate`` comes from
+    the arm's FK, then this measured ``plate <- optical`` — a later change of
+    the URDF's nominal cannot silently move a measured camera. The nominal is
+    carried for the trace (how far the measurement moved the lens).
+    """
+
+    side: str
+    xyz_m: Tuple[float, float, float]
+    quat_xyzw: Tuple[float, float, float, float]
+    parent_link: str
+    nominal_xyz_m: Optional[Tuple[float, float, float]] = None
+    nominal_quat_xyzw: Optional[Tuple[float, float, float, float]] = None
+    #: the mount gate's verdict as the file recorded it (never FAIL unless
+    #: overridden — the reader refuses that)
+    gate: str = ""
+    rms_px: Optional[float] = None
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        if self.side not in WRIST_PARENT_LINKS:
+            raise ValueError(f"wrist mount side must be one of "
+                             f"{sorted(WRIST_PARENT_LINKS)}, got {self.side!r}")
+        expected = WRIST_PARENT_LINKS[self.side]
+        if self.parent_link != expected:
+            raise ValueError(
+                f"the {self.side} wrist camera's mount must be expressed in "
+                f"{expected!r} (logical {self.side} = URDF suffix "
+                f"_{URDF_SUFFIX[self.side]}), the file says "
+                f"{self.parent_link!r}")
+        for name, size in (("xyz_m", 3), ("quat_xyzw", 4),
+                           ("nominal_xyz_m", 3), ("nominal_quat_xyzw", 4)):
+            raw = getattr(self, name)
+            if raw is None and name.startswith("nominal"):
+                continue
+            value = tuple(float(v) for v in raw)
+            if len(value) != size:
+                raise ValueError(f"wrist mount {name} needs {size} numbers, "
+                                 f"got {list(value)}")
+            _finite(f"wrist mount {name}", *value)
+            object.__setattr__(self, name, value)
+        norm = math.sqrt(sum(q * q for q in self.quat_xyzw))
+        if abs(norm - 1.0) > 1e-6:
+            raise ValueError(f"wrist mount quat_xyzw must be a unit "
+                             f"quaternion, norm is {norm:.9f}")
+
+    @classmethod
+    def from_mount(cls, side: str, mount: "cc.Mount") -> "WristMount":
+        """A v2 file's ``cameras.<side>_wrist.mount``."""
+        prov = mount.provenance
+        return cls(side=side, xyz_m=mount.T_parent_camera.xyz_m,
+                   quat_xyzw=mount.T_parent_camera.quat_xyzw,
+                   parent_link=mount.parent_link,
+                   nominal_xyz_m=mount.nominal.xyz_m,
+                   nominal_quat_xyzw=mount.nominal.quat_xyzw,
+                   gate=mount.gate.verdict, rms_px=prov.rms_px,
+                   source=f"{cc.WRIST_SLOTS[side]}: {prov.describe()}; "
+                          f"gate {mount.gate.verdict}")
+
+    @classmethod
+    def from_json(cls, side: str, block: Mapping[str, Any]) -> "WristMount":
+        """The block :meth:`to_json` writes (a scene's
+        ``robot.wrist_camera.<side>.mount``)."""
+        missing = [k for k in ("parent_link", "xyz_m", "quat_xyzw")
+                   if k not in block]
+        if missing:
+            raise ValueError(f"scene robot.wrist_camera.{side}.mount needs "
+                             f"parent_link, xyz_m, quat_xyzw; missing {missing}")
+        return cls(side=side, xyz_m=block["xyz_m"],
+                   quat_xyzw=block["quat_xyzw"],
+                   parent_link=str(block["parent_link"]),
+                   nominal_xyz_m=block.get("nominal_xyz_m"),
+                   nominal_quat_xyzw=block.get("nominal_quat_xyzw"),
+                   gate=str(block.get("gate", "")),
+                   rms_px=(None if block.get("rms_px") is None
+                           else float(block["rms_px"])),
+                   source=str(block.get("source", "")))
+
+    def to_json(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"parent_link": self.parent_link,
+                               "xyz_m": list(self.xyz_m),
+                               "quat_xyzw": list(self.quat_xyzw),
+                               "gate": self.gate, "source": self.source}
+        if self.nominal_xyz_m is not None:
+            out["nominal_xyz_m"] = list(self.nominal_xyz_m)
+        if self.nominal_quat_xyzw is not None:
+            out["nominal_quat_xyzw"] = list(self.nominal_quat_xyzw)
+        if self.rms_px is not None:
+            out["rms_px"] = float(self.rms_px)
+        return out
+
+
+@dataclass(frozen=True)
 class RobotProfile:
     """Everything measured about ONE robot that the kit consumes."""
 
@@ -237,6 +349,7 @@ class RobotProfile:
     hand: Optional[HandMeasurement] = None
     head_mount_delta: Optional[HeadMountDelta] = None
     wrist_cameras: Dict[str, WristIntrinsics] = field(default_factory=dict)
+    wrist_mounts: Dict[str, WristMount] = field(default_factory=dict)
     #: the file it was built from, typed (``None`` for a hand-built profile)
     calibration: Optional["cc.CameraCalibration"] = field(default=None,
                                                          compare=False,
@@ -252,9 +365,10 @@ class RobotProfile:
 
         A layer whose gate FAILED is refused
         (:class:`~manipulation_kit.description.camera_calibration.FailedCalibrationGate`)
-        unless the file overrides it or ``allow_failed_gate``. A measured
-        WRIST mount is refused too: the kit's wrist camera is the nominal
-        plate geometry and would silently ignore it."""
+        unless the file overrides it or ``allow_failed_gate`` — a wrist
+        mount's gate included (WARN is accepted and warned about). A wrist
+        mount becomes that side's :class:`WristMount`; a wrist mount
+        expressed in any link but the side's camera plate is refused."""
         if isinstance(doc, (str, Path)):
             calib = cc.load(doc, allow_failed_gate=allow_failed_gate)
         elif isinstance(doc, cc.CameraCalibration):
@@ -263,17 +377,19 @@ class RobotProfile:
             calib = cc.parse(doc, allow_failed_gate=allow_failed_gate)
         head = calib.camera(cc.HEAD_SLOT)
         wrists: Dict[str, WristIntrinsics] = {}
+        mounts: Dict[str, WristMount] = {}
         for side, slot in cc.WRIST_SLOTS.items():
             camera = calib.camera(slot)
-            if camera is None or camera.intrinsics is None:
+            if camera is None:
                 continue
             if camera.mount is not None:
-                raise ValueError(
-                    f"{calib.source}: camera {slot!r} has a measured mount, "
-                    f"and the kit does not apply one to a wrist camera yet "
-                    f"(it uses the nominal plate geometry); refusing rather "
-                    f"than ignoring it")
-            wrists[side] = WristIntrinsics.from_calibration(camera)
+                try:
+                    mounts[side] = WristMount.from_mount(side, camera.mount)
+                except ValueError as exc:
+                    raise ValueError(f"{calib.source}: camera {slot!r}: "
+                                     f"{exc}") from None
+            if camera.intrinsics is not None:
+                wrists[side] = WristIntrinsics.from_calibration(camera)
         hand = calib.hand
         return cls(
             name=calib.robot,
@@ -282,7 +398,7 @@ class RobotProfile:
                 "" if hand.provenance is None else hand.provenance.describe()),
             head_mount_delta=(None if head is None or head.mount is None
                               else HeadMountDelta.from_mount(head.mount)),
-            wrist_cameras=wrists, calibration=calib)
+            wrist_cameras=wrists, wrist_mounts=mounts, calibration=calib)
 
     @classmethod
     def load(cls, path: Union[str, Path], *,
@@ -325,9 +441,12 @@ class RobotProfile:
             out["hand"] = {"open_gap_m": float(self.hand.open_gap_m),
                            "_source": self.hand.source}
         if self.wrist_cameras:
-            out["wrist_camera"] = {
-                side: dict(w.to_json(), measured=True)
-                for side, w in sorted(self.wrist_cameras.items())}
+            out["wrist_camera"] = {}
+            for side, w in sorted(self.wrist_cameras.items()):
+                one = dict(w.to_json(), measured=True)
+                if side in self.wrist_mounts:
+                    one["mount"] = self.wrist_mounts[side].to_json()
+                out["wrist_camera"][side] = one
         if self.head_mount_delta is not None:
             out["head_mount_delta"] = self.head_mount_delta.to_json()
         return out
@@ -376,4 +495,5 @@ def with_profile(scene: Optional[Mapping[str, Any]],
 
 __all__ = ["HEAD_PARENT_LINK", "HandMeasurement", "HeadMountDelta",
            "NotACalibrationFile", "RobotProfile", "WRIST_MODELS",
-           "WristIntrinsics", "scene_robot_block", "with_profile"]
+           "WRIST_PARENT_LINKS", "WristIntrinsics", "WristMount",
+           "scene_robot_block", "with_profile"]

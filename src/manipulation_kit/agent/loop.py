@@ -559,7 +559,9 @@ class _Loop:
             self._refuse(record, call_id, primitive, error)
             return
         seen = model.project_object(item, world.frames)
-        record.look = dict(camera=camera, object=name, **seen.to_json())
+        record.look = dict(camera=camera, object=name,
+                           mount=getattr(model, "mount", None),
+                           **seen.to_json())
         arm = world.arm(side)
         if seen.visible:
             self.state.aimed(side, name)
