@@ -62,8 +62,40 @@ print(trace.stop, trace.summary())
   never as a sighting) and the hand is moved by the same step with the kit's `Nudge` (coarse 30 mm, then 10
   mm once the answer changes sign), within `max_nudges_per_target`. `on`
   counts as the look and the grasp runs in the same turn; anything else ends
-  the servo with a named outcome (`unsure` below `min_confidence`, `nudge_budget`,
-  `not_visible`, `unmappable_direction`) that the model reads and chooses on.
+  the servo with a named outcome (`unsure`, `nudge_budget`, `servo_budget`,
+  `stale_frame`, `not_visible`, `unmappable_direction`) that the model reads
+  and chooses on.
+  **The servo is an inner loop.** Photo -> mark -> judge -> step or stop
+  runs at the photo/judge rate inside the one agent turn, until `on`, a cap
+  (`budget_s`, default 6 s; `max_iterations`, 12; the policy's nudge
+  budget) or evidence that stays flat. One photo's shrug does not end it:
+  the judge's distributions over the photos since the last move (`window`,
+  default 3) are averaged, and `decide()` steps when the accumulated
+  direction leads both `on` and its opposite by `margin` (0.10), stops when
+  `on` leads the runner-up by it, takes another photo otherwise, and ends
+  `unsure` ("no blind step") only when `window` photos stayed flat. After a
+  step the next photo must be written after the move ended (and `settle_s`,
+  0.15 s, after it); three older files in a row end the loop `stale_frame`.
+  Every photo is logged as it happens (`log`, default the
+  `manipulation_kit.agent.servo` logger; `jev_servo.py` prints it):
+  `t=+0.83s iter 3 side=right judge below 0.41 (on 0.30, ...) acc[2] below
+  0.38 -> step +10mm along image-below -> base (dx,dy)=(...) m [frame ..s
+  judge ..s step ..s]`, and one exit line with the totals and the seconds
+  per iteration. The trace keeps every iteration (`record.servo.steps[]`:
+  `iteration`, `t_s`, `accumulated`, `frames`, `decision`, `frame_age_s`,
+  `timing_s`) and `elapsed_s` / `iterations`.
+  **What the judge is asked** is `manipulation_kit.agent.judge`: the
+  formulation (`choice`, the six-way question; `score`, two ordinal axis
+  scores and a yes/no "inside", decided by per-question thresholds;
+  `grasp`, `score` plus two grasp-geometry questions) and the VIEWS of the
+  photo each answer is averaged over (upright, flipped top-bottom, flipped
+  left-right, rotated 180 deg; the answers are mapped back to the upright
+  photo). The default is `choice` over all four views: asked about the
+  upright d1-2 wrist photo alone, the classifier does not read up/down (a
+  "below" bias), and on the three photos of the 2026-09-24 live run its
+  accumulated answer steps AWAY from the roll. `tools/jev_questions_lab.py`
+  measures formulations offline on real photos with boxes drawn at known
+  offsets, records every answer and recomputes its tables from the record.
   Every judgement and its distribution is in the trace (`record.servo`). The
   kit's own stand-in is `geometry_judge(truth)`, which answers from where a
   known point projects; `examples/agent/jev_servo.py` plugs in Jev-Omni, a

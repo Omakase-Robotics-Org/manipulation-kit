@@ -18,6 +18,43 @@ in one typed robot profile. **It is a clean break**: nothing below is kept
 alive beside its replacement except the one transitional `RawState`
 accessor set, removed in 0.17.
 
+### The servo as an inner loop, and what its judge is asked (PR #25 follow-up)
+
+- **BREAKING `Servo(min_confidence=)` is gone.** One photo's confidence no
+  longer gates anything. `Servo` runs photo -> judge -> step or stop as a
+  closed loop inside the turn and accumulates the judge's distributions
+  over the photos since the last move: `window` (3), `margin` (0.10),
+  `budget_s` (6 s), `max_iterations` (12), `settle_s` (0.15 s), `log`,
+  `clock`, `sleep`. New outcomes `servo_budget` and `stale_frame`; `unsure`
+  now means the evidence stayed flat over `window` photos. New
+  `accumulate()`, `decide()`, `iteration_line()`, `exit_line()`. Every
+  iteration is logged live and recorded (`ServoStep.iteration`, `t_s`,
+  `accumulated`, `frames`, `decision`, `frame_age_s`, `timing_s`;
+  `ServoReport.elapsed_s`, `iterations`). d1-2, 2026-09-24: the servo ran
+  once per turn, the judge said "below" at 0.36 / 0.28 under the 0.50 gate,
+  the hand never moved and the grasp was refused.
+- **NEW `manipulation_kit.agent.judge`** — formulations (`choice`, `score`,
+  `grasp`), mirrored views with the answers mapped back, per-question
+  thresholds for `score` (`SCORE_STEP` 0.7, `SCORE_ON` 0.6), and
+  `AskingJudge`, the `judge(look)` seam over a transport. `jev_judge.py`'s
+  `JevJudge` / `RemoteJudge` are transports on it and take
+  `formulation=` / `views=` (default: `choice` over all four views);
+  `jev_servo.py` has `--judge-questions`, `--judge-views`,
+  `--servo-budget-s`, `--verbose-servo`. `jev_judge_server.py` answers
+  `POST /judge_batch` (several questions about one photo in one request)
+  and says so in `/health`.
+- **FIX `locate(..., size=)` on a camera that looks back at the object.**
+  `contact_to_centre(image_up=)`: the silhouette's bottom is the footprint
+  edge furthest down the image, which for a wrist camera beyond the object
+  is its FAR edge; the centre is walked toward the camera there. d1-2,
+  2026-09-24: the right wrist camera at x = 0.488 m, a tape roll at
+  ~0.41 m, the model's pixel on the roll's bottom edge, declared 0.353 m —
+  55 mm short of the photo (0.408 m); the servo's box was drawn there and
+  the grasp closed on the roll's rim.
+- **NEW `tools/jev_questions_lab.py`**: the offline question-design lab
+  (real photos, boxes at known offsets, every answer recorded, tables
+  recomputed with `--report`).
+
 ### The look before a stroke, answered by a judge that chooses (System 1, PR #25)
 
 - **NEW `manipulation_kit.agent.servo`** — `Servo(frame, judge)`, passed to
