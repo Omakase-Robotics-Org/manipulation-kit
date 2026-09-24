@@ -8,7 +8,14 @@ Run this on a workstation and point ``jev_servo.py --judge-url`` at it::
 
 ``POST /judge`` takes ``{"state", "question", "options": [...],
 "image_jpeg_b64"}`` and answers ``{"probabilities": {option: p}, "ms"}``;
-``GET /health`` answers ``{"ok": true, "loaded": bool}``. The classifier is
+``POST /judge_batch`` takes ``{"state", "image_jpeg_b64", "items":
+[{"question", "options"}, ...]}`` — several questions about ONE photo — and
+answers ``{"answers": [{"probabilities", "ms"}, ...], "ms"}``: one upload and
+one decode for all of them. Jev-Omni has a single classification head and
+answers one question per forward pass, so the model time still grows with
+the number of questions; what the batch saves is the request, the upload and
+the queueing between them. ``GET /health`` answers ``{"ok": true, "loaded":
+bool, "batch": true}``. The classifier is
 loaded once, at start (``--lazy``: on the first request), and judgements are
 serialised: one GPU, one model. Measured on an RTX PRO 6000 (6000-us,
 2026-09-23, three marked mirror frames): 700 ms for the first judgement of a
@@ -53,34 +60,47 @@ def make_server(classifier: Any, host: str = "127.0.0.1", port: int = 8766
         def do_GET(self) -> None:  # noqa: N802
             if self.path != "/health":
                 return self._send(404, {"error": "GET /health or POST /judge"})
-            self._send(200, {"ok": True, "loaded": classifier.loaded})
+            self._send(200, {"ok": True, "loaded": classifier.loaded,
+                             "batch": True})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/judge":
-                return self._send(404, {"error": "POST /judge"})
+            if self.path not in ("/judge", "/judge_batch"):
+                return self._send(404, {"error": "POST /judge or /judge_batch"})
             size = int(self.headers.get("Content-Length") or 0)
             if not 0 < size <= MAX_BODY_BYTES:
                 return self._send(413, {"error": f"body of {size} bytes"})
             try:
                 ask = json.loads(self.rfile.read(size))
                 image = base64.b64decode(ask["image_jpeg_b64"])
-                options = [str(o) for o in ask["options"]]
-                if not 2 <= len(options) <= 256:
+                items = (ask["items"] if self.path == "/judge_batch"
+                         else [ask])
+                if not isinstance(items, list) or not 1 <= len(items) <= 64:
+                    raise ValueError("1-64 items")
+                items = [(str(item.get("question", "")),
+                          [str(o) for o in item["options"]]) for item in items]
+                if any(not 2 <= len(options) <= 256 for _q, options in items):
                     raise ValueError("2-256 options")
-            except (KeyError, TypeError, ValueError) as exc:
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
                 return self._send(400, {"error": f"bad request: {exc}"})
+            answers, started = [], time.time()
             with tempfile.NamedTemporaryFile(suffix=".jpg") as photo:
                 photo.write(image)
                 photo.flush()
-                started = time.time()
                 with lock:
-                    result = classifier.predict(
-                        state=str(ask.get("state", "")),
-                        question=str(ask.get("question", "")),
-                        options=options, media=photo.name, modality="image")
-            self._send(200, {"probabilities": {
-                str(k): float(v) for k, v in result["probabilities"].items()},
-                "ms": round((time.time() - started) * 1000.0)})
+                    for question, options in items:
+                        one = time.time()
+                        result = classifier.predict(
+                            state=str(ask.get("state", "")),
+                            question=question, options=options,
+                            media=photo.name, modality="image")
+                        answers.append({"probabilities": {
+                            str(k): float(v)
+                            for k, v in result["probabilities"].items()},
+                            "ms": round((time.time() - one) * 1000.0)})
+            ms = round((time.time() - started) * 1000.0)
+            if self.path == "/judge":
+                return self._send(200, {**answers[0], "ms": ms})
+            self._send(200, {"answers": answers, "ms": ms})
 
         def log_message(self, fmt: str, *args: Any) -> None:
             print(f"[jev_judge_server] {self.address_string()} {fmt % args}")

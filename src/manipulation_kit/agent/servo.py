@@ -36,6 +36,14 @@ alignment before the stroke; the model's own look does not replace it.
 is), ``handover`` closes at a posture reached inside its own plan, and
 ``approach`` is the move that brings the hand to the look — none is judged.
 
+THE LOOP (d1-2, 2026-09-24: once per turn, one photo, "below" at 0.36
+under a 0.50 gate, no step, the grasp refused): :class:`Servo` runs photo ->
+mark -> judge -> step or stop inside the turn, at the photo/judge rate,
+averaging the judge's distributions over the photos since the last move and
+acting on the accumulated lead (:func:`decide`), until ``on``, a cap or
+evidence that stays flat — one live log line per photo. What the judge is
+asked, and about which view of the photo, is :mod:`.judge`.
+
 Two seams, and the wheel owns everything between them::
 
     frame(side) -> Path | None      a FRESH photo from that hand's wrist camera
@@ -81,7 +89,9 @@ sense on a synthetic bar (clockwise for both tilts).
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (Any, Callable, Dict, List, Mapping, Optional, Sequence,
@@ -119,8 +129,24 @@ MIN_HORIZONTAL = 0.3
 #: changes sign on an axis. Both on the nudge grid.
 DEFAULT_STEPS_M: Tuple[float, ...] = (NUDGE_GRID_M[1], NUDGE_GRID_M[0])
 
-#: below this the judge is not believed: no blind nudge on a shrug
-DEFAULT_MIN_CONFIDENCE = 0.5
+#: how many consecutive judgements (photos at the same hand pose) are
+#: averaged before the servo acts: a shrug on one photo is not the end of
+#: the loop, a shrug that stays flat over this many is
+DEFAULT_WINDOW = 3
+
+#: the accumulated answer must lead by this much to be acted on: a direction
+#: over "on" to step, "on" over the runner-up to stop. Evidence, not a
+#: confidence gate on one photo (d1-2 2026-09-24: "below" at 0.31-0.36 on
+#: every live photo, and a 0.50 gate stopped the loop on the first one)
+DEFAULT_MARGIN = 0.10
+
+#: the loop's own caps, besides the operator policy's nudge budget
+DEFAULT_BUDGET_S = 6.0
+DEFAULT_MAX_ITERATIONS = 12
+
+#: after a correction, wait this long past the move's end before the next
+#: photo, and refuse a photo written before the move ended
+DEFAULT_SETTLE_S = 0.15
 
 #: how close is close enough: the radius of the circle drawn around the mark,
 #: one fine nudge step — inside it no correction the grid can make is smaller
@@ -140,6 +166,10 @@ NOT_VISIBLE = "not_visible"
 NO_FRAME = "no_frame"
 UNSURE = "unsure"
 BUDGET = "nudge_budget"
+#: the loop's wall-clock or iteration cap
+TIMEOUT = "servo_budget"
+#: the frame source kept giving photos written before the last move ended
+STALE = "stale_frame"
 UNMAPPABLE = "unmappable_direction"
 REFUSED = "nudge_refused"
 NOT_MOVED = "nudge_not_completed"
@@ -201,6 +231,18 @@ class ServoStep:
     plan: Optional[Dict[str, Any]] = None
     run: Optional[Dict[str, Any]] = None
     verdict: Optional[Dict[str, Any]] = None
+    #: the inner loop: which iteration, when (s since the loop began), the
+    #: distribution averaged over the photos since the last move and how
+    #: many they were, what was decided, and where the time went
+    iteration: int = 0
+    t_s: float = 0.0
+    accumulated: Optional[Dict[str, float]] = None
+    frames: int = 1
+    decision: str = ""
+    #: seconds between the end of the last move and the photo being written
+    #: (None: no move yet in this loop, or no photo)
+    frame_age_s: Optional[float] = None
+    timing_s: Optional[Dict[str, float]] = None
 
     def to_json(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -213,6 +255,9 @@ class ServoReport:
     outcome: str
     detail: str = ""
     steps: List[ServoStep] = field(default_factory=list)
+    #: the loop's wall-clock time and number of judged photos
+    elapsed_s: float = 0.0
+    iterations: int = 0
 
     @property
     def aligned(self) -> bool:
@@ -226,6 +271,8 @@ class ServoReport:
     def to_json(self) -> Dict[str, Any]:
         out = {"side": self.side, "object": self.object,
                "outcome": self.outcome, "detail": self.detail,
+               "elapsed_s": round(self.elapsed_s, 3),
+               "iterations": self.iterations,
                "steps": [s.to_json() for s in self.steps]}
         if self.skipped:
             out["skipped"] = "no wrist frame"
@@ -262,7 +309,7 @@ def servo_line(servo: Optional[Mapping[str, Any]]) -> str:
     looks = [s for s in servo.get("steps", []) if s.get("kind", "look") == "look"]
     said = ""
     if looks:
-        dist = looks[-1]["distribution"]
+        dist = looks[-1].get("accumulated") or looks[-1]["distribution"]
         ranked = sorted(dist.items(), key=lambda kv: -kv[1])
         said = (f"{ranked[0][0]} {ranked[0][1]:.2f} ("
                 + ", ".join(f"{c} {p:.2f}" for c, p in ranked[1:]) + ")")
@@ -359,24 +406,137 @@ def image_direction_in_base(camera: Any, choice: str) -> Optional[np.ndarray]:
     return horizontal / norm
 
 
+#: the displacement choices, and the one each contradicts
+_OPPOSITE = {"left": "right", "right": "left", "above": "below",
+             "below": "above"}
+
+#: the servo's log: one line per judged photo, and one when the loop ends
+LOG = logging.getLogger(__name__)
+
+
+def accumulate(window: Sequence[Mapping[str, float]]) -> Dict[str, float]:
+    """The mean of the distributions in ``window`` (photos at one pose)."""
+    out = {c: 0.0 for c in CHOICES}
+    for dist in window:
+        for c in CHOICES:
+            out[c] += float(dist.get(c, 0.0)) / len(window)
+    return out
+
+
+def decide(acc: Mapping[str, float], frames: int, *, window: int,
+           margin: float) -> Tuple[str, str]:
+    """What the accumulated evidence ``acc`` over ``frames`` photos says:
+
+    ``("on", why)``          "on" leads the runner-up by ``margin``
+    ``(direction, why)``     a direction leads "on" AND its opposite by
+                             ``margin``: step that way
+    ``("not_visible", why)`` "not in the photo" leads the runner-up by it
+    ``("more", why)``        not decisive yet, and fewer than ``window``
+                             photos: take another
+    ``("flat", why)``        not decisive after ``window`` photos: no blind
+                             step
+
+    Confidence routes, it does not gate: a 0.31 answer that holds its lead
+    over three photos is evidence, a 0.60 answer contradicted by its
+    opposite is not."""
+    ranked = sorted(acc.items(), key=lambda kv: -kv[1])
+    top, p_top = ranked[0]
+    runner = ranked[1][1]
+    if top in ("on", "not_visible") and p_top - runner >= margin:
+        return top, f"{top} leads by {p_top - runner:.2f}"
+    if top in _OPPOSITE:
+        lead_on = p_top - acc["on"]
+        lead_back = p_top - acc[_OPPOSITE[top]]
+        if lead_on >= margin and lead_back >= margin:
+            return top, (f"{top} leads on by {lead_on:.2f}, "
+                         f"{_OPPOSITE[top]} by {lead_back:.2f}")
+    why = (f"{top} {p_top:.2f} leads by {p_top - runner:.2f} < {margin:.2f}"
+           f" over {frames} photo{'s' if frames != 1 else ''}")
+    return ("flat" if frames >= window else "more"), why
+
+
+def _ranked(dist: Mapping[str, float]) -> str:
+    ranked = sorted(dist.items(), key=lambda kv: -kv[1])
+    return (f"{ranked[0][0]} {ranked[0][1]:.2f} ("
+            + ", ".join(f"{c} {p:.2f}" for c, p in ranked[1:]) + ")")
+
+
+def iteration_line(step: ServoStep, *, side: str) -> str:
+    """The live log line of one judged photo::
+
+        t=+0.83s iter 3 side=right judge below 0.41 (on 0.30, ...) acc[2]
+        below 0.38 -> step +10mm along image-below -> base (dx,dy)=(+0.000,
+        -0.010) m [frame 0.21s judge 0.17s step 0.44s]
+    """
+    acc = step.accumulated or step.distribution
+    head = (f"t=+{step.t_s:.2f}s iter {step.iteration} side={side} judge "
+            f"{_ranked(step.distribution)}")
+    if step.frames > 1:
+        top = max(acc, key=acc.get)
+        head += f" acc[{step.frames}] {top} {acc[top]:.2f}"
+    if step.step_m is not None:
+        size = math.hypot(*step.step_m) * 1000.0
+        head += (f" -> step {size:+.0f}mm along image-{step.choice} -> base "
+                 f"(dx,dy)=({step.step_m[0]:+.3f},{step.step_m[1]:+.3f}) m")
+    elif step.decision:
+        head += f" -> {step.decision}"
+    if step.frame_age_s is not None:
+        head += f" (photo {step.frame_age_s:.2f}s after the move)"
+    if step.timing_s:
+        head += " [" + " ".join(f"{k} {v:.2f}s" for k, v in
+                                step.timing_s.items()) + "]"
+    return head
+
+
+def exit_line(report: ServoReport) -> str:
+    """The loop's last log line: outcome, why, and the totals."""
+    moved = sum(1 for s in report.steps if s.step_m is not None)
+    per = report.elapsed_s / report.iterations if report.iterations else 0.0
+    return (f"t=+{report.elapsed_s:.2f}s servo {report.side} "
+            f"{report.object!r}: {report.outcome} — {report.detail} "
+            f"({report.iterations} photo{'s' if report.iterations != 1 else ''}"
+            f", {moved} step{'s' if moved != 1 else ''}, {per:.2f} s/iteration)")
+
+
 class Servo:
-    """Align one hand on one object, by repeated judgement. Built once per
-    run; :meth:`align` is called by the loop in place of the wrist-look text
-    whenever a stroke needs a look."""
+    """Align one hand on one object: a closed loop at the photo/judge rate.
+    Built once per run; :meth:`align` is called by the loop before every
+    stroke of :data:`SERVO_VERBS`.
+
+    Each iteration: a FRESH photo (written after the last move ended, and
+    ``settle_s`` after it), marked; the judge's distribution; the mean over
+    the photos since the last move (``window`` of them at most); then
+    :func:`decide` — step on the nudge grid (coarse, then fine once an axis
+    overshoots), stop ``on``, or take another photo. The loop ends on ``on``,
+    "not visible", evidence that stays flat over ``window`` photos, the
+    operator policy's nudge budget, ``max_iterations`` photos or
+    ``budget_s`` seconds. One log line per photo (``log``, default the
+    ``manipulation_kit.agent.servo`` logger at INFO) and one at the end."""
 
     def __init__(self, frame: Frame, judge: Judge, *,
                  steps_m: Sequence[float] = DEFAULT_STEPS_M,
-                 min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+                 window: int = DEFAULT_WINDOW,
+                 margin: float = DEFAULT_MARGIN,
+                 budget_s: float = DEFAULT_BUDGET_S,
+                 max_iterations: int = DEFAULT_MAX_ITERATIONS,
+                 settle_s: float = DEFAULT_SETTLE_S,
                  tolerance_m: float = DEFAULT_TOLERANCE_M,
                  out_dir: Optional[Path] = None,
                  observe_only: bool = False, refine: bool = False,
-                 refine_m: float = DEFAULT_REFINE_M):
+                 refine_m: float = DEFAULT_REFINE_M,
+                 log: Optional[Callable[[str], None]] = None,
+                 clock: Callable[[], float] = time.time,
+                 sleep: Callable[[float], None] = time.sleep):
         if not steps_m or any(not 0.0 < float(s) <= max(NUDGE_GRID_M)
                               for s in steps_m):
             raise ValueError(f"steps_m must be nudge-grid steps, got "
                              f"{list(steps_m)!r}")
-        if not 0.0 <= float(min_confidence) <= 1.0:
-            raise ValueError("min_confidence is a probability")
+        if int(window) < 1 or int(max_iterations) < 1:
+            raise ValueError("window and max_iterations are at least 1")
+        if not 0.0 <= float(margin) <= 1.0:
+            raise ValueError("margin is a difference of probabilities")
+        if not float(budget_s) > 0.0 or float(settle_s) < 0.0:
+            raise ValueError("budget_s is positive, settle_s not negative")
         if not 0.0 < float(tolerance_m) <= max(NUDGE_GRID_M):
             raise ValueError("tolerance_m is a small positive distance")
         if not 0.0 < float(refine_m) <= float(tolerance_m):
@@ -386,11 +546,15 @@ class Servo:
         #: whether the judge needs the photo (:func:`photoless` says no)
         self.reads_photo = bool(getattr(judge, "reads_photo", True))
         self.steps_m = tuple(float(s) for s in steps_m)
-        self.min_confidence = float(min_confidence)
+        self.window, self.margin = int(window), float(margin)
+        self.budget_s, self.max_iterations = float(budget_s), int(max_iterations)
+        self.settle_s = float(settle_s)
         self.tolerance_m = float(tolerance_m)
         self.out_dir = Path(out_dir) if out_dir is not None else None
         self.observe_only, self.refine = bool(observe_only), bool(refine)
         self.refine_m = float(refine_m)
+        self.log = log if log is not None else LOG.info
+        self.clock, self.sleep = clock, sleep
         self._n = 0
         #: the turn and directory of the current :meth:`align` (the marked
         #: photos are named ``turn{N}_servo_{side}[ _k].png`` beside the trace)
@@ -481,76 +645,158 @@ class Servo:
         directory)."""
         self._turn, self._in_turn = turn, 0
         self._where = None if out_dir is None else Path(out_dir)
+        started = self.clock()
+        report = ServoReport(side=side, object=name, outcome=UNSURE)
         try:
-            return self._align(robot=robot, policy=policy, state=state,
-                               side=side, name=name, settings=settings,
-                               run_plan=run_plan)
+            self._align(report, started, robot=robot, policy=policy,
+                        state=state, side=side, name=name, settings=settings,
+                        run_plan=run_plan)
         finally:
             self._turn, self._where = None, None
+            report.elapsed_s = self.clock() - started
+            report.iterations = sum(1 for s in report.steps if s.kind == "look")
+        if not report.skipped:
+            self.log(exit_line(report))
+        return report
 
-    def _align(self, *, robot, policy, state, side, name, settings,
-               run_plan) -> ServoReport:
-        report = ServoReport(side=side, object=name, outcome=UNSURE)
+    def _grab(self, robot, world, side, name, moved_at):
+        """One look whose photo was written after ``moved_at`` (the end of
+        the last move): up to three grabs. ``(look, why, age_s, grab_s)``."""
+        started, age, look, why = self.clock(), None, None, ""
+        for _attempt in range(3):
+            look, why = self.look(robot, world, side, name)
+            if look is None or look.photo is None or moved_at is None:
+                break
+            try:
+                age = Path(look.photo).stat().st_mtime - moved_at
+            except OSError:
+                age = None
+                break
+            if age >= 0.0:
+                break
+            look, why = None, STALE
+        return look, why, age, self.clock() - started
+
+    def _align(self, report: ServoReport, started: float, *, robot, policy,
+               state, side, name, settings, run_plan) -> None:
         signs: Dict[str, float] = {}       # axis -> sign of the last step
         fine = False
+        window: List[Dict[str, float]] = []
+        moved_at: Optional[float] = None
+        iteration = 0
         while True:
+            if iteration >= self.max_iterations or (
+                    iteration and self.clock() - started >= self.budget_s):
+                report.outcome = TIMEOUT
+                report.detail = (f"{iteration} photos in "
+                                 f"{self.clock() - started:.1f} s without an "
+                                 f"answer (caps: {self.max_iterations} photos,"
+                                 f" {self.budget_s:.1f} s)")
+                return
             world = robot.world()
-            look, why = self.look(robot, world, side, name)
+            look, why, age, grab_s = self._grab(robot, world, side, name,
+                                                moved_at)
             if look is None and why == NO_FRAME:
                 report.outcome = NO_FRAME
                 report.detail = (f"no {side}_wrist photo from the frame source "
                                  f"(no snapshotter, or the grab gave none), and "
                                  f"this judge reads the photo")
-                return report
+                return
+            if look is None and why == STALE:
+                report.outcome = STALE
+                report.detail = (f"three {side}_wrist photos in a row were "
+                                 f"written before the last move ended")
+                return
             if look is None:
                 report.outcome, report.detail = NOT_VISIBLE, why
-                return report
+                return
+            iteration += 1
+            judged = self.clock()
             dist, choice, confidence = self.ask(look)
+            judge_s = self.clock() - judged
+            window = (window + [dist])[-self.window:]
+            acc = accumulate(window)
+            verdict, why = decide(acc, len(window), window=self.window,
+                                  margin=self.margin)
             step = ServoStep(look=look.to_json(), distribution=dist,
-                             choice=choice, confidence=confidence)
+                             choice=choice, confidence=confidence,
+                             iteration=iteration,
+                             t_s=round(judged - started, 3),
+                             accumulated=acc, frames=len(window),
+                             frame_age_s=None if age is None else round(age, 3),
+                             timing_s={"frame": round(grab_s, 3),
+                                       "judge": round(judge_s, 3)})
             report.steps.append(step)
-            if self.observe_only:
+            if self.observe_only and verdict not in ("more",):
+                step.decision = f"recorded only ({why})"
+                self.log(iteration_line(step, side=side))
                 report.outcome = OBSERVED
-                report.detail = f"{choice!r} at {confidence:.2f}"
-                return report
-            if confidence < self.min_confidence:
-                report.outcome = UNSURE
-                report.detail = (f"the judge's best answer {choice!r} at "
-                                 f"{confidence:.2f} is below "
-                                 f"{self.min_confidence:.2f}; no blind step")
-                return report
-            if choice == "on":
+                top = max(acc, key=acc.get)
+                report.detail = (f"{top!r} at {acc[top]:.2f} over "
+                                 f"{len(window)} photo"
+                                 f"{'s' if len(window) != 1 else ''}")
+                return
+            if verdict in ("more", "flat"):
+                step.decision = ("another photo" if verdict == "more"
+                                 else "no blind step")
+                self.log(iteration_line(step, side=side) + f" ({why})")
+                if verdict == "flat":
+                    report.outcome = UNSURE
+                    report.detail = (f"the evidence stayed flat over "
+                                     f"{len(window)} photos ({why}); no "
+                                     f"blind step")
+                    return
+                continue
+            if verdict == "on":
+                step.decision = "on the mark"
+                self.log(iteration_line(step, side=side))
                 state.aimed(side, name)
                 state.look(side, name, world.arm(side).joints)
                 report.outcome = ALIGNED
-                report.detail = f"on the mark at {confidence:.2f}"
+                report.detail = (f"on the mark at {acc['on']:.2f} over "
+                                 f"{len(window)} photo"
+                                 f"{'s' if len(window) != 1 else ''}")
                 if self.refine:
                     report.detail += self._refine(robot, world, look, name, report)
-                return report
-            if choice == "not_visible":
+                return
+            if verdict == "not_visible":
+                step.decision = "not visible"
+                self.log(iteration_line(step, side=side))
                 report.outcome = NOT_VISIBLE
                 report.detail = (f"the judge does not see {name!r} in the "
-                                 f"{side}_wrist photo ({confidence:.2f})")
-                return report
-            direction = image_direction_in_base(look.camera, choice)
+                                 f"{side}_wrist photo ({acc['not_visible']:.2f}"
+                                 f" over {len(window)} photos)")
+                return
+            direction = image_direction_in_base(look.camera, verdict)
             if direction is None:
+                step.decision = "unmappable"
+                self.log(iteration_line(step, side=side))
                 report.outcome = UNMAPPABLE
-                report.detail = (f"image {choice!r} is nearly vertical in "
+                report.detail = (f"image {verdict!r} is nearly vertical in "
                                  f"base from this posture; no table-plane "
                                  f"step follows it")
-                return report
-            axis = "u" if choice in ("left", "right") else "v"
-            sign = -1.0 if choice in ("left", "above") else 1.0
+                return
+            axis = "u" if verdict in ("left", "right") else "v"
+            sign = -1.0 if verdict in ("left", "above") else 1.0
             if axis in signs and signs[axis] != sign:
                 fine = True             # overshot: switch to the fine step
             signs[axis] = sign
             size = self.steps_m[-1] if fine else self.steps_m[0]
-            delta = direction * size
+            step.choice = verdict       # what the step follows (accumulated)
+            moving = self.clock()
             done = self._correct(robot, world, policy, state, side, name,
-                                 delta, settings, run_plan, step)
+                                 direction * size, settings, run_plan, step)
+            step.timing_s["step"] = round(self.clock() - moving, 3)
+            step.decision = (f"step {verdict}" if step.step_m is not None
+                             else "no step")
+            self.log(iteration_line(step, side=side))
             if done is not None:
                 report.outcome, report.detail = done
-                return report
+                return
+            window = []                 # a new pose: the old photos are gone
+            moved_at = self.clock()
+            if self.reads_photo and self.settle_s > 0.0:
+                self.sleep(self.settle_s)
 
     def _refine(self, robot, world, look: ServoLook, name: str,
                 report: ServoReport) -> str:
@@ -567,7 +813,7 @@ class Servo:
         s = self.refine_m
         offsets = [(0.0, 0.0)] + [(a, b) for a in (0.0, s, -s)
                                   for b in (0.0, s, -s) if (a, b) != (0.0, 0.0)]
-        best = None
+        best, unshifted = None, 0.0
         for a, b in offsets:
             if b and len(axes) < 2:
                 continue
@@ -584,12 +830,15 @@ class Servo:
                 look=seen.to_json(), distribution=dist, choice=choice,
                 confidence=confidence, kind="refine",
                 shift_m=(float(shift[0]), float(shift[1]))))
+            if not np.any(shift):
+                unshifted = dist["on"]
             if best is None or dist["on"] > best[0]:
                 best = (dist["on"], moved, shift)
-        if best is None or best[0] < self.min_confidence:
+        if best is None or best[0] < self.margin:
             return f"; refinement found no mark within {s * 1000:.0f} mm"
-        if not np.any(best[2]):
-            return f"; refined: the unshifted mark is best (on {best[0]:.2f})"
+        if not np.any(best[2]) or best[0] - unshifted < self.margin:
+            return (f"; refined: the unshifted mark is best (on "
+                    f"{unshifted:.2f}, best shift {best[0]:.2f})")
         robot.declare([dataclasses.replace(
             best[1], provenance="judged", confidence=float(best[0]),
             stamp=float(world.stamp))])
@@ -684,8 +933,11 @@ def geometry_judge(truth: Mapping[str, Sequence[float]], *,
     return photoless(judge)
 
 
-__all__ = ["ALIGNED", "BUDGET", "CHOICES", "DEFAULT_MIN_CONFIDENCE",
-           "DEFAULT_REFINE_M", "DEFAULT_STEPS_M", "DEFAULT_TOLERANCE_M",
+__all__ = ["ALIGNED", "BUDGET", "CHOICES", "DEFAULT_BUDGET_S",
+           "DEFAULT_MARGIN", "DEFAULT_MAX_ITERATIONS", "DEFAULT_REFINE_M",
+           "DEFAULT_SETTLE_S", "DEFAULT_STEPS_M", "DEFAULT_TOLERANCE_M",
+           "DEFAULT_WINDOW", "STALE", "TIMEOUT", "accumulate", "decide",
+           "exit_line", "iteration_line",
            "Frame", "Judge", "NOT_VISIBLE", "NO_FRAME", "OBSERVED",
            "SERVO_VERBS", "Servo", "ServoLook", "ServoReport", "ServoStep",
            "UNSURE", "geometry_judge", "image_direction_in_base", "mark",
