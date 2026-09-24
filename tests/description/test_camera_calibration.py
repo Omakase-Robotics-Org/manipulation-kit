@@ -148,16 +148,34 @@ def test_an_old_robot_profile_gives_the_migration():
         RobotProfile.load(D1_2_V1)
 
 
-def test_a_measured_wrist_mount_is_refused_rather_than_ignored(tmp_path):
+def test_the_d1_2_wrist_mounts_are_read(tmp_path):
+    """The installed file's wrist mounts (seiryu-calib, gate WARN on the
+    informative pad shift) load, are warned about, and reach the profile —
+    in the side's own camera plate (logical left = the _R tree)."""
+    with pytest.warns(UserWarning, match="'left_wrist' mount gate is WARN"):
+        profile = RobotProfile.load(D1_2)
+    assert set(profile.wrist_mounts) == {"left", "right"}
+    left = profile.wrist_mounts["left"]
+    assert left.parent_link == "gripper_R_camera_plate"
+    assert profile.wrist_mounts["right"].parent_link == "gripper_L_camera_plate"
+    assert left.gate == "WARN"
+    assert [round(v * 1000, 1) for v in left.xyz_m] == [4.8, 82.3, 30.3]
+
+
+def test_a_wrist_mount_in_the_wrong_plate_is_refused(tmp_path):
     doc = _doc()
-    doc["cameras"]["left_wrist"]["mount"] = copy.deepcopy(
-        doc["cameras"]["head"]["mount"])
-    doc["cameras"]["left_wrist"]["mount"]["parent_link"] = "left_camera_plate"
+    doc["cameras"]["left_wrist"]["mount"]["parent_link"] = "gripper_L_camera_plate"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         cc.load(_write(tmp_path, doc))           # the FILE is valid...
-        with pytest.raises(ValueError, match="does not apply one to a wrist"):
-            RobotProfile.load(_write(tmp_path, doc))   # ...the kit refuses
+        with pytest.raises(ValueError, match="gripper_R_camera_plate"):
+            RobotProfile.load(_write(tmp_path, doc))   # ...the side is not
+
+
+def test_a_failed_wrist_mount_is_refused(tmp_path):
+    path = _write(tmp_path, _fail(_doc(), "right_wrist", "mount"))
+    with pytest.raises(cc.FailedCalibrationGate, match="'right_wrist' mount"):
+        RobotProfile.load(path)
 
 
 def test_a_distorted_brown_conrady_wrist_is_refused(tmp_path):

@@ -1,7 +1,7 @@
 {
   "schema": "omakase.camera_calibration/2",
   "robot": "d1-2",
-  "updated": "2026-09-23T02:00:00Z",
+  "updated": "2026-09-24T01:45:48.18168993Z",
   "cameras": {
     "head": {
       "device": {
@@ -53,23 +53,22 @@
           "date": "2026-09-10",
           "session": null,
           "board": null,
-          "migrated_from": "cameras_d1-2.head.interior.json provenance.intrinsics",
-          "notes": []
+          "migrated_from": "cameras_d1-2.head.interior.json provenance.intrinsics"
         }
       },
       "mount": {
         "parent_link": "head_link",
         "T_parent_camera": {
           "xyz_m": [
-            0.1328782463976737,
-            -0.10699968956352766,
-            -0.004431366924609333
+            0.08409209268733285,
+            -0.06979908646485186,
+            -0.007126581003648717
           ],
           "quat_xyzw": [
-            -0.06661988887184894,
-            0.7186028516363119,
-            0.07725344591434152,
-            0.6878979845305719
+            -0.0506044208759871,
+            0.7165190183154144,
+            0.0643875010762759,
+            0.692743775638059
           ]
         },
         "nominal": {
@@ -77,45 +76,85 @@
             "xyz_m": [
               0.0966561,
               -0.0732024,
-              -0.028299499999999995
+              -0.0282995
             ],
             "quat_xyzw": [
-              -0.106064274,
-              0.699105583,
-              0.106063884,
-              0.699108151
+              -0.0922959892171091,
+              0.7010586901087433,
+              0.09229565019563314,
+              0.7010561149811145
             ]
           },
-          "urdf": "manipulation_kit d1_wholebody_gripper.urdf (17.25 deg head tilt)",
-          "kit_version": "0.15.x"
+          "urdf": "manipulation_kit description/d1/d1_wholebody_gripper.urdf (vendored in seiryu-calib)",
+          "kit_version": "manipulation-kit 00b1798 (2026-09-22)"
         },
         "gate": {
-          "verdict": "WARN",
+          "verdict": "PASS",
           "checks": [
             {
               "name": "rms_px",
-              "value": 3.892,
+              "value": 0.42529792715120096,
               "warn": 2.0,
               "fail": 4.0,
               "direction": "below",
-              "verdict": "WARN",
-              "detail": "interior-row fit, max 9.55 px"
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "max_px",
+              "value": 1.5125129256196277,
+              "warn": null,
+              "fail": 5.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "sessions_or_poses",
+              "value": null,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "2 session(s), 20 pose(s): need ≥ 2 sessions (both arms) or ≥ 8 poses"
+            },
+            {
+              "name": "cross_check_rms_px",
+              "value": 0.631782086291139,
+              "warn": null,
+              "fail": 3.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": "worst left-out session: its corners under the mount solved on the other session(s), only its board-on-gripper re-fitted"
+            },
+            {
+              "name": "neck_states",
+              "value": 1.0,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "distinct neck/lift states over the frames; with one, the mount is exact at that gaze and elsewhere as good as the neck model. Mount 1σ [0.22, 0.32, 0.15] mm"
             }
           ],
-          "reasons": [
-            "RMS 3.89 px is in the 2-4 px WARN band (9/17 three-band gate)"
-          ],
+          "reasons": [],
           "override": null
         },
         "provenance": {
-          "tool": "d1-inference head_aruco (wagon + neck sweep)",
-          "date": "2026-09-10",
-          "session": "20260911-054337 + 20260911-055008",
-          "board": "wagon top plate DICT_5X5_50",
-          "rms_px": 3.892,
-          "migrated_from": "cameras_d1-2.head.interior.json",
+          "tool": "seiryu-calib head-correct 0.1.0",
+          "date": "2026-09-24T01:45:30.762478017Z",
+          "session": "/home/doraemon/OmakaseCalib/arm-check/d1-2_20260924-011548, /home/doraemon/OmakaseCalib/arm-check/d1-2_20260924-012637",
+          "board": "charuco-7x5-a4",
+          "square_mm_measured": 35.0,
+          "views": 60,
+          "rms_px": 0.4253,
           "notes": [
-            "d1-inference head_aruco interior-row fit (pitch > -0.62, 32 poses, sessions 20260911-054337 + 055008), RMS 3.89 px / max 9.55 px, adopted for d1-2 2026-09-10; the delta of its head_link_to_camera against the nominal it was fitted from (manipulation_kit d1_wholebody_gripper.urdf, 17.25 deg head tilt), as recorded in d1-isaaclab assets/d1/cameras_d1-2.json provenance.head"
+            "robot-world hand-eye on 2 arm-check session(s) (board on the gripper, arm FK = the world reference): 60 frame(s) over 20 pose(s), 1 neck/lift state(s); max 1.51 px; mount 1σ [0.22, 0.32, 0.15] mm, [0.027, 0.018, 0.015] deg; initialised from the installed mount (seiryu-calib 0.1.0, 2026-09-24T00:51:15.125819064Z)",
+            "d1-2_20260924-011548 arm a (left_wrist): 10 pose(s), 0.38 px; arm-check world offset through the installed mount [-6.6, +22.4, -6.4] mm / 2.87 deg, through this one [+0.6, -1.3, +1.1] mm / 0.33 deg (rigid 0.38 px)",
+            "d1-2_20260924-012637 arm b (right_wrist): 10 pose(s), 0.47 px; arm-check world offset through the installed mount [+7.0, +22.2, -5.7] mm / 2.91 deg, through this one [-2.6, -0.1, +0.9] mm / 0.54 deg (rigid 0.47 px)",
+            "cross-check: d1-2_20260924-011548 left out → 0.63 px RMS / 1.39 px max under the other session(s)' mount (3.6 mm / 0.54 deg from the joint one)",
+            "cross-check: d1-2_20260924-012637 left out → 0.59 px RMS / 1.73 px max under the other session(s)' mount (3.0 mm / 0.33 deg from the joint one)",
+            "world = base_footprint; arm feedback_joints (deg) from GET /v1/arm/{side}/state, neck from GET /v1/neck/state, lift from GET /v1/slider/state; d1-firmwared OpenAPI 0.3.0 sha256 388bcd087a24"
           ]
         }
       }
@@ -127,7 +166,7 @@
         "by_path": null,
         "model": null,
         "asset_tag": null,
-        "seiryu_node": "left_hand"
+        "seiryu_node": "wrist_left"
       },
       "stream": {
         "width": 640,
@@ -184,12 +223,127 @@
           "marker_mm_measured": 26.0,
           "views": 48,
           "rms_px": 0.218,
-          "coverage": null,
-          "migrated_from": "wrist_left_intrinsics.json (schema_version 1)",
-          "notes": []
+          "migrated_from": "wrist_left_intrinsics.json (schema_version 1)"
         }
       },
-      "mount": null
+      "mount": {
+        "parent_link": "gripper_R_camera_plate",
+        "T_parent_camera": {
+          "xyz_m": [
+            0.00477453268134346,
+            0.08232761972327976,
+            0.030265861664874175
+          ],
+          "quat_xyzw": [
+            -0.004378190287252177,
+            0.12600172502293,
+            -0.9919982838676906,
+            -0.006618273537040036
+          ]
+        },
+        "nominal": {
+          "T_parent_camera": {
+            "xyz_m": [
+              0.0,
+              0.079236,
+              0.014543
+            ],
+            "quat_xyzw": [
+              1.8208905291361432e-6,
+              0.1305246748045215,
+              -0.9914450611349032,
+              -3.881503009089959e-6
+            ]
+          },
+          "urdf": "manipulation_kit description/d1/d1_wholebody_gripper.urdf (vendored in seiryu-calib)",
+          "kit_version": "manipulation-kit 00b1798 (2026-09-22)"
+        },
+        "gate": {
+          "verdict": "WARN",
+          "checks": [
+            {
+              "name": "rms_px",
+              "value": 1.2749802771998977,
+              "warn": 2.0,
+              "fail": 4.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "max_px",
+              "value": 2.8854899457643826,
+              "warn": null,
+              "fail": 5.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "spread_board_poses",
+              "value": 8.0,
+              "warn": null,
+              "fail": 8.0,
+              "direction": "above",
+              "verdict": "PASS",
+              "detail": "poses whose frame saw ≥ 16 corners in all four board quadrants (need ≥ 8)"
+            },
+            {
+              "name": "translation_sigma_mm",
+              "value": 0.845897593408438,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "1σ from the fit's covariance; excludes unmodelled neck error (measure it with `seiryu-calib neck-repeat`)"
+            },
+            {
+              "name": "stale_frames_dropped",
+              "value": 0.0,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "0 of 36 frame(s) disagreed with the last frame of their pose by > 2 px and were left out"
+            },
+            {
+              "name": "pads_in_image",
+              "value": null,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "both jaw pads project into the image through the solved mount"
+            },
+            {
+              "name": "pad_shift_from_nominal_px",
+              "value": 32.21245122410766,
+              "warn": 25.0,
+              "fail": null,
+              "direction": "below",
+              "verdict": "WARN",
+              "detail": "jaw pads, solved vs nominal mount (informative; > 25 px: look at the overlay before installing)"
+            }
+          ],
+          "reasons": [
+            "pad_shift_from_nominal_px Warn: jaw pads, solved vs nominal mount (informative; > 25 px: look at the overlay before installing)"
+          ],
+          "override": null
+        },
+        "provenance": {
+          "tool": "seiryu-calib 0.1.0",
+          "date": "2026-09-23T23:15:12.780932839Z",
+          "session": "/home/doraemon/OmakaseCalib/wrist/d1-2_20260923-231214",
+          "board": "charuco-7x5-a4",
+          "square_mm_measured": 35.0,
+          "views": 36,
+          "rms_px": 1.275,
+          "notes": [
+            "static table board + arm moved by hand (live mode): 36 frame(s) over 12 pose(s) (0 stale frame(s) of 36 left out), 8 with ≥ 16 corners in all four board quadrants; max 2.89 px; mount 1σ [0.5, 0.6, 0.4] mm, [0.08, 0.04, 0.06] deg; pads 32.2/28.9 px from the nominal (half-opening 0.032 m)",
+            "world = base_footprint; arm side a feedback_joints (deg) from GET /v1/arm/{side}/state, lift from GET /v1/slider/state; d1-firmwared OpenAPI 0.3.0 sha256 388bcd087a24"
+          ]
+        }
+      }
     },
     "right_wrist": {
       "device": {
@@ -198,7 +352,7 @@
         "by_path": null,
         "model": null,
         "asset_tag": null,
-        "seiryu_node": "right_hand"
+        "seiryu_node": "wrist_right"
       },
       "stream": {
         "width": 640,
@@ -206,7 +360,7 @@
       },
       "intrinsics": {
         "fx": 237.63819955960315,
-        "fy": 238.95176258931406,
+        "fy": 238.9517625893141,
         "cx": 328.37260250300966,
         "cy": 225.57549500574052,
         "distortion": {
@@ -255,12 +409,127 @@
           "marker_mm_measured": 26.0,
           "views": 37,
           "rms_px": 0.3922,
-          "coverage": null,
-          "migrated_from": "wrist_right_intrinsics.json (schema_version 1)",
-          "notes": []
+          "migrated_from": "wrist_right_intrinsics.json (schema_version 1)"
         }
       },
-      "mount": null
+      "mount": {
+        "parent_link": "gripper_L_camera_plate",
+        "T_parent_camera": {
+          "xyz_m": [
+            -0.004704222345219476,
+            0.07460971592847213,
+            0.03408917945469229
+          ],
+          "quat_xyzw": [
+            -0.007064051845065176,
+            0.12706170672175593,
+            -0.9918654089487334,
+            0.0029038573392152272
+          ]
+        },
+        "nominal": {
+          "T_parent_camera": {
+            "xyz_m": [
+              0.0,
+              0.079236,
+              0.014543
+            ],
+            "quat_xyzw": [
+              1.8208905291361432e-6,
+              0.1305246748045215,
+              -0.9914450611349032,
+              -3.881503009089959e-6
+            ]
+          },
+          "urdf": "manipulation_kit description/d1/d1_wholebody_gripper.urdf (vendored in seiryu-calib)",
+          "kit_version": "manipulation-kit 00b1798 (2026-09-22)"
+        },
+        "gate": {
+          "verdict": "WARN",
+          "checks": [
+            {
+              "name": "rms_px",
+              "value": 1.1639749214498625,
+              "warn": 2.0,
+              "fail": 4.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "max_px",
+              "value": 4.062313474185419,
+              "warn": null,
+              "fail": 5.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "spread_board_poses",
+              "value": 10.0,
+              "warn": null,
+              "fail": 8.0,
+              "direction": "above",
+              "verdict": "PASS",
+              "detail": "poses whose frame saw ≥ 16 corners in all four board quadrants (need ≥ 8)"
+            },
+            {
+              "name": "translation_sigma_mm",
+              "value": 1.110931700741906,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "1σ from the fit's covariance; excludes unmodelled neck error (measure it with `seiryu-calib neck-repeat`)"
+            },
+            {
+              "name": "stale_frames_dropped",
+              "value": 0.0,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "0 of 36 frame(s) disagreed with the last frame of their pose by > 2 px and were left out"
+            },
+            {
+              "name": "pads_in_image",
+              "value": null,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "both jaw pads project into the image through the solved mount"
+            },
+            {
+              "name": "pad_shift_from_nominal_px",
+              "value": 27.057082314077416,
+              "warn": 25.0,
+              "fail": null,
+              "direction": "below",
+              "verdict": "WARN",
+              "detail": "jaw pads, solved vs nominal mount (informative; > 25 px: look at the overlay before installing)"
+            }
+          ],
+          "reasons": [
+            "pad_shift_from_nominal_px Warn: jaw pads, solved vs nominal mount (informative; > 25 px: look at the overlay before installing)"
+          ],
+          "override": null
+        },
+        "provenance": {
+          "tool": "seiryu-calib 0.1.0",
+          "date": "2026-09-23T23:23:52.588677005Z",
+          "session": "/home/doraemon/OmakaseCalib/wrist/d1-2_20260923-232157",
+          "board": "charuco-7x5-a4",
+          "square_mm_measured": 35.0,
+          "views": 36,
+          "rms_px": 1.164,
+          "notes": [
+            "static table board + arm moved by hand (live mode): 36 frame(s) over 12 pose(s) (0 stale frame(s) of 36 left out), 10 with ≥ 16 corners in all four board quadrants; max 4.06 px; mount 1σ [0.6, 0.9, 0.3] mm, [0.12, 0.08, 0.03] deg; pads 24.7/27.1 px from the nominal (half-opening 0.016 m)",
+            "world = base_footprint; arm side b feedback_joints (deg) from GET /v1/arm/{side}/state, lift from GET /v1/slider/state; d1-firmwared OpenAPI 0.3.0 sha256 388bcd087a24"
+          ]
+        }
+      }
     }
   },
   "hand": {
@@ -268,6 +537,8 @@
     "provenance": {
       "tool": "d1-firmwared 0.3.0 open_rad",
       "date": "2026-09-22",
+      "session": null,
+      "board": null,
       "notes": [
         "d1-firmwared 0.3.0 open_rad 1.35 on d1-2 (2026-09-22) through the hand description's 44.8 mm/rad map"
       ]
