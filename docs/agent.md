@@ -35,10 +35,14 @@ print(trace.stop, trace.summary())
   (`model: fisheye`, `k1..k4`, pixels outside `valid_radius_px` not trusted).
   Without intrinsics the loop refuses to start (`look_unavailable`); a block
   marked `"measured": false` is used by the kinematic mirror only.
-  **First live run on a robot: `--no-look-before-stroke`.** The wrist
-  lens's EXTRINSIC is still the kit's nominal plate geometry, and the look
-  policy has not been exercised on hardware; own the blind grasp for the first
-  session and turn the look on once a wrist photo is seen to agree with the
+  The wrist lens's EXTRINSIC is the calibration file's MEASURED mount when
+  it has one (`cameras.<side>_wrist.mount`, seiryu-calib's plate -> optical
+  fit in `gripper_R_camera_plate` for the logical left arm,
+  `gripper_L_camera_plate` for the right), else the kit's nominal plate
+  geometry; the camera model and every `look` record say which
+  (`mount: measured | nominal`). **First live run on a robot without a
+  measured wrist mount: `--no-look-before-stroke`** — own the blind grasp
+  and turn the look on once a wrist photo is seen to agree with the
   projection.
 - `droop_margin_m` (`--droop-margin-m`): how far the real arm sags below the
   commanded pose, added to the fingertip floor of a descent and to every
@@ -77,9 +81,15 @@ driven-open gap.
 `RobotProfile.load(path)` builds the kit's view of it: the head mount becomes
 the `HeadMountDelta` on its recorded nominal (the head camera applies it and
 says `calibrated: true` only then), the wrist lenses become per-side
-`WristIntrinsics`, `hand` becomes `HandMeasurement`. A measured WRIST mount is
-refused (the kit still uses the nominal plate geometry, and would otherwise
-ignore it silently).
+`WristIntrinsics`, the wrist mounts become per-side `WristMount`s (the
+ABSOLUTE `plate -> optical` pose; `perception.WristCamera` composes it with
+the arm's FK in place of the nominal, and says `mount: "measured"`,
+`calibrated: true` only then), `hand` becomes `HandMeasurement`. A wrist
+mount expressed in any link but its side's camera plate is refused — the
+logical left arm is the URDF `_R` tree (`manipulation_kit.arms.sides`). On
+d1-2 (installed 2026-09-24) the measured wrist lenses sit 16-20 mm from the
+nominal, ~30 px of jaw-pad shift in the fisheye; the head mount is
+seiryu-calib `head-correct` (arm FK as the world reference, 0.43 px).
 
 Every layer has a gate. A layer whose gate is **FAIL is refused** unless the
 file records a `gate.override` with a reason, or the caller passes

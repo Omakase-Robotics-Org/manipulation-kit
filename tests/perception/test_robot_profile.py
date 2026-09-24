@@ -30,8 +30,12 @@ from manipulation_kit.perception.wrist import (fisheye_distort,
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "tests" / "data" / "robot_profile"
 D1_2_SCENE = ROOT / "examples" / "agent" / "scenes" / "d1-2_tape_cup.json"
-#: d1-2's calibration file, as the robot holds it
+#: d1-2's calibration file, as the robot holds it (installed 2026-09-24
+#: 01:47Z: seiryu-calib wrist mounts + head-correct head mount)
 D1_2 = ROOT / "tests" / "data" / "d1-2.camera_calibration.json"
+#: the same robot's file as first MIGRATED from the v1 profile (2026-09-23):
+#: the reference the v1 parity tests hold the reader to
+D1_2_MIGRATED = DATA / "d1-2.camera_calibration.migrated-20260923.json"
 #: the kit's old committed profile (manipulation_kit.robot_profile/1), kept
 #: as the reference the v2 file must reproduce
 D1_2_V1 = DATA / "d1-2.robot_profile-v1.json"
@@ -94,7 +98,7 @@ def test_the_profile_carries_the_wrist_calibration_files_numbers_verbatim():
     """The v2 file's wrist lenses are d1-calibrate-wrist's
     ``wrist_<side>_intrinsics.json`` numbers, bit for bit, and the old
     committed profile's."""
-    profile = RobotProfile.load(D1_2)
+    profile = RobotProfile.load(D1_2_MIGRATED)
     v1 = json.loads(D1_2_V1.read_text(encoding="utf-8"))
     assert set(profile.wrist_cameras) == {"left", "right"}
     for side in ("left", "right"):
@@ -111,6 +115,14 @@ def test_the_profile_carries_the_wrist_calibration_files_numbers_verbatim():
             assert wrist.rms_px == ref["rms_px"]
     assert profile.name == "d1-2"
     assert profile.hand.open_gap_m == v1["hand"]["open_gap_m"] == 0.0605
+    # the installed file's lenses are the same fit (seiryu re-serialised
+    # them: the last bit of one focal length moved)
+    installed = RobotProfile.load(D1_2)
+    for side in ("left", "right"):
+        a, b = installed.wrist_cameras[side], profile.wrist_cameras[side]
+        assert np.allclose([a.fx, a.fy, a.cx, a.cy], [b.fx, b.fy, b.cx, b.cy],
+                           rtol=0, atol=1e-9)
+        assert a.k == b.k and a.valid_radius_px == b.valid_radius_px
 
 
 def test_per_robot_values_are_not_the_kits():
@@ -132,9 +144,17 @@ def test_the_head_mount_round_trips_to_the_files_absolute_pose():
     """fixture -> HeadMountDelta -> head_link_to_optical == the file's
     absolute T_parent_camera, and == what the old delta + nominal produced."""
     from manipulation_kit.description.robot_profile import HeadMountDelta
-    doc = json.loads(D1_2.read_text(encoding="utf-8"))
+    for path in (D1_2, D1_2_MIGRATED):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        absolute = doc["cameras"]["head"]["mount"]["T_parent_camera"]
+        p, r = RobotProfile.load(path).head_mount_delta.head_link_to_optical()
+        assert np.allclose(p, absolute["xyz_m"], atol=1e-9)
+        q = r.as_quat()
+        q = q if np.dot(q, absolute["quat_xyzw"]) >= 0 else -q
+        assert np.allclose(q, absolute["quat_xyzw"], atol=1e-9)
+    doc = json.loads(D1_2_MIGRATED.read_text(encoding="utf-8"))
     absolute = doc["cameras"]["head"]["mount"]["T_parent_camera"]
-    mount = RobotProfile.load(D1_2).head_mount_delta
+    mount = RobotProfile.load(D1_2_MIGRATED).head_mount_delta
     p, r = mount.head_link_to_optical()
     assert np.allclose(p, absolute["xyz_m"], atol=1e-9)
     q = r.as_quat()
@@ -157,7 +177,7 @@ def test_the_d1_2_head_mount_is_the_fitted_pose_whatever_the_nominal_is():
     """The delta is kept WITH the nominal it was fitted against (17.25 deg),
     so the rebuilt head_link -> optical is the fit's absolute pose — not the
     delta pasted onto the kit's current 15 deg nominal."""
-    mount = RobotProfile.load(D1_2).head_mount_delta
+    mount = RobotProfile.load(D1_2_MIGRATED).head_mount_delta
     p, r = mount.head_link_to_optical()
     assert np.allclose(p, [0.132879, -0.107000, -0.004431], atol=2e-6)
     assert np.allclose(r.as_matrix()[:, 2], [0.978358, 0.202684, -0.041656],
@@ -171,7 +191,7 @@ def test_the_head_camera_with_the_d1_2_profile_moves_a_wagon_point():
     cube's, d1-2 2026-09-22) lands 8 cm further out with the measured mount
     than through the URDF nominal — and only the measured one says
     calibrated."""
-    mount = RobotProfile.load(D1_2).head_mount_delta
+    mount = RobotProfile.load(D1_2_MIGRATED).head_mount_delta
     kwargs = dict(width=640, height=480, fx=606.54, fy=605.90, cx=325.76,
                   cy=250.35, neck_pitch=0.62)
     nominal = HeadCamera.from_robot(**kwargs)
@@ -185,6 +205,23 @@ def test_the_head_camera_with_the_d1_2_profile_moves_a_wagon_point():
     assert 0.06 < shift < 0.10, shift
     assert b[0] > a[0]                      # further out, not sideways
     assert HeadCamera.from_json(measured.to_json()).calibrated
+
+
+def test_the_installed_head_correct_mount_is_what_the_head_camera_uses():
+    """The installed file's head mount (seiryu-calib head-correct, arm FK as
+    the world reference, 0.43 px) is fitted against the kit's CURRENT 15 deg
+    nominal; the head camera rebuilds exactly that pose, and the wagon pixel
+    moves 4.5 cm further out than the nominal puts it."""
+    mount = RobotProfile.load(D1_2).head_mount_delta
+    assert mount.rms_px == pytest.approx(0.4253)
+    assert np.allclose(np.asarray(mount.xyz_m) * 1000, [-21.2, 6.5, -11.3],
+                       atol=0.1)
+    kwargs = dict(width=640, height=480, fx=606.54, fy=605.90, cx=325.76,
+                  cy=250.35, neck_pitch=0.62)
+    a = HeadCamera.from_robot(**kwargs).locate(568, 436, plane_z=0.166).p
+    b = HeadCamera.from_robot(mount_delta=mount, **kwargs).locate(
+        568, 436, plane_z=0.166).p
+    assert np.allclose(b - a, [0.0445, -0.0056, 0.0], atol=0.001)
 
 
 def test_a_scene_resolved_against_the_profile_gets_the_measured_wrists(tmp_path):

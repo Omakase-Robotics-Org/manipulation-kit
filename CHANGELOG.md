@@ -18,6 +18,31 @@ in one typed robot profile. **It is a clean break**: nothing below is kept
 alive beside its replacement except the one transitional `RawState`
 accessor set, removed in 0.17.
 
+### Wrist camera: the measured mount (issue #28)
+
+d1-2's calibration file now carries each wrist camera's MEASURED mount
+(seiryu-calib, 2026-09-23: left [4.8, 82.3, 30.3] mm in
+`gripper_R_camera_plate`, right [-4.7, 74.6, 34.1] mm in
+`gripper_L_camera_plate`, against the nominal [0, 79.2, 14.5] mm — ~30 px of
+jaw-pad shift in the fisheye), and 0.16.0 refused such a file outright
+("does not apply one to a wrist camera yet"). Now:
+
+- `RobotProfile.wrist_mounts` (side -> `WristMount`, the ABSOLUTE
+  `plate -> optical` pose with its nominal, gate verdict and provenance);
+  `RobotProfile.scene_block()` writes it as `robot.wrist_camera.<side>.mount`.
+- `perception.WristCamera.from_flange(..., mount=)` /
+  `optical_in_flange(side, mount)` compose the measured transform with the
+  side's clocking and the arm's FK in place of the nominal;
+  `WristCamera.mount` is `"measured"` or `"nominal"` (in `to_json()` and in
+  every loop `look` record) and `calibrated` is true only when measured.
+  `nominal_optical_in_plate()` is the nominal it replaces.
+- A wrist mount in the wrong side's plate is refused; a mount whose gate is
+  FAIL is refused as every layer is (WARN is accepted and warned about).
+- `tests/data/d1-2.camera_calibration.json` is d1-2's installed file
+  (2026-09-24 01:47Z; head mount from seiryu-calib `head-correct`); the
+  migrated 2026-09-23 file moved to `tests/data/robot_profile/` for the v1
+  parity tests. Perception only: the golden plans do not change.
+
 ### Grasp: the measured width outranks the declared one
 
 First live Astra run on d1-2 (2026-09-23 03:46Z, trace
