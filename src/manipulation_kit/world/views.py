@@ -19,10 +19,10 @@ Three rules, each of them a bug somebody shipped:
    one only.
 
 Serialisation is part of the contract, not a debug aid: :meth:`WorldView.to_text`
-is what a typed-choice model (Jev) is shown instead of an image, and
+is what a typed-choice model is shown instead of an image, and
 :meth:`WorldView.to_json` is what a trace record stores. Both are stable and
-both are tested for size — a world description that grows without bound is a
-prompt that silently stops fitting.
+both are tested for size — a world description that grows without bound is
+model-facing text that silently stops fitting.
 """
 
 from __future__ import annotations
@@ -81,19 +81,20 @@ def _tilt_rad(rot: R) -> float:
     """How far this pose is from having ONE body axis straight up.
 
     Zero for any yaw about z (a turned block is not a tilted one); the angle
-    to the nearest upright otherwise. The primitives refuse above
-    :data:`UPRIGHT_TOL_RAD` rather than computing a support height that
-    assumes a level box.
+    to the nearest upright otherwise. Above :data:`UPRIGHT_TOL_RAD` the
+    primitives plan in the object's own frame (or refuse, when nothing
+    measured is under it).
     """
     columns = rot.as_matrix()
     best = max(abs(float(columns[2, i])) for i in range(3))
     return float(math.acos(max(0.0, min(1.0, best))))
 
 
-#: How far from upright a box may sit and still be planned against. Above it
-#: the vertical extent, the support height and the jaw geometry all become
-#: statements about a shape this v1 does not model, and the honest answer is a
-#: refusal rather than a number (R9).
+#: How far from upright a box may sit and still be treated as upright. Above
+#: it a grasp descends along the object's OWN top-face normal and the plan's
+#: notes say so; it is refused only when no measured surface is under it to
+#: give the descent a floor (``primitives.verbs.support_geometry_known``,
+#: redesign step 3 — this used to be a blanket refusal, R9).
 UPRIGHT_TOL_RAD = math.radians(10.0)
 
 
@@ -109,6 +110,34 @@ def _round(values: Iterable[float], places: int = 3) -> list:
     return [round(float(v), places) for v in values]
 
 
+#: WHERE AN OBJECT'S POSE CAME FROM (design C.9, design review 11). A verifier
+#: that reads a pose has to know whether anybody SAW the thing there:
+#:
+#: ``observed``   a sensor or a simulator's ground truth put it there
+#: ``declared``   somebody said so — a tape-measured scene file, or a model
+#:                declaring what it sees in a photograph
+#: ``judged``     a classifier CHOSE it: the wrist-look servo
+#:                (:mod:`manipulation_kit.agent.servo`) moved the declaration
+#:                one step the way its judge said the object sticks out of the
+#:                drawn box. A statement like ``declared`` — nobody measured a
+#:                position — with the judge's probability in ``confidence``
+#: ``attached``   it is in a hand: the pose is the tool pose composed with the
+#:                grasp transform recorded at the stroke
+#:                (:func:`manipulation_kit.world.attach.with_attached`) —
+#:                inferred, not sighted
+#: ``predicted``  where it should be and nobody has looked: let go at the
+#:                last attached pose, or a planner's rolled-forward world
+PROVENANCES: Tuple[str, ...] = ("observed", "declared", "judged", "attached",
+                                "predicted")
+#: the two that are inferences, not sightings
+INFERRED: Tuple[str, ...] = ("attached", "predicted")
+#: the two that are STATEMENTS, not sightings: a verifier may plan from them
+#: but never ties a measurement to the object by their position alone
+STATED: Tuple[str, ...] = ("declared", "judged")
+#: ``ObjectView.size_provenance``: as the producer said, or MEASURED by a grip
+SIZE_PROVENANCES: Tuple[Optional[str], ...] = (None, "measured")
+
+
 @dataclass(frozen=True)
 class ObjectView:
     """One named thing with a measured extent, in the frame it was seen in."""
@@ -122,8 +151,33 @@ class ObjectView:
     colour: Optional[str] = None
     confidence: float = 1.0
     stamp: float = 0.0
+    #: how far the declared box may be off in any direction [m], when the
+    #: producer says; the scene gate (``primitives.clearance``) keeps the arm
+    #: that far away from it. ``None`` = not stated (the gate's default).
+    uncertainty_m: Optional[float] = None
+    #: one of :data:`PROVENANCES`. ``attached`` / ``predicted`` are
+    #: INFERENCES and every verifier that reads the pose says so.
+    provenance: str = "observed"
+    #: where ``size`` came from, when that is not the producer's statement:
+    #: ``"measured"`` = a stalled grasp measured the object's extent along the
+    #: jaw axis (:func:`manipulation_kit.world.attach.with_measured_width`) and
+    #: it replaced the declared number. ``None`` = as the producer gave it.
+    size_provenance: Optional[str] = None
 
     def __post_init__(self) -> None:
+        if self.size_provenance not in SIZE_PROVENANCES:
+            raise ValueError(f"{self.name}.size_provenance must be one of "
+                             f"{SIZE_PROVENANCES}, got {self.size_provenance!r}")
+        if self.uncertainty_m is not None:
+            value = float(self.uncertainty_m)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{self.name}.uncertainty_m must be a finite "
+                                 f"non-negative number, got "
+                                 f"{self.uncertainty_m!r}")
+            object.__setattr__(self, "uncertainty_m", value)
+        if self.provenance not in PROVENANCES:
+            raise ValueError(f"{self.name}.provenance must be one of "
+                             f"{PROVENANCES}, got {self.provenance!r}")
         object.__setattr__(self, "p", _vec3(self.p, f"{self.name}.p"))
         size = _vec3(self.size, f"{self.name}.size")
         if np.any(size <= 0.0):
@@ -249,6 +303,12 @@ class ObjectView:
         the same number for an upright box and the right one for any other."""
         return float(self.size[2])
 
+    @property
+    def inferred(self) -> bool:
+        """``True`` when nobody SAW it where :attr:`p` says (attached or
+        predicted)."""
+        return self.provenance in INFERRED
+
     def to_json(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
             "name": self.name, "kind": self.kind, "frame_id": self.frame_id,
@@ -256,9 +316,14 @@ class ObjectView:
             "quat_xyzw": _round(self.r.as_quat(), 4),
             "confidence": round(float(self.confidence), 3),
             "stamp": round(float(self.stamp), 3),
+            "provenance": self.provenance,
         }
+        if self.size_provenance:
+            out["size_provenance"] = self.size_provenance
         if self.colour:
             out["colour"] = self.colour
+        if self.uncertainty_m is not None:
+            out["uncertainty_m"] = round(self.uncertainty_m, 4)
         return out
 
     def to_text(self, frames: Optional[FrameGraph] = None) -> str:
@@ -286,10 +351,36 @@ class ObjectView:
         else:
             note = f" in {self.frame_id}"
         yaw = math.degrees(self.r.as_euler("xyz")[2])
+        # A confidence below 1 is printed and a confidence of 1 is not. The
+        # field has been here since the first WorldView and never reached the
+        # text, so a producer that said "0.3, I am guessing" (a detector, or a
+        # model declaring what it sees) had that erased on the way to the only
+        # consumer that could act on it. Nothing in the kit GATES on it —
+        # checked, 2026-09-22 — so it is information, not a permission.
+        doubt = "" if self.confidence >= 1.0 else \
+            f", confidence {self.confidence:.2f}"
+        # An inferred pose is SAID to be one, on the line the model reads —
+        # otherwise a pose computed from the tool reads exactly like a sight.
+        how = {"attached": ", ATTACHED: riding the hand that holds it — "
+                           "inferred from the tool pose, not sighted",
+               "predicted": ", PREDICTED: where it was let go, not sighted "
+                            "since",
+               "judged": ", JUDGED: placed by the wrist look's classifier, "
+                         "not measured"}.get(self.provenance, "")
+        if self.size_provenance == "measured":
+            how += ", size MEASURED by the grip that holds it"
         return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "
                 f"{where[1]:.3f}, {where[2]:.3f}) m base{note}, "
                 f"{self.size[0] * 1000:.0f}x{self.size[1] * 1000:.0f}x"
-                f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg")
+                f"{self.size[2] * 1000:.0f}mm, yaw {yaw:+.0f}deg{doubt}{how}")
+
+
+#: A container's interior, as a fraction of its outside, when nobody measured
+#: it. THE one number: :class:`ContainerView` invents it when a producer
+#: gives no interior, and ``manipulation_kit.perception.measure`` uses it for
+#: a perceived container. (They disagreed — 0.9 here, 0.85 there — design
+#: L15.) Anything built with it says ``interior_measured: false``.
+INTERIOR_FRACTION = 0.9
 
 
 @dataclass(frozen=True)
@@ -307,7 +398,8 @@ class ContainerView(ObjectView):
     interior: Optional[np.ndarray] = None
     #: height of the rim above the container's centre [m]; ``None`` = size/2
     rim_height_m: Optional[float] = None
-    #: was ``interior`` MEASURED, or is it the 90% estimate? A placement that
+    #: was ``interior`` MEASURED, or is it the :data:`INTERIOR_FRACTION`
+    #: estimate? A placement that
     #: needs the walls to be where they are said to be must not run on a
     #: guess, so the flag travels with the number and
     #: :class:`~manipulation_kit.primitives.Place` refuses a tight fit against
@@ -317,7 +409,8 @@ class ContainerView(ObjectView):
     def __post_init__(self) -> None:
         super().__post_init__()
         estimated = self.interior is None
-        interior = (np.asarray(self.size, dtype=float) * 0.9 if estimated
+        interior = (np.asarray(self.size, dtype=float) * INTERIOR_FRACTION
+                    if estimated
                     else _vec3(self.interior, f"{self.name}.interior"))
         if np.any(interior <= 0.0) or np.any(interior > self.size + 1e-9):
             raise ValueError(f"{self.name}.interior must be positive and no "
@@ -392,7 +485,8 @@ class ContainerView(ObjectView):
         return out
 
     def to_text(self, frames: Optional[FrameGraph] = None) -> str:
-        how = "measured" if self.interior_measured else "ESTIMATED at 90% of size"
+        how = ("measured" if self.interior_measured
+               else f"ESTIMATED at {INTERIOR_FRACTION:.0%} of size")
         return (super().to_text(frames) + f", interior "
                 f"{self.interior[0] * 1000:.0f}x{self.interior[1] * 1000:.0f}"
                 f"x{self.interior[2] * 1000:.0f}mm ({how})")
@@ -400,9 +494,29 @@ class ContainerView(ObjectView):
 
 @dataclass(frozen=True)
 class SurfaceView(ObjectView):
-    """A table, a shelf, a wagon top — something to put things ON."""
+    """A table, a shelf, a wagon top — something to put things ON.
+
+    ``plane_source`` / ``height_uncertainty_m`` say how the top's HEIGHT is
+    known, when a producer knows: a single camera cannot measure the height
+    of the plane it is looking at, so a perceived surface arrives
+    ``provisional`` (+-100 mm), ``known-length`` or ``declared``, and that
+    has to reach the world rather than stop at the scene file (design review
+    8). ``None`` = the producer did not say.
+    """
 
     kind: str = "surface"
+    plane_source: Optional[str] = None
+    height_uncertainty_m: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.height_uncertainty_m is not None:
+            value = float(self.height_uncertainty_m)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{self.name}.height_uncertainty_m must be a "
+                                 f"finite non-negative number, got "
+                                 f"{self.height_uncertainty_m!r}")
+            object.__setattr__(self, "height_uncertainty_m", value)
 
     def top_z(self, frames: FrameGraph) -> float:
         """World z of the top face, from the RESOLVED pose (R1/R9)."""
@@ -442,6 +556,79 @@ class SurfaceView(ObjectView):
         half = np.asarray(self.size, dtype=float) / 2.0 + float(pad_m)
         return bool(abs(local[0]) <= half[0] and abs(local[1]) <= half[1]
                     and -0.005 <= local[2] - half[2] <= 0.030 + float(pad_m))
+
+    def to_json(self) -> Dict[str, Any]:
+        out = super().to_json()
+        if self.plane_source is not None:
+            out["plane_source"] = self.plane_source
+        if self.height_uncertainty_m is not None:
+            out["height_uncertainty_m"] = round(self.height_uncertainty_m, 4)
+        return out
+
+    def to_text(self, frames: Optional[FrameGraph] = None) -> str:
+        text = super().to_text(frames)
+        if self.plane_source is None and self.height_uncertainty_m is None:
+            return text
+        how = self.plane_source or "unstated"
+        plus = ("" if self.height_uncertainty_m is None
+                else f" +-{self.height_uncertainty_m * 1000:.0f}mm")
+        return text + f", top height {how}{plus}"
+
+    @classmethod
+    def from_plane(cls, name: str, point, normal, *,
+                   footprint_m: Tuple[float, float] = (0.10, 0.10),
+                   thickness_m: float = 0.02, yaw_axis=None,
+                   plane_source: Optional[str] = "contact",
+                   height_uncertainty_m: Optional[float] = None,
+                   stamp: float = 0.0, colour: Optional[str] = None
+                   ) -> "SurfaceView":
+        """A surface whose TOP FACE is the plane through ``point`` with ``normal``.
+
+        How a MEASURED plane — a probe's contact, a fit over three of them —
+        becomes a thing in the world. The view is a thin slab: its own +z is
+        ``normal``, its top face passes through ``point`` (so for a level
+        plane :meth:`top_z` is the contact height, exactly), and it extends
+        ``footprint_m`` in the plane, centred on ``point``. ``yaw_axis``, when
+        given, is the in-plane direction the slab's own x lies along (keep an
+        existing surface's footprint orientation); otherwise the one nearest
+        base x.
+        """
+        n = np.asarray(normal, dtype=float).reshape(3)
+        length = float(np.linalg.norm(n))
+        if not math.isfinite(length) or length < 1e-9:
+            raise ValueError(f"{name}: a plane needs a non-zero normal, got "
+                             f"{n.tolist()}")
+        n = n / length
+        seed = np.asarray(yaw_axis if yaw_axis is not None else (1.0, 0.0, 0.0),
+                          dtype=float).reshape(3)
+        x = seed - n * float(np.dot(seed, n))
+        if float(np.linalg.norm(x)) < 1e-6:
+            x = np.array([0.0, 1.0, 0.0]) - n * float(n[1])
+        x = x / float(np.linalg.norm(x))
+        y = np.cross(n, x)
+        rot = R.from_matrix(np.column_stack([x, y, n]))
+        centre = (_vec3(point, f"{name}.point")
+                  - n * float(thickness_m) / 2.0)
+        return cls(name, p=centre,
+                   size=(float(footprint_m[0]), float(footprint_m[1]),
+                         float(thickness_m)),
+                   r=rot, stamp=float(stamp), colour=colour,
+                   plane_source=plane_source,
+                   height_uncertainty_m=height_uncertainty_m)
+
+    def top_normal(self, frames: FrameGraph) -> np.ndarray:
+        """The slab's own +z in the base frame — the face :meth:`from_plane`
+        put on the measured plane (for a wall, horizontal)."""
+        _p, r = self.pose_in_base(frames)
+        return np.asarray(r.as_matrix()[:, 2], dtype=float)
+
+    def plane_offset(self, point, frames: FrameGraph) -> float:
+        """Signed distance of ``point`` above the top face, along
+        :meth:`top_normal` [m]."""
+        p, r = self.pose_in_base(frames)
+        n = np.asarray(r.as_matrix()[:, 2], dtype=float)
+        face = np.asarray(p, dtype=float) + n * float(self.size[2]) / 2.0
+        return float(np.dot(np.asarray(point, dtype=float).reshape(3) - face, n))
 
     def supports_object(self, obj: "ObjectView", frames: FrameGraph, *,
                         pad_m: float = 0.0, tol_m: float = 0.005) -> bool:
@@ -559,6 +746,10 @@ class GripperView:
     grip: str = "firm"                 # soft | firm | strong
     #: commanded closed AND stopped short of the target; None = not measured
     jaw_stalled: Optional[bool] = None
+    #: the pad gap THIS hand reaches driven fully open [m], as its producer
+    #: reports it (``HandState.open_gap_m``); None = use the hand
+    #: description's nominal driven opening. What a grasp's fit is judged by.
+    open_gap_m: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.side not in _SIDES:
@@ -575,6 +766,8 @@ class GripperView:
             out["jaw_gap_m"] = round(float(self.jaw_gap_m), 4)
         if self.jaw_stalled is not None:
             out["jaw_stalled"] = bool(self.jaw_stalled)
+        if self.open_gap_m is not None:
+            out["open_gap_m"] = round(float(self.open_gap_m), 4)
         if self.held_object:
             out["held_object"] = self.held_object
         return out
@@ -585,6 +778,65 @@ class GripperView:
         return (f"{self.side} gripper: "
                 f"{'HOLDING' + what if self.holding else 'empty'}, "
                 f"closedness {self.closedness:.2f}{gap}")
+
+
+@dataclass(frozen=True)
+class ContactView:
+    """One contact leg's MEASURED outcome, carried by the world.
+
+    The evidence a contact verb's verifier reads. ``p`` is where the SURFACE
+    was met — the leading fingertip, not the tool point — and ``p_tool`` the
+    tool point (pad centre) the executor measured; both base frame.
+    ``normal`` is the executor's hint (minus the travel). ``surface`` is the
+    name the verb asked to publish the contact as, "" for none. A contact
+    that was NOT made (``made=False``) is evidence too: the leg ran its whole
+    ``travel_m`` and nothing resisted (``stopped_by="max_travel"``).
+    """
+
+    side: str
+    made: bool
+    p: np.ndarray
+    p_tool: np.ndarray
+    normal: np.ndarray
+    stopped_by: str
+    travel_m: float = float("nan")
+    torque_nm: float = float("nan")
+    surface: str = ""
+    verb: str = ""
+    stamp: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.side not in _SIDES:
+            raise ValueError(f"side must be one of {_SIDES}, got {self.side!r}")
+        object.__setattr__(self, "p", _vec3(self.p, "contact.p"))
+        object.__setattr__(self, "p_tool", _vec3(self.p_tool, "contact.p_tool"))
+        n = np.asarray(self.normal, dtype=float).reshape(3)
+        norm = float(np.linalg.norm(n))
+        object.__setattr__(self, "normal", n / norm if norm > 1e-9 else n)
+
+    def to_json(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "side": self.side, "made": bool(self.made),
+            "stopped_by": self.stopped_by, "p": _round(self.p, 4),
+            "normal": _round(self.normal, 3)}
+        if math.isfinite(self.travel_m):
+            out["travel_m"] = round(float(self.travel_m), 4)
+        if math.isfinite(self.torque_nm):
+            out["torque_nm"] = round(float(self.torque_nm), 3)
+        if self.surface:
+            out["surface"] = self.surface
+        if self.verb:
+            out["verb"] = self.verb
+        return out
+
+    def to_text(self) -> str:
+        if not self.made:
+            return (f"{self.side} {self.verb or 'contact'}: nothing resisted "
+                    f"over {self.travel_m * 1000:.0f} mm ({self.stopped_by})")
+        where = ", ".join(f"{v:.3f}" for v in self.p)
+        named = f" -> {self.surface}" if self.surface else ""
+        return (f"{self.side} {self.verb or 'contact'}: touched at ({where})"
+                f"{named}")
 
 
 @dataclass(frozen=True)
@@ -609,9 +861,20 @@ class WorldView:
     #: against a different one (R8). Producers that do not count simply leave
     #: it at 0 and the binding falls back to the stamp and the frame set.
     revision: int = 0
+    #: Which firmware contract the ROBOT half of this observation came through
+    #: (the executor's ``firmware_spec``: an OpenAPI sha256, ``"kinematic"``),
+    #: "" when the producer does not say. Recorded in every plan's binding.
+    firmware_spec: str = ""
+    #: contact legs' MEASURED outcomes, oldest first — the evidence a probe's
+    #: or a press's verifier reads (``primitives.contact.record_contacts``
+    #: folds a run's reports in). Not part of :meth:`observation_id`: a
+    #: contact is evidence about what happened, and the surface it measured
+    #: reaches the world as an object, which is.
+    contacts: Tuple[ContactView, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "objects", tuple(self.objects))
+        object.__setattr__(self, "contacts", tuple(self.contacts))
         names = [o.name for o in self.objects]
         duplicates = sorted({n for n in names if names.count(n) > 1})
         if duplicates:
@@ -630,12 +893,14 @@ class WorldView:
            frames: Optional[FrameGraph] = None,
            arms: Sequence[ArmView] = (),
            grippers: Sequence[GripperView] = (),
-           stamp: float = 0.0, revision: int = 0) -> "WorldView":
+           stamp: float = 0.0, revision: int = 0,
+           firmware_spec: str = "") -> "WorldView":
         return cls(frames=frames if frames is not None else FrameGraph(now=stamp),
                    objects=tuple(objects),
                    arms={a.side: a for a in arms},
                    grippers={g.side: g for g in grippers},
-                   stamp=stamp, revision=revision)
+                   stamp=stamp, revision=revision,
+                   firmware_spec=str(firmware_spec or ""))
 
     # -- identity ---------------------------------------------------------- #
     def observation_id(self) -> Tuple[Any, ...]:
@@ -701,10 +966,18 @@ class WorldView:
             objects=tuple(changes.get("objects", self.objects)),
             arms=changes.get("arms", self.arms),
             grippers=changes.get("grippers", self.grippers),
-            stamp=stamp, revision=int(revision))
+            stamp=stamp, revision=int(revision),
+            firmware_spec=changes.get("firmware_spec", self.firmware_spec),
+            contacts=tuple(changes.get("contacts", self.contacts)))
 
     # -- serialisation ----------------------------------------------------- #
     def to_json(self) -> Dict[str, Any]:
+        out = self._to_json()
+        if self.contacts:
+            out["contacts"] = [c.to_json() for c in self.contacts]
+        return out
+
+    def _to_json(self) -> Dict[str, Any]:
         return {
             "stamp": round(float(self.stamp), 3),
             "revision": int(self.revision),
@@ -723,8 +996,8 @@ class WorldView:
     def to_text(self) -> str:
         """The world as a typed-choice model is shown it: line per thing.
 
-        Kept flat, metric and short on purpose. This string is a prompt, and a
-        prompt that grows with the scene is one that silently stops fitting —
+        Kept flat, metric and short on purpose. This string is model-facing text,
+        and text that grows with the scene is one that silently stops fitting —
         ``tests/world/test_serialisation.py`` pins the budget.
         """
         lines = ["WORLD (base frame: +x forward, +y robot-left, +z up; "
@@ -744,6 +1017,8 @@ class WorldView:
                 lines.append(f"  - {self.arms[side].to_text()}")
             if side in self.grippers:
                 lines.append(f"  - {self.grippers[side].to_text()}")
+        if self.contacts:
+            lines.append("last contact: " + self.contacts[-1].to_text())
         stale = [f.frame_id for f in self.frames.frames.values()
                  if not f.fresh(self.frames.now)]
         if stale:

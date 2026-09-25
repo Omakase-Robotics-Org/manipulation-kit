@@ -390,21 +390,24 @@ def test_a_descent_that_stopped_short_is_refused_rather_than_shoved(d1_arm,
     """Depth is what CONTACT takes, and pushing into it is F5.
 
     A descent deliberately ends with the fingertips 3 mm off the surface
-    (``approach.SUPPORT_CLEARANCE_M``), so an arm that parks a centimetre high
+    (``orientation.SUPPORT_CLEARANCE_M``), so an arm that parks a centimetre high
     with the jaws still lined up has met something. The barrier says so and
     stops; it does not command the same pose deeper, which is how ten grasps
     out of ten jammed their fingers on the table.
     """
-    from manipulation_kit.primitives.approach import link7_from_tool
+    from manipulation_kit.primitives.orientation import link7_from_tool
 
     world = observe(d1_arm, block_p=REACHABLE)
     plan = _grasp(world, d1_arm)
 
     class StopsShort(DroopingExecutor):
-        """Every command lands 12 mm short ALONG the approach axis — 2.5 deg
-        in joints, inside the joint barrier and outside the tool one."""
+        """Every command lands 11 mm short ALONG the approach axis — inside
+        the 3 deg joint barrier and outside the 10 mm tool one. (12 mm until
+        0.16.0 step 3: the grasp point is now 7 mm lower on this fixture —
+        its table is the descent floor — and at that posture 12 mm is
+        3.03 deg, which the joint barrier catches first.)"""
 
-        short_m = 0.012
+        short_m = 0.011
 
         def measured(self):
             if self.commanded is None:
@@ -531,18 +534,26 @@ def test_the_barrier_runs_once_per_gated_waypoint_and_not_per_knot(d1_arm,
     assert len(plan.joint_steps()) > len(report.arrivals)
 
 
-def test_a_plan_with_no_gated_waypoint_keeps_the_barrier_it_always_had(
-        d1_arm, observe):
-    """``Approach`` is unchanged: its own verifier measures the tool point, and
-    its opening stroke happens before the arm moves at all."""
+def test_approach_gates_its_standoff_against_a_droop(d1_arm, observe):
+    """``Approach`` IS gated now (d1-2, 2026-09-22: an ungated Approach ended
+    167 mm off and reported completed). A 2.5 deg droop, inside the joint
+    tolerance, is two centimetres at the tool: the standoff gate measures it
+    and the run does not end with the tool there unmeasured."""
     world = observe(d1_arm, block_p=REACHABLE)
     plan = Approach(object="red_block", side="left").plan(world, d1_arm)
     assert getattr(plan, "ok", False)
-    assert [w.arrive for w in plan.waypoints] == [False]
+    assert [w.arrive for w in plan.waypoints] == [True]
     robot = DroopingExecutor(world)
     report = run(plan, robot, kin=d1_arm)
-    assert report.completed, report.error
-    assert report.arrivals == (), "no stroke follows a joint step here"
+    assert report.arrivals, "the standoff was not measured"
+    assert report.arrivals[0].waypoint_label == "standoff"
+    first = report.arrivals[0]
+    assert first.corrections, "the droop was measured and not corrected"
+    # the same answer Grasp gets at the same pose: in tolerance, or refused
+    # with the number — never completed with the tool unmeasured
+    assert report.completed == (first.tool_across_m <= ARRIVE_TOL_M)
+    if not report.completed:
+        assert report.refusal.reason == "arrived_off_by"
 
 
 # --------------------------------------------------------------------------- #
@@ -569,11 +580,11 @@ def test_place_marks_the_transit_and_the_set_down(d1_arm, observe):
         "the rise is free space; the tool promise starts over the destination")
 
 
-def test_approach_is_unchanged(d1_arm, observe):
+def test_approach_marks_its_standoff(d1_arm, observe):
     world = observe(d1_arm, block_p=REACHABLE)
     plan = Approach(object="red_block", side="left").plan(world, d1_arm)
     assert [(w.label, w.arrive) for w in plan.waypoints] == [
-        ("standoff", False)]
+        ("standoff", True)]
 
 
 def test_a_waypoint_defaults_to_no_tool_barrier(d1_arm, observe):

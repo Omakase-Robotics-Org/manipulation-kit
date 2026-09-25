@@ -7,6 +7,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.motion import Motion
+
 if TYPE_CHECKING:
     from ..models.arm_slots import ArmSlots
     from ..models.chassis_state import ChassisState
@@ -27,7 +29,7 @@ class Snapshot:
     """One whole-robot snapshot.
 
     Attributes:
-        arm (ArmSlots): The two arms' slots, keyed by side.
+        arm (ArmSlots): The two arms' slots, keyed by side, and the operator lease over both.
         chassis (ChassisState | SlotError):
             Either the device's own state or, when that device could not be
             read, a [`SlotError`] naming the failure.
@@ -41,6 +43,44 @@ class Snapshot:
             gripper on both sides — which is what the D1 ships as — reports an
             empty object rather than two errors for hardware nobody fitted.
         kill (KillSnapshot): A copyable snapshot of every device's soft-kill latch.
+        motion (Motion): Whether the robot is moving right now, as the whole-robot snapshot
+            answers it.
+
+            This exists for the question "is it safe to stop or restart the daemon
+            now?". `deploy/systemd/d1-firmwared.service` chooses `KillSignal=SIGKILL`
+            so the arms hold their pose across a restart, and states the cost of that
+            choice plainly: a device that is mid-motion is NOT quiesced on stop. An
+            OTA config plane that wants to restart the unit has to be able to ask the
+            machine, rather than trusting an operator to remember.
+
+            Derived ONLY from motion facts the devices already report — no timer, no
+            bookkeeping of commands in flight — so it describes the machine and not
+            the daemon's memory of it:
+
+            | source | means moving |
+            | --- | --- |
+            | [`crate::ArmState::stationary`] (both sides) | `false` |
+            | [`crate::SliderState::moving`] | `true` |
+            | [`crate::ChassisState::navigating`] | `true` |
+            | [`crate::GripperReport::tracking`] (both sides) | `true` |
+            | [`crate::NeckState::moving`] | `true` |
+
+            Two limits, stated rather than hidden:
+
+            - The NECK is answered at the resolution of its own wire. Its motors
+              report no "moving" bit, so the backend compares each axis' measured
+              velocity against one count of the feedback's twelve-bit velocity field
+              (`0.022 rad/s`); a neck commanded slower than that creeps invisibly and
+              contributes `false`. That is a property of the DM protocol, not a
+              threshold this daemon chose.
+            - A gripper driven by the BLOCKING verbs is not represented either:
+              `tracking` describes the streaming `target` lane only. Such a stroke is
+              bounded and is held open by its own in-flight request.
+
+            A consumer deciding whether a restart is safe must treat everything that
+            is not [`Motion::Idle`] as unsafe. [`Motion::Unknown`] is reported when a
+            device that contributes to the answer could not be read, and must never be
+            read as "idle": not knowing is not the same as standing still.
         neck (NeckState | SlotError):
             Either the device's own state or, when that device could not be
             read, a [`SlotError`] naming the failure.
@@ -55,6 +95,7 @@ class Snapshot:
     gripper: GripperSlots
     hand: SnapshotHand
     kill: KillSnapshot
+    motion: Motion
     neck: NeckState | SlotError
     slider: SliderState | SlotError
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -85,6 +126,8 @@ class Snapshot:
 
         kill = self.kill.to_dict()
 
+        motion = self.motion.value
+
         neck: dict[str, Any]
         if isinstance(self.neck, NeckState):
             neck = self.neck.to_dict()
@@ -107,6 +150,7 @@ class Snapshot:
                 "gripper": gripper,
                 "hand": hand,
                 "kill": kill,
+                "motion": motion,
                 "neck": neck,
                 "slider": slider,
             }
@@ -169,6 +213,8 @@ class Snapshot:
 
         kill = KillSnapshot.from_dict(d.pop("kill"))
 
+        motion = Motion(d.pop("motion"))
+
         def _parse_neck(data: object) -> NeckState | SlotError:
             try:
                 if not isinstance(data, dict):
@@ -210,6 +256,7 @@ class Snapshot:
             gripper=gripper,
             hand=hand,
             kill=kill,
+            motion=motion,
             neck=neck,
             slider=slider,
         )

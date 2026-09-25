@@ -86,6 +86,11 @@ def sync_detailed(
      Read-only, and neither a reservation nor an authorization: it observes the arm for about 300 ms and
     reports what it saw. `ready: false` lists actionable blockers in `blocking`.
 
+    `advisory` is separate from `blocking` and does not affect `ready`: it is an INFO-level note about a
+    machine that is working as designed, carrying a stable `code` and the call it suggests. The only one
+    today is `arm_idle_recover_suggested`, for an arm that is idle with no controller error and no soft
+    kill.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
 
@@ -118,6 +123,11 @@ def sync(
      Read-only, and neither a reservation nor an authorization: it observes the arm for about 300 ms and
     reports what it saw. `ready: false` lists actionable blockers in `blocking`.
 
+    `advisory` is separate from `blocking` and does not affect `ready`: it is an INFO-level note about a
+    machine that is working as designed, carrying a stable `code` and the call it suggests. The only one
+    today is `arm_idle_recover_suggested`, for an arm that is idle with no controller error and no soft
+    kill.
+
     Args:
         side (ArmSide): Selects one of the two physical arms.
 
@@ -144,6 +154,11 @@ async def asyncio_detailed(
 
      Read-only, and neither a reservation nor an authorization: it observes the arm for about 300 ms and
     reports what it saw. `ready: false` lists actionable blockers in `blocking`.
+
+    `advisory` is separate from `blocking` and does not affect `ready`: it is an INFO-level note about a
+    machine that is working as designed, carrying a stable `code` and the call it suggests. The only one
+    today is `arm_idle_recover_suggested`, for an arm that is idle with no controller error and no soft
+    kill.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
@@ -174,6 +189,11 @@ async def asyncio(
 
      Read-only, and neither a reservation nor an authorization: it observes the arm for about 300 ms and
     reports what it saw. `ready: false` lists actionable blockers in `blocking`.
+
+    `advisory` is separate from `blocking` and does not affect `ready`: it is an INFO-level note about a
+    machine that is working as designed, carrying a stable `code` and the call it suggests. The only one
+    today is `arm_idle_recover_suggested`, for an arm that is idle with no controller error and no soft
+    kill.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.

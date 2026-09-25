@@ -16,14 +16,14 @@ nothing must not be able to pass.
 from __future__ import annotations
 
 import math
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..world import (ContainerView, FrameError, ObjectView, SurfaceView,
-                     WorldView)
-from .approach import JAW_CLEARANCE_M
+from ..world import (STATED, ContainerView, FrameError, ObjectView,
+                     SurfaceView, WorldView)
+from .orientation import JAW_CLEARANCE_M
 from .types import Verdict, VerdictReport, Verifier
 
 #: how close a measured tool point must be to a commanded ABSOLUTE pose to
@@ -44,7 +44,7 @@ MOVED_FRACTION = 0.7
 OPEN_CLOSEDNESS = 0.15
 #: How far the MEASURED pad gap may sit either side of the object's own width
 #: and still be that object between the pads. It is the planner's own clearance
-#: (``approach.JAW_CLEARANCE_M``, 4 mm) rather than a second number: the kit
+#: (``orientation.JAW_CLEARANCE_M``, 4 mm) rather than a second number: the kit
 #: refuses to plan a grasp that does not leave this much per side, so a gap
 #: outside the window is either the jaws closed on something else or on
 #: themselves. MEASURED, 2026-09-19: a 40 mm cube stops the sim's jaws at a
@@ -66,6 +66,71 @@ MIN_TURN_TOL_RAD = math.radians(2.0)
 #: them, when the producer does not report ``held_object`` [m]. Generous: it
 #: is a corroboration, not a grasp-quality metric.
 ASSOCIATION_TOL_M = 0.08
+#: How far ABOVE the descent floor a grasp's fingertip search may stop by
+#: contact and still have reached the surface it was sent to [m]. The tip
+#: height is forward kinematics from the joint encoders, and the real arm's
+#: sag is not in it (F16: ~10 mm at x 0.48), so a contact on the table can
+#: read up to that much high. A contact higher than this stopped on something
+#: before the surface — for a grasp, usually the object's own top.
+SEARCH_STOP_TOL_M = 0.010
+#: :attr:`~manipulation_kit.executor.ContactReport.surface` of a stop ON the
+#: object rather than its support (mirrors ``executor.SURFACE_OBJECT``; the
+#: executor imports this package, so it is not imported back)
+SURFACE_OBJECT = "object"
+
+#: :class:`Holding`'s per-criterion outcomes (``measured["checks"]``)
+CHECK_PASS, CHECK_FAIL, CHECK_UNMEASURED = "pass", "fail", "unmeasured"
+
+
+class GraspStroke:
+    """What a grasp's travel was planned to do, for :class:`Holding` to hold
+    it to — the evidence a jaw gap cannot give.
+
+    A stall inside the width window says the pads stopped on something the
+    object's size could make. It does not say the fingers were IN the object:
+    jaws closing on a tape roll's rim, or on its top edge, stall at a
+    plausible width too. So a grasp's hold is also graded on
+
+    * **insertion** — the finger TIPS at closure against the object's near
+      face along the travel (its top, for a descent), from the world the
+      grasp was planned in (:func:`.grasp_geometry.insertion_along`);
+    * **approach** — whether the travel got where it was sent: the
+      executor's arrival at the ``grasp`` waypoint and its stop reason, and
+      for a fingertip descent that finishes by contact, whether the search
+      stopped on the SURFACE or on something above it.
+
+    ``direction`` is the base-frame unit travel, ``item`` the object as the
+    plan saw it, ``floor_z`` the descent floor (:func:`.grasp_geometry.
+    descent_floor`), ``by_contact`` whether the descent ends in a search.
+    """
+
+    def __init__(self, direction, item: ObjectView, *, floor_z: float,
+                 by_contact: bool = False, floor_name: str = ""):
+        d = np.asarray(direction, dtype=float).reshape(3)
+        self.direction = d / max(float(np.linalg.norm(d)), 1e-12)
+        self.item = item
+        self.floor_z = float(floor_z)
+        self.by_contact = bool(by_contact)
+        self.floor_name = str(floor_name)
+
+    @property
+    def descends(self) -> bool:
+        from .orientation import VERTICAL_COS  # noqa: PLC0415
+        return float(self.direction[2]) < -VERTICAL_COS
+
+
+#: At or under this pad-face gap the jaws closed on NOTHING: the stroke
+#: stalled on the pads themselves (or on a sliver no verb is planned for).
+#: Capped at half the named object's width, so a declared 6 mm card is still
+#: a card at 5 mm.
+EMPTY_GAP_M = 0.006
+#: How far a MEASURED stalled gap may sit from the DECLARED width and still be
+#: that object, as a factor either way. The declaration is a model's estimate
+#: from a photo; the gap is the robot's own measurement (d1-2, 2026-09-23: a
+#: tape roll declared 50 mm was held at 57.1 mm and the old +-4 mm window
+#: called it a miss). Beyond a factor of two the jaws are on something the
+#: declaration does not describe, and that is UNKNOWN, not TRUE.
+WIDTH_PLAUSIBLE_FACTOR = 2.0
 
 
 def grip_width_window(width_m: float, tol_m: float = GRIP_WIDTH_TOL_M):
@@ -77,6 +142,65 @@ def grip_width_window(width_m: float, tol_m: float = GRIP_WIDTH_TOL_M):
     """
     width = float(width_m)
     return max(0.0, width - float(tol_m)), width + float(tol_m)
+
+
+#: :func:`grip_fit` outcomes
+FIT_HELD, FIT_EMPTY, FIT_BLOCKED, FIT_IMPLAUSIBLE = (
+    "held", "empty", "blocked", "implausible")
+
+
+def grip_fit(gap_m: float, declared_m: float, *,
+             open_gap_m: Optional[float] = None,
+             reference=None) -> Dict[str, Any]:
+    """What a STALLED pad-face gap says about the object it was closed on.
+
+    MEASUREMENT OUTRANKS DECLARATION. The declared width is somebody's estimate;
+    a stalled gap is where the pads actually stopped. So the gap decides, and
+    the declaration is only graded:
+
+    * ``empty``   the gap is at most :data:`EMPTY_GAP_M` (or half the declared
+                  width, for something thinner): nothing between the pads;
+    * ``blocked`` the gap is within one planner clearance of the hand's open
+                  gap (``open_gap_m``, else the nominal driven opening): the
+                  pads barely moved, stopped by something before the object;
+    * ``implausible``  more than :data:`WIDTH_PLAUSIBLE_FACTOR` off the
+                  declaration either way: the jaws stalled on something the
+                  declaration does not describe;
+    * ``held``    anything else — the object, at its MEASURED width.
+
+    ``reference`` is the grasp's :class:`~.grasp_geometry.GraspReference`. The
+    gap is the pad-FACE gap for either reference (a parallel gripper's faces
+    are parallel), so it does not move the band's lower half; it sets the
+    ``blocked`` margin, which is the per-side clearance that reference plans
+    with (pad 4 mm, tip 2 mm): a hold wider than ``open - clearance`` is pads
+    that travelled less than the planner would ever leave free. The +-
+    :data:`GRIP_WIDTH_TOL_M` window is kept as ``matches_declaration`` — a
+    note on how good the declaration was, not the verdict.
+    """
+    from ..hands.d1.parallel_gripper.description import (  # noqa: PLC0415
+        DRIVEN_OPEN_GAP_M)
+    from .grasp_geometry import PAD  # noqa: PLC0415
+    ref = PAD if reference is None else reference
+    gap, declared = float(gap_m), float(declared_m)
+    opening = DRIVEN_OPEN_GAP_M if open_gap_m is None else float(open_gap_m)
+    empty = min(EMPTY_GAP_M, 0.5 * declared)
+    blocked = opening - float(ref.clearance_per_side_m)
+    low = declared / WIDTH_PLAUSIBLE_FACTOR
+    high = min(blocked, declared * WIDTH_PLAUSIBLE_FACTOR)
+    w_low, w_high = grip_width_window(declared)
+    if gap <= empty:
+        kind = FIT_EMPTY
+    elif gap >= blocked:
+        kind = FIT_BLOCKED
+    elif not low <= gap <= high:
+        kind = FIT_IMPLAUSIBLE
+    else:
+        kind = FIT_HELD
+    return {"fit": kind, "declared_width_m": round(declared, 4),
+            "width_band_m": [round(max(low, empty), 4), round(high, 4)],
+            "width_window_m": [round(w_low, 4), round(w_high, 4)],
+            "matches_declaration": bool(w_low <= gap <= w_high),
+            "open_gap_m": round(opening, 4), "contact": ref.name}
 
 
 def resting_on(obj: ObjectView, world: WorldView, *,
@@ -173,6 +297,38 @@ def _why_missing(world: WorldView, name: str) -> str:
     except LookupError as exc:
         return f"{name!r}'s frame could not be resolved: {exc}"
     return f"{name!r} has no usable position"
+
+
+def _stated(world1: WorldView, world0: WorldView, name: str) -> str:
+    """``"declared"`` / ``"judged"`` when ``name``'s position is a STATEMENT
+    (:data:`~manipulation_kit.world.views.STATED`) in the later world, else
+    "". A judged pose (the wrist-look servo's classifier moved the
+    declaration) is treated exactly like a declared one: plannable, never a
+    measurement of where the thing is."""
+    item = world1.find(name)
+    if item is None:
+        item = world0.find(name)
+    if item is None or item.provenance not in STATED:
+        return ""
+    return item.provenance
+
+
+def _inferred(world: WorldView, name: str) -> str:
+    """"" for a sighted pose; otherwise the words that say it is not one.
+
+    An ``attached`` pose is the tool pose composed with the grasp recorded at
+    the stroke, a ``predicted`` one is where the hand let go — both inferences
+    (:mod:`manipulation_kit.world.attach`). A verdict computed from either says
+    so, and a NEGATIVE one becomes UNKNOWN: a confident FALSE from a pose
+    nobody saw is as wrong as a confident TRUE (design review 11).
+    """
+    item = world.find(name)
+    if item is None or item.provenance not in ("attached", "predicted"):
+        return ""
+    how = ("riding the hand — the tool pose and the grasp recorded at the "
+           "stroke" if item.provenance == "attached"
+           else "where the hand let go")
+    return f"{name!r}'s pose is {item.provenance} ({how}): inferred, not sighted"
 
 
 def turn_tol(asked_rad: float) -> float:
@@ -290,12 +446,12 @@ class ToolTurned(Verifier):
     describes = "the hand turned by what was asked"
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
-                 dyaw_rad: float, axis=None, tol_rad: Optional[float] = None):
+                 roll_rad: float, axis=None, tol_rad: Optional[float] = None):
         super().__init__(primitive, world0)
         self.side = side
-        self.dyaw_rad = float(dyaw_rad)
+        self.roll_rad = float(roll_rad)
         self.axis = None if axis is None else np.asarray(axis, dtype=float)
-        self.tol_rad = turn_tol(dyaw_rad) if tol_rad is None else float(tol_rad)
+        self.tol_rad = turn_tol(roll_rad) if tol_rad is None else float(tol_rad)
         arm = world0.arm(side)
         self.before = None if arm is None else arm.tool_r
 
@@ -313,9 +469,9 @@ class ToolTurned(Verifier):
         local = self.before.inv().apply(np.asarray(axis, dtype=float))
         local = local / max(float(np.linalg.norm(local)), 1e-12)
         turned = float(np.dot(delta, local))
-        err = abs(turned - self.dyaw_rad)
+        err = abs(turned - self.roll_rad)
         measured = {"turned_deg": round(math.degrees(turned), 2),
-                    "asked_deg": round(math.degrees(self.dyaw_rad), 2),
+                    "asked_deg": round(math.degrees(self.roll_rad), 2),
                     "off_axis_deg": round(math.degrees(float(np.linalg.norm(
                         delta - local * turned))), 2),
                     "tolerance_deg": round(math.degrees(self.tol_rad), 2)}
@@ -325,7 +481,7 @@ class ToolTurned(Verifier):
                          f"axis as asked", **measured)
         return _false(f"the {self.side} hand turned "
                       f"{math.degrees(turned):+.1f} deg of the "
-                      f"{math.degrees(self.dyaw_rad):+.1f} deg asked",
+                      f"{math.degrees(self.roll_rad):+.1f} deg asked",
                       **measured)
 
 
@@ -344,10 +500,14 @@ class Holding(Verifier):
        ``GripperReport.holding`` carries on the robot.
     2. **A body is between the two pad faces** — which only the producer can
        see, and which is exactly what ``holding`` means here.
-    3. **The gap is one the named object could make**: within
-       :data:`GRIP_WIDTH_TOL_M` of its own narrowest width. Below the window the
-       jaws went past it (closed on themselves, or on something thinner); above
-       it they never reached it.
+    3. **The gap is one the named object could make** (:func:`grip_fit`).
+       The MEASURED gap outranks the DECLARED width: a stall inside the
+       plausibility band is the object, at its measured width, and the verdict
+       says so (``width_correction``) when that differs from the declaration
+       by more than :data:`GRIP_WIDTH_TOL_M`. Only a gap at (near) zero —
+       nothing between the pads — or at (near) the open gap — blocked before
+       the object — is FALSE; a gap more than a factor of two off the
+       declaration is UNKNOWN.
 
     Every part is optional-if-unmeasured and never optional-if-measured: a
     producer that reports no gap gets (1) and (2) — the documented fallback for
@@ -359,11 +519,18 @@ class Holding(Verifier):
 
     def __init__(self, primitive: str, world0: WorldView, side: str,
                  obj: Optional[ObjectView] = None,
-                 tol_m: float = GRIP_WIDTH_TOL_M, *, jaw_axis=None):
+                 tol_m: float = GRIP_WIDTH_TOL_M, *, jaw_axis=None,
+                 reference=None, stroke: Optional[GraspStroke] = None):
         super().__init__(primitive, world0)
         self.side = side
         self.obj = obj
         self.tol_m = float(tol_m)
+        #: the grasp's planned travel (:class:`GraspStroke`); ``None`` for a
+        #: hold that was not taken by a travel onto the object (a handover's
+        #: receiver), which is graded on the jaws alone
+        self.stroke = stroke
+        #: the grasp's GraspReference (pad / tip); None = pad
+        self.reference = reference
         #: the base-frame jaw axis the grasp was planned with. The width the
         #: pads must span is the object's extent ALONG THIS, not its smallest
         #: side (R9).
@@ -383,7 +550,141 @@ class Holding(Verifier):
                 continue
         return None
 
+    # -- the stroke's two criteria ------------------------------------------ #
+    def _insertion(self, world1: WorldView) -> Dict[str, Any]:
+        """Criterion (a): how far past the object's near face the finger
+        tips were when the jaws closed."""
+        from . import grasp_geometry as gg  # noqa: PLC0415
+        stroke = self.stroke
+        arm = world1.arm(self.side)
+        if arm is None or arm.tool_p is None or arm.tool_r is None:
+            return {"verdict": CHECK_UNMEASURED,
+                    "why": f"the {self.side} arm reports no tool pose"}
+        tip = gg.fingertip_point(arm.tool_p, arm.tool_r)
+        try:
+            frames = self.world0.frames
+            insertion = gg.insertion_along(stroke.item, frames,
+                                           stroke.direction, tip)
+            need = gg.min_insertion_m(stroke.item, frames, stroke.direction)
+            top = stroke.item.top_face_z(frames)
+        except LookupError as exc:
+            return {"verdict": CHECK_UNMEASURED,
+                    "why": f"{stroke.item.name!r}'s planned pose does not "
+                           f"resolve: {exc}"}
+        out = {"verdict": CHECK_PASS if insertion >= need else CHECK_FAIL,
+               "insertion_m": round(insertion, 4),
+               "insertion_min_m": round(need, 4),
+               "tip_p": [round(float(v), 4) for v in tip],
+               "object_provenance": stroke.item.provenance}
+        if stroke.descends:
+            out.update(tip_z_m=round(float(tip[2]), 4),
+                       object_top_z_m=round(float(top), 4))
+        return out
+
+    def _approach(self, world1: WorldView, run: Any) -> Dict[str, Any]:
+        """Criterion (b): did the travel reach its commanded depth, or stop
+        early — the executor's arrival and stop reason, and where a
+        fingertip search stopped."""
+        from ..executor import ARRIVE_TOL_ALONG_M  # noqa: PLC0415
+        stroke = self.stroke
+        out: Dict[str, Any] = {"by_contact": stroke.by_contact}
+        fails = []
+        evidence = False
+        if run is not None:
+            evidence = True
+            out["run_completed"] = bool(run.completed)
+            out["stop_reason"] = run.stop_reason or ""
+            arrival = next((a for a in reversed(tuple(run.arrivals))
+                            if a.waypoint_label == "grasp"), None)
+            if arrival is not None:
+                out["arrived_at_grasp"] = bool(arrival.arrived)
+                along = float(arrival.tool_along_m)
+                if math.isfinite(along):
+                    out["tool_along_m"] = round(along, 4)
+            if not run.completed:
+                fails.append(f"the run stopped before the close finished "
+                             f"({run.stop_reason or 'no reason given'}"
+                             f"{': ' + run.error if run.error else ''})")
+            elif arrival is not None and not arrival.arrived:
+                fails.append(f"the {self.side} arm did not arrive at the "
+                             f"grasp point: {arrival.detail}")
+            elif "tool_along_m" in out and out["tool_along_m"] < -ARRIVE_TOL_ALONG_M:
+                fails.append(f"the {self.side} tool stopped "
+                             f"{-out['tool_along_m'] * 1000:.0f} mm short of "
+                             f"the grasp point along the approach")
+        stop = self._search_stop(world1, run)
+        if stroke.by_contact and stop is not None:
+            evidence = True
+            made, p, report = stop
+            above = float(p[2]) - stroke.floor_z
+            out.update(search_contact=made,
+                       search_stop_z_m=round(float(p[2]), 4),
+                       search_stop_above_floor_m=round(above, 4))
+            # THE RUNNER'S OWN CLASSIFICATION, when the leg made one (a
+            # ``back_off`` leg: ``ContactReport.surface``, judged against the
+            # leg's ``band_m``); the floor-height rule only for a record that
+            # does not carry it (a folded contact, an older report)
+            surface = getattr(report, "surface", "") if report is not None else ""
+            if surface:
+                out.update(search_surface=surface,
+                           search_support=report.support,
+                           backoff_m=round(float(report.backoff_m), 5))
+                for key in ("tip_z_before_m", "tip_z_after_m",
+                            "backoff_measured_m"):
+                    value = getattr(report, key)
+                    if value is not None:
+                        out[key] = round(float(value), 5)
+                on_object = surface == SURFACE_OBJECT
+            else:
+                on_object = made and above > SEARCH_STOP_TOL_M
+            if on_object:
+                try:
+                    top = stroke.item.top_face_z(self.world0.frames)
+                    what = (f"{stroke.item.name!r}'s top is "
+                            f"{(top - stroke.floor_z) * 1000:.0f} mm up")
+                except LookupError:
+                    what = f"{stroke.item.name!r} is where it stopped"
+                fails.append(
+                    f"the fingertip search stopped by contact "
+                    f"{above * 1000:.0f} mm above "
+                    f"{stroke.floor_name or 'the surface'} ({what}): it met "
+                    f"something before the surface it was sent to — a "
+                    f"collision, not a grasp")
+        if not evidence:
+            out.update(verdict=CHECK_UNMEASURED,
+                       why="no run report and no contact record")
+            return out
+        out["verdict"] = CHECK_FAIL if fails else CHECK_PASS
+        if fails:
+            out["why"] = "; ".join(fails)
+        return out
+
+    def _search_stop(self, world1: WorldView, run: Any):
+        """``(made, fingertip point, report)`` where this grasp's search leg
+        stopped: the run's own contact report (``report`` is it), else the
+        contact the loop folded into the later world (verb ``grasp``, this
+        side, after ``world0``; ``report`` is None)."""
+        from . import grasp_geometry as gg  # noqa: PLC0415
+        for report in reversed(tuple(getattr(run, "contacts", ()) or ())):
+            if report.side != self.side:
+                continue
+            travel = -np.asarray(report.normal_hint, dtype=float)
+            travel = travel / max(float(np.linalg.norm(travel)), 1e-12)
+            tip = np.asarray(report.p_tool, dtype=float) + travel * gg.PAD.lead_m
+            if getattr(report, "tip_z_before_m", None) is not None:
+                tip[2] = float(report.tip_z_before_m)
+            return bool(report.made), tip, report
+        for contact in reversed(tuple(world1.contacts)):
+            if (contact.side == self.side and contact.verb == "grasp"
+                    and float(contact.stamp) >= float(self.world0.stamp)):
+                return (bool(contact.made), np.asarray(contact.p, dtype=float),
+                        None)
+        return None
+
     def measure(self, world1: WorldView) -> VerdictReport:
+        return self.measure_run(world1, None)
+
+    def measure_run(self, world1: WorldView, run: Any = None) -> VerdictReport:
         gripper = world1.gripper(self.side)
         if gripper is None:
             return _unknown(f"no gripper report for the {self.side} hand")
@@ -395,6 +696,24 @@ class Holding(Verifier):
                     "named_object": name}
         if gripper.jaw_gap_m is not None:
             measured["jaw_gap_m"] = round(float(gripper.jaw_gap_m), 4)
+        # EVERY CRITERION, WITH ITS OWN VERDICT, in every record — so the log
+        # and the model see which one failed, not only that one did.
+        checks: Dict[str, Dict[str, Any]] = {
+            "jaw_gap": {"verdict": CHECK_UNMEASURED}}
+        insertion = approach = None
+        if self.stroke is not None:
+            insertion = self._insertion(world1)
+            approach = self._approach(world1, run)
+            checks["insertion"] = insertion
+            checks["approach"] = approach
+            for key in ("tip_z_m", "object_top_z_m", "insertion_m",
+                        "insertion_min_m"):
+                if key in insertion:
+                    measured[key] = insertion[key]
+            measured["approach_completed"] = (
+                None if approach["verdict"] == CHECK_UNMEASURED
+                else approach["verdict"] == CHECK_PASS)
+        measured["checks"] = checks
         # (0) CONTRADICTORY IDENTITY beats everything. A hand that says it is
         # holding something else is not holding this.
         if (name is not None and gripper.held_object
@@ -410,28 +729,79 @@ class Holding(Verifier):
         # verdict so "it closed on itself" is reported as itself rather than as
         # a bare `nothing held`.
         width = self._width(world1)
+        fit = None
         if width is not None and gripper.jaw_gap_m is not None:
-            low, high = grip_width_window(width, self.tol_m)
-            measured["width_window_m"] = [round(low, 4), round(high, 4)]
-            measured["object_width_m"] = round(float(width), 4)
-            if gripper.jaw_gap_m < low:
+            gap_m = float(gripper.jaw_gap_m)
+            fit = grip_fit(gap_m, width, open_gap_m=gripper.open_gap_m,
+                           reference=self.reference)
+            measured.update(fit, object_width_m=round(float(width), 4))
+            checks["jaw_gap"] = {
+                "verdict": (CHECK_PASS if fit["fit"] == FIT_HELD
+                            else CHECK_UNMEASURED
+                            if fit["fit"] == FIT_IMPLAUSIBLE else CHECK_FAIL),
+                "fit": fit["fit"], "jaw_gap_m": round(gap_m, 4),
+                "width_band_m": fit["width_band_m"],
+                "width_window_m": fit["width_window_m"],
+                "matches_declaration": fit["matches_declaration"]}
+            if fit["fit"] == FIT_EMPTY:
                 return _false(
-                    f"the {self.side} gripper stalled at "
-                    f"{gripper.jaw_gap_m * 1000:.1f} mm, inside "
-                    f"{name}'s {width * 1000:.1f} mm — it closed on "
-                    f"itself, not on the object", **measured)
-            if gripper.jaw_gap_m > high:
+                    f"the {self.side} gripper stalled at {gap_m * 1000:.1f} mm "
+                    f"— it closed on itself, not on {name!r}: nothing is "
+                    f"between the pads", **measured)
+            if fit["fit"] == FIT_BLOCKED:
                 return _false(
-                    f"the {self.side} gripper stopped at "
-                    f"{gripper.jaw_gap_m * 1000:.1f} mm, wider than "
-                    f"{name}'s {width * 1000:.1f} mm — the jaws never "
-                    f"reached it", **measured)
+                    f"the {self.side} gripper stalled at {gap_m * 1000:.1f} mm, "
+                    f"at (or past) its {fit['open_gap_m'] * 1000:.1f} mm open "
+                    f"gap — something blocked the pads before {name!r}: the "
+                    f"jaws never reached it", **measured)
         # (2) the half only the producer can see: a body between the pad faces
         if not gripper.holding:
             return _false(f"the {self.side} gripper reports nothing between its "
                           f"pads", **measured)
+        # (5) THE STROKE. A stall at a width the object could make is not a
+        # hold if the travel stopped early or the fingers never got into the
+        # object (d1-2, 2026-09-24: a 48 mm stall inside a 46-54 mm window
+        # was reported held, and the roll never left the table).
+        stalled = ("" if gripper.jaw_gap_m is None
+                   else f" stalled at {gripper.jaw_gap_m * 1000:.0f} mm")
+        if approach is not None and approach["verdict"] == CHECK_FAIL:
+            return _false(f"the {self.side} jaws{stalled}, but the approach "
+                          f"did not complete: {approach['why']}", **measured)
+        if insertion is not None and insertion["verdict"] == CHECK_FAIL:
+            face = "top" if self.stroke.descends else "near face"
+            return _false(
+                f"the {self.side} jaws{stalled} with the finger tips "
+                f"{insertion['insertion_m'] * 1000:+.0f} mm past "
+                f"{self.stroke.item.name!r}'s {face} (insertion "
+                f"{insertion['insertion_m'] * 1000:+.1f} mm; a hold needs "
+                f"{insertion['insertion_min_m'] * 1000:.1f} mm): a pinch on "
+                f"its rim or edge, not a hold", **measured)
+        if fit is not None and fit["fit"] == FIT_IMPLAUSIBLE:
+            return _unknown(
+                f"the {self.side} jaws stalled on something at "
+                f"{gripper.jaw_gap_m * 1000:.1f} mm, but {name!r} was declared "
+                f"{width * 1000:.1f} mm — more than a factor of "
+                f"{WIDTH_PLAUSIBLE_FACTOR:.0f} off, so this is not evidence it "
+                f"is {name!r}. Look again and re-declare it", **measured)
         gap = ("" if gripper.jaw_gap_m is None
                else f" at a {gripper.jaw_gap_m * 1000:.1f} mm gap")
+        if fit is not None and not fit["matches_declaration"]:
+            # the MEASURED width replaces the declared one (the loop hands
+            # this to the world source)
+            measured["width_provenance"] = "measured"
+            measured["width_correction"] = {
+                "object": name, "declared_m": fit["declared_width_m"],
+                "measured_m": round(float(gripper.jaw_gap_m), 4),
+                "jaw_axis": (None if self.jaw_axis is None
+                             else [round(float(v), 4) for v in self.jaw_axis])}
+            gap += (f"; declared {width * 1000:.1f} mm, width corrected to "
+                    f"the MEASURED {gripper.jaw_gap_m * 1000:.1f} mm")
+        if insertion is not None and insertion["verdict"] == CHECK_UNMEASURED:
+            # conservative: a hold is jaws AND fingers in the object, and the
+            # second half was not measured
+            return _unknown(f"the {self.side} jaws stalled{gap}, but how far "
+                            f"the fingers got into {name!r} could not be "
+                            f"measured: {insertion['why']}", **measured)
         if name is None:
             return _true(f"the {self.side} gripper is holding{gap}", **measured)
         # (4) ASSOCIATION. "Something is gripped" is not "the named block is
@@ -455,11 +825,32 @@ class Holding(Verifier):
                 f"object to turn this into a verdict", **measured)
         distance = float(np.linalg.norm(np.asarray(at) - tool))
         measured["object_to_tool_m"] = round(distance, 4)
+        stated = _stated(world1, self.world0, name)
+        said = f"{stated} at" if stated else "measured"
         if distance > ASSOCIATION_TOL_M:
             return _false(
                 f"the {self.side} jaws stalled on something, but {name!r} is "
-                f"measured {distance * 1000:.0f} mm from the tool point — "
+                f"{said} {distance * 1000:.0f} mm from the tool point — "
                 f"whatever is between the pads, it is not that", **measured)
+        if stated:
+            # A DECLARED or JUDGED position is where the grasp was planned
+            # to, so "it is at the tool point" is true by construction and
+            # measures nothing. Only the measured gap (grip_fit) can tie
+            # the stall to this object.
+            measured["provenance"] = stated
+            if fit is None:
+                measured["association"] = None
+                return _unknown(
+                    f"the {self.side} jaws stalled on something{gap}, and "
+                    f"{name!r} is {stated} {distance * 1000:.0f} mm from the "
+                    f"tool point — but a {stated} position is where the "
+                    f"grasp aimed, not a measurement, and no jaw gap was "
+                    f"measured to say the pads closed on {name!r}", **measured)
+            measured["association"] = "stated_position+grip_fit"
+            return _true(f"the {self.side} gripper is holding {name!r}{gap}: "
+                         f"the measured gap fits {name!r}, {stated} "
+                         f"{distance * 1000:.0f} mm from the tool point",
+                         **measured)
         measured["association"] = "measured_position"
         return _true(f"the {self.side} gripper is holding {name!r}{gap}, and "
                      f"{name!r} is measured {distance * 1000:.0f} mm from the "
@@ -487,6 +878,63 @@ class NotHolding(Verifier):
             return _false(f"the {self.side} gripper reports nothing held but its "
                           f"jaws are {gripper.closedness:.2f} closed", **measured)
         return _true(f"the {self.side} gripper is open and empty", **measured)
+
+
+class ToolClearOf(Verifier):
+    """A hand's tool point is at least ``min_gap_m`` OUTSIDE an object's box.
+
+    The giving hand's half of a ``handover``: opening the jaws is not the end
+    of the give — a hand still around the object drags it when it moves next.
+    The gap is measured from the tool point (the pad centre) to the object's
+    own oriented box, so a hand that backed straight out along its approach
+    axis is measured on the axis it backed out along.
+
+    Like the other clearance verdicts, a POSITIVE gap to an inferred pose
+    (``attached`` to the other hand, ``predicted``) stays TRUE and says so; a
+    negative one is UNKNOWN, because a pose nobody saw cannot convict.
+    """
+
+    describes = "the hand is clear of the object"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str,
+                 name: str, min_gap_m: float):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.name = name
+        self.min_gap_m = float(min_gap_m)
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        tool = _tool_point(world1, self.side)
+        if tool is None:
+            return _unknown(f"the {self.side} arm reports no tool point, so "
+                            f"its clearance from {self.name!r} cannot be "
+                            f"measured")
+        item = world1.find(self.name)
+        if item is None:
+            return _unknown(_why_missing(world1, self.name))
+        try:
+            p, r = item.pose_in_base(world1.frames)
+        except LookupError:
+            return _unknown(_why_missing(world1, self.name))
+        local = r.inv().apply(np.asarray(tool, dtype=float) - np.asarray(p))
+        half = np.asarray(item.size, dtype=float).reshape(3) / 2.0
+        gap = float(np.linalg.norm(np.maximum(np.abs(local) - half, 0.0)))
+        measured = {"gap_m": round(gap, 4),
+                    "min_gap_m": round(self.min_gap_m, 4)}
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = item.provenance
+        if gap >= self.min_gap_m:
+            return _true(f"the {self.side} hand's tool point is "
+                         f"{gap * 1000:.0f} mm clear of {self.name!r}"
+                         + (f" — {inferred}" if inferred else ""), **measured)
+        if inferred:
+            return _unknown(f"by its inferred pose {self.name!r} is only "
+                            f"{gap * 1000:.0f} mm from the {self.side} hand, "
+                            f"but {inferred}", **measured)
+        return _false(f"the {self.side} hand is only {gap * 1000:.0f} mm from "
+                      f"{self.name!r} (needs {self.min_gap_m * 1000:.0f} mm)",
+                      **measured)
 
 
 class ObjectRose(Verifier):
@@ -519,6 +967,10 @@ class ObjectRose(Verifier):
         gripper = world1.gripper(self.side)
         measured = {"rise_m": round(rise, 4), "asked_m": round(self.height_m, 4),
                     "holding": None if gripper is None else bool(gripper.holding)}
+        inferred = _inferred(world1, self.name)
+        item = world1.find(self.name)
+        if item is not None:
+            measured["provenance"] = item.provenance
         if gripper is None:
             # "Still held" is half the predicate, so a missing gripper report
             # is missing EVIDENCE, not a pass (R12). The old code skipped the
@@ -542,7 +994,13 @@ class ObjectRose(Verifier):
         if support is not None:
             return _false(f"{self.name} reports a {rise * 1000:.0f} mm rise but "
                           f"its underside is still on {support.name}", **measured)
-        return _true(f"{self.name} rose {rise * 1000:.0f} mm", **measured)
+        # A held object's pose is the ATTACHED one (the tool pose and the
+        # grasp recorded at the stroke), so the rise is the hand's, measured,
+        # with the gripper reporting the object still in it. That is the
+        # evidence a lift can have without a fresh sight, and the verdict says
+        # which kind it is.
+        return _true(f"{self.name} rose {rise * 1000:.0f} mm"
+                     + (f" — {inferred}" if inferred else ""), **measured)
 
 
 class ObjectOver(Verifier):
@@ -582,9 +1040,18 @@ class ObjectOver(Verifier):
             return _false(f"the {self.side} gripper is holding "
                           f"{gripper.held_object!r}, not {self.name!r}",
                           **measured)
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = world1.find(self.name).provenance
         if gap <= self.tol_m:
             return _true(f"{self.name} is {gap * 1000:.0f} mm from over "
-                         f"{self.destination}", **measured)
+                         f"{self.destination}"
+                         + (f" — {inferred}" if inferred else ""), **measured)
+        if inferred:
+            return _unknown(f"by its inferred pose {self.name} is "
+                            f"{gap * 1000:.0f} mm from over "
+                            f"{self.destination}, but {inferred}; a sighting "
+                            f"is what can call it", **measured)
         return _false(f"{self.name} is {gap * 1000:.0f} mm from over "
                       f"{self.destination}", **measured)
 
@@ -630,9 +1097,17 @@ class ObjectClears(Verifier):
         measured = {"underside_z_m": round(under, 4),
                     f"{what}_z_m": round(top, 4),
                     "clearance_m": round(gap, 4)}
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = obj.provenance
         if gap >= self.margin_m:
             return _true(f"{self.name}'s underside is {gap * 1000:.0f} mm above "
-                         f"{self.destination}'s {what}", **measured)
+                         f"{self.destination}'s {what}"
+                         + (f" — {inferred}" if inferred else ""), **measured)
+        if inferred:
+            return _unknown(f"by its inferred pose {self.name}'s underside is "
+                            f"{-gap * 1000:.0f} mm below {self.destination}'s "
+                            f"{what}, but {inferred}", **measured)
         return _false(f"{self.name}'s underside is {-gap * 1000:.0f} mm BELOW "
                       f"{self.destination}'s {what}", **measured)
 
@@ -706,6 +1181,22 @@ class ObjectIn(Verifier):
         rest = under - floor
         measured["inside"] = bool(inside)
         measured["underside_above_floor_m"] = round(rest, 4)
+        inferred = _inferred(world1, self.name)
+        if inferred:
+            measured["provenance"] = obj.provenance
+            if gripper is not None and gripper.holding and (
+                    not gripper.held_object
+                    or gripper.held_object == self.name):
+                return _false(f"the {self.side} gripper is still holding "
+                              f"{self.name}", **measured)
+            # "In the cup, released, standing on the floor" is a claim about
+            # where the thing CAME TO REST, and an inferred pose has not seen
+            # it come to rest anywhere: never TRUE, never a confident FALSE.
+            return _unknown(
+                f"by its inferred pose {self.name} would be "
+                f"{'' if inside else 'NOT '}{where} "
+                f"({rest * 1000:+.0f} mm from the floor), but {inferred}; "
+                f"look, and declare what you see, to measure it", **measured)
         if not inside:
             return _false(f"{self.name} — all of it, not just its centre — is "
                           f"not {where}", **measured)
@@ -810,6 +1301,115 @@ class Tilted(Verifier):
             f"turn this into a verdict", **measured)
 
 
+#: How far a published contact surface's face may sit from the contact it
+#: was fitted to and still be that contact's surface [m]. A single probe's
+#: plane passes through its contact exactly; a fit over three leaves a
+#: residual, and 3 mm is the hardware gate's own accuracy target (decision 2).
+CONTACT_PLANE_TOL_M = 0.003
+
+
+def _new_contacts(world0: WorldView, world1: WorldView, side: str,
+                  verb: str = ""):
+    """The contacts ``world1`` carries that ``world0`` did not, for ``side``."""
+    base = len(getattr(world0, "contacts", ()))
+    fresh = tuple(getattr(world1, "contacts", ()))[base:]
+    return [c for c in fresh if c.side == side and (not verb or c.verb == verb)]
+
+
+class ContactMade(Verifier):
+    """The hand met resistance along its direction — MEASURED by the leg.
+
+    Reads the :class:`~manipulation_kit.world.ContactView` a run's
+    :class:`~manipulation_kit.executor.ContactReport` became
+    (``primitives.contact.record_contacts``). No new contact in the later
+    world is UNKNOWN — nobody folded the evidence in — never TRUE; a contact
+    leg that ran its whole travel is FALSE, with the travel.
+    """
+
+    describes = "the hand touched something, measured by the torque watch"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str, *,
+                 max_travel_m: float, verb: str = ""):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.max_travel_m = float(max_travel_m)
+        self.verb = verb or primitive
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        new = _new_contacts(self.world0, world1, self.side, self.verb)
+        if not new:
+            return _unknown(
+                f"no {self.verb} contact on the {self.side} hand reached this "
+                f"world; fold the run's report in "
+                f"(primitives.contact.record_contacts)")
+        c = new[-1]
+        measured = {"stopped_by": c.stopped_by,
+                    "p": [round(float(v), 4) for v in c.p],
+                    "normal": [round(float(v), 3) for v in c.normal],
+                    "travel_m": (None if not math.isfinite(c.travel_m)
+                                 else round(float(c.travel_m), 4)),
+                    "torque_nm": (None if not math.isfinite(c.torque_nm)
+                                  else round(float(c.torque_nm), 3))}
+        if not c.made:
+            travel = (f"{c.travel_m * 1000:.0f} mm" if math.isfinite(c.travel_m)
+                      else "its whole leg")
+            return _false(f"nothing resisted the {self.side} hand: the leg "
+                          f"stopped by {c.stopped_by} after {travel}",
+                          **measured)
+        if (math.isfinite(c.travel_m)
+                and not -0.005 <= c.travel_m <= self.max_travel_m + 0.005):
+            return _false(f"the {self.side} contact is {c.travel_m * 1000:.0f} "
+                          f"mm along a leg of {self.max_travel_m * 1000:.0f} "
+                          f"mm, which is not a point on it", **measured)
+        return _true(f"the {self.side} hand met resistance after "
+                     f"{c.travel_m * 1000:.0f} mm ({c.torque_nm:.2f} Nm rise)",
+                     **measured)
+
+
+class SurfaceMeasured(Verifier):
+    """A SURFACE named ``name`` now carries the plane the contact measured."""
+
+    describes = "the touched surface was published with its measured plane"
+
+    def __init__(self, primitive: str, world0: WorldView, side: str, name: str,
+                 *, tol_m: float = CONTACT_PLANE_TOL_M, verb: str = ""):
+        super().__init__(primitive, world0)
+        self.side = side
+        self.name = name
+        self.tol_m = float(tol_m)
+        self.verb = verb or primitive
+
+    def measure(self, world1: WorldView) -> VerdictReport:
+        new = _new_contacts(self.world0, world1, self.side, self.verb)
+        if not new:
+            return _unknown(f"no {self.verb} contact reached this world, so "
+                            f"no surface was measured")
+        c = new[-1]
+        if not c.made:
+            return _false(f"nothing was touched, so {self.name!r} was not "
+                          f"measured")
+        surface = world1.find(self.name)
+        if not isinstance(surface, SurfaceView):
+            return _false(f"no surface called {self.name!r} was published")
+        if surface.plane_source != "contact":
+            return _false(f"{self.name!r} is known from "
+                          f"{surface.plane_source or 'an unstated source'}, "
+                          f"not from contact")
+        try:
+            off = surface.plane_offset(c.p, world1.frames)
+            normal = surface.top_normal(world1.frames)
+        except FrameError as exc:
+            return _unknown(f"{self.name!r} does not resolve: {exc}")
+        measured = {"offset_m": round(off, 4),
+                    "normal": [round(float(v), 4) for v in normal],
+                    "height_uncertainty_m": surface.height_uncertainty_m}
+        if abs(off) > self.tol_m:
+            return _false(f"{self.name!r}'s face is {off * 1000:+.1f} mm from "
+                          f"the contact it should pass through", **measured)
+        return _true(f"{self.name!r} passes {abs(off) * 1000:.1f} mm from the "
+                     f"measured contact", **measured)
+
+
 class Never(Verifier):
     """For a primitive whose success is not measurable here at all."""
 
@@ -837,7 +1437,10 @@ class All(Verifier):
         self.describes = "; ".join(p.describes for p in self.parts)
 
     def measure(self, world1: WorldView) -> VerdictReport:
-        reports = [p(world1) for p in self.parts]
+        return self.measure_run(world1, None)
+
+    def measure_run(self, world1: WorldView, run: Any = None) -> VerdictReport:
+        reports = [p(world1, run) for p in self.parts]
         measured = {}
         for part, report in zip(self.parts, reports):
             measured[type(part).__name__] = report.to_json()

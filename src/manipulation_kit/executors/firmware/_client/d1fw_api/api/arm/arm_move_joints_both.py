@@ -5,15 +5,15 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.arm_move_joints_both_body import ArmMoveJointsBothBody
 from ...models.arm_move_joints_both_response_200 import ArmMoveJointsBothResponse200
-from ...models.both_joints_request import BothJointsRequest
 from ...models.error_envelope import ErrorEnvelope
 from ...types import Response
 
 
 def _get_kwargs(
     *,
-    body: BothJointsRequest,
+    body: ArmMoveJointsBothBody,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -83,15 +83,32 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: BothJointsRequest,
+    body: ArmMoveJointsBothBody,
 ) -> Response[ArmMoveJointsBothResponse200 | ErrorEnvelope]:
     """Command both arms to joint targets in one guarded call
 
-     Guarded as one dual-arm pose, so it accepts poses that two single-arm calls in sequence would not.
-    Angles are degrees.
+     Angles are degrees. The motion guard checks the straight joint-space path from both arms' current
+    feedback pose to the two targets, sampled at 1 degree per joint, each sample one dual-arm pose
+    checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins; the
+    targets are checked against the URDF joint limits. Because the two paths are checked together it
+    accepts a coordinated move (arm A going where arm B is while B leaves) that "A, then B" as two
+    single-arm calls would refuse. A path that fails is refused with `kind: refused` before anything is
+    written, naming the sample, the moving joints and each pair under its margin with its distance; a
+    path that starts inside a margin is accepted while no clearance gets smaller than at the start. The
+    clearance guard cannot be switched off.
+
+    Streaming (teleop sends this route at up to 200 Hz): a refused command is not written, so the arms
+    hold the last accepted target; nothing latches, and the next command whose path is clear is accepted
+    at once, so a streaming client just keeps streaming. A per-tick delta under one degree is one guard
+    check.
+
+    Both arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If
+    either is not, the call is refused at once with `kind: refused` and no command is written to either
+    arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover
+    call that energises it.
 
     Args:
-        body (BothJointsRequest): `POST /v1/arm/move_joints_both`.
+        body (ArmMoveJointsBothBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,15 +132,32 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: BothJointsRequest,
+    body: ArmMoveJointsBothBody,
 ) -> ArmMoveJointsBothResponse200 | ErrorEnvelope | None:
     """Command both arms to joint targets in one guarded call
 
-     Guarded as one dual-arm pose, so it accepts poses that two single-arm calls in sequence would not.
-    Angles are degrees.
+     Angles are degrees. The motion guard checks the straight joint-space path from both arms' current
+    feedback pose to the two targets, sampled at 1 degree per joint, each sample one dual-arm pose
+    checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins; the
+    targets are checked against the URDF joint limits. Because the two paths are checked together it
+    accepts a coordinated move (arm A going where arm B is while B leaves) that "A, then B" as two
+    single-arm calls would refuse. A path that fails is refused with `kind: refused` before anything is
+    written, naming the sample, the moving joints and each pair under its margin with its distance; a
+    path that starts inside a margin is accepted while no clearance gets smaller than at the start. The
+    clearance guard cannot be switched off.
+
+    Streaming (teleop sends this route at up to 200 Hz): a refused command is not written, so the arms
+    hold the last accepted target; nothing latches, and the next command whose path is clear is accepted
+    at once, so a streaming client just keeps streaming. A per-tick delta under one degree is one guard
+    check.
+
+    Both arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If
+    either is not, the call is refused at once with `kind: refused` and no command is written to either
+    arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover
+    call that energises it.
 
     Args:
-        body (BothJointsRequest): `POST /v1/arm/move_joints_both`.
+        body (ArmMoveJointsBothBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,15 +176,32 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: BothJointsRequest,
+    body: ArmMoveJointsBothBody,
 ) -> Response[ArmMoveJointsBothResponse200 | ErrorEnvelope]:
     """Command both arms to joint targets in one guarded call
 
-     Guarded as one dual-arm pose, so it accepts poses that two single-arm calls in sequence would not.
-    Angles are degrees.
+     Angles are degrees. The motion guard checks the straight joint-space path from both arms' current
+    feedback pose to the two targets, sampled at 1 degree per joint, each sample one dual-arm pose
+    checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins; the
+    targets are checked against the URDF joint limits. Because the two paths are checked together it
+    accepts a coordinated move (arm A going where arm B is while B leaves) that "A, then B" as two
+    single-arm calls would refuse. A path that fails is refused with `kind: refused` before anything is
+    written, naming the sample, the moving joints and each pair under its margin with its distance; a
+    path that starts inside a margin is accepted while no clearance gets smaller than at the start. The
+    clearance guard cannot be switched off.
+
+    Streaming (teleop sends this route at up to 200 Hz): a refused command is not written, so the arms
+    hold the last accepted target; nothing latches, and the next command whose path is clear is accepted
+    at once, so a streaming client just keeps streaming. A per-tick delta under one degree is one guard
+    check.
+
+    Both arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If
+    either is not, the call is refused at once with `kind: refused` and no command is written to either
+    arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover
+    call that energises it.
 
     Args:
-        body (BothJointsRequest): `POST /v1/arm/move_joints_both`.
+        body (ArmMoveJointsBothBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,15 +223,32 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: BothJointsRequest,
+    body: ArmMoveJointsBothBody,
 ) -> ArmMoveJointsBothResponse200 | ErrorEnvelope | None:
     """Command both arms to joint targets in one guarded call
 
-     Guarded as one dual-arm pose, so it accepts poses that two single-arm calls in sequence would not.
-    Angles are degrees.
+     Angles are degrees. The motion guard checks the straight joint-space path from both arms' current
+    feedback pose to the two targets, sampled at 1 degree per joint, each sample one dual-arm pose
+    checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins; the
+    targets are checked against the URDF joint limits. Because the two paths are checked together it
+    accepts a coordinated move (arm A going where arm B is while B leaves) that "A, then B" as two
+    single-arm calls would refuse. A path that fails is refused with `kind: refused` before anything is
+    written, naming the sample, the moving joints and each pair under its margin with its distance; a
+    path that starts inside a margin is accepted while no clearance gets smaller than at the start. The
+    clearance guard cannot be switched off.
+
+    Streaming (teleop sends this route at up to 200 Hz): a refused command is not written, so the arms
+    hold the last accepted target; nothing latches, and the next command whose path is clear is accepted
+    at once, so a streaming client just keeps streaming. A per-tick delta under one degree is one guard
+    check.
+
+    Both arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If
+    either is not, the call is refused at once with `kind: refused` and no command is written to either
+    arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover
+    call that energises it.
 
     Args:
-        body (BothJointsRequest): `POST /v1/arm/move_joints_both`.
+        body (ArmMoveJointsBothBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

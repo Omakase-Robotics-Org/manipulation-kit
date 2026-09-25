@@ -16,17 +16,22 @@ import math
 
 import numpy as np
 import pytest
+
+from manipulation_kit.world.direction import ALIASES
 from scipy.spatial.transform import Rotation as R
 
 from manipulation_kit.primitives import (Approach, Carry, Grasp, Lift, Nudge,
                                          Place, Pour, Release, Retreat)
-from manipulation_kit.primitives import approach as ap
+from manipulation_kit.primitives import orientation as ap
 from manipulation_kit.primitives.types import (BAD_ARGUMENT, GRIPPER_UNKNOWN,
                                                NOT_HOLDING, OBJECT_TOO_WIDE,
                                                PRECONDITION_UNMET, Verdict)
 from manipulation_kit.world import (ArmView, ContainerView, Frame, FrameGraph,
                                     GripperView, ObjectView, SurfaceView,
                                     WorldView)
+
+#: the base-frame "down" vector the orientation helpers take
+DOWN = ALIASES["down"].vector()
 
 REACHABLE = (0.38, 0.25, 0.05)
 
@@ -82,7 +87,11 @@ def test_a_yawed_frame_moves_the_grasp_with_the_object(d1_arm):
     """R1. The rotated case: the transform has to rotate the position too."""
     yaw = R.from_euler("z", 0.35)
     frames = FrameGraph.of([Frame("wagon", "base", p=(0.30, 0.10, 0.0), r=yaw)])
-    local = np.array([0.06, 0.04, 0.05])
+    # standing ON the table (top z = 0.01). It used to float 15 mm above it,
+    # which the old underside-as-floor geometry could not tell apart; with
+    # the table as the floor and the standoff from the block's top the
+    # floating declaration's standoff is guard-rejected at this reach.
+    local = np.array([0.06, 0.04, 0.035])
     world = WorldView.of(
         [ObjectView("red_block", p=local, size=(0.05, 0.04, 0.05),
                     frame_id="wagon"),
@@ -216,25 +225,38 @@ def test_a_yawed_cube_is_measured_across_the_jaws_it_will_close_with(d1_arm):
     frames = FrameGraph()
     cube = ObjectView("cube", p=(0.4, 0.1, 0.2), size=(0.04, 0.04, 0.04),
                       r=R.from_euler("z", math.radians(25.0)))
-    r_tcp = ap.grasp_orientation("left", "top_down", cube, frames)
+    r_tcp = ap.grasp_orientation("left", DOWN, cube, frames)
     assert ap.grasp_width(cube, frames, r_tcp) == pytest.approx(0.04, abs=1e-6)
     # ...and a BASE-aligned jaw set would see 53.2 mm of it
-    square = ap.grasp_orientation("left", "top_down")
+    square = ap.grasp_orientation("left", DOWN)
     assert ap.grasp_width(cube, frames, square) > 0.05
 
 
 def test_a_tilted_object_is_refused_rather_than_measured_as_if_upright(
         d1_arm, observe):
-    """R9. Every support height reads the vertical extent off the resolved
-    pose, which is exact for a yaw and wrong for a tilt."""
+    """R9, narrowed by req 4 (0.16.0 step 3). A tilted object's own underside
+    is a corner, not the table, so it cannot stand in for the descent floor:
+    WITHOUT a measured surface under it a tilted object is still refused.
+    With one it is planned in its own frame
+    (``test_grasp_geometry.test_a_30deg_object_is_grasped_along_its_own_face``).
+    """
     world = observe(d1_arm, block_p=REACHABLE)
     tilted = world.with_(objects=[
         ObjectView("red_block", p=REACHABLE, size=(0.05, 0.04, 0.05),
                    r=R.from_euler("y", math.radians(30.0))),
-        *[o for o in world.objects if o.name != "red_block"]])
+        *[o for o in world.objects
+          if o.name != "red_block" and not isinstance(o, SurfaceView)]])
     codes = {u.code for u in Grasp(object="red_block", side="left")
              .preconditions(tilted)}
     assert "object_tilted" in codes
+    # ...and the fixture's own table under it is what lifts the refusal
+    on_table = world.with_(objects=[
+        ObjectView("red_block", p=REACHABLE, size=(0.05, 0.04, 0.05),
+                   r=R.from_euler("y", math.radians(30.0))),
+        *[o for o in world.objects if o.name != "red_block"]])
+    codes = {u.code for u in Grasp(object="red_block", side="left")
+             .preconditions(on_table)}
+    assert "object_tilted" not in codes
 
 
 def test_a_container_narrower_than_the_object_refuses_the_place(d1_arm, observe):
@@ -303,7 +325,7 @@ def test_a_constrained_leg_is_refused_instead_of_routed_around(d1_arm, observe):
 
     world = observe(d1_arm, block_p=REACHABLE)
     hard = np.array([0.10, 0.45, 0.55])
-    r = ap.grasp_orientation("left", "top_down")
+    r = ap.grasp_orientation("left", DOWN)
     with Kin(d1_arm, world) as kin:
         free_steps, free_error, notes = solve_path(
             kin, "left", [Waypoint("free", hard, r, allow_via=True)],
@@ -335,7 +357,8 @@ def test_a_gripper_holding_something_else_does_not_verify_this_grasp(
     assert "OTHER" in report.reason
 
 
-def test_a_hold_with_no_identity_and_no_object_is_unknown(d1_arm, observe):
+def test_a_hold_with_no_identity_and_no_object_is_unknown(d1_arm, observe,
+                                                          at_grasp):
     """R11. A torque stall cannot tell a named block from anything else of the
     same width. With no association evidence the answer is UNKNOWN, and the
     verdict says what would settle it."""
@@ -346,19 +369,26 @@ def test_a_hold_with_no_identity_and_no_object_is_unknown(d1_arm, observe):
                                       held_object=None, jaw_gap_m=0.040,
                                       jaw_stalled=True),
                   "right": world.gripper("right")})
-    report = Grasp(object="red_block", side="left").verifier(world)(after)
+    grasp = Grasp(object="red_block", side="left")
+    report = grasp.verifier(world)(at_grasp(d1_arm, world, after, grasp))
     assert report.verdict == Verdict.UNKNOWN
     assert "held_object" in report.reason
 
 
-def test_a_named_object_measured_away_from_the_pads_is_false(d1_arm, observe):
-    """R11. The other half: the object is observed, and it is not in the hand."""
+def test_a_named_object_measured_away_from_the_pads_is_false(d1_arm, observe,
+                                                            at_grasp):
+    """R11. The other half: the object is observed, and it is not in the hand
+    — the hand closed at the grasp pose, and the block is measured 80+ mm
+    from it."""
     world = observe(d1_arm, block_p=REACHABLE)
-    after = world.with_(grippers={
+    grasp = Grasp(object="red_block", side="left")
+    moved = observe(d1_arm, block_p=(REACHABLE[0], REACHABLE[1] + 0.12,
+                                     REACHABLE[2]))
+    after = moved.with_(grippers={
         "left": GripperView("left", 1.0, holding=True, held_object=None,
                             jaw_gap_m=0.040, jaw_stalled=True),
         "right": world.gripper("right")})
-    report = Grasp(object="red_block", side="left").verifier(world)(after)
+    report = grasp.verifier(world)(at_grasp(d1_arm, world, after, grasp))
     assert report.verdict == Verdict.FALSE
     assert "from the tool point" in report.reason
 
@@ -527,7 +557,7 @@ def test_approach_verifies_the_wrist_it_derived(d1_arm, observe):
     along, and it verified the tool POINT alone."""
     world = observe(d1_arm, block_p=REACHABLE)
     verb = Approach(object="red_block", side="left")
-    _side, p_stand, _r, _u = verb._geometry(world)
+    p_stand = verb._meet(world)[0].p_stand
     arm = world.arm("left")
     right_place_wrong_wrist = world.with_(arms={
         "left": ArmView("left", joints=arm.joints, tool_p=p_stand,

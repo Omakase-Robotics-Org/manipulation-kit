@@ -211,6 +211,6 @@ def test_every_way_a_call_can_be_malformed_ends_as_one_typed_refusal(call,
 def test_a_well_formed_call_decodes_to_the_primitive_it_named(d1_arm, observe):
     world = observe(d1_arm)
     call = decode("grasp", {"object": "red_block", "side": "left",
-                            "approach": "top_down"}, world)
+                            "direction": "down"}, world)
     assert isinstance(call, Grasp)
-    assert label_for(call) == "grasp red_block with the left hand, top down"
+    assert label_for(call) == "grasp red_block with the left hand, travelling down"

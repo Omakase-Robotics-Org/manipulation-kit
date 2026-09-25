@@ -83,14 +83,20 @@ def test_a_recording_executor_that_sent_the_plan_still_fails(d1_arm, observe, ve
     assert verdict != Verdict.TRUE
 
 
-def test_grasp_is_true_only_when_the_gripper_itself_reports_holding(d1_arm, observe):
+def test_grasp_is_true_only_when_the_gripper_itself_reports_holding(
+        d1_arm, observe, at_grasp):
     world = observe(d1_arm, block_p=REACHABLE)
-    verifier = Grasp(object="red_block", side="left").verifier(world)
+    grasp = Grasp(object="red_block", side="left")
+    verifier = grasp.verifier(world)
     closed_empty = observe(d1_arm, block_p=REACHABLE, closed={"left": 1.0})
     assert verifier(closed_empty).verdict == Verdict.FALSE
     holding = observe(d1_arm, block_p=REACHABLE, closed={"left": 1.0},
                       held={"left": "red_block"})
-    assert verifier(holding).verdict == Verdict.TRUE
+    # the same hold with the arm still at its start pose: the jaws closed
+    # 130 mm above the block — not a hold
+    assert verifier(holding).verdict == Verdict.FALSE
+    assert verifier(at_grasp(d1_arm, world, holding, grasp)).verdict \
+        == Verdict.TRUE
 
 
 def test_a_gripper_stalled_on_itself_is_not_holding_the_object(d1_arm, observe):
@@ -121,35 +127,39 @@ def test_a_stroke_that_never_stalled_is_not_a_grasp(d1_arm, observe):
     assert "never stopped short" in report.reason
 
 
-def test_a_40mm_cube_is_held_at_a_closedness_the_old_gate_refused(d1_arm, observe):
+def test_a_40mm_cube_is_held_at_a_closedness_the_old_gate_refused(
+        d1_arm, observe, at_grasp):
     """F8, as a row. The env stopped the jaws at closedness 0.41 on a 40 mm
     cube and the 0.6 closure gate therefore reported nothing held — while the
     cube tracked the tool through 149.8 mm of lift. Closedness is not the
     evidence; the gap, the stall and the body between the pads are."""
     world = observe(d1_arm, block_p=REACHABLE, block_size=(0.04, 0.04, 0.04))
-    verifier = Grasp(object="red_block", side="left").verifier(world)
+    grasp = Grasp(object="red_block", side="left")
+    verifier = grasp.verifier(world)
     after = observe(d1_arm, block_p=REACHABLE, block_size=(0.04, 0.04, 0.04),
                     closed={"left": 0.41}, held={"left": "red_block"},
                     gap={"left": 0.04122})          # the measured face gap
-    report = verifier(after)
+    report = verifier(at_grasp(d1_arm, world, after, grasp))
     assert report.verdict == Verdict.TRUE, report.reason
     assert report.measured["closedness"] == 0.41
 
 
-def test_the_gap_has_to_be_one_the_object_could_make(d1_arm, observe):
+def test_the_gap_has_to_be_one_the_object_could_make(d1_arm, observe,
+                                                     at_grasp):
     """Either side of the window is a different, named failure."""
     from manipulation_kit.primitives.verifiers import grip_width_window
 
     size = (0.04, 0.04, 0.04)
     world = observe(d1_arm, block_p=REACHABLE, block_size=size)
-    verifier = Grasp(object="red_block", side="left").verifier(world)
+    grasp = Grasp(object="red_block", side="left")
+    verifier = grasp.verifier(world)
     low, high = grip_width_window(0.04)
     assert (round(low, 4), round(high, 4)) == (0.036, 0.044)
 
     def after(gap_m):
-        return observe(d1_arm, block_p=REACHABLE, block_size=size,
-                       closed={"left": 0.9}, held={"left": "red_block"},
-                       gap={"left": gap_m})
+        return at_grasp(d1_arm, world, observe(
+            d1_arm, block_p=REACHABLE, block_size=size, closed={"left": 0.9},
+            held={"left": "red_block"}, gap={"left": gap_m}), grasp)
 
     assert verifier(after(low + 0.0005)).verdict == Verdict.TRUE
     assert verifier(after(high - 0.0005)).verdict == Verdict.TRUE
@@ -161,18 +171,24 @@ def test_the_gap_has_to_be_one_the_object_could_make(d1_arm, observe):
     assert "never reached it" in never_reached.reason
 
 
-def test_a_10mm_bar_is_held_at_the_gap_a_10mm_bar_makes(d1_arm, observe):
-    """The window is the OBJECT's, not the gripper's: the same 41 mm gap that
-    holds a 40 mm cube is the jaws nowhere near a 10 mm bar."""
+def test_a_10mm_bar_is_held_at_the_gap_a_10mm_bar_makes(d1_arm, observe,
+                                                        at_grasp):
+    """The band is the OBJECT's, not the gripper's: the same 41 mm gap that
+    holds a 40 mm cube is four times a 10 mm bar — not evidence of the bar
+    (UNKNOWN, not TRUE; the measurement outranks a declaration only within a
+    factor of two of it)."""
     bar = (0.010, 0.080, 0.010)
     world = observe(d1_arm, block_p=REACHABLE, block_size=bar)
-    verifier = Grasp(object="red_block", side="left").verifier(world)
+    grasp = Grasp(object="red_block", side="left")
+    verifier = grasp.verifier(world)
     held = observe(d1_arm, block_p=REACHABLE, block_size=bar, closed={"left": 0.86},
                    held={"left": "red_block"}, gap={"left": 0.0112})
-    assert verifier(held).verdict == Verdict.TRUE
+    assert verifier(at_grasp(d1_arm, world, held, grasp)).verdict \
+        == Verdict.TRUE
     wide = observe(d1_arm, block_p=REACHABLE, block_size=bar, closed={"left": 0.41},
                    held={"left": "red_block"}, gap={"left": 0.04122})
-    assert verifier(wide).verdict == Verdict.FALSE
+    assert verifier(at_grasp(d1_arm, world, wide, grasp)).verdict \
+        == Verdict.UNKNOWN
 
 
 def test_an_empty_close_is_not_holding_however_hard_it_stalled(d1_arm, observe):
@@ -185,14 +201,17 @@ def test_an_empty_close_is_not_holding_however_hard_it_stalled(d1_arm, observe):
     assert verifier(empty).verdict == Verdict.FALSE
 
 
-def test_holding_falls_back_to_the_stall_when_the_width_is_unmeasurable(d1_arm, observe):
+def test_holding_falls_back_to_the_stall_when_the_width_is_unmeasurable(
+        d1_arm, observe, at_grasp):
     """A producer with no pad-gap sensor still gets a verdict — from the stall
     and the body between the pads — rather than a manufactured gap."""
     world = observe(d1_arm, block_p=REACHABLE)
-    verifier = Grasp(object="red_block", side="left").verifier(world)
+    grasp = Grasp(object="red_block", side="left")
+    verifier = grasp.verifier(world)
     blind = observe(d1_arm, block_p=REACHABLE, closed={"left": 0.41},
                     held={"left": "red_block"}, gap={"left": None})
-    assert verifier(blind).verdict == Verdict.TRUE
+    assert verifier(at_grasp(d1_arm, world, blind, grasp)).verdict \
+        == Verdict.TRUE
     not_stalled = observe(d1_arm, block_p=REACHABLE, closed={"left": 0.41},
                           held={"left": "red_block"}, gap={"left": None},
                           stalled={"left": False})

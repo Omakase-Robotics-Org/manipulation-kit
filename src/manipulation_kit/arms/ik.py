@@ -36,12 +36,16 @@ is what a shared MuJoCo ``mjData`` requires; a purely functional chain
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional, Protocol, Tuple, runtime_checkable
+from typing import (TYPE_CHECKING, Callable, Optional, Protocol, Sequence,
+                    Tuple, runtime_checkable)
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from . import safety
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .coupled_limits import CoupledJointLimit
 
 
 @runtime_checkable
@@ -97,7 +101,8 @@ DEFAULT_TUNING = IkTuning()
 
 
 def solve_ik(chain: KinematicChain, p_target, r_target: R, q0,
-             *, q_ref=None, tuning: IkTuning = DEFAULT_TUNING
+             *, q_ref=None, tuning: IkTuning = DEFAULT_TUNING,
+             coupled: Sequence["CoupledJointLimit"] = ()
              ) -> Optional[np.ndarray]:
     """Damped least squares on the chain's joints, seeded at ``q0``.
 
@@ -136,6 +141,14 @@ def solve_ik(chain: KinematicChain, p_target, r_target: R, q0,
     projection is the identity and the arithmetic is bit-for-bit what it was;
     teleop following, which moves a few hundredths of a rad per tick well inside
     the box, is untouched.
+
+    COUPLED LIMITS ARE PART OF THE FEASIBLE SET (``coupled``). The box is not
+    the whole envelope: on the D1 the wrist roll J7 reaches less far the more
+    J6 is pitched (:mod:`manipulation_kit.arms.coupled_limits`). Each update is
+    projected onto those too, after the box, so the same argument holds — a
+    target that needs more roll than the wrist has returns ``None`` and the
+    caller tries another roll or seed. Measured 2026-09-22 on d1-2: the box-only
+    solver returned J7 = -90 deg at J6 = 55 deg, the wrist stopped at -39.5.
     """
     q = np.array(q0, dtype=float)
     q_ref = np.asarray(q0 if q_ref is None else q_ref, dtype=float)
@@ -145,7 +158,7 @@ def solve_ik(chain: KinematicChain, p_target, r_target: R, q0,
     lo, hi = chain.limits()
     # A seed handed in out of limits is not a posture the arm can hold either;
     # start feasible so the very first convergence test is honest too.
-    q = np.clip(q, lo, hi)
+    q = _feasible(np.clip(q, lo, hi), coupled)
     for _ in range(tuning.iters):
         chain.set_joints(q)
         p, r = chain.ee_pose()
@@ -167,10 +180,18 @@ def solve_ik(chain: KinematicChain, p_target, r_target: R, q0,
         # re-configuring inside a single solve (= a visible jump).
         pull = np.clip(q_ref - q, -tuning.pull_clip, tuning.pull_clip)
         dq = dq + tuning.posture_gain * (eye_n - np.linalg.pinv(J) @ J) @ pull
-        q = np.clip(q + np.clip(dq, -tuning.dq_clip, tuning.dq_clip), lo, hi)
+        q = _feasible(np.clip(q + np.clip(dq, -tuning.dq_clip, tuning.dq_clip),
+                              lo, hi), coupled)
     # restore the seed pose — IK failed, nothing should have moved
     chain.set_joints(np.array(q0, dtype=float))
     return None
+
+
+def _feasible(q: np.ndarray, coupled) -> np.ndarray:
+    """``q`` projected onto the coupled limits (identity when there are none)."""
+    for lim in coupled:
+        q = lim.project(q)
+    return q
 
 
 def clamp_joint_step(q0, q, limit: float = safety.MAX_JOINT_STEP_RAD
@@ -206,7 +227,8 @@ def find_ready_seed(chain: KinematicChain, *, q_home, probe: ReadyProbe,
                     iters: int = safety.READY_SEED_IK_ITERS,
                     fwd_weight: float = safety.READY_SEED_FWD_W,
                     fwd_free: float = safety.READY_SEED_FWD_FREE,
-                    tuning: IkTuning = DEFAULT_TUNING
+                    tuning: IkTuning = DEFAULT_TUNING,
+                    coupled: Sequence["CoupledJointLimit"] = ()
                     ) -> Tuple[np.ndarray, float]:
     """One-time search for the rest branch the IK null space biases toward.
 
@@ -236,7 +258,10 @@ def find_ready_seed(chain: KinematicChain, *, q_home, probe: ReadyProbe,
     for _ in range(samples):
         seed = rng.uniform(lo, hi)
         q = solve_ik(chain, target, r_target, seed, tuning=probe_tuning)
-        if q is None:
+        # a READY posture the wrist cannot hold is no bias to drift toward.
+        # Filtered, not projected: the samples the search draws, and so the
+        # posture it picks when the winner is feasible, stay what they were.
+        if q is None or any(lim.violation(q) for lim in coupled):
             continue
         got = probe(q)
         if got is None:

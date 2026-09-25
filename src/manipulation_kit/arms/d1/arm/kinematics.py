@@ -26,11 +26,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
 from ... import safety, sides
+from ...coupled_limits import CoupledJointLimit, load_coupled_limits
 from ...guard import GuardGate, load_motion_guard
 from ...ik import IkTuning, find_ready_seed
 from ...kinematics import GuardedArm
@@ -124,6 +125,7 @@ class D1ArmKinematics(GuardedArm):
                  tuning: IkTuning = IkTuning(),
                  find_ready: bool = True,
                  chain: str = DEFAULT_CHAIN,
+                 coupled: Optional[Sequence[CoupledJointLimit]] = None,
                  quiet: bool = False):
         urdf_path = Path(urdf) if urdf else default_urdf()
         self.urdf_path = urdf_path
@@ -134,8 +136,14 @@ class D1ArmKinematics(GuardedArm):
             chains = self._mujoco_chains(urdf_path)
         else:
             raise ValueError(f"chain must be one of {CHAINS}, got {chain!r}")
+        # The coupled limits of this arm revision (the wrist roll J7 that
+        # narrows with J6 — config/coupled_joint_limits.json). Mirror-symmetric
+        # in sign, so the same table holds for both arms. ``coupled=()`` is
+        # the box alone, for a test that needs it explicitly.
+        limits = tuple(load_coupled_limits() if coupled is None else coupled)
         super().__init__(chains, home=home if home is not None else load_home(quiet=quiet),
-                         guard=guard, tuning=tuning)
+                         guard=guard, tuning=tuning,
+                         coupled={s: limits for s in sides.SIDES})
         # Start at the real D1 HOME (the wrist-forward pose home_pose.json
         # holds), not URDF zero = T-pose — the same posture the physical robot
         # wakes up in, and where following engages.
@@ -217,7 +225,7 @@ class D1ArmKinematics(GuardedArm):
             q, clearance = find_ready_seed(
                 self._chains[side], q_home=self._home[side],
                 probe=self._probe(side), target=target, r_target=r0,
-                tuning=self._tuning)
+                tuning=self._tuning, coupled=self._coupled[side])
         if not quiet:
             print(f"[manipulation_kit.arms] ready seed {side}: "
                   f"body clearance {clearance:.3f} m")
@@ -231,6 +239,7 @@ def build_kinematics(*, urdf: Optional[Path] = None,
                      tuning: IkTuning = IkTuning(),
                      find_ready: bool = True,
                      chain: str = DEFAULT_CHAIN,
+                     coupled: Optional[Sequence[CoupledJointLimit]] = None,
                      quiet: bool = False) -> D1ArmKinematics:
     """Factory resolved by :func:`manipulation_kit.arms.get_arm_kinematics`.
 
@@ -261,4 +270,5 @@ def build_kinematics(*, urdf: Optional[Path] = None,
     else:
         gate = GuardGate(guard)
     return D1ArmKinematics(urdf=urdf, home=home, guard=gate, tuning=tuning,
-                           find_ready=find_ready, chain=chain, quiet=quiet)
+                           find_ready=find_ready, chain=chain, coupled=coupled,
+                           quiet=quiet)

@@ -17,12 +17,22 @@ frame is stale, and :mod:`.views` for why ``size`` has no default.
 
 from .frames import (BASE, FRAME_STALE, FUTURE_TOL_S, UNKNOWN_FRAME, Frame,
                      FrameError, FrameGraph)
-from .views import (UPRIGHT_TOL_RAD, ArmView, ContainerView, GripperView,
-                    ObjectView, SurfaceView, WorldView)
+from .direction import (ALIASES, FRAMES, OBJECT_PREFIX, TOOL, Direction,
+                        frame_rotation, object_frame, parse_direction, toward)
+from .views import (INFERRED, PROVENANCES, STATED, UPRIGHT_TOL_RAD, ArmView,
+                    ContactView, ContainerView, GripperView, ObjectView,
+                    SurfaceView, WorldView)
+from .attach import (GraspTransform, attached, grasp_transform, released,
+                     with_attached, with_measured_width)
 
 __all__ = [
+    "ALIASES", "Direction", "FRAMES", "OBJECT_PREFIX", "TOOL",
+    "frame_rotation", "object_frame", "parse_direction", "toward",
     "BASE", "FRAME_STALE", "FUTURE_TOL_S", "UNKNOWN_FRAME", "UPRIGHT_TOL_RAD",
     "Frame", "FrameError", "FrameGraph",
     "ObjectView", "ContainerView", "SurfaceView",
-    "ArmView", "GripperView", "WorldView",
+    "ArmView", "GripperView", "WorldView", "ContactView",
+    "INFERRED", "PROVENANCES", "STATED",
+    "GraspTransform", "attached", "grasp_transform", "released",
+    "with_attached", "with_measured_width",
 ]

@@ -1,0 +1,279 @@
+{
+  "schema": "omakase.camera_calibration/2",
+  "robot": "d1-2",
+  "updated": "2026-09-23T02:00:00Z",
+  "cameras": {
+    "head": {
+      "device": {
+        "kind": "realsense",
+        "serial": "335522070204",
+        "by_path": null,
+        "model": "D435",
+        "asset_tag": null,
+        "seiryu_node": "head"
+      },
+      "stream": {
+        "width": 640,
+        "height": 480
+      },
+      "intrinsics": {
+        "fx": 606.5361328125,
+        "fy": 605.902160644531,
+        "cx": 325.764892578125,
+        "cy": 250.346237182617,
+        "distortion": {
+          "model": "inverse_brown_conrady",
+          "coefficients": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "valid_radius_px": null,
+        "gate": {
+          "verdict": "PASS",
+          "checks": [
+            {
+              "name": "factory",
+              "value": null,
+              "warn": null,
+              "fail": null,
+              "direction": null,
+              "verdict": "PASS",
+              "detail": "RealSense factory calibration, not refitted"
+            }
+          ],
+          "reasons": [],
+          "override": null
+        },
+        "provenance": {
+          "tool": "factory (rs-enumerate-devices -c, Color 640x480)",
+          "date": "2026-09-10",
+          "session": null,
+          "board": null,
+          "migrated_from": "cameras_d1-2.head.interior.json provenance.intrinsics",
+          "notes": []
+        }
+      },
+      "mount": {
+        "parent_link": "head_link",
+        "T_parent_camera": {
+          "xyz_m": [
+            0.1328782463976737,
+            -0.10699968956352766,
+            -0.004431366924609333
+          ],
+          "quat_xyzw": [
+            -0.06661988887184894,
+            0.7186028516363119,
+            0.07725344591434152,
+            0.6878979845305719
+          ]
+        },
+        "nominal": {
+          "T_parent_camera": {
+            "xyz_m": [
+              0.0966561,
+              -0.0732024,
+              -0.028299499999999995
+            ],
+            "quat_xyzw": [
+              -0.106064274,
+              0.699105583,
+              0.106063884,
+              0.699108151
+            ]
+          },
+          "urdf": "manipulation_kit d1_wholebody_gripper.urdf (17.25 deg head tilt)",
+          "kit_version": "0.15.x"
+        },
+        "gate": {
+          "verdict": "WARN",
+          "checks": [
+            {
+              "name": "rms_px",
+              "value": 3.892,
+              "warn": 2.0,
+              "fail": 4.0,
+              "direction": "below",
+              "verdict": "WARN",
+              "detail": "interior-row fit, max 9.55 px"
+            }
+          ],
+          "reasons": [
+            "RMS 3.89 px is in the 2-4 px WARN band (9/17 three-band gate)"
+          ],
+          "override": null
+        },
+        "provenance": {
+          "tool": "d1-inference head_aruco (wagon + neck sweep)",
+          "date": "2026-09-10",
+          "session": "20260911-054337 + 20260911-055008",
+          "board": "wagon top plate DICT_5X5_50",
+          "rms_px": 3.892,
+          "migrated_from": "cameras_d1-2.head.interior.json",
+          "notes": [
+            "d1-inference head_aruco interior-row fit (pitch > -0.62, 32 poses, sessions 20260911-054337 + 055008), RMS 3.89 px / max 9.55 px, adopted for d1-2 2026-09-10; the delta of its head_link_to_camera against the nominal it was fitted from (manipulation_kit d1_wholebody_gripper.urdf, 17.25 deg head tilt), as recorded in d1-isaaclab assets/d1/cameras_d1-2.json provenance.head"
+          ]
+        }
+      }
+    },
+    "left_wrist": {
+      "device": {
+        "kind": "v4l2",
+        "serial": null,
+        "by_path": null,
+        "model": null,
+        "asset_tag": null,
+        "seiryu_node": "left_hand"
+      },
+      "stream": {
+        "width": 640,
+        "height": 480
+      },
+      "intrinsics": {
+        "fx": 238.54464330199528,
+        "fy": 239.6710285822928,
+        "cx": 313.9953141483106,
+        "cy": 224.75686492142916,
+        "distortion": {
+          "model": "kannala_brandt",
+          "coefficients": [
+            -0.033292080458809964,
+            -0.016422483703523335,
+            0.008259598689387115,
+            -0.002041109188182926
+          ]
+        },
+        "valid_radius_px": 304.3,
+        "gate": {
+          "verdict": "WARN",
+          "checks": [
+            {
+              "name": "rms_px",
+              "value": 0.218,
+              "warn": 0.5,
+              "fail": 1.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "coverage_in_mask",
+              "value": null,
+              "warn": null,
+              "fail": 0.85,
+              "direction": "above",
+              "verdict": "SKIP",
+              "detail": "v1 file recorded full-image coverage 0.71; in-mask coverage not evaluated"
+            }
+          ],
+          "reasons": [
+            "migrated from a v1 wrist_<side>_intrinsics.json: coverage inside the visible mask was not evaluated; re-gate with `seiryu-calib replay`"
+          ],
+          "override": null
+        },
+        "provenance": {
+          "tool": "d1-calibrate-wrist (d1-inference PR #77)",
+          "date": "2026-09-22T21:53:10+00:00",
+          "session": null,
+          "board": "charuco-7x5-a4",
+          "square_mm_measured": 35.0,
+          "marker_mm_measured": 26.0,
+          "views": 48,
+          "rms_px": 0.218,
+          "coverage": null,
+          "migrated_from": "wrist_left_intrinsics.json (schema_version 1)",
+          "notes": []
+        }
+      },
+      "mount": null
+    },
+    "right_wrist": {
+      "device": {
+        "kind": "v4l2",
+        "serial": null,
+        "by_path": null,
+        "model": null,
+        "asset_tag": null,
+        "seiryu_node": "right_hand"
+      },
+      "stream": {
+        "width": 640,
+        "height": 480
+      },
+      "intrinsics": {
+        "fx": 237.63819955960315,
+        "fy": 238.95176258931406,
+        "cx": 328.37260250300966,
+        "cy": 225.57549500574052,
+        "distortion": {
+          "model": "kannala_brandt",
+          "coefficients": [
+            -0.037428329813206214,
+            -0.003566793700033574,
+            -0.0019754802512323374,
+            0.0004794796874036616
+          ]
+        },
+        "valid_radius_px": 325.8,
+        "gate": {
+          "verdict": "WARN",
+          "checks": [
+            {
+              "name": "rms_px",
+              "value": 0.3922,
+              "warn": 0.5,
+              "fail": 1.0,
+              "direction": "below",
+              "verdict": "PASS",
+              "detail": null
+            },
+            {
+              "name": "coverage_in_mask",
+              "value": null,
+              "warn": null,
+              "fail": 0.85,
+              "direction": "above",
+              "verdict": "SKIP",
+              "detail": "v1 file recorded full-image coverage 0.71; in-mask coverage not evaluated"
+            }
+          ],
+          "reasons": [
+            "migrated from a v1 wrist_<side>_intrinsics.json: coverage inside the visible mask was not evaluated; re-gate with `seiryu-calib replay`"
+          ],
+          "override": null
+        },
+        "provenance": {
+          "tool": "d1-calibrate-wrist (d1-inference PR #77)",
+          "date": "2026-09-22T21:53:29+00:00",
+          "session": null,
+          "board": "charuco-7x5-a4",
+          "square_mm_measured": 35.0,
+          "marker_mm_measured": 26.0,
+          "views": 37,
+          "rms_px": 0.3922,
+          "coverage": null,
+          "migrated_from": "wrist_right_intrinsics.json (schema_version 1)",
+          "notes": []
+        }
+      },
+      "mount": null
+    }
+  },
+  "hand": {
+    "open_gap_m": 0.0605,
+    "provenance": {
+      "tool": "d1-firmwared 0.3.0 open_rad",
+      "date": "2026-09-22",
+      "notes": [
+        "d1-firmwared 0.3.0 open_rad 1.35 on d1-2 (2026-09-22) through the hand description's 44.8 mm/rad map"
+      ]
+    }
+  },
+  "kinematics": {
+    "neck_compensation": null
+  }
+}

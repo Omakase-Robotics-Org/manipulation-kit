@@ -120,7 +120,35 @@ a worked example with the conventions written into it. The short version:
 
 The robot half of the observation — both arms, their tool poses, both grippers
 — is filled in from live state by
-[`examples/agent/live.py`](examples/agent/live.py); you supply only the things.
+`manipulation_kit.agent.robot.SceneSource`; you supply only the things.
+
+#### …or do not measure it at all
+
+[`examples/agent/perceive.py`](examples/agent/perceive.py) writes that same
+file from **one head frame**, and the only calibration that goes into it is
+**this robot's**: the head camera's intrinsics and the pose of its lens in
+`base`, which `manipulation_kit.description.head_camera` reads out of the
+committed URDF for the neck joints you give it. No table width, no far-edge x,
+no table height, no marker, no tape on anything.
+
+```sh
+pip install -e '.[perception]'
+python examples/agent/perceive.py --image turn0_base_0_rgb.jpg \
+    --neck-pitch 0.52 --neck-yaw 0.0 --lift 0.205 \
+    --out examples/agent/scenes/live.json --debug /tmp/fit.png
+```
+
+That writes the camera and the table and **no things**: the loop's own model is
+the detector, and it declares them with `declare_scene` while looking at the
+same frame ([`examples/agent/astra_loop.py`](examples/agent/astra_loop.py),
+`--perceive`).
+
+One camera cannot measure the HEIGHT of the plane it is looking at — twice as
+far and twice as big is the same picture — so that number is `declared`,
+`known-length` (`--table-width`, optional) or `provisional`, it is named in the
+file, and everything that depends on it scales with it. Look at the debug PNG
+before believing the JSON: a plane fit that latched onto the floor still
+produces a tidy file.
 
 ### 4. Offer: what can it actually do right now?
 
@@ -146,6 +174,13 @@ Three ways, same checked actions underneath:
 python examples/agent/astra_loop.py --dry-run          # scripted: no key, no network
 OPENAI_API_KEY=... python examples/agent/astra_loop.py # a function-calling model
 python examples/agent/jev_menu.py --task "put the red block in the box"
+
+# the loop measuring its own scene from a frame, once, before turn 0
+python examples/agent/astra_loop.py --perceive snapshot --trace /tmp/run/t.jsonl \
+    --object charger --destination cup \
+    --perceive-opts "--table-width 0.60 --neck-pitch 0.52"
+# (on the robot its ~/.config/omakase/camera_calibration.json is read by
+#  default; offline, add --robot-profile tests/data/d1-2.camera_calibration.json)
 ```
 
 `pip install openai` first for the second one — it is not a dependency of this
@@ -159,20 +194,20 @@ from manipulation_kit.executor import run
 from manipulation_kit.executors.firmware import FirmwareExecutor
 from manipulation_kit.primitives import Grasp, Lift
 
-# examples/agent/live.py — the robot half from RawState, the things from the
-# scene file you measured in step 3
-from live import LiveRobot, load_scene
+# manipulation_kit.agent.robot — the robot half from RawState, the things
+# from the scene file you measured in step 3; a held object rides the tool
+from manipulation_kit.agent.robot import SceneSource, load_scene
 
 with FirmwareExecutor(base_url="http://d1-2:4750") as executor:
-    source = LiveRobot(executor, kin, load_scene("examples/agent/scenes/tabletop.json"))
-    world = source.world()
+    source = SceneSource.from_scene(
+        executor, kin, load_scene("examples/agent/scenes/tabletop.json"))
+    world = source.observe()
 
     verb = Grasp(object="red_block", side="left")
     plan = verb.plan(world, kin)          # pure: nothing has moved
     assert plan.ok, plan                  # a refusal names the waypoint and the residual
-    source.expect("left", "red_block")    # what the next stroke is closing on
     report = run(plan, executor)          # lease, mode, barriers, transport
-    after = source.world()                # RE-OBSERVE. Always.
+    after = source.observe()              # RE-OBSERVE. Always.
     print(report.completed, json.dumps(verb.verifier(world)(after).to_json()))
 ```
 
@@ -379,7 +414,8 @@ src/manipulation_kit/     the installed package — this, and only this, is the 
 contrib/         research, not installed (whole-body IK: base + lift + neck)
 examples/        runnable scripts: preflight.py (the live-robot check),
                  gesture generation, preview, click-to-move IK, and agent/ —
-                 the part that knows a model exists
+                 the agents: everything that knows a model exists (the
+                 harness above never imports it)
 tools/vendoring/ CAD re-import; needs the private assets repo, not installed
 dist/            prebuilt, provenance-tracked exports
 docs/            the institutional notes, verbatim
@@ -388,8 +424,8 @@ docs/            the institutional notes, verbatim
 ## Primitives and the agent examples
 
 Above the IK there is a small set of **verbs**: `Approach Grasp Lift Carry
-Place Release Nudge Retreat GoHome`, plus the `Pour` contract whose body is a
-learned policy. Each is a frozen dataclass with the same three parts —
+Place Release Nudge Retreat GoHome`, the contact verbs `Probe Press`, the
+two-arm `Handover`, plus the `Pour` contract whose body is a learned policy. Each is a frozen dataclass with the same three parts —
 `preconditions(world)`, a pure `plan(world, kin)`, and a `verifier(world0)`
 that returns a **measured** verdict from a later observation. The full contract
 is [`docs/PRIMITIVE_CONTRACT.md`](docs/PRIMITIVE_CONTRACT.md).
@@ -406,7 +442,7 @@ world = WorldView.of(
     arms=[ArmView(s, joints=kin.joints(s)) for s in ("left", "right")],
     grippers=[GripperView(s, 0.0) for s in ("left", "right")])
 
-verb = Grasp(object="red_block", side="left", approach="top_down")
+verb = Grasp(object="red_block", side="left", direction="down")
 plan = verb.plan(world, kin)                 # pure — nothing has moved
 print(plan if not plan.ok else run(plan, KinematicExecutor(kin)))
 print(verb.verifier(world)(world).verdict)   # 'false': nothing was measured yet
@@ -434,9 +470,10 @@ Three things are load-bearing, and each is a bug somebody shipped:
   waypoint is retried through a short measured list of clearance points
   (`planning.VIA_OFFSETS_M`) and then a `ready()` re-seed; only a waypoint
   nothing reaches is refused, and the refusal is still the straight line's.
-- **Orientation is derived, not emitted.** A caller names one of four
-  approaches; the kit computes the wrist from the approach axis and the
-  object's principal axis. `Nudge` is the only verb whose numbers are *snapped*
+- **Orientation is derived, not emitted.** A caller gives a `direction` — an
+  alias such as `down`/`forward`, or any `{axis, frame}` — and the kit computes
+  the wrist from it and the object's principal axis
+  (`primitives.orientation.align_tool`). `Nudge` is the only verb whose numbers are *snapped*
   — ±10/30/50 mm and ±15° of yaw about the approach axis — but it is not the
   only one that takes numbers: `standoff_m`, `height_m`, `clearance_m`,
   `distance_m` and `tilt_deg` are used as written, inside the published range.
@@ -447,6 +484,121 @@ Three things are load-bearing, and each is a bug somebody shipped:
   object fits the jaws is its extent along *the jaw axis of that grasp*, not
   its smallest side; how tall it stands is its extent along base +z from its
   *resolved* orientation. A tilted box is refused rather than approximated.
+
+### The vocabulary (0.16): directions, contact, probe/press, handover
+
+**A direction is the way the hand TRAVELS**, never an orientation — the wrist
+is derived from it (`orientation.align_tool`) and the roll is the kit's one
+sweep (`grasp_geometry.roll_candidates`; the plan's notes say which it took).
+Name an alias or give any vector in a named frame:
+
+| alias | vector | frame |
+|---|---|---|
+| `down` | (0, 0, -1) | base |
+| `up` | (0, 0, +1) | base |
+| `forward` | (+1, 0, 0) | base — away from the robot |
+| `backward` | (-1, 0, 0) | base |
+| `left` | (0, +1, 0) | base — toward the robot's left |
+| `right` | (0, -1, 0) | base |
+| `along_tool` | (0, 0, +1) | tool — the hand's own approach axis |
+
+```python
+from manipulation_kit.world import Direction
+Grasp(object="cube", direction="down")                                  # an alias
+Grasp(object="cube", direction={"axis": [1, 0, -1], "frame": "base"})   # 45 deg down-forward
+Probe(side="left", direction=Direction((0, 0, 1), frame="object:shelf")) # the shelf's own +z
+```
+
+(0.15's `approach="side_left"` travelled toward -y: it is `right`, not
+`left` — see the CHANGELOG's migration table.) A verb whose direction is how
+the hand **arrives** sets `Primitive.DIRECTION_ARRIVES`; the operator's
+`allowed_directions` restricts exactly those (`agent.policy.DIRECTED_VERBS`:
+approach, grasp, probe, press, handover).
+
+**Where on the hand**: `Grasp(contact="pad")` (the default: between the pad
+centres) or `contact="tip"` (between the finger tips — a card lying on a
+table). **`tip` is experimental**: planned and verified on the kinematic
+mirror only, until the tip grasp trial of
+[`docs/probe-hardware-trial.md`](docs/probe-hardware-trial.md) passes on d1-2.
+
+**Contact** is a verb, not a guess: `Probe(side, direction="down",
+max_travel_m=0.15)` travels until a joint torque rises and reports where
+(`declare_as="table"` publishes the measured surface; three probes fit a
+plane); `Press(target=..., direction="forward", force_nm=...)` pushes, holds
+and returns. Position mode only — a watched straight line, never a torque
+command — and gated on hardware by the same document.
+
+**What a contact leg does once something resists** is a per-verb decision,
+named (`primitives.ContactPolicy`, `VERB_CONTACT_POLICY`), never a field a
+model sets:
+
+| verb | policy | after the stop |
+|---|---|---|
+| `probe` | `stay` | re-commanded at the measured stop; stays touching (the contact is the measurement) |
+| `grasp` (fingertip, by contact) | `back_off` | a stop ON the support the object stands on (within 5 mm of the modelled top, or past it) retreats `ClearancePolicy.contact_backoff_m` (1 mm) along minus the travel before the jaws close; a stop higher up, on the object, closes where it stopped |
+| `press` | `push_through` | holds the frozen command against the face for `hold_s`, then retracts to the standoff |
+
+The run records what a `back_off` leg stopped on and what it did
+(`ContactReport.surface` = `support` / `object` / `none`, `support`,
+`height_m`, `backoff_m`, `tip_z_before_m`, `tip_z_after_m`,
+`backoff_measured_m`).
+
+**`Handover(object="cube")`** passes a held object to the other hand: the
+giving hand meets at a point both arms reach, the receiving hand approaches
+(travelling `direction`, default `left` = toward a left-hand giver) and
+grasps, the giver opens and backs out. The receiver's close must end
+measurably holding before the giver opens (`GripStep.expect_hold`).
+
+**The scene is an obstacle set**: every declared surface, container and object
+is a box the arm's links keep clear of (`primitives.clearance.SceneGate`,
+refusals name the obstacle and the penetration), free transits rise over
+things, and a contact leg's gate (`SceneGate.for_contact`) leaves out only the
+surface it is aimed at.
+
+**The operator policy** is data, not environment variables:
+
+```python
+from manipulation_kit.agent import OperatorPolicy
+policy = OperatorPolicy(max_grip="soft", allowed_directions=("down",),
+                        vel_ratio=0.15, look_before_stroke=True,
+                        droop_margin_m=0.012)        # d1-2's measured arm sag
+```
+
+`look_before_stroke` needs **measured wrist-camera intrinsics per robot**.
+d1-2's two fisheyes were measured on 2026-09-22 (d1-inference
+`d1-calibrate-wrist`, `calibration/wrist_fisheye.py`) and live **on the robot**, in
+its `omakase.camera_calibration/2` file `~/.config/omakase/camera_calibration.json`
+with the hand gap and the head camera's measured mount — the kit ships the
+schema and the reader (`manipulation_kit.description.camera_calibration`,
+`RobotProfile.load(path)`), never a robot's values. `--robot-profile PATH`
+overrides the default (offline: `tests/data/d1-2.camera_calibration.json`); a
+FAILED calibration gate is refused unless `--allow-failed-calibration` (a
+WARN gate is accepted and printed). The wrist lens's extrinsic is the file's
+MEASURED wrist mount when it carries one (`cameras.<side>_wrist.mount`,
+seiryu-calib's plate -> optical fit), else the nominal plate geometry — the
+wrist camera model and the trace's `look` records say `mount: measured |
+nominal`. Without a measured wrist mount, **`--no-look-before-stroke` is the
+documented setting for a robot's first live run**. See
+[`docs/agent.md`](docs/agent.md).
+
+**Isaac** is an executor, registered by d1-isaaclab rather than imported:
+
+```python
+# d1-isaaclab: scripts/eval/agent_eval/kit_executor.py
+from manipulation_kit.agent import LiveRobot
+
+def isaac(*, kin, policy, scene=None, url=None, wrist_intrinsics=None, **_):
+    ...                     # build the env client, executor and world source
+    return LiveRobot(executor, source, kin, name="isaac", closing=(client,),
+                     wrist_intrinsics=wrist_intrinsics)
+```
+```toml
+[project.entry-points."manipulation_kit.executors"]
+isaac = "agent_eval.kit_executor:isaac"
+```
+
+then `astra_loop.py --executor isaac --isaac-url tcp://HOST:8977` (full
+snippet in `docs/agent.md`).
 
 ### Running a plan
 
@@ -494,20 +646,28 @@ second, independent guard pass over the whole path. Streaming
 `move_joints_both` at 50 Hz stays available for the case that genuinely is a
 stream.
 
-### Where the line between the kit and a model runs
+### Architecture: the harness (`src/`) and the agents (`examples/`)
 
-Shu, 2026-09-19: 「approach とか少し高次のスキルも manip kit に実装するわけで、
-それは agent の中ではなくて、普通に primitive の中に入れる」 and 「agent 的なのは
-examples フォルダに切り離す」. So the split runs between *capability* and *one way
-of driving it* — and after the 2026-09-19 review the line moved, because three
-things had been filed on the wrong side of it:
+`src/manipulation_kit` is the **robot harness**: capabilities, the loop's
+mechanics and the seams an agent plugs into. It knows no agent — no model
+name, no prompt, no question wording, no judge formulation, no provider
+client. Everything that knows a model exists lives under `examples/agent/`.
+Higher-level skills such as `approach` are primitives in the harness, not
+agent code. `tests/test_harness_boundary.py` enforces the line: no file under
+`src/manipulation_kit` may name a specific agent or model family, and no
+module there may import from `examples/` (its allowlist is empty and must
+stay so).
 
-| in the wheel — capability | in `examples/agent/` — the model |
+| in the harness (`src/`) — capability and seams | in `examples/agent/` — the agents |
 |---|---|
-| `world/` — the perception-result types | `astra_loop.py` — the prompt, the provider client, the scripted stand-in, the message bookkeeping |
-| `primitives/` — the verbs, their plans and their measured verifiers | `menu.py` / `jev_menu.py` — the Jev renderer: ranking, the cap, wait/rescan/stop, the question itself |
-| `primitives/offer.py` — the IK+guard gate: what can this robot do right now | `mirror.py`, `live.py` — the demo robot and the real one |
-| `primitives/schema.py`, `arguments.py` — the canonical argument table, a JSON Schema export, and `decode()` back | `scene.py`, `trace.py` — the shared demo scene and the JSONL decision record |
+| `world/` — the perception-result types | `astra_loop.py` — the planner model's system text, the provider client, the scripted stand-in, the message bookkeeping |
+| `primitives/` — the verbs, their plans and their measured verifiers | `menu.py` / `jev_menu.py` — a typed-choice renderer: ranking, the cap, wait/rescan/stop, the question itself |
+| `primitives/offer.py` — the IK+guard gate: what can this robot do right now | `snapshot.py` — the camera-grab contract |
+| `primitives/schema.py`, `arguments.py` — the canonical argument table, a JSON Schema export, and `decode()` back | `scene.py` — the shared demo scene |
+| `agent/` — `OperatorPolicy`, the provider-independent loop, `LiveRobot` / `KinematicMirror` and the `--executor` registry, the JSONL decision trace | |
+| `agent/servo.py` — the wrist servo's inner loop: draw, accumulate the judge's typed readings, retreat / turn / step / approach by a fixed priority on the nudge grid, `image_direction_in_base` | `jev_servo.py` — the servo driven by a classifier judge |
+| `agent/jaws.py` — what the servo draws: the jaw opening at the object's depth, the object's declared-shape outline, and the `object_outline(photo, look)` seam | `segmenter.py` / `segment_server.py` — the outline from a text-prompted segmenter (SAM 3, or Grounded-SAM-2) behind HTTP; `jev_jaws_lab.py` — the offline lab for the jaw-opening questions |
+| `agent/judge.py` — **the judge seam**: typed `Question`s (choice / yes-no / ordinal score) and their answers, the `Formulation` protocol, mirrored views mapped back, the letters drawn beside the box, `AskingJudge` over a transport | `jev_questions.py` — what the classifier is asked (wording, labels, the `choice` / `score` / `grasp` / `letters` / `jaws` / `jaws_words` formulations, their thresholds); `jev_judge.py` / `jev_judge_server.py` — where it runs; `jev_questions_lab.py` — the offline question-design lab |
 | `primitives/reach.py` — which hand can do the WHOLE task | |
 | `executor.py`, `executors/` — how a plan reaches a robot | |
 

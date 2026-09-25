@@ -306,6 +306,19 @@ def test_the_old_algorithm_faked_that_same_target(arm, blocked_target):
 # --------------------------------------------------------------------------- #
 # 4. the partial step is untouched
 # --------------------------------------------------------------------------- #
+def _feasible_target(arm, side, q):
+    """``q`` moved into everything the arm can hold: the box, THEN the coupled
+    limits (the D1 wrist roll narrows with J6 — ``arms.coupled_limits``).
+    ``home + 0.9`` puts J7 at 64.6 deg with J6 at 50.5, 25 deg past the
+    measured wrist stop, so without the second step this "feasible" move was
+    one the wrist cannot make — the same mistake the J2 clip below fixed."""
+    lo, hi = arm._chains[side].limits()
+    q = np.clip(q, lo, hi)
+    for lim in arm.coupled_limits(side):
+        q = lim.project(q)
+    return q
+
+
 def test_a_large_feasible_move_still_commits_a_partial_step(arm):
     """``step_clamped`` streaming semantics must survive this change verbatim.
 
@@ -323,8 +336,7 @@ def test_a_large_feasible_move_still_commits_a_partial_step(arm):
     # solver stopped lying about those, this test started failing for the
     # reason it was written to prove. (Both these step_clamped cases are red on
     # dx-manipulator PR #31 as filed; fixed here, in the fixture, not the code.)
-    lo, hi = chain.limits()
-    arm.set_joints(side, np.clip(q0 + 0.9, lo, hi))
+    arm.set_joints(side, _feasible_target(arm, side, q0 + 0.9))
     p_t, r_t = arm.ee_pose(side)
 
     arm.set_joints(side, q0)
@@ -335,7 +347,8 @@ def test_a_large_feasible_move_still_commits_a_partial_step(arm):
     np.testing.assert_array_equal(arm.joints(side), res.q)
 
     # the committed vector is a partial step toward a solution that DOES reach
-    q_full = solve_ik(chain, p_t, r_t, q0, q_ref=arm.ready(side))
+    q_full = solve_ik(chain, p_t, r_t, q0, q_ref=arm.ready(side),
+                      coupled=arm.coupled_limits(side))
     assert q_full is not None and _reaches(chain, q_full, p_t, r_t)
     scale = safety.MAX_JOINT_STEP_RAD / np.max(np.abs(q_full - q0))
     np.testing.assert_allclose(res.q, q0 + (q_full - q0) * scale, rtol=0, atol=1e-12)
@@ -347,8 +360,8 @@ def test_a_partial_step_is_not_expected_to_reach_the_target_yet(arm):
     side = "left"
     chain = arm._chains[side]
     q0 = arm.home(side)
-    lo, hi = chain.limits()          # feasible target — see the test above
-    arm.set_joints(side, np.clip(q0 + 0.9, lo, hi))
+    # feasible target — see the test above
+    arm.set_joints(side, _feasible_target(arm, side, q0 + 0.9))
     p_t, r_t = arm.ee_pose(side)
     arm.set_joints(side, q0)
     res = arm.solve_ee(side, p_t, r_t)

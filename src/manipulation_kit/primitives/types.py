@@ -33,13 +33,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, fields
+from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..arms import sides
+from ..arms import safety, sides
 from ..world import WorldView
+from ..world.direction import BASE as _BASE, TOOL as _TOOL
 
 # --------------------------------------------------------------------------- #
 # vocabulary
@@ -57,27 +59,27 @@ BOTH = "both"
 SIDE_CHOICES: Tuple[str, ...] = SIDES + (AUTO,)
 GOHOME_SIDE_CHOICES: Tuple[str, ...] = SIDES + (AUTO, BOTH)
 
-#: The named approach set. This is the WHOLE of the orientation vocabulary a
-#: model gets: it names one of these four, and the kit derives the quaternion
-#: from it plus the object's principal axis. See :mod:`.approach` for why.
-TOP_DOWN = "top_down"
-FRONT = "front"
-SIDE_LEFT = "side_left"
-SIDE_RIGHT = "side_right"
-APPROACHES: Tuple[str, ...] = (TOP_DOWN, FRONT, SIDE_LEFT, SIDE_RIGHT)
+#: The grasp directions a planner TRIES, in order, when it is choosing one —
+#: aliases of :data:`manipulation_kit.world.ALIASES` (the way the tool travels
+#: onto the object). ONE constant, so the model-facing text, the example's hand chooser
+#: and the offer generator cannot disagree about the set or its order again.
+#: It is a search order, not the vocabulary: a verb takes any
+#: :class:`~manipulation_kit.world.Direction`.
+GRASP_DIRECTIONS: Tuple[str, ...] = ("down", "forward", "left", "right")
 
 #: firmware ``GripPreset`` — the presets own the stop torque (d1-firmware #55),
 #: which is why a number is not offered here.
 GRIPS: Tuple[str, ...] = ("soft", "firm", "strong")
 
 #: The correction grid, metres. Coarse AND fine in the same menu: a task that
-#: needs a 30 mm correction fails when 50 mm is the only offer (Raptor's Jev
-#: run, 2026-09-19), and a menu of only fine steps costs turns.
+#: needs a 30 mm correction fails when 50 mm is the only offer (a classifier-
+#: driven run, 2026-09-19), and a menu of only fine steps costs turns.
 NUDGE_GRID_M: Tuple[float, ...] = (0.010, 0.030, 0.050)
 #: the only rotation a model may ask for, about the approach axis
 NUDGE_MAX_YAW_RAD = math.radians(15.0)
-#: ``Nudge`` frames: the tool's own axes, or the robot base
-NUDGE_FRAMES: Tuple[str, ...] = ("tool", "base")
+#: ``Nudge`` frames: the tool's own axes, or the robot base — the same frame
+#: names a :class:`~manipulation_kit.world.Direction` uses
+NUDGE_FRAMES: Tuple[str, ...] = (_TOOL, _BASE)
 
 # --------------------------------------------------------------------------- #
 # refusal reasons
@@ -87,6 +89,10 @@ NUDGE_FRAMES: Tuple[str, ...] = ("tool", "base")
 IK_FAIL = "ik_fail"
 INFEASIBLE = "infeasible"
 GUARD_REJECT = "guard_reject"
+#: the pose needs more of a joint than the arm has IN THAT POSTURE — a coupled
+#: limit (the D1 wrist roll J7 narrows with J6,
+#: :mod:`manipulation_kit.arms.coupled_limits`); the detail names it
+JOINT_LIMIT = "joint_limit"
 #: ...and the ones that are about the WORLD rather than the arm
 UNREACHABLE_OBJECT = "unreachable_object"
 #: the DESTINATION of a carry/place is outside this arm's reachable set at
@@ -98,6 +104,13 @@ UNREACHABLE_OBJECT = "unreachable_object"
 #: smaller clearance — measured 2026-09-19, the blocks-eval bin rim plus a
 #: constant 100 mm sits 109 mm outside the holding arm's reach.
 UNREACHABLE_DESTINATION = "unreachable_destination"
+#: no MEETING POSE of a ``handover`` plans for both arms: every candidate of
+#: ``reach.HANDOVER_MEETING_POINTS_M`` was tried and each was refused for the
+#: giving arm's transit, the receiving arm's approach or grasp, or the giving
+#: arm's retreat. Distinct from ``unreachable_destination``: there is no
+#: destination the model named — the kit chose every point it tried — so the
+#: answer is to move the object (or the robot), not to name another place.
+UNREACHABLE_HANDOVER = "unreachable_handover"
 NO_SUCH_OBJECT = "no_such_object"
 FRAME_STALE = "frame_stale"
 UNKNOWN_FRAME = "unknown_frame"
@@ -117,9 +130,9 @@ UNSUPPORTED_GEOMETRY = "unsupported_geometry"
 BAD_ARGUMENT = "bad_argument"
 
 PLAN_REASONS: Tuple[str, ...] = (
-    IK_FAIL, INFEASIBLE, GUARD_REJECT, UNREACHABLE_OBJECT,
-    UNREACHABLE_DESTINATION, NO_SUCH_OBJECT, FRAME_STALE, UNKNOWN_FRAME,
-    PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED, INCOMPLETE_OBSERVATION,
+    IK_FAIL, INFEASIBLE, GUARD_REJECT, JOINT_LIMIT, UNREACHABLE_OBJECT,
+    UNREACHABLE_DESTINATION, UNREACHABLE_HANDOVER, NO_SUCH_OBJECT, FRAME_STALE,
+    UNKNOWN_FRAME, PRECONDITION_UNMET, LEARNED_POLICY_REQUIRED, INCOMPLETE_OBSERVATION,
     STALE_PLAN, UNSUPPORTED_GEOMETRY, BAD_ARGUMENT)
 
 #: Unmet codes the kit itself produces. Open to extension by a consumer, but
@@ -221,8 +234,30 @@ class Waypoint:
     #: transit legs (and ``Approach``, whose verifier already measures the
     #: tool point) do not set it.
     arrive: bool = False
+    #: The spacing [m] of this leg's interpolation knots; ``None`` = the
+    #: planner's ``safety.MAX_STEP_M``. Only ever FINER: a contact leg is
+    #: played until something resists, so the arm stops BETWEEN knots, where
+    #: the joint-space interpolation bows off the line (0.2 mm at 25 mm
+    #: spacing on the d1-2 probe, in the same direction every probe).
+    knot_m: Optional[float] = None
+    #: Is this leg's LINE the measurement? A nudge (a bounded correction the
+    #: model reads back) and a contact leg (a probe, a press, a fingertip
+    #: descent: where it stops is what it reports) are solved to the tool
+    #: point without the IK's READY pull and must stay within the arrival
+    #: tolerance of their line (``planning.straight_tuning``,
+    #: ``STRAIGHT_PATH_TOL_M``). Only on a leg with ``allow_via=False``.
+    #: ``False`` for every other leg: a long straight transit (a carry across
+    #: the wagon) NEEDS the pull to keep the elbow off the body.
+    exact: bool = False
 
     def __post_init__(self) -> None:
+        if self.exact and self.allow_via:
+            raise ValueError("an exact leg is a straight one: allow_via=False")
+        if self.knot_m is not None and not (0.0 < float(self.knot_m)
+                                            <= safety.MAX_STEP_M):
+            raise ValueError(
+                f"knot_m must be in (0, {safety.MAX_STEP_M}] m, got "
+                f"{self.knot_m!r}")
         p = np.array(self.p, dtype=float).reshape(3)
         p.setflags(write=False)
         object.__setattr__(self, "p", p)
@@ -232,7 +267,10 @@ class Waypoint:
                 "p": [round(float(v), 4) for v in self.p],
                 "quat_xyzw": [round(float(v), 4) for v in self.r.as_quat()],
                 "allow_via": bool(self.allow_via),
-                "arrive": bool(self.arrive)}
+                "arrive": bool(self.arrive),
+                **({"exact": True} if self.exact else {}),
+                **({} if self.knot_m is None else
+                   {"knot_m": round(float(self.knot_m), 4)})}
 
 
 @dataclass(frozen=True)
@@ -255,6 +293,12 @@ class GripStep:
     closedness: float             # 0 open .. 1 closed
     grip: str = "soft"
     waypoint: int = -1
+    #: the run may go on only if this stroke ends MEASURABLY holding
+    #: (``StrokeReport.holding is True``). Set where what follows depends on
+    #: the hold — a handover's receiving close, before the giving hand opens:
+    #: a receiver that closed on air would otherwise be followed by the giver
+    #: dropping the object. Unknown is a stop, not a pass.
+    expect_hold: bool = False
 
 
 @dataclass(frozen=True)
@@ -265,11 +309,290 @@ class SettleStep:
     timeout_s: float = 2.0
 
 
+@dataclass(frozen=True)
+class ContactCriterion:
+    """When to call it contact. MEASURED, never commanded.
+
+    Position mode only (Shu, 2026-09-22): a contact leg is a position-
+    commanded motion WATCHED for resistance, not a compliant or torque-mode
+    motion. So every number here is a threshold on what the transport
+    MEASURES, and none of them is ever sent to a controller.
+
+    ``joint_torque_nm``       the rise, on any one joint of the moving arm,
+                              over the torque that joint read BEFORE the
+                              motion started [Nm]. A rise, not an absolute:
+                              the arm carries its own weight and a held tool.
+    ``tool_force_n``          a force at the tool, when a transport can
+                              ESTIMATE one [N]. No transport in this package
+                              can, so a criterion that sets it is refused
+                              (``unmeasured``) rather than silently ignored.
+    ``stall_velocity_rad_s``  the arm counts as STOPPED ON something only
+                              while no joint moves faster than this — a torque
+                              rise on a moving arm is acceleration or gravity,
+                              not a surface. Skipped when the transport does
+                              not publish velocity.
+    ``settle_s``              how long both have to hold before it is called
+                              contact [s]. The command is FROZEN while it is
+                              being confirmed, so confirming costs no travel.
+    """
+
+    joint_torque_nm: float = 4.0
+    tool_force_n: Optional[float] = None
+    stall_velocity_rad_s: float = 0.02
+    settle_s: float = 0.15
+
+    def __post_init__(self) -> None:
+        for name in ("joint_torque_nm", "stall_velocity_rad_s", "settle_s"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"ContactCriterion.{name} must be a positive "
+                                 f"finite number, got {getattr(self, name)!r}")
+            object.__setattr__(self, name, value)
+        if self.tool_force_n is not None:
+            force = float(self.tool_force_n)
+            if not math.isfinite(force) or force <= 0.0:
+                raise ValueError(f"ContactCriterion.tool_force_n must be a "
+                                 f"positive finite number or None, got "
+                                 f"{self.tool_force_n!r}")
+            object.__setattr__(self, "tool_force_n", force)
+
+    def to_json(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "joint_torque_nm": round(self.joint_torque_nm, 3),
+            "stall_velocity_rad_s": round(self.stall_velocity_rad_s, 4),
+            "settle_s": round(self.settle_s, 3)}
+        if self.tool_force_n is not None:
+            out["tool_force_n"] = round(self.tool_force_n, 3)
+        return out
+
+
+#: The least time between two knots of a contact leg [s]: one 50 Hz tick.
+CONTACT_KNOT_MIN_DT_S = 0.02
+
+
+class ContactPolicy(str, Enum):
+    """What a contact leg does ONCE SOMETHING HAS RESISTED — a per-verb design
+    decision, named, so no runner special-cases a verb.
+
+    ``stay``          stop and stay touching: the arm is re-commanded at the
+                      posture it MEASURED at the stop (``probe``: the contact
+                      IS the measurement).
+    ``back_off``      stop, and when the leading finger tips stopped ON THE
+                      SUPPORT the object stands on, retreat along minus the
+                      travel by :attr:`SurfaceBackoff.distance_m` before
+                      anything else happens (a fingertip ``grasp``: jaws
+                      closed with the tips pressed on the table drag across
+                      it, and the friction stalls them inside the declared
+                      width window — d1-2 2026-09-24, turn 6). A stop ABOVE
+                      the support (on the object) behaves as ``stay``.
+    ``push_through``  keep pushing: hold the frozen command for ``hold_s``,
+                      then retract along the leg (``press``: a button needs
+                      the push, and the retract is the release).
+
+    Planner-internal. It is not a :class:`Primitive` field and never reaches
+    a tool schema: which policy a verb uses is the kit's decision, not the
+    model's (:data:`VERB_CONTACT_POLICY`).
+    """
+
+    STAY = "stay"
+    BACK_OFF = "back_off"
+    PUSH_THROUGH = "push_through"
+
+
+#: The contact policy of every verb that plans a :class:`ContactStep`. A new
+#: contact verb (an insert, a push) is added here by name.
+VERB_CONTACT_POLICY: Dict[str, "ContactPolicy"] = {
+    "probe": ContactPolicy.STAY,
+    "grasp": ContactPolicy.BACK_OFF,
+    "press": ContactPolicy.PUSH_THROUGH,
+}
+
+
+@dataclass(frozen=True)
+class SurfaceBackoff:
+    """Where a ``back_off`` leg's support is, and how far to leave it.
+
+    Every length is along the leg (``ContactStep.direction``), so the rule
+    holds for any travel, not only ``down``.
+
+    ``distance_m``    the retreat after a stop on the support [m], along
+                      minus the travel. 0 = measure and report, do not move.
+    ``surface_at_m``  the leg distance at which the leading finger tips meet
+                      the MODELLED support [m] (forward kinematics of the
+                      solved leg start against the plan's descent floor).
+    ``band_m``        a stop at most this far SHORT of ``surface_at_m`` (or
+                      anywhere past it) is a stop on the support; further
+                      short, the tips met something standing on it — the
+                      object — and nothing is retracted [m].
+    ``support``       the support's name, for the record ("" = the object's
+                      own declared underside, no surface under it).
+    ``tip_lead_m``    how far the finger tips lead the tool point along the
+                      travel [m], so the record can say where the TIPS were.
+    """
+
+    distance_m: float
+    surface_at_m: float
+    band_m: float
+    support: str = ""
+    tip_lead_m: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("distance_m", "band_m", "tip_lead_m"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"SurfaceBackoff.{name} must be a finite "
+                                 f"non-negative length, got "
+                                 f"{getattr(self, name)!r}")
+            object.__setattr__(self, name, value)
+        at = float(self.surface_at_m)
+        if not math.isfinite(at):
+            raise ValueError(f"SurfaceBackoff.surface_at_m must be finite, "
+                             f"got {self.surface_at_m!r}")
+        object.__setattr__(self, "surface_at_m", at)
+
+    def to_json(self) -> Dict[str, Any]:
+        return {"distance_m": round(self.distance_m, 5),
+                "surface_at_m": round(self.surface_at_m, 5),
+                "band_m": round(self.band_m, 5), "support": self.support,
+                "tip_lead_m": round(self.tip_lead_m, 5)}
+
+
+@dataclass(frozen=True)
+class ContactStep:
+    """A straight leg that STOPS ON WHATEVER RESISTS, and reports where.
+
+    Run by the executor's ``move_until`` (the protocol's contact capability):
+    the leg is position-commanded knot by knot while :attr:`criterion` watches
+    the measured torque, and the motion is stopped the moment it is met. An
+    executor with no ``move_until`` fails this step with ``transport_error``
+    — never plays the leg blind, because a leg played blind is a position-
+    controlled arm driven into a table.
+
+    THE LEG'S KNOTS LIVE INSIDE THIS STEP (``path``), not as ``JointStep``s
+    beside it, so a runner that does not understand a contact step cannot
+    play the leg by accident: it can only refuse the step.
+
+    ``direction``   the travel, RESOLVED into the base frame at plan time.
+    ``path``        the leg's joint knots for ``side``, from the posture the
+                    leg starts at (``path[0]``) to the one ``max_travel_m``
+                    along ``direction`` (``path[-1]``), each already solved by
+                    the same IK, clamp and guard as every other plan step.
+    ``s``           each knot's distance along ``direction`` from the start [m].
+    ``speed_m_s``   how fast the tool travels along the leg. Slow on purpose:
+                    what the arm overshoots after contact is this speed times
+                    the transport's detection latency.
+    ``hold_s``      after contact, keep the command where it stopped this long
+                    (a press holds; a probe does not).
+    ``retract``     after the hold, travel the leg BACK to its start (a press
+                    returns to its standoff). Without it the arm is re-
+                    commanded at the posture it MEASURED at contact, so it
+                    stops pushing but stays touching.
+    ``waypoint``    the index of the plan waypoint the leg ends at.
+    """
+
+    side: str
+    direction: Any                      # world.Direction, base frame
+    max_travel_m: float
+    criterion: ContactCriterion = field(default_factory=ContactCriterion)
+    waypoint: int = -1
+    path: Tuple[np.ndarray, ...] = ()
+    s: Tuple[float, ...] = ()
+    speed_m_s: float = 0.01
+    hold_s: float = 0.0
+    retract: bool = False
+    #: what happens after the stop (:class:`ContactPolicy`); ``None`` is
+    #: derived from ``retract`` — ``push_through`` with one, ``stay`` without
+    policy: Optional[ContactPolicy] = None
+    #: the support a ``back_off`` leg retreats from; required by, and only
+    #: allowed with, ``back_off``
+    backoff: Optional[SurfaceBackoff] = None
+
+    def __post_init__(self) -> None:
+        policy = self.policy
+        if policy is None:
+            policy = (ContactPolicy.PUSH_THROUGH if self.retract
+                      else ContactPolicy.STAY)
+        policy = ContactPolicy(policy)
+        object.__setattr__(self, "policy", policy)
+        if (policy is ContactPolicy.PUSH_THROUGH) != bool(self.retract):
+            raise ValueError(f"ContactStep: policy {policy.value!r} with "
+                             f"retract={self.retract!r}; push_through is the "
+                             f"one policy that retracts along the leg")
+        if (policy is ContactPolicy.BACK_OFF) != (self.backoff is not None):
+            raise ValueError(f"ContactStep: policy {policy.value!r} "
+                             f"{'needs' if self.backoff is None else 'takes no'}"
+                             f" SurfaceBackoff")
+        path = tuple(np.array(q, dtype=float).reshape(7) for q in self.path)
+        for q in path:
+            q.setflags(write=False)
+        object.__setattr__(self, "path", path)
+        object.__setattr__(self, "s", tuple(float(v) for v in self.s))
+        if len(self.s) != len(path):
+            raise ValueError(f"ContactStep: {len(path)} knots but "
+                             f"{len(self.s)} distances")
+        if len(path) < 2:
+            raise ValueError("ContactStep: a contact leg needs its start and at "
+                             "least one knot")
+        for k, q in enumerate(path):
+            if not np.all(np.isfinite(q)):
+                raise ValueError(f"ContactStep: knot {k} is not finite: "
+                                 f"{q.tolist()}")
+        for k, (a, b) in enumerate(zip(self.s, self.s[1:])):
+            if not math.isfinite(b) or b < a:
+                raise ValueError(f"ContactStep: the distance along the leg "
+                                 f"must not decrease, knot {k + 1} is {b!r} "
+                                 f"after {a!r}")
+        if getattr(self.direction, "frame", _BASE) != _BASE:
+            raise ValueError("ContactStep.direction must be resolved into the "
+                             "base frame at plan time")
+        for name in ("max_travel_m", "speed_m_s"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"ContactStep.{name} must be positive, got "
+                                 f"{getattr(self, name)!r}")
+        if not math.isfinite(float(self.hold_s)) or float(self.hold_s) < 0.0:
+            raise ValueError(f"ContactStep.hold_s must be >= 0, got "
+                             f"{self.hold_s!r}")
+
+    def timed_path(self) -> Tuple[Tuple[float, np.ndarray], ...]:
+        """``(t, q)`` per knot, ``t`` seconds from the leg start at
+        :attr:`speed_m_s` — the one timing every transport plays.
+
+        STRICTLY INCREASING. A knot that moves the joints without advancing
+        along the direction (the solver correcting the wrist, not the tool
+        point) has the distance of the knot before it; timed by distance
+        alone it had the same TIME, and d1-firmwared refuses a trajectory
+        whose times do not increase — the whole leg, at upload (d1-2
+        2026-09-23, table probe 4 of 10). Such a knot is given
+        :data:`CONTACT_KNOT_MIN_DT_S` after the one before it.
+        """
+        out: List[Tuple[float, np.ndarray]] = []
+        for s, q in zip(self.s, self.path):
+            t = max(0.0, s) / self.speed_m_s
+            if out and t < out[-1][0] + CONTACT_KNOT_MIN_DT_S:
+                t = out[-1][0] + CONTACT_KNOT_MIN_DT_S
+            out.append((t, q))
+        return tuple(out)
+
+    def duration_s(self) -> float:
+        return self.timed_path()[-1][0]
+
+
 #: The closed set of things a plan can contain. Spelt as a Union rather than
 #: ``Any`` so a consumer's type checker can see that the generic runner's
 #: ``raise TypeError`` and the firmware runner's silent skip were not the same
 #: behaviour over the same set.
-Step = Union[JointStep, GripStep, SettleStep]
+Step = Union[JointStep, GripStep, SettleStep, ContactStep]
+
+
+def _revision_fields(revision: str) -> Dict[str, str]:
+    """``"a=1;b=2"`` -> ``{"a": "1", "b": "2"}``; a revision that is not in
+    that form is one opaque field."""
+    out: Dict[str, str] = {}
+    for part in str(revision).split(";"):
+        key, sep, value = part.partition("=")
+        out[key if sep else "revision"] = value if sep else part
+    return out
 
 
 @dataclass(frozen=True)
@@ -310,21 +633,29 @@ class PlanBinding:
     #: travels with the plan, and the hardware boundary refuses the unguarded
     #: kind unless the caller says so explicitly.
     guarded: bool = True
+    #: the FIRMWARE CONTRACT the observation came through — for d1-firmwared
+    #: the sha256 of the OpenAPI document the executor's client was generated
+    #: from (``WorldView.firmware_spec``), ``"kinematic"`` for the mirror, ""
+    #: when the producer did not say. ``executor.check_binding`` refuses to
+    #: play a plan against a transport that drives a different one.
+    firmware_spec: str = ""
 
     @classmethod
     def of(cls, world, kin=None, *, joint_tol_rad: float = 0.05,
-           max_age_s: float = float("nan")) -> "PlanBinding":
-        from .approach import tool_revision  # noqa: PLC0415 - cycle at import
+           max_age_s: float = float("nan"),
+           reference: Optional[str] = None) -> "PlanBinding":
+        from .orientation import tool_revision  # noqa: PLC0415 - cycle at import
         q0 = {side: tuple(float(v) for v in arm.joints)
               for side, arm in world.arms.items()}
         gate = getattr(kin, "gate", None)
         return cls(q0=q0, observation=world.observation_id(),
                    world_stamp=float(world.stamp),
                    frames_now=float(world.frames.now),
-                   tool_revision=tool_revision(),
+                   tool_revision=tool_revision(reference),
                    joint_tol_rad=float(joint_tol_rad),
                    max_age_s=float(max_age_s),
-                   guarded=bool(getattr(gate, "installed", False)))
+                   guarded=bool(getattr(gate, "installed", False)),
+                   firmware_spec=str(getattr(world, "firmware_spec", "") or ""))
 
     def drift(self, *, joints=None, world=None, now: float = float("nan"),
               tool_revision: str = "") -> Optional[str]:
@@ -356,9 +687,19 @@ class PlanBinding:
         if world is not None and tuple(world.observation_id()) != tuple(self.observation):
             return ("the world has been re-observed since this plan was "
                     "checked — replan against the observation you are holding")
-        if tool_revision and self.tool_revision and tool_revision != self.tool_revision:
-            return (f"the tool configuration changed ({self.tool_revision} -> "
-                    f"{tool_revision}); every waypoint is a TOOL-POINT pose")
+        if tool_revision and self.tool_revision:
+            # Every field BOTH revisions state must agree. An executor states
+            # the hand; a grasp plan also states WHERE on it the contact is
+            # (``reference=pad|tip``), so a tip plan runs on the hand it was
+            # planned for and is refused where a pad plan is expected.
+            planned = _revision_fields(self.tool_revision)
+            now = _revision_fields(tool_revision)
+            changed = sorted(k for k in set(planned) & set(now)
+                             if planned[k] != now[k])
+            if changed or not set(planned) & set(now):
+                return (f"the tool configuration changed ({self.tool_revision} "
+                        f"-> {tool_revision}); every waypoint is a TOOL-POINT "
+                        f"pose")
         if math.isfinite(self.max_age_s) and math.isfinite(now):
             age = float(now) - self.world_stamp
             if age > self.max_age_s:
@@ -376,6 +717,8 @@ class PlanBinding:
             "joint_tol_deg": round(math.degrees(self.joint_tol_rad), 2),
             "guarded": bool(self.guarded),
         }
+        if self.firmware_spec:
+            out["firmware_spec"] = self.firmware_spec
         if math.isfinite(self.max_age_s):
             out["max_age_s"] = round(float(self.max_age_s), 3)
         return out
@@ -388,11 +731,28 @@ def _step_json(step: Step) -> Dict[str, Any]:
                 "q_rad": [round(float(v), 6) for v in step.q],
                 "waypoint": int(step.waypoint)}
     if isinstance(step, GripStep):
-        return {"step": "grip", "side": step.side,
-                "closedness": round(float(step.closedness), 4),
-                "grip": step.grip, "waypoint": int(step.waypoint)}
+        out = {"step": "grip", "side": step.side,
+               "closedness": round(float(step.closedness), 4),
+               "grip": step.grip, "waypoint": int(step.waypoint)}
+        if step.expect_hold:
+            out["expect_hold"] = True
+        return out
     if isinstance(step, SettleStep):
         return {"step": "settle", "timeout_s": round(float(step.timeout_s), 3)}
+    if isinstance(step, ContactStep):
+        return {"step": "contact", "side": step.side,
+                "direction": step.direction.to_json(),
+                "max_travel_m": round(float(step.max_travel_m), 4),
+                "criterion": step.criterion.to_json(),
+                "speed_m_s": round(float(step.speed_m_s), 4),
+                "hold_s": round(float(step.hold_s), 3),
+                "retract": bool(step.retract),
+                "policy": step.policy.value,
+                **({"backoff": step.backoff.to_json()}
+                   if step.backoff is not None else {}),
+                "waypoint": int(step.waypoint),
+                "s_m": [round(float(v), 5) for v in step.s],
+                "q_rad": [[round(float(v), 6) for v in q] for q in step.path]}
     raise TypeError(f"not a plan step: {step!r}")
 
 
@@ -460,6 +820,16 @@ class Plan:
             "notes": list(self.notes),
             "binding": None if self.binding is None else self.binding.to_json(),
         }
+        contacts = [s for s in self.steps if isinstance(s, ContactStep)]
+        if contacts:
+            out["contact_steps"] = [
+                {"side": s.side, "direction": s.direction.label(),
+                 "max_travel_m": round(float(s.max_travel_m), 4),
+                 "criterion": s.criterion.to_json(),
+                 "hold_s": round(float(s.hold_s), 3),
+                 "retract": bool(s.retract), "policy": s.policy.value,
+                 **({"backoff_m": round(s.backoff.distance_m, 5)}
+                    if s.backoff is not None else {})} for s in contacts]
         if full:
             out["steps"] = [_step_json(step) for step in self.steps]
         else:
@@ -583,6 +953,13 @@ class Verifier:
 
     Built from the world BEFORE the primitive ran, so it can measure a
     difference rather than a state. Subclasses implement :meth:`measure`.
+
+    ``run`` is the executor's :class:`~manipulation_kit.executor.RunReport`
+    for the run between the two worlds, when the caller has it (the agent
+    loop always does): its arrivals, stop reason and contact legs are
+    measurements too. A verifier that reads them overrides
+    :meth:`measure_run`; every other one ignores them, and a caller that
+    has no report gets the world-only verdict.
     """
 
     #: what this verifier checks, one line, for a menu or a trace
@@ -592,7 +969,10 @@ class Verifier:
         self.primitive = primitive
         self.world0 = world0
 
-    def __call__(self, world1: WorldView) -> VerdictReport:
+    def __call__(self, world1: WorldView, run: Any = None) -> VerdictReport:
+        return self.measure_run(world1, run)
+
+    def measure_run(self, world1: WorldView, run: Any = None) -> VerdictReport:
         return self.measure(world1)
 
     def measure(self, world1: WorldView) -> VerdictReport:  # pragma: no cover
@@ -616,6 +996,11 @@ class Primitive:
     #: the name a model says. Defaults to the class name lowercased, so the
     #: two cannot drift.
     VERB = ""
+    #: True when the verb's ``direction`` is the way the hand TRAVELS ONTO
+    #: something (approach, grasp, probe, press) rather than the way it
+    #: leaves (lift, retreat). An operator's ``allowed_directions``
+    #: (``manipulation_kit.agent.OperatorPolicy``) restricts exactly these.
+    DIRECTION_ARRIVES = False
 
     @classmethod
     def name(cls) -> str:
@@ -635,6 +1020,28 @@ class Primitive:
         depending on which model is driving.
         """
         return {}
+
+    @classmethod
+    def arg_roles(cls) -> Dict[str, str]:
+        """Per-verb ROLE of a name argument, where it differs from the table's.
+
+        Same reasoning as :meth:`arg_enums`: ``target`` is a vessel for
+        ``pour`` and anything in the world for ``press``, and the verb says
+        so once, so the schema export and ``decode`` cannot disagree.
+        """
+        return {}
+
+    @classmethod
+    def applicable(cls, world: WorldView) -> bool:
+        """Is this verb worth DESCRIBING to a model in this world at all?
+
+        ``True`` for every verb but the ones whose very meaning needs a world
+        state — ``handover`` needs one hand holding a named thing and the
+        other measurably free. :func:`.schema.tool_schemas` leaves a verb out
+        when this says ``False``; ``decode`` and ``plan`` still refuse it with
+        the typed reason, so hiding it is an economy of model-facing text, never the check.
+        """
+        return True
 
     def preconditions(self, world: WorldView) -> List[Unmet]:  # pragma: no cover
         raise NotImplementedError
@@ -672,8 +1079,8 @@ class LearnedPrimitive(Primitive):
     lives where the policy lives (``d1-inference``), because ``omakase-core``
     must not depend on that package and the kit must not grow a model runtime.
 
-    Shu, 2026-09-19: 「Pour は ACT」. Astra orchestrates at the VLA's level and
-    the learned policy is the body of one verb.
+    Pouring is a learned policy (ACT): the planner model orchestrates at the
+    VLA's level and the learned policy is the body of one verb.
 
     Subclasses declare their own ``policy`` FIELD (``"act:pourwithsmallpotjp"``
     — the executor resolves it, the kit does not). It is not declared here

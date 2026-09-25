@@ -50,15 +50,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     from manipulation_kit.arms import get_arm_kinematics
     from manipulation_kit.executors.firmware import FirmwareExecutor
-    from manipulation_kit.primitives.approach import tool_from_link7, tool_revision
+    from manipulation_kit.hands.d1.parallel_gripper.description import (
+        DRIVEN_OPEN_GAP_M, PAD_CENTRE_Z_M)
+    from manipulation_kit.primitives.orientation import tool_from_link7, tool_revision
+    from manipulation_kit.world.views import INTERIOR_FRACTION
 
     problems: List[str] = []
     kin = get_arm_kinematics("d1/arm", quiet=True)
     robot = FirmwareExecutor(base_url=args.robot, heartbeat=False)
 
     print(f"tool the kit plans with: {tool_revision()}")
-    print("   (pad centre 100 mm, driven opening 51.96 mm — MEASURED on d1-3,")
-    print("    2026-09-16. If a different hand is bolted on, stop here.)")
+    # The numbers the kit will plan with, read from the kit — not prose that
+    # goes stale the moment the description (or its env knob) changes.
+    print(f"   (pad centre {PAD_CENTRE_Z_M * 1000:.0f} mm, driven opening "
+          f"{DRIVEN_OPEN_GAP_M * 1000:.2f} mm. If a different hand is bolted "
+          f"on, stop here.)")
 
     lease = robot.acquire()
     print(f"lease: held by {lease.holder!r} at class {lease.lease_class!r}, "
@@ -98,13 +104,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("lease: released")
 
     if args.scene is not None:
-        from live import objects_from
+        from manipulation_kit.agent.robot import objects_from
         scene = json.loads(args.scene.read_text(encoding="utf-8"))
         for item in objects_from(scene):
             print(f"scene: {item.to_text()}")
             if getattr(item, "interior_measured", True) is False:
                 problems.append(
-                    f"{item.name}'s interior is ESTIMATED at 90% of its size; "
+                    f"{item.name}'s interior is ESTIMATED at "
+                    f"{INTERIOR_FRACTION:.0%} of its size; "
                     f"measure it, or nothing may be placed into it")
 
     if problems:

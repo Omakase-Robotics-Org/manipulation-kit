@@ -104,3 +104,37 @@ def test_the_bundled_client_is_a_real_tree_not_an_empty_directory():
     assert len(files) == ensure.snapshot()["files"], (
         "SNAPSHOT.json counts a different number of generated files than the "
         "tree holds — a partial commit")
+
+
+#: sha256 of d1-firmware ``openapi/d1-firmwared.v1.json`` at 0077deb (PR #106,
+#: branch feat/guard-joint-moves): the always-on guard, with the trajectory
+#: ``guard`` field and ``TrajectoryGuard`` removed. A superset of what d1-2
+#: serves until its daemon is redeployed; against that daemon ``ensure``
+#: regenerates at connect.
+BUNDLED_SPEC_SHA256 = ("3b354c25563e46aabd49c6a42819e5f32de0e5a7e003f3e4d97a3e56"
+                       "7048cfb9")
+
+
+def test_the_bundled_client_is_the_always_on_guard_document(spec_document):
+    """The snapshot is the pinned document, not an older one.
+
+    The hash is computed from the file on disk, so a hand-edited
+    ``SNAPSHOT.json`` cannot satisfy this.
+    """
+    assert ensure.bundled_spec_sha256() == BUNDLED_SPEC_SHA256
+    assert ensure.snapshot()["spec_sha256"] == BUNDLED_SPEC_SHA256
+    assert spec_document["info"]["version"] == "0.3.0"
+    schemas = spec_document["components"]["schemas"]
+    assert "TrajectoryGuard" not in schemas
+    assert "guard" not in schemas["TrajectoryRequest"]["properties"]
+
+
+@needs_310
+def test_the_bundled_document_publishes_the_brake_routes(spec_document):
+    """mkit-teach's default guide releases the holding brakes; the bundled
+    client has to carry those operations, not regenerate for them."""
+    for route in ("/v1/arm/{side}/brake_release", "/v1/arm/{side}/brake_engage",
+                  "/v1/arm/{side}/brake"):
+        assert route in spec_document["paths"], route
+    from manipulation_kit.executors.firmware._client.d1fw_api.api.arm import (  # noqa: F401
+        arm_brake, arm_brake_engage, arm_brake_release)

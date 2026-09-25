@@ -14,6 +14,7 @@ without them.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,17 +31,33 @@ pytestmark = pytest.mark.skipif(
     sys.version_info < ensure.MIN_PYTHON,
     reason="the generated client imports on Python 3.10+")
 
+#: Shaped like d1-firmwared 0.3.0's answers (the document the bundled client
+#: is generated from): every required field, plus the optional ones the daemon
+#: fills on d1-2.
 ARM_STATE = {
     "mode": "position", "error_code": 0,
-    "feedback_joints": [0.0] * 7, "command_joints": [0.0] * 7,
-    "feedback_velocity": [0.0] * 7, "feedback_torque": [0.0] * 7,
+    "feedback_joints": [0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "command_joints": [0.0] * 7,
+    "feedback_velocity": [0.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "feedback_torque": [0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0],
     "feedback_temperature": [30.0] * 7,
     "frame_serial": 12, "stationary": True,
+    "frame_miss_count": 0, "max_frame_miss_count": 3,
+    "sys_cycle_miss_count": 0, "protocol_mismatch": False,
+    "controller_version": 100341,
 }
 GRIPPER_STATE = {
-    "kind": "parallel", "jaw_rad": 0.1, "torque_nm": 0.2, "holding": False,
-    "grip_preload_rad": 0.0, "live": True, "open_rad": 0.8, "coil_c": 31,
+    "kind": "grasp", "jaw_rad": 0.9, "torque_nm": -0.35, "holding": True,
+    "grip_preload_rad": 0.05, "live": False, "open_rad": 1.35, "coil_c": 31,
+    "fault_code": None, "overload_released": False,
+    "target_closedness": None, "tracking": False,
 }
+NECK_STATE = {"pitch": -0.4, "yaw": 0.1, "pitch_velocity": 0.0,
+              "yaw_velocity": 0.0, "moving": False, "pitch_torque": 0.2,
+              "yaw_torque": 0.0, "enabled": True}
+SLIDER_STATE = {"alarm": False, "alarm_code": 0, "alarm_text": "",
+                "comms_ok": True, "height_m": 0.205, "moving": False,
+                "travel_max_m": 0.30, "zero_reference": "commissioned"}
 
 
 class Daemon:
@@ -125,17 +142,95 @@ def test_a_connect_resolves_the_client_and_then_reads_the_arms(client_factory):
             assert client.spec_sha256 == ensure.bundled_spec_sha256()
             assert client.tree.source == "bundled"
             state = client.arm_state("a")
-    assert state.mode == "position"
-    assert state.feedback_joints == (0.0,) * 7
-    assert state.stationary is True and state.frame_serial == 12
+    # The GENERATED model, not a hand-written parse of the keys.
+    assert type(state).__name__ == "ArmState"
+    assert type(state).__module__.startswith(ensure.BUNDLED_MODULE)
+    assert state.mode == "position" and state.frame_serial == 12
+    assert state.controller_version == 100341
+
+
+def test_the_arm_reading_becomes_a_joint_state_field_for_field(client_factory):
+    from manipulation_kit.executors.firmware.client import joint_state
+
+    with Daemon({"/v1/arm/a/state": ok(ARM_STATE)}) as daemon:
+        with client_factory(daemon) as client:
+            arm = joint_state(client.arm_state("a"))
+    assert arm.mode == "position" and arm.error_code == 0 and arm.stationary
+    assert arm.q[1] == pytest.approx(math.radians(10.0))
+    assert arm.qd[1] == pytest.approx(math.radians(5.0))
+    assert arm.torque_nm[1] == pytest.approx(1.5)
 
 
 def test_the_gripper_reading_comes_back_typed(client_factory):
+    from manipulation_kit.executors.firmware.client import hand_state
+    from manipulation_kit.hands.d1.parallel_gripper.description import (
+        gap_from_motor_rad)
+
     with Daemon({"/v1/gripper/b/state": ok(GRIPPER_STATE)}) as daemon:
         with client_factory(daemon) as client:
             report = client.gripper_state("b")
-    assert report.holding is False and report.open_rad == 0.8
-    assert report.kind == "parallel"
+    assert type(report).__name__ == "GripperReport"
+    assert report.holding is True and report.open_rad == 1.35
+    assert report.kind == "grasp"
+    hand = hand_state(report)
+    assert hand.holding is True and hand.stalled is True and hand.fault is None
+    assert hand.closedness == pytest.approx(1.0 - 0.9 / 1.35)
+    # the daemon's open_rad, through the description's kinematic map:
+    # d1-2's 1.35 rad is its measured 60.5 mm opening
+    assert hand.open_gap_m == pytest.approx(gap_from_motor_rad(1.35))
+    assert hand.open_gap_m == pytest.approx(0.0605, abs=0.0005)
+    assert hand.jaw_gap_m == pytest.approx(gap_from_motor_rad(0.9))
+    assert hand.torque_nm == pytest.approx(-0.35)
+
+
+def test_a_field_the_document_leaves_out_is_none_not_a_number(client_factory):
+    from manipulation_kit.executors.firmware.client import hand_state
+
+    bare = {k: GRIPPER_STATE[k] for k in ("kind", "jaw_rad", "torque_nm",
+                                          "holding", "grip_preload_rad")}
+    with Daemon({"/v1/gripper/a/state": ok(bare)}) as daemon:
+        with client_factory(daemon) as client:
+            hand = hand_state(client.gripper_state("a"))
+    assert hand.open_gap_m is None and hand.closedness is None
+    assert hand.commanded is None and hand.fault is None
+
+
+def test_a_faulted_gripper_reports_its_fault_code(client_factory):
+    from manipulation_kit.executors.firmware.client import hand_state
+
+    faulted = dict(GRIPPER_STATE, kind="fault", holding=False,
+                   fault_code="coil_over_temperature")
+    with Daemon({"/v1/gripper/a/state": ok(faulted)}) as daemon:
+        with client_factory(daemon) as client:
+            hand = hand_state(client.gripper_state("a"))
+    assert hand.fault == "coil_over_temperature"
+
+
+def test_the_neck_and_the_lift_are_read_through_generated_operations(
+        client_factory):
+    from manipulation_kit.executors.firmware.client import (lift_state,
+                                                            neck_state)
+
+    with Daemon({"/v1/neck/state": ok(NECK_STATE),
+                 "/v1/slider/state": ok(SLIDER_STATE)}) as daemon:
+        with client_factory(daemon) as client:
+            neck = neck_state(client.neck_state())
+            lift = lift_state(client.slider_state())
+    assert neck.pitch_rad == pytest.approx(-0.4)   # the daemon's sign, unflipped
+    assert neck.yaw_rad == pytest.approx(0.1) and neck.enabled and not neck.moving
+    assert lift.height_m == pytest.approx(0.205) and lift.alarm is None
+
+
+def test_the_blocking_stroke_is_bounded_by_the_documents_own_timeout(
+        client_factory):
+    with Daemon({}) as daemon:
+        with client_factory(daemon) as client:
+            documented = client.operation_timeout_s("POST",
+                                                    "/v1/gripper/{side}/set")
+    spec = json.loads(ensure.bundled_spec_bytes())
+    assert documented == spec["paths"]["/v1/gripper/{side}/set"]["post"][
+        "x-timeout-seconds"]
+    assert documented == 40.0
 
 
 def test_a_device_the_daemon_could_not_read_is_a_device_failure(client_factory):
@@ -204,3 +299,35 @@ def test_the_generated_operations_are_reachable_from_the_adapter(client_factory)
             arm = client.api_module("arm.arm_state")
             response = arm.sync_detailed(side="a", client=client.api_client)
     assert response.status_code == 200
+
+
+def test_the_contact_leg_operations_go_through_the_generated_client(
+        client_factory):
+    """``trajectory_start`` / ``_status`` / ``_cancel``: generated bodies out,
+    generated ``TrajectoryStatus`` back — the contact leg's whole wire."""
+    from manipulation_kit.executors.firmware.client import _word
+
+    def status(phase, ms):
+        return ok({"id": 9, "phase": phase, "elapsed_ms": ms, "message": None})
+    with Daemon({"/v1/arm/trajectory/start": status("running", 0),
+                 "/v1/arm/trajectory/9/status": status("running", 120),
+                 "/v1/arm/trajectory/9/cancel": status("cancelled", 130)}
+                ) as daemon:
+        with client_factory(daemon) as client:
+            started = client.trajectory_start(
+                [(0.0, [0.0] * 7, [1.0] * 7), (0.5, [2.0] * 7, [1.0] * 7)],
+                holder="mkit-test")
+            polled = client.trajectory_status(9)
+            cancelled = client.trajectory_cancel(9)
+    for answer in (started, polled, cancelled):
+        assert type(answer).__name__ == "TrajectoryStatus"
+        assert type(answer).__module__.startswith(ensure.BUNDLED_MODULE)
+    assert started.id == 9 and polled.elapsed_ms == 120
+    assert _word(polled.phase) == "running" and _word(cancelled.phase) == "cancelled"
+    method, path, body = daemon.seen[0]
+    assert (method, path) == ("POST", "/v1/arm/trajectory/start")
+    assert body == {"waypoints": [{"a": [0.0] * 7, "b": [1.0] * 7, "t": 0.0},
+                                  {"a": [2.0] * 7, "b": [1.0] * 7, "t": 0.5}],
+                    "holder": "mkit-test"}
+    assert daemon.seen[1][:2] == ("GET", "/v1/arm/trajectory/9/status")
+    assert daemon.seen[2][:2] == ("POST", "/v1/arm/trajectory/9/cancel")

@@ -85,7 +85,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: LockCtrlRequest,
 ) -> Response[ChassisLockCtrlResponse200 | ErrorEnvelope]:
-    """Lock or unlock vendor control of the chassis
+    """Release or engage drive motors (vendor-compatible request)
+
+     Legacy motor command: unlock=true releases the drive motors for manual pushing; unlock=false engages
+    them. This is the inverse of the engaged field on POST /v1/chassis/motors, not controller ownership
+    or remote mode. Success returns null data. Motor state records this daemon's successful write, not
+    physical readback.
 
     Args:
         body (LockCtrlRequest): `POST /v1/chassis/lock_ctrl`.
@@ -114,7 +119,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: LockCtrlRequest,
 ) -> ChassisLockCtrlResponse200 | ErrorEnvelope | None:
-    """Lock or unlock vendor control of the chassis
+    """Release or engage drive motors (vendor-compatible request)
+
+     Legacy motor command: unlock=true releases the drive motors for manual pushing; unlock=false engages
+    them. This is the inverse of the engaged field on POST /v1/chassis/motors, not controller ownership
+    or remote mode. Success returns null data. Motor state records this daemon's successful write, not
+    physical readback.
 
     Args:
         body (LockCtrlRequest): `POST /v1/chassis/lock_ctrl`.
@@ -138,7 +148,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: LockCtrlRequest,
 ) -> Response[ChassisLockCtrlResponse200 | ErrorEnvelope]:
-    """Lock or unlock vendor control of the chassis
+    """Release or engage drive motors (vendor-compatible request)
+
+     Legacy motor command: unlock=true releases the drive motors for manual pushing; unlock=false engages
+    them. This is the inverse of the engaged field on POST /v1/chassis/motors, not controller ownership
+    or remote mode. Success returns null data. Motor state records this daemon's successful write, not
+    physical readback.
 
     Args:
         body (LockCtrlRequest): `POST /v1/chassis/lock_ctrl`.
@@ -165,7 +180,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: LockCtrlRequest,
 ) -> ChassisLockCtrlResponse200 | ErrorEnvelope | None:
-    """Lock or unlock vendor control of the chassis
+    """Release or engage drive motors (vendor-compatible request)
+
+     Legacy motor command: unlock=true releases the drive motors for manual pushing; unlock=false engages
+    them. This is the inverse of the engaged field on POST /v1/chassis/motors, not controller ownership
+    or remote mode. Success returns null data. Motor state records this daemon's successful write, not
+    physical readback.
 
     Args:
         body (LockCtrlRequest): `POST /v1/chassis/lock_ctrl`.

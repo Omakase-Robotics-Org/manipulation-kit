@@ -19,8 +19,11 @@ asked*, which is a different question from *can the arm get there*:
 * `no_such_object` — and the `Unmet.remedy` lists what the world does hold
 * `frame_stale` / `unknown_frame` — the pose exists but cannot be resolved
 * `not_holding` / `already_holding` — the hand is in the wrong state
-* `object_too_wide` — the driven jaws open 51.96 mm and this is wider
-* `bad_side`, `bad_approach`, `bad_grip`, `bad_frame`, `no_motion` — the
+* `object_too_wide` / `object_too_flat` — against THIS hand's measured
+  opening (`GripperView.open_gap_m`; the nominal 51.96 mm when none is
+  measured) and the contact reference (`pad` / `tip`)
+* `bad_argument` (a direction that does not resolve or travels the wrong
+  way, a number out of its published range), `bad_side`, `no_motion` — the
   arguments themselves
 
 Keeping these separate from the reach problem matters because the two want
@@ -69,7 +72,9 @@ take, so the pads meet two corners and stall holding nothing.
 
 **The tool point is the pad CENTRE, and the pads reach 29 mm past it.** A
 top-down `Grasp` is therefore raised to keep the finger tips clear of whatever
-the object is standing on (`approach.grasp_point`, `SUPPORT_CLEARANCE_M` 3 mm)
+the object is standing on — the MEASURED surface under it when one is known,
+its own underside only when not (`grasp_geometry.grasp_pose`,
+`SUPPORT_CLEARANCE_M` 3 mm)
 — descending to a 40 mm cube's centre asks for the tips 9 mm *under the
 table*, which jams the fingers and stops the arm 17 mm high and 19 mm to the
 side. The pads are 58 mm deep, so the raised grasp still has 37 mm of pad
@@ -86,7 +91,8 @@ body, the other arm or itself
 ```
 
 The reason vocabulary is closed (`PLAN_REASONS`): `ik_fail`, `infeasible`,
-`guard_reject`, `unreachable_object`, `unreachable_destination`,
+`guard_reject`, `joint_limit` (a coupled joint limit, e.g. the D1
+wrist roll narrowing with J6), `unreachable_object`, `unreachable_destination`,
 `no_such_object`, `frame_stale`, `unknown_frame`, `precondition_unmet`,
 `learned_policy_required`. A consumer switches on it; it never parses a
 message.
@@ -161,9 +167,12 @@ cannot live in the kit, which has no model runtime, and it cannot live in
 
 ## Orientation is derived, never emitted
 
-The model names a verb, an object and one of four approaches
-(`top_down`, `front`, `side_left`, `side_right`). The kit derives the wrist
-quaternion from the approach direction plus the object's principal axis — the
+The model names a verb, an object and a `direction` — which way the hand
+travels: an alias (`down`, `up`, `forward`, `backward`, `left`, `right`,
+`along_tool`) or `{axis: [x, y, z], frame: base|tool|object:<name>}`
+(`manipulation_kit.world.Direction`). The kit derives the wrist quaternion
+from that direction plus the object's principal axis
+(`primitives.orientation.align_tool`, the only place one is produced) — the
 jaws close *across* the long side — and the per-arm mirror convention lives in
 one constant. `Nudge` is the only verb that takes free numbers: translations
 snapped to the ±10/30/50 mm grid, and a yaw clamped to ±15° about the approach

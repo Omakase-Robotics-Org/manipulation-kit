@@ -65,19 +65,33 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Collection, Dict, List, Optional, Sequence
 
 import numpy as np
 
 from ...arms import safety, sides
 from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
-                        JOINT_SLICE, SIDES, STROKE_TIMEOUT_S,
-                        TRANSPORT_ERROR, ArrivalReport, RawState, RunReport,
-                        SettleReport, StrokeReport, ToolGate, WIRE_DIM,
-                        arrive_labels, barrier_refusal)
-from ...primitives.types import GripStep, JointStep, Plan, SettleStep
-from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
-                     RateRefused)
+                        CONTACT, CONTACT_BASELINE_SAMPLES, CONTACT_FAULT,
+                        CONTACT_GUARD, CONTROLLER_FAULT, JOINT_SLICE,
+                        MAX_TRAVEL, SIDES, TRANSPORT_ERROR, UNMEASURED,
+                        ArrivalReport, ContactReport, ContactWatch, LiftState,
+                        NeckState, RawState, RunReport, SettleReport,
+                        StrokeReport, ToolGate, WIRE_DIM, _final_arrival,
+                        arrive_labels, barrier_refusal, contact_kin,
+                        contact_outcome, contact_report, controller_fault,
+                        fault_refusal, hold_refusal, record_outcome,
+                        retract_path, stroke_refusal)
+from ...primitives.types import (ContactCriterion, ContactStep, GripStep,
+                                 JointStep, Plan, SettleStep)
+from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
+                     check_waypoints,
+                     hand_state, joint_state)
+from .client import lift_state as _lift_state
+from .client import neck_state as _neck_state
+from .errors import (ClientTimeout, FirmwareError,  # noqa: F401 - re-exported
+                     FirmwareUnavailable, LeasePreempted,
+                     ModeUnconfirmed, OperationUnavailable, RecoverFailed,
+                     RateRefused, TrajectoryInvalid)
 
 # --------------------------------------------------------------------------- #
 # constants, each with the measurement behind it
@@ -87,7 +101,7 @@ from .errors import (FirmwareUnavailable, LeasePreempted,  # noqa: F401
 #: VR tick parity"): the rate the arms are actually driven at on this robot.
 STREAM_HZ = 50.0
 
-#: Per-joint rate ceiling [deg/s]. ``dx-vr-teleop``'s anti-lunge clamp is
+#: Per-joint rate ceiling at FULL speed [deg/s]. ``dx-vr-teleop``'s anti-lunge clamp is
 #: ``JOINT_DELTA_CLAMP_DEG = 7.0`` per tick at its 20 Hz keepalive, i.e.
 #: 140 deg/s — "~2-3x the fastest plausible human teleop joint speed", so
 #: continuous motion passes through untouched while a single-tick warp is
@@ -95,6 +109,30 @@ STREAM_HZ = 50.0
 #: runs at a different tick than the keepalive it was measured at, and a
 #: per-tick copy of the number would mean something different at 50 Hz.
 MAX_JOINT_RATE_DEG_S = 140.0
+
+#: How long ONE blocking gripper stroke may take [s], when the document does
+#: not say. d1-firmwared's ``POST /v1/gripper/{side}/set`` blocks until the
+#: stroke is done and publishes its own bound as the operation's
+#: ``x-timeout-seconds`` (40 s on 0.3.0), which is what the executor uses; this
+#: is the fallback for a document without it. 20 s is what a real firm close
+#: on d1-2 needed with margin (2026-09-22, when the client's 2 s default cut
+#: the stroke off and the example injected 20 s into the client by hand).
+DEFAULT_STROKE_TIMEOUT_S = 20.0
+
+
+def schedule_rate_deg_s(vel_ratio: float) -> float:
+    """The joint rate the trajectory schedule is timed at [deg/s].
+
+    The daemon runs position mode at ``vel_ratio`` x full speed, so a schedule
+    timed at the full-speed ceiling runs AHEAD of the arm: at the default
+    0.15 the arm moves about 20 deg/s behind timestamps seven times faster,
+    every large move "arrives late" and the arrival barrier fails while the
+    arm is still moving (d1-2 run4, 2026-09-22: "still moving after 1.5 s,
+    worst joint 18.2 deg/s", tool 190 mm off). So the schedule is timed at
+    the speed the ratio this executor INSTALLS will give — derived here, once,
+    rather than by each caller.
+    """
+    return MAX_JOINT_RATE_DEG_S * float(vel_ratio)
 
 #: Interpolation window at the start of a trajectory [s]. The daemon refuses a
 #: trajectory whose first waypoint is more than 3 degrees from measured
@@ -149,6 +187,40 @@ MAX_COMMAND_STEP_DEG = math.degrees(safety.MAX_JOINT_STEP_RAD)
 #: snap to a stale command — on d1-2 (2026-09-10) one joint's command sat 48
 #: degrees from its measurement.
 ANCHOR_GAP_DEG = 3.0
+
+#: How long a requested mode may take to be REPORTED [s], and the poll period.
+#: ``POST /v1/arm/{side}/mode`` returns once the daemon accepted the request;
+#: the controller reported the transition 11 ms later on d1-2 (2026-09-23),
+#: and the daemon's own confirmed transitions (``arm_recovery::confirmed``)
+#: poll 8 times at 500 ms. 3 s is well past both.
+MODE_TIMEOUT_S = 3.0
+MODE_POLL_S = 0.02
+
+#: ``POST /v1/arm/{side}/recover`` ratios: the daemon's own default, and the
+#: vendor's ``lockCurrentPositionMode(5, 5)``.
+RECOVER_RATIO = 0.05
+#: A recover the controller refuses is retried this many times in all, this
+#: far apart [s]. On d1-2 (2026-09-23) a recover sent 2 ms after the brakes
+#: engaged was refused (``RESET1`` code 8, mode flapping idle/error) while
+#: the arm was still settling.
+RECOVER_ATTEMPTS = 3
+RECOVER_SPACING_S = 1.0
+#: How long an arm must report one unchanged mode AND ``stationary`` before a
+#: recover is sent to it after hand guiding [s].
+STEADY_S = 0.3
+
+
+def _command_gap_deg(state: Any) -> float:
+    """Largest |commanded - measured| joint difference of a generated
+    ``ArmState`` [deg]: how far position control would snap the arm."""
+    return max(abs(c - f) for c, f in zip(state.command_joints, state.feedback_joints))
+
+
+def _given_text(value: Any) -> str:
+    """A generated optional string (``None`` / ``Unset`` / text) as text."""
+    if value is None or type(value).__name__ == "Unset":
+        return "(no message)"
+    return str(value)
 
 
 def _wire_side(side: str) -> str:
@@ -225,14 +297,16 @@ class FirmwareExecutor:
                  hz: float = STREAM_HZ,
                  vel_ratio: float = DEFAULT_VEL_RATIO,
                  acc_ratio: float = DEFAULT_ACC_RATIO,
-                 max_joint_rate_deg_s: float = MAX_JOINT_RATE_DEG_S,
+                 max_joint_rate_deg_s: Optional[float] = None,
                  grip: str = "soft",
                  heartbeat: bool = True,
                  arrive_tol_rad: float = ARRIVE_TOL_RAD,
                  arrive_timeout_s: float = ARRIVE_TIMEOUT_S,
-                 stroke_timeout_s: float = STROKE_TIMEOUT_S,
+                 stroke_timeout_s: Optional[float] = None,
                  client_policy: str = "auto",
                  client_cache_dir=None,
+                 recover_on_entry: bool = False,
+                 announce: Callable[[str], None] = lambda line: None,
                  sleep=time.sleep, clock=time.monotonic):
         if transport not in ("trajectory", "stream"):
             raise ValueError("transport must be 'trajectory' or 'stream', "
@@ -242,6 +316,15 @@ class FirmwareExecutor:
                 raise ValueError(f"{name} is a FRACTION in (0, 1]; the daemon "
                                  f"clamps anything above 1, so {ratio!r} asks "
                                  f"for full speed. Divide the percent by 100.")
+        if max_joint_rate_deg_s is None:
+            max_joint_rate_deg_s = schedule_rate_deg_s(vel_ratio)
+        self.client = (client if client is not None else
+                       _default_client(base_url, client_policy, client_cache_dir))
+        if stroke_timeout_s is None:
+            documented = getattr(self.client, "operation_timeout_s", None)
+            stroke_timeout_s = ((documented("POST", "/v1/gripper/{side}/set")
+                                 if documented is not None else None)
+                                or DEFAULT_STROKE_TIMEOUT_S)
         # Positive and FINITE, all of them. A NaN hz makes every period a NaN,
         # every sleep a no-op and every deadline unreachable, and nothing
         # downstream would have said so (R14).
@@ -255,8 +338,10 @@ class FirmwareExecutor:
                                  f"got {value!r}")
         if not (math.isfinite(float(ttl_s)) and int(ttl_s) >= 1):
             raise ValueError(f"ttl_s must be at least 1 second, got {ttl_s!r}")
-        self.client = (client if client is not None else
-                       _default_client(base_url, client_policy, client_cache_dir))
+        #: sha256 of the OpenAPI document the client was generated from — the
+        #: firmware contract a plan's binding is compared against
+        #: (``executor.check_binding``). ``None`` for a client that cannot say.
+        self.firmware_spec: Optional[str] = getattr(self.client, "spec_sha256", None)
         self.holder = holder if holder is not None else default_holder()
         self.lease_class = lease_class
         self.ttl_s = int(ttl_s)
@@ -284,6 +369,20 @@ class FirmwareExecutor:
         #: the way out of any failure, so an interrupted consumer does not
         #: leave the arms playing a path nobody is watching.
         self._jobs: List[int] = []
+        #: side -> the closedness this executor last COMMANDED and the daemon
+        #: accepted. Published as ``HandState.commanded``: the transport
+        #: knows what it asked for, and a runner that cannot find it refuses
+        #: to move a holding hand (F9).
+        self._commanded: Dict[str, float] = {}
+        #: Opt-in (``manipulation_kit.teach``): on entry, RECOVER every arm
+        #: that is not in position — idle, error, anything — before position
+        #: mode is engaged, instead of refusing it. Off for everything else:
+        #: an agent loop that finds an arm idle and 40 degrees from its
+        #: command must stop and say so, not move it (``position_mode``).
+        self.recover_on_entry = bool(recover_on_entry)
+        self._announce = announce
+        #: what ``recover_on_entry`` did, one line per recovered arm
+        self.entry_recoveries: List[str] = []
 
     # -- lease ------------------------------------------------------------- #
     def acquire(self, *, strict: bool = False) -> Lease:
@@ -372,6 +471,8 @@ class FirmwareExecutor:
     def __enter__(self) -> "FirmwareExecutor":
         self.acquire()
         try:
+            if self.recover_on_entry:
+                self.recover_idle_arms()
             self.position_mode()
         except BaseException:
             # HAND THE ARMS BACK. A failed setup used to leave the lease
@@ -395,7 +496,9 @@ class FirmwareExecutor:
 
     # -- setup ------------------------------------------------------------- #
     def position_mode(self) -> None:
-        """Put both arms in position control at THIS run's ratios.
+        """Put both arms in position control at THIS run's ratios, and wait
+        until each REPORTS ``position`` ("completed means arrived": the mode
+        route answers on acceptance, not on the transition).
 
         Sent even when the arm already reports ``position``: the ratios are
         part of the request, the daemon's own ``recover`` leaves different ones
@@ -404,12 +507,11 @@ class FirmwareExecutor:
         for side in SIDES:
             wire = _wire_side(side)
             state = self.client.arm_state(wire)
-            if state.mode != "position":
-                gap = max(abs(c - f) for c, f in
-                          zip(state.command_joints, state.feedback_joints))
+            if _word(state.mode) != "position":
+                gap = _command_gap_deg(state)
                 if state.error_code or gap > ANCHOR_GAP_DEG:
                     raise FirmwareUnavailable(
-                        f"arm {wire} is in mode {state.mode!r} with error "
+                        f"arm {wire} is in mode {_word(state.mode)!r} with error "
                         f"{state.error_code} and its commanded pose is "
                         f"{gap:.1f} deg from the measured one; engaging "
                         f"position control now would snap the arm to a stale "
@@ -417,27 +519,175 @@ class FirmwareExecutor:
             self.client.request("POST", f"/v1/arm/{wire}/mode", self._holder_body({
                 "mode": "position", "vel_ratio": self.vel_ratio,
                 "acc_ratio": self.acc_ratio}))
+            self.wait_for_mode(side, ("position",))
+
+    def set_ratios(self, vel_ratio: float, acc_ratio: Optional[float] = None) -> None:
+        """Re-install position mode at other ratios, confirmed, and re-time
+        the schedule to them (:func:`schedule_rate_deg_s`). For a caller whose
+        motion's own timing decides the ratio (a taught gesture played at its
+        recorded speed, :mod:`manipulation_kit.teach.play`)."""
+        acc_ratio = vel_ratio if acc_ratio is None else acc_ratio
+        for name, ratio in (("vel_ratio", vel_ratio), ("acc_ratio", acc_ratio)):
+            if not (math.isfinite(float(ratio)) and 0.0 < float(ratio) <= 1.0):
+                raise ValueError(f"{name} is a FRACTION in (0, 1], got {ratio!r}")
+        self.vel_ratio, self.acc_ratio = float(vel_ratio), float(acc_ratio)
+        self.max_rate = schedule_rate_deg_s(self.vel_ratio)
+        self.position_mode()
+
+    # -- confirmed mode transitions ---------------------------------------- #
+    def wait_for_mode(self, side: str, modes: Optional[Collection[str]] = None, *,
+                      timeout_s: float = MODE_TIMEOUT_S, poll_s: float = MODE_POLL_S,
+                      steady_s: float = 0.0, stationary: bool = False) -> Any:
+        """Poll ``arm_state`` until the arm REPORTS a mode in ``modes``.
+
+        ``modes=None`` accepts any mode. ``steady_s`` additionally requires
+        the same mode word for that long, and ``stationary`` the daemon's
+        ``stationary`` flag, throughout. Returns the last generated
+        ``ArmState``. Raises :class:`ModeUnconfirmed`, naming the last mode
+        observed, on timeout — and at once when the arm reports ``error``
+        and ``error`` was not asked for: a fault after a mode request is a
+        fault, not a transition still in progress.
+        """
+        wire = _wire_side(side)
+        wanted = None if modes is None else frozenset(modes)
+        asked = ("any mode" if wanted is None else
+                 "mode " + "|".join(sorted(wanted)))
+        if stationary:
+            asked += ", stationary"
+        if steady_s > 0:
+            asked += f", unchanged for {steady_s:g} s"
+        deadline = self._clock() + float(timeout_s)
+        since: Optional[float] = None
+        held: Optional[str] = None
+        while True:
+            self.renew()
+            state = self.client.arm_state(wire)
+            word = _word(state.mode) or "unknown"
+            if wanted is not None and word == "error" and "error" not in wanted:
+                raise ModeUnconfirmed(
+                    f"arm {wire} reported mode 'error' (error code "
+                    f"{state.error_code}) while the kit waited for {asked}: "
+                    f"the controller faulted instead of making the transition")
+            now = self._clock()
+            ok = ((wanted is None or word in wanted)
+                  and (not stationary or bool(state.stationary)))
+            if not ok:
+                since, held = None, None
+            elif since is None or word != held:
+                since, held = now, word
+            if ok and now - since >= steady_s:
+                return state
+            if now >= deadline:
+                raise ModeUnconfirmed(
+                    f"arm {wire}: waited {timeout_s:g} s for {asked}; it last "
+                    f"reported mode {word!r}"
+                    + ("" if not stationary else
+                       f", stationary={bool(state.stationary)}")
+                    + f", error code {state.error_code}")
+            self._sleep(poll_s)
+
+    def recover_arm(self, side: str, *, steady_s: float = 0.0,
+                    attempts: int = RECOVER_ATTEMPTS,
+                    spacing_s: float = RECOVER_SPACING_S) -> Any:
+        """``POST /v1/arm/{side}/recover`` (errors cleared, commanded pose
+        anchored at the measured one, position hold at :data:`RECOVER_RATIO`),
+        confirmed by the arm REPORTING ``position``.
+
+        ``steady_s`` > 0 first waits for the arm to report one unchanged mode
+        and ``stationary`` for that long — after hand guiding the controller
+        refuses a recover sent while the arm is still settling. The request
+        waits for the daemon's answer as long as the document allows
+        (``x-timeout-seconds``, 65 s on the bundled document: the daemon's
+        own confirm loop runs inside it). A refusal, an arm that never came
+        to rest, or an answer not followed by ``position`` is retried,
+        ``attempts`` in all, ``spacing_s`` apart. A :class:`ClientTimeout`
+        is NOT retried: the daemon may still be running that recover, and a
+        second one must not be issued on top of it. Raises
+        :class:`RecoverFailed` with the reason per attempt; a lost lease is
+        re-raised as is.
+        """
+        wire = _wire_side(side)
+        failures: List[tuple] = []
+        for attempt in range(1, int(attempts) + 1):
+            stage = "not_steady"
+            try:
+                if steady_s > 0:
+                    self.wait_for_mode(side, None, steady_s=steady_s, stationary=True)
+                stage = "request"
+                self.client.arm_recover(wire, vel_ratio=RECOVER_RATIO,
+                                        acc_ratio=RECOVER_RATIO)
+                stage = "unconfirmed"
+                return self.wait_for_mode(side, ("position",))
+            except LeasePreempted:
+                raise
+            except ClientTimeout as exc:
+                failures.append(("client_timeout", str(exc)))
+                break
+            except FirmwareUnavailable as exc:
+                if stage == "request":
+                    stage = "refused" if isinstance(exc, FirmwareError) else "error"
+                failures.append((stage, str(exc)))
+            if attempt < attempts:
+                self._sleep(spacing_s)
+        raise RecoverFailed(wire, failures)
+
+    def recover_idle_arms(self) -> List[str]:
+        """Recover every arm that is not in position (``recover_on_entry``).
+
+        Both arms, always: :meth:`position_mode` engages both and a HOME move
+        drives both, so an untaught arm left idle would be refused just the
+        same. Each recovery is announced and kept in :attr:`entry_recoveries`.
+        """
+        done: List[str] = []
+        for side in SIDES:
+            wire = _wire_side(side)
+            state = self.client.arm_state(wire)
+            word = _word(state.mode) or "unknown"
+            if word == "position":
+                continue
+            line = (f"recovering arm {wire} ({word}, "
+                    f"{_command_gap_deg(state):.1f} deg from its command)")
+            self._announce(line)
+            self.recover_arm(side)
+            done.append(line)
+        self.entry_recoveries = done
+        return done
 
     # -- Executor protocol ------------------------------------------------- #
     def state(self) -> RawState:
-        joints: Dict[str, np.ndarray] = {}
-        grippers: Dict[str, float] = {}
-        holding: Dict[str, bool] = {}
-        stationary = True
+        """Both arms and both hands, from the generated models, field for field.
+
+        Everything the daemon publishes reaches the kit: joints, velocity and
+        torque, the controller's mode and error code (a latched arm is
+        ``mode == "error"``, read by ``run_steps`` as a
+        :data:`~manipulation_kit.executor.CONTROLLER_FAULT`), the jaw gap,
+        torque, stroke outcome and fault, the hand's driven-open gap from the
+        daemon's own ``open_rad`` — and what this executor has COMMANDED the
+        hands to, which only the transport can know.
+        """
+        arms = {}
+        hands = {}
         for side in SIDES:
             wire = _wire_side(side)
-            arm = self.client.arm_state(wire)
-            joints[side] = np.radians(np.asarray(arm.feedback_joints, dtype=float))
-            stationary = stationary and bool(arm.stationary)
+            arms[side] = joint_state(self.client.arm_state(wire))
             try:
                 report = self.client.gripper_state(wire)
             except Exception:  # noqa: BLE001 - a gripper that cannot be read is
-                continue       # UNKNOWN, not "open"; leave it out of the dict
-            holding[side] = bool(report.holding)
-            if report.open_rad:
-                grippers[side] = max(0.0, min(1.0, 1.0 - report.jaw_rad / report.open_rad))
-        return RawState(joints=joints, grippers=grippers, holding=holding,
-                        stationary=stationary, stamp=self._clock())
+                continue       # UNKNOWN, not "open"; leave it out of the map
+            hands[side] = hand_state(report, commanded=self._commanded.get(side))
+        return RawState(arms, hands, stamp=self._clock())
+
+    def neck_state(self) -> NeckState:
+        """``GET /v1/neck/state`` through the generated operation.
+
+        Pitch is the daemon's LOGICAL sign, unflipped:
+        ``description.head_camera.pose_from_neck_state`` owns the convention.
+        """
+        return _neck_state(self.client.neck_state())
+
+    def lift_state(self) -> LiftState:
+        """``GET /v1/slider/state`` through the generated operation."""
+        return _lift_state(self.client.slider_state())
 
     def begin_run(self, plan: Plan = None) -> None:
         """A new plan starts a new clock.
@@ -559,9 +809,16 @@ class FirmwareExecutor:
         return times
 
     def set_gripper(self, side: str, closedness: float, *, grip: str = "") -> None:
+        """One blocking stroke, bounded by :attr:`stroke_timeout_s`.
+
+        The command is recorded only once the daemon ACCEPTED it: a refused
+        or timed-out stroke is not a command the hand is under.
+        """
         self.renew()
         self.client.gripper_set(_wire_side(side), float(closedness),
-                                grip=(grip or self.grip) or None)
+                                grip=(grip or self.grip) or None,
+                                timeout_s=self.stroke_timeout_s)
+        self._commanded[side] = float(closedness)
 
     # -- barriers ---------------------------------------------------------- #
     def wait_arrived(self, q16, *, tol_rad: float = None,
@@ -606,11 +863,20 @@ class FirmwareExecutor:
                              ) -> StrokeReport:
         """Poll the gripper until the stroke reaches a TERMINAL state.
 
-        Terminal is one of: the jaws stopped moving (two consecutive identical
-        readings), or the producer reports ``holding``. ``gripper_set`` posted
-        the command and threw the reply away, and the in-repo fake establishes
-        nothing about whether the pinned client blocks — so this does not
-        assume it does. F13 is what reading the evidence too early costs.
+        THE DAEMON'S OWN OUTCOME DECIDES, not jaw motion. ``GripperReport.kind``
+        (the document's ``StrokeKind``) and ``fault_code`` say what the stroke
+        did, and they are the only thing that separates "the jaws stopped on
+        the object" from "the jaws stopped because the motor is disabled". This
+        barrier used to accept two identical ``jaw_rad`` readings, so a faulted
+        gripper — whose jaws are the stillest thing in the room — passed it as
+        a completed stroke (design review 13; d1-2, 2026-09-22).
+
+        In order: a fault (``HandState.fault``: a ``fault_code``, or a
+        ``fault``/``overload`` outcome) is a FAILED barrier carrying the fault;
+        a terminal outcome (``grasp``/``contact``/``empty``/``open``/``lost``)
+        settles; ``timeout`` fails; and only an outcome that says nothing
+        (``blind``, or a producer too old to publish one) falls back to jaw
+        motion — two consecutive identical readings, or a reported hold.
         """
         deadline_s = (self.stroke_timeout_s if timeout_s is None
                       else float(timeout_s))
@@ -621,29 +887,50 @@ class FirmwareExecutor:
             self.renew()
             try:
                 report = self.client.gripper_state(wire)
+                hand = hand_state(report, commanded=self._commanded.get(side))
             except Exception as exc:  # noqa: BLE001
                 return StrokeReport(False, waited_s=self._clock() - started,
                                     detail=f"the gripper cannot be read: {exc}")
-            jaw = float(getattr(report, "jaw_rad", float("nan")))
-            open_rad = float(getattr(report, "open_rad", 0.0) or 0.0)
-            closedness = (float("nan") if open_rad <= 0.0
-                          else max(0.0, min(1.0, 1.0 - jaw / open_rad)))
-            holding = bool(getattr(report, "holding", False))
+            jaw = float(report.jaw_rad)
+            kind = _word(report.kind) or ""
+            closedness = (float("nan") if hand.closedness is None
+                          else hand.closedness)
+            holding = bool(hand.holding)
+            waited = self._clock() - started
+            if hand.fault is not None or kind in FAULT_KINDS:
+                return StrokeReport(
+                    False, closedness, holding, None, waited,
+                    f"the stroke ended {kind or 'faulted'} "
+                    f"(fault {hand.fault}) at {hand.torque_nm:.2f} Nm with the "
+                    f"jaws at {jaw:.3f} rad",
+                    kind=kind, fault=hand.fault or kind)
+            if kind in SETTLED_KINDS:
+                return StrokeReport(True, closedness, holding,
+                                    stalled=hand.stalled, waited_s=waited,
+                                    detail=f"the stroke ended {kind}",
+                                    kind=kind)
+            if kind in UNFINISHED_KINDS:
+                return StrokeReport(
+                    False, closedness, holding, None, waited,
+                    f"the stroke ended {kind}: it ran out of time inside the "
+                    f"daemon, which says nothing about where the jaws are",
+                    kind=kind)
             stopped = previous is not None and abs(jaw - previous) <= 1e-6
             if holding or stopped:
                 return StrokeReport(True, closedness, holding,
                                     stalled=holding or None,
-                                    waited_s=self._clock() - started,
+                                    waited_s=waited,
                                     detail=("the producer reports a hold"
                                             if holding else
-                                            "the jaws stopped moving"))
+                                            "the jaws stopped moving"),
+                                    kind=kind)
             previous = jaw
-            waited = self._clock() - started
             if waited >= deadline_s:
                 return StrokeReport(
                     False, closedness, holding, None, waited,
                     f"the stroke had not reached a terminal state after "
-                    f"{waited:.1f}s (jaw {jaw:.3f} rad, still moving)")
+                    f"{waited:.1f}s (jaw {jaw:.3f} rad, still moving)",
+                    kind=kind)
             self._sleep(min(self.period, max(0.0, deadline_s - waited)))
 
     def settle(self, timeout_s: float) -> SettleReport:
@@ -657,8 +944,9 @@ class FirmwareExecutor:
         worst = float("nan")
         while True:
             self.renew()
-            states = [self.client.arm_state(_wire_side(s)) for s in SIDES]
-            worst = max(max(abs(v) for v in st.feedback_velocity) for st in states)
+            states = [joint_state(self.client.arm_state(_wire_side(s)))
+                      for s in SIDES]
+            worst = max(float(np.max(np.abs(np.degrees(st.qd)))) for st in states)
             if all(st.stationary for st in states):
                 return SettleReport(True, self._clock() - started, worst)
             waited = self._clock() - started
@@ -669,8 +957,219 @@ class FirmwareExecutor:
                     f"{worst:.1f} deg/s")
             self._sleep(min(self.period, max(0.0, float(timeout_s) - waited)))
 
+    # -- contact: a short trajectory, a state poll, a cancel --------------- #
+    def move_until(self, path, *, side: str, criterion: ContactCriterion,
+                   hz: float = None, kin=None, direction=None,
+                   **_ignored) -> ContactReport:
+        """Play a contact leg on the daemon, watch the torque, cancel on contact.
+
+        POSITION MODE ONLY (Shu, 2026-09-22): nothing here sets a mode or a
+        torque. The leg is uploaded as an ordinary guarded trajectory
+        (``arm.arm_trajectory_start``: the daemon re-checks every sample
+        against its own motion guard), the MOVING arm's generated
+        ``ArmState`` is polled at this executor's rate alongside the job's
+        generated ``TrajectoryStatus``, and every sample goes through the
+        same :class:`~manipulation_kit.executor.ContactWatch` the streamed
+        default uses. When the watch says ``confirming`` the job is cancelled
+        (``arm.arm_trajectory_cancel``: "the arms hold the last accepted
+        target"), which freezes the command while the rise is confirmed; a
+        rise that goes away resumes the rest of the leg as a new job from the
+        measured posture. Everything read comes through the generated client.
+
+        What the document does NOT give this, and a d1-firmware issue should:
+        a stop condition evaluated by the daemon's own 1 ms loop (here the
+        stop latency is one HTTP poll, ~``1/hz``), the playback index or the
+        setpoint in ``TrajectoryStatus`` (the frozen point is inferred from
+        ``elapsed_ms``), and a tool-force estimate (``tool_force_n`` is
+        therefore ``unmeasured``).
+        """
+        kin = contact_kin(self, kin)
+        period = self.period if hz is None else 1.0 / float(hz)
+        timed = [(float(t), np.asarray(q, dtype=float).reshape(7))
+                 for t, q in path]
+        wire = _wire_side(side)
+        other = SIDES[1] if side == SIDES[0] else SIDES[0]
+        self.renew()
+        samples = [joint_state(self.client.arm_state(wire))
+                   for _ in range(CONTACT_BASELINE_SAMPLES)]
+        q_start = np.asarray(samples[0].q, dtype=float)
+
+        def done(stopped_by: str, q_stop, *, made: bool = False,
+                 watch: Optional[ContactWatch] = None, leg_t: float = 0.0,
+                 elapsed: float = 0.0, detail: str = "") -> ContactReport:
+            return contact_report(
+                kin, side, timed, direction=direction, q_start=q_start,
+                q_stop=q_stop, made=made,
+                stopped_by=stopped_by,
+                torque_nm=float("nan") if watch is None else watch.peak_nm,
+                joint=-1 if watch is None else watch.joint, leg_t_s=leg_t,
+                elapsed_s=elapsed, detail=detail)
+
+        if criterion.tool_force_n is not None:
+            return done(UNMEASURED, None, detail=(
+                "the criterion asks for a TOOL FORCE and d1-firmwared "
+                "publishes none; watch joint torque (tool_force_n=None)"))
+        for arm in samples:
+            if arm.faulted:
+                return done(CONTACT_FAULT, arm.q, detail=(
+                    f"the {side} arm controller reports mode {arm.mode!r} "
+                    f"with error code {arm.error_code}"))
+            if arm.torque_nm is None:
+                return done(UNMEASURED, None, detail=(
+                    f"the daemon publishes no feedback_torque for the {side} "
+                    f"arm; the leg was not started"))
+        watch = ContactWatch(criterion,
+                             np.mean([a.torque_nm for a in samples], axis=0))
+        q_other = np.degrees(joint_state(
+            self.client.arm_state(_wire_side(other))).q)
+        end = float(timed[-1][0])
+
+        def upload(from_t: float, q_now) -> Any:
+            """The rest of the leg, from ``from_t``, starting AT ``q_now``."""
+            here = np.degrees(np.asarray(q_now, dtype=float))
+            ahead = [(t - from_t, q) for t, q in timed if t > from_t + 1e-9]
+            if not ahead:
+                return None
+            points = []
+            for t, q in [(0.0, None)] + ahead:
+                deg = here if q is None else np.degrees(q)
+                pair = {side: deg, other: q_other}
+                points.append((0.0 if q is None else INTERPOLATION_S + t,
+                               pair["left"], pair["right"]))
+            # checked HERE as well as in the adapter: the client is
+            # replaceable (a fake, a recorder) and the check is the kit's
+            check_waypoints(points)
+            status = self.client.trajectory_start(
+                points, holder=self.holder if self.lease is not None else None)
+            job = int(status.id)
+            self._jobs.append(job)
+            return job
+
+        def cancel(job) -> None:
+            if job is None:
+                return
+            try:
+                self.client.trajectory_cancel(job)
+            finally:
+                if job in self._jobs:
+                    self._jobs.remove(job)
+
+        started = self._clock()
+        job = upload(0.0, q_start)
+        job_t0 = started
+        job_from = 0.0
+        leg_t = 0.0
+        tail = 0.0
+        deadline = started + end + INTERPOLATION_S + 5.0
+        try:
+            while True:
+                self._sleep(period)
+                self.renew()
+                arm = joint_state(self.client.arm_state(wire))
+                now = self._clock()
+                elapsed = now - started
+                if job is not None:
+                    status = self.client.trajectory_status(job)
+                    phase = _word(status.phase) or ""
+                    played = max(0.0, float(status.elapsed_ms) / 1000.0
+                                 - INTERPOLATION_S)
+                    leg_t = min(end, job_from + played)
+                    if phase == "completed":
+                        self._jobs.remove(job)
+                        job, leg_t = None, end
+                    elif phase in ("failed", "cancelled"):
+                        self._jobs.remove(job)
+                        job = None
+                        if not arm.faulted:
+                            return done(CONTACT_GUARD, arm.q, watch=watch,
+                                        leg_t=leg_t, elapsed=elapsed, detail=(
+                                            f"trajectory {status.id} {phase}: "
+                                            f"{_given_text(status.message)}"))
+                if arm.faulted:
+                    cancel(job)
+                    job = None
+                    return done(CONTACT_FAULT, arm.q, watch=watch, leg_t=leg_t,
+                                elapsed=elapsed, detail=(
+                                    f"the {side} arm controller latched during "
+                                    f"the leg: mode {arm.mode!r}, error code "
+                                    f"{arm.error_code}"))
+                if arm.torque_nm is None:
+                    cancel(job)
+                    job = None
+                    return done(UNMEASURED, arm.q, watch=watch, leg_t=leg_t,
+                                elapsed=elapsed,
+                                detail="feedback_torque stopped being published")
+                verdict = watch.sample(elapsed, arm)
+                if verdict == ContactWatch.CONTACT:
+                    cancel(job)
+                    job = None
+                    return done(CONTACT, arm.q, made=True, watch=watch,
+                                leg_t=leg_t, elapsed=elapsed, detail=(
+                                    f"joint {watch.joint + 1} rose "
+                                    f"{watch.peak_nm:.2f} Nm over its "
+                                    f"pre-motion torque (threshold "
+                                    f"{criterion.joint_torque_nm:.2f} Nm)"))
+                if verdict == ContactWatch.CONFIRMING:
+                    # FREEZE: the daemon holds the last accepted target.
+                    cancel(job)
+                    job = None
+                    continue
+                if job is None and leg_t < end - 1e-9:
+                    # A transient: resume the rest of the leg from where the
+                    # arm is, as a new job (the daemon anchors on feedback).
+                    job = upload(leg_t, arm.q)
+                    job_from, job_t0 = leg_t, now
+                    deadline = now + (end - leg_t) + INTERPOLATION_S + 5.0
+                    continue
+                if job is None:
+                    tail += period
+                    if tail >= criterion.settle_s - 1e-9:
+                        return done(MAX_TRAVEL, arm.q, watch=watch, leg_t=end,
+                                    elapsed=elapsed, detail=(
+                                        f"travelled the whole leg and nothing "
+                                        f"resisted (largest rise "
+                                        f"{watch.peak_nm:.2f} Nm, threshold "
+                                        f"{criterion.joint_torque_nm:.2f} Nm)"))
+                elif now > deadline:
+                    cancel(job)
+                    job = None
+                    return done(CONTACT_GUARD, arm.q, watch=watch, leg_t=leg_t,
+                                elapsed=elapsed, detail=(
+                                    f"the contact leg was still playing "
+                                    f"{now - job_t0:.1f}s into its job; "
+                                    f"cancelled"))
+        except BaseException:
+            cancel(job)
+            raise
+
+    def _after_contact(self, step: ContactStep, report: ContactReport,
+                       index: int) -> int:
+        """Relieve, hold or retract after a contact leg, as trajectory jobs.
+
+        The same three shapes as the generic runner's
+        (``executor._after_contact``): a probe is re-commanded at the posture
+        it MEASURED, a press holds its frozen command (which the cancelled
+        job left in place) for ``hold_s`` and then plays the leg back to its
+        standoff. Returns the number of waypoints sent.
+        """
+        outcome = contact_outcome(step, report)
+        if outcome is not None and outcome.q_backoff is not None:
+            # back_off, stopped on the support: retreat off it before the
+            # close (types.ContactPolicy) — along the leg's own knots
+            return self._play([JointStep(step.side, outcome.q_backoff, index)])
+        if not step.retract:
+            if report.q_stop is None:
+                return 0
+            return self._play([JointStep(step.side, report.q_stop, index)])
+        if report.made and step.hold_s > 0.0:
+            self._sleep(float(step.hold_s))
+        back = retract_path(step, report)
+        return self._play([JointStep(step.side, q, index)
+                           for _t, q in back[1:]])
+
     # -- the preferred path: one upload ------------------------------------ #
-    def run_plan(self, plan: Plan, *, arrive_tol_rad: float = None,
+    def run_plan(self, plan: Plan, *, hz: float = None,
+                 arrive_tol_rad: float = None,
                  arrive_timeout_s: float = None,
                  stroke_timeout_s: float = None,
                  gate: "ToolGate" = None) -> RunReport:
@@ -689,6 +1188,15 @@ class FirmwareExecutor:
         ends the run with ``arrived_off_by`` rather than with a jaw stall two
         steps later (F17). The gate the generic runner would have used is
         passed in; with nothing passed this transport builds the same one.
+
+        ``hz`` is the streamed transport's command rate (the trajectory upload
+        is paced by the daemon), forwarded from ``run(hz=...)``; ``None``
+        keeps this executor's own.
+
+        A latched arm controller (``JointState.faulted``) stops the run with
+        :data:`~manipulation_kit.executor.CONTROLLER_FAULT` — before the first
+        upload, between legs, before every stroke, and in place of the
+        transport error a trajectory the controller aborted ends in.
         """
         if not getattr(plan, "ok", False):
             from ...executor import REFUSED_PLAN  # noqa: PLC0415
@@ -716,25 +1224,50 @@ class FirmwareExecutor:
                 # a plan this transport cannot carry is not half-carried.
                 return RunReport(plan.primitive, plan.side, False, 0,
                                  error=str(exc), stop_reason=TRANSPORT_ERROR)
-            return run_steps(plan, self, hz=self.hz, schedule=schedule,
+            return run_steps(plan, self, hz=self.hz if hz is None else float(hz),
+                             schedule=schedule,
                              arrive_tol_rad=tol, arrive_timeout_s=arrive_s,
                              stroke_timeout_s=stroke_s)
         sent = 0
         settle: Optional[SettleReport] = None
         arrivals: List[ArrivalReport] = []
         strokes: List[StrokeReport] = []
+        contacts: List[ContactReport] = []
         batch: List[JointStep] = []
         last: Dict[str, np.ndarray] = {}
 
         def report(index: int, reason: str, detail: str,
                    refusal=None) -> RunReport:
             self.cancel_jobs()
+            if reason != CONTROLLER_FAULT:
+                # A leg the controller aborted, or a barrier it failed
+                # under, is a controller fault and is reported as one.
+                fault = self._fault_now()
+                if fault is not None:
+                    reason, detail = CONTROLLER_FAULT, fault
+                    refusal = fault_refusal(plan, fault)
             return RunReport(plan.primitive, plan.side, False, sent, settle,
                              error=detail, stop_reason=reason,
                              stopped_at=index, arrivals=tuple(arrivals),
-                             strokes=tuple(strokes), refusal=refusal)
+                             strokes=tuple(strokes), refusal=refusal,
+                             contacts=tuple(contacts))
 
         try:
+            fault = controller_fault(self.state())
+            if fault is not None:
+                # BEFORE THE FIRST BYTE. A latched arm plays nothing, and a
+                # path uploaded to it is a path waiting to start the moment
+                # somebody clears the error.
+                return report(-1, CONTROLLER_FAULT, fault,
+                              fault_refusal(plan, fault))
+
+            def check_between(index: int):
+                fault = self._fault_now()
+                if fault is None:
+                    return None
+                return report(index, CONTROLLER_FAULT, fault,
+                              fault_refusal(plan, fault))
+
             def gate_at(closing: JointStep, index: int):
                 """Flush, then measure the TOOL at the waypoint just finished."""
                 arrival, corrected = gate.check(
@@ -749,6 +1282,35 @@ class FirmwareExecutor:
                 refusal = barrier_refusal(plan, closing.side, arrival, gate)
                 return report(index, BARRIER_FAILED, refusal.detail, refusal)
 
+            def arrive_after(played: Sequence[JointStep], index: int, *,
+                             final: bool):
+                """Measure the leg just played, before anything that is
+                not another joint leg. THE SAME RULE ``run_steps`` applies:
+                a gated waypoint gets the tool gate; otherwise, before a
+                settle and at the end of the plan, the joint-space barrier.
+
+                Before this, the trajectory runner flushed a gated waypoint
+                only when ANOTHER joint leg followed it or a stroke did, and
+                ran no arrival at all before a settle or at the end: an
+                Approach whose last leg ends on a settle reported
+                ``completed`` with ``arrivals: []`` while its J7 sat 50 deg
+                short (d1-2, 2026-09-22).
+                """
+                if not played or not last:
+                    return None
+                if played[-1].waypoint in labels:
+                    return gate_at(played[-1], index)
+                if not final:
+                    return None
+                arrival = _final_arrival(self, plan, self._vector(last),
+                                         tol_rad=tol, timeout_s=arrive_s,
+                                         gate=gate)
+                arrivals.append(arrival)
+                if arrival.arrived:
+                    return None
+                refusal = barrier_refusal(plan, plan.side, arrival, gate)
+                return report(index, BARRIER_FAILED, arrival.detail, refusal)
+
             for index, step in enumerate(plan.steps):
                 if isinstance(step, JointStep):
                     if (batch and step.waypoint != batch[-1].waypoint
@@ -759,7 +1321,7 @@ class FirmwareExecutor:
                         closing = batch[-1]
                         sent += self._play(batch)
                         batch = []
-                        stopped = gate_at(closing, index)
+                        stopped = check_between(index) or gate_at(closing, index)
                         if stopped is not None:
                             return stopped
                     batch.append(step)
@@ -768,6 +1330,9 @@ class FirmwareExecutor:
                 sent += self._play(batch)
                 played = batch
                 batch = []
+                stopped = check_between(index)
+                if stopped is not None:
+                    return stopped
                 if isinstance(step, GripStep):
                     if last and played and played[-1].waypoint in labels:
                         # the LAST leg before a stroke is gated at the tool too
@@ -786,13 +1351,47 @@ class FirmwareExecutor:
                                                        timeout_s=stroke_s)
                     strokes.append(stroke)
                     if not stroke.settled:
-                        return report(index, BARRIER_FAILED, stroke.detail)
+                        refusal = stroke_refusal(plan, step.side, stroke)
+                        return report(index, BARRIER_FAILED, refusal.detail,
+                                      refusal)
+                    refusal = hold_refusal(plan, step, stroke)
+                    if refusal is not None:
+                        return report(index, BARRIER_FAILED, refusal.detail,
+                                      refusal)
                     sent += 1
                 elif isinstance(step, SettleStep):
+                    stopped = arrive_after(played, index, final=True)
+                    if stopped is not None:
+                        return stopped
                     settle = self.settle(step.timeout_s)
                     sent += 1
                     if not settle.settled:
                         return report(index, BARRIER_FAILED, settle.detail)
+                elif isinstance(step, ContactStep):
+                    stopped = arrive_after(played, index, final=False)
+                    if stopped is not None:
+                        return stopped
+                    contact = self.move_until(
+                        step.timed_path(), side=step.side,
+                        criterion=step.criterion, kin=gate.kin,
+                        direction=step.direction.vector())
+                    contacts.append(contact)
+                    if contact.stopped_by == CONTACT_FAULT:
+                        fault = self._fault_now() or contact.detail
+                        return report(index, CONTROLLER_FAULT, fault,
+                                      fault_refusal(plan, fault))
+                    if contact.stopped_by in (CONTACT_GUARD, UNMEASURED):
+                        return report(index, TRANSPORT_ERROR, (
+                            f"the {step.side} contact leg stopped by "
+                            f"{contact.stopped_by}: {contact.detail}"))
+                    sent += 1 + self._after_contact(step, contact, step.waypoint)
+                    last[step.side] = np.asarray(
+                        self.state().joints[step.side], dtype=float)
+                    # what the stop was ON, and where the tips are now,
+                    # MEASURED after the back-off job completed
+                    contacts[-1] = record_outcome(
+                        contact, step, contact_outcome(step, contact),
+                        contact_kin(self, gate.kin), last[step.side])
                 else:
                     # The firmware runner used to skip an unknown step in
                     # silence while the generic one raised. Same closed set,
@@ -800,12 +1399,22 @@ class FirmwareExecutor:
                     return report(index, TRANSPORT_ERROR,
                                   f"not a plan step: {step!r}")
             sent += self._play(batch)
+            stopped = arrive_after(batch, len(plan.steps) - 1, final=True)
+            if stopped is not None:
+                return stopped
         except FirmwareUnavailable as exc:
             return report(-1, TRANSPORT_ERROR, str(exc))
         finally:
             self.end_run(plan)
         return RunReport(plan.primitive, plan.side, True, sent, settle,
-                         arrivals=tuple(arrivals), strokes=tuple(strokes))
+                         arrivals=tuple(arrivals), strokes=tuple(strokes),
+                         contacts=tuple(contacts))
+
+    def _fault_now(self) -> Optional[str]:
+        try:
+            return controller_fault(self.state())
+        except Exception:  # noqa: BLE001 - unreadable is not a fault; the
+            return None    # transport error that follows says so
 
     def _vector(self, per_side: Dict[str, np.ndarray]) -> np.ndarray:
         """A 16-vector of the last commanded joints, filled from measurement.
@@ -826,9 +1435,37 @@ class FirmwareExecutor:
         if not steps:
             return 0
         self.renew()
-        waypoints = self._waypoints(steps)
+        return self._run_job(self._waypoints(steps))
+
+    def play_waypoints(self, points: Sequence[Dict[str, Any]]) -> int:
+        """Play an already-TIMED dual-arm trajectory and block until it ends.
+
+        ``points`` are the daemon's own ``Waypoint`` shape — ``{"t": s,
+        "a": [7 deg], "b": [7 deg]}`` with ``a`` the physical LEFT arm — and
+        their timestamps are kept exactly: this is for a motion whose timing
+        IS the content (a taught gesture, :mod:`manipulation_kit.teach`), not
+        for a plan, whose timing this executor derives itself (:meth:`_play`).
+        Everything else is the plan path's: the lease is renewed, the knots are
+        checked against the document's ``Waypoint`` contract before upload,
+        the job is polled to completion, and any way out that is not
+        ``completed`` cancels it. The daemon still refuses a first knot more
+        than 3 degrees from feedback and re-guards every sample — clearance
+        included, always (Shu 2026-09-23: the guard is on everywhere; no
+        ``guard`` field is sent).
+
+        Transport completion is not arrival — follow with :meth:`wait_arrived`.
+        """
+        self.renew()
+        return self._run_job([{"t": float(w["t"]),
+                               "a": [float(v) for v in w["a"]],
+                               "b": [float(v) for v in w["b"]]} for w in points])
+
+    def _run_job(self, waypoints: List[Dict[str, Any]]) -> int:
+        """Upload ``waypoints`` as one trajectory job and poll it to the end."""
+        check_waypoints([(w["t"], w["a"], w["b"]) for w in waypoints])
+        body: Dict[str, Any] = {"waypoints": waypoints}
         status = self.client.request("POST", "/v1/arm/trajectory/start",
-                                     self._holder_body({"waypoints": waypoints}))
+                                     self._holder_body(body))
         job = int(status["id"])
         self._jobs.append(job)
         deadline = self._clock() + waypoints[-1]["t"] + 5.0

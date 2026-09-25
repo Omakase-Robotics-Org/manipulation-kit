@@ -12,8 +12,9 @@ T = TypeVar("T", bound="ChargeDock")
 
 @_attrs_define
 class ChargeDock:
-    """The charging-dock scene and waypoint configured by `set_charge_info`, later
-    used by `charge` (vendor `sendChargeCmd`).
+    """The charging-dock scene and waypoint written through the map resource's
+    `charging_dock` sub-resource, later used by `charge` (vendor
+    `sendChargeCmd`).
 
         Attributes:
             point_id (str): Charging waypoint identifier, e.g. `"0000"`.

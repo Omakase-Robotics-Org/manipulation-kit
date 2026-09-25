@@ -66,7 +66,7 @@ def test_the_plan_says_out_loud_that_it_snapped(d1_arm, observe):
 
 
 def test_a_base_frame_nudge_moves_the_tool_along_the_base_axis(d1_arm, observe):
-    from manipulation_kit.primitives.approach import tool_from_link7
+    from manipulation_kit.primitives.orientation import tool_from_link7
     world = observe(d1_arm)
     before = world.arm("left").tool_p
     plan = Nudge(side="left", dz=0.030, frame="base").plan(world, d1_arm)
@@ -77,7 +77,7 @@ def test_a_base_frame_nudge_moves_the_tool_along_the_base_axis(d1_arm, observe):
 
 
 def test_a_tool_frame_nudge_moves_along_the_hands_own_axes(d1_arm, observe):
-    from manipulation_kit.primitives.approach import tool_from_link7
+    from manipulation_kit.primitives.orientation import tool_from_link7
     world = observe(d1_arm)
     arm = world.arm("left")
     plan = Nudge(side="left", dz=0.030, frame="tool").plan(world, d1_arm)
@@ -127,7 +127,7 @@ def test_a_ten_millimetre_nudge_that_moved_nothing_is_false(d1_arm, observe):
 
 
 def test_a_ten_millimetre_nudge_that_moved_ten_millimetres_is_true(d1_arm, observe):
-    from manipulation_kit.primitives.approach import tool_from_link7
+    from manipulation_kit.primitives.orientation import tool_from_link7
 
     world = observe(d1_arm)
     verb = Nudge(side="left", dx=0.010, frame="base")

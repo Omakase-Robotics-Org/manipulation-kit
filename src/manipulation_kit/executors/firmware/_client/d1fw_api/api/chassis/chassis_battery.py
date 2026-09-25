@@ -74,9 +74,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ChassisBatteryResponse200 | ErrorEnvelope]:
-    """Read the chassis battery percentage
+    """Read the chassis battery
 
-     A projection of `/v1/chassis/state`. `-1` means the chassis did not report a percentage.
+     A projection of `/v1/chassis/state`. `battery_percent` is `-1` when the selected source did not
+    report a percentage; `source` names that source and `cells` carries the per-pack detail when it
+    reports any. `charging` is a THREE-valued answer: true and false only on positive evidence, and null
+    when the only evidence is a `charge_status` code the vendor documents nowhere or when there is none
+    at all -- `basis` says which of those it was. Do not read null as false.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,9 +103,13 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ChassisBatteryResponse200 | ErrorEnvelope | None:
-    """Read the chassis battery percentage
+    """Read the chassis battery
 
-     A projection of `/v1/chassis/state`. `-1` means the chassis did not report a percentage.
+     A projection of `/v1/chassis/state`. `battery_percent` is `-1` when the selected source did not
+    report a percentage; `source` names that source and `cells` carries the per-pack detail when it
+    reports any. `charging` is a THREE-valued answer: true and false only on positive evidence, and null
+    when the only evidence is a `charge_status` code the vendor documents nowhere or when there is none
+    at all -- `basis` says which of those it was. Do not read null as false.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,9 +128,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ChassisBatteryResponse200 | ErrorEnvelope]:
-    """Read the chassis battery percentage
+    """Read the chassis battery
 
-     A projection of `/v1/chassis/state`. `-1` means the chassis did not report a percentage.
+     A projection of `/v1/chassis/state`. `battery_percent` is `-1` when the selected source did not
+    report a percentage; `source` names that source and `cells` carries the per-pack detail when it
+    reports any. `charging` is a THREE-valued answer: true and false only on positive evidence, and null
+    when the only evidence is a `charge_status` code the vendor documents nowhere or when there is none
+    at all -- `basis` says which of those it was. Do not read null as false.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,9 +155,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ChassisBatteryResponse200 | ErrorEnvelope | None:
-    """Read the chassis battery percentage
+    """Read the chassis battery
 
-     A projection of `/v1/chassis/state`. `-1` means the chassis did not report a percentage.
+     A projection of `/v1/chassis/state`. `battery_percent` is `-1` when the selected source did not
+    report a percentage; `source` names that source and `cells` carries the per-pack detail when it
+    reports any. `charging` is a THREE-valued answer: true and false only on positive evidence, and null
+    when the only evidence is a `charge_status` code the vendor documents nowhere or when there is none
+    at all -- `basis` says which of those it was. Do not read null as false.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

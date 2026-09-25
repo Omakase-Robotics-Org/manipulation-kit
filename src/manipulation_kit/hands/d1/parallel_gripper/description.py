@@ -104,8 +104,47 @@ JAW_OPEN_GAP_M = 2 * JAW_STROKE_M
 #: 1.43 rad rather than the ~1.55 rad of mechanism travel the CAD implied. So
 #: either the travel is shorter than the CAD said or the map is not linear
 #: through zero. Both endpoint GAPS are measured; the map between them is
-#: not, and nothing here depends on it.
+#: not — :data:`JAW_GAP_PER_MOTOR_RAD_M` below is the linear assumption the
+#: firmware executor converts the daemon's jaw readings with.
 DRIVEN_OPEN_GAP_M = 0.05196
+#: ^ the NOMINAL driven opening, for kinematics, sim and dry-runs. It is not
+#: what a particular robot's hand opens to: d1-firmwared publishes its own
+#: ``open_rad`` ceiling (1.35 rad on d1-2 on 2026-09-22, about 60.5 mm), and
+#: the firmware executor reports THAT, through :func:`gap_from_motor_rad`, as
+#: ``HandState.open_gap_m``. Nothing reads an environment variable for it.
+
+#: The daemon's driven-open ceiling this description's nominal gap was
+#: measured at [motor rad] (d1-3, 2026-08-24).
+NOMINAL_OPEN_RAD = 1.16
+
+#: Pad-face gap per motor radian [m/rad] — the kinematic map between the
+#: daemon's ``jaw_rad`` / ``open_rad`` and a gap, linear through zero
+#: (``jaw_rad = 0`` is closed): 51.96 mm / 1.16 rad = 44.8 mm/rad. The kit
+#: owns this GEOMETRY; the daemon owns the VALUE of ``open_rad``.
+#:
+#: Linear through zero is an assumption with one measured point behind it
+#: (see above: extrapolated, it puts the 64 mm mechanical stop at 1.43 rad).
+#: It is the map d1-2's 1.35 rad -> 60.5 mm was computed with.
+JAW_GAP_PER_MOTOR_RAD_M = DRIVEN_OPEN_GAP_M / NOMINAL_OPEN_RAD
+
+
+def gap_from_motor_rad(motor_rad: float) -> float:
+    """The pad-face gap [m] at a jaw motor position [rad], clipped to the
+    mechanism's measured 0 .. :data:`JAW_OPEN_GAP_M`."""
+    return max(0.0, min(JAW_OPEN_GAP_M, float(motor_rad) * JAW_GAP_PER_MOTOR_RAD_M))
+
+
+#: What a NON-GRASPING verb (``probe``, ``press``) asks the hand to be, as the
+#: closedness it is driven to. The hand owns the map, not the verb, so a
+#: different hand says what "closed" means for it. ``closed``: the pads meet
+#: and the fingertips are one blunt probe; ``open``: driven fully open, the
+#: two tips lead; ``pinched``: nearly shut, the tips a few millimetres apart.
+#: (Added by redesign step 4 for the contact verbs; step 3 is to own and
+#: reconcile this map — the values are the obvious ones, not measured.)
+HAND_CLOSEDNESS = {"open": 0.0, "pinched": 0.85, "closed": 1.0}
+HAND_POSES = tuple(HAND_CLOSEDNESS)
+
+
 #: The jaw joint value at the driven-open stop: q = (JAW_OPEN_GAP_M -
 #: DRIVEN_OPEN_GAP_M) / 2 per finger. Sim "fully open" is this, not 0.
 DRIVEN_OPEN_Q = (JAW_OPEN_GAP_M - DRIVEN_OPEN_GAP_M) / 2.0
@@ -121,6 +160,24 @@ PAD_ROOT_Z_M = 0.071
 PAD_CENTRE_Z_M = 0.100
 PAD_DEPTH_M = 0.058
 PAD_TIP_Z_M = PAD_ROOT_Z_M + PAD_DEPTH_M      # 0.129
+
+#: The pad's width ACROSS the jaw travel (the gripper's y), metres: the jaw
+#: collision box of the composed D1 URDF spans -19 .. +19 mm there
+#: (``generate_d1_urdf.GRIPPER_JAW_BOX``, CAD lateral bounds — the calliper
+#: sketch gave no lateral numbers). What the wrist servo draws the closing
+#: region with (``manipulation_kit.agent.jaws``).
+PAD_WIDTH_M = 0.038
+
+#: Clearance per side an object must leave inside the jaw opening, by WHERE
+#: on the jaws it is taken [m]. At the PADS 4 mm — the clearance the kit has
+#: planned pad grasps with since the driven opening was measured (43.96 mm
+#: graspable of 51.96 mm). At the TIPS 2 mm — the redesign's number (DESIGN
+#: C.2) for a fingertip pinch of something flat, which has no pad face to be
+#: squared up against; NOT measured on hardware yet. These are properties of
+#: this HAND, and the two grasp references (``primitives.grasp_geometry.PAD``
+#: / ``TIP``) are built from them.
+PAD_CLEARANCE_PER_SIDE_M = 0.004
+TIP_CLEARANCE_PER_SIDE_M = 0.002
 
 #: Backwards-compatible name for the pad tip — the number consumers place a
 #: TCP against. MEASURED 129 mm (was the CAD's 143.5 mm).

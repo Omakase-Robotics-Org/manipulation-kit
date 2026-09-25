@@ -6,17 +6,17 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.arm_move_joint_body import ArmMoveJointBody
 from ...models.arm_move_joint_response_200 import ArmMoveJointResponse200
 from ...models.arm_side import ArmSide
 from ...models.error_envelope import ErrorEnvelope
-from ...models.joint_request import JointRequest
 from ...types import Response
 
 
 def _get_kwargs(
     side: ArmSide,
     *,
-    body: JointRequest,
+    body: ArmMoveJointBody,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -89,16 +89,18 @@ def sync_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointRequest,
+    body: ArmMoveJointBody,
 ) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets.
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
+    `/v1/arm/{side}/move_joints`.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointRequest): `POST /v1/arm/{side}/move_joint`.
+        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,16 +126,18 @@ def sync(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointRequest,
+    body: ArmMoveJointBody,
 ) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets.
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
+    `/v1/arm/{side}/move_joints`.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointRequest): `POST /v1/arm/{side}/move_joint`.
+        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,16 +158,18 @@ async def asyncio_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointRequest,
+    body: ArmMoveJointBody,
 ) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets.
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
+    `/v1/arm/{side}/move_joints`.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointRequest): `POST /v1/arm/{side}/move_joint`.
+        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,16 +193,18 @@ async def asyncio(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: JointRequest,
+    body: ArmMoveJointBody,
 ) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
     """Command one joint of one arm
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their
-    last commanded targets.
+     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
+    the other six are the arm's current feedback values, from the same read the guard checks. Same
+    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
+    `/v1/arm/{side}/move_joints`.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (JointRequest): `POST /v1/arm/{side}/move_joint`.
+        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

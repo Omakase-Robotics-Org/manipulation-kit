@@ -1,11 +1,11 @@
-"""The gate: an unreachable candidate never becomes a word in a prompt.
+"""The gate: an unreachable candidate never becomes a word the model reads.
 
 **Why this is in the wheel.** Shu's rule is "primitives are kit capabilities,
 not agent internals" (design note 7.1), and *what can this robot do right now*
 is a capability question, not a model question. A script, a teleop assist, a
 collection macro and a learned pipeline all want it, and none of them wants a
 JSON tool schema. The bit that IS model-specific — ranking, menu capping,
-provider envelopes, prompts — stays in ``examples/agent/``.
+provider envelopes, model-facing text — stays in ``examples/agent/``.
 
 The rule itself is the one that separates a robot agent that works from one
 that spends thirty turns asking for a move the guard already refused
@@ -32,9 +32,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from ..world import ContainerView, SurfaceView, WorldView
-from .types import Plan, PlanError, Primitive
-from .verbs import (Approach, Carry, GoHome, Grasp, Lift, Nudge, NUDGE_GRID_M,
-                    Place, Release, Retreat)
+from ..world.direction import Direction
+from .types import GRASP_DIRECTIONS, Plan, PlanError, Primitive
+from .verbs import (Approach, Carry, GoHome, Grasp, Handover, Lift, Nudge,
+                    NUDGE_GRID_M, Place, Release, Retreat)
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,13 @@ class Refused:
 
 
 def arguments(primitive: Primitive) -> Dict[str, Any]:
-    return {name: getattr(primitive, name) for name in primitive.arguments()}
+    """The bound arguments, JSON-ready: a direction is written the way a model
+    writes one (its alias, else ``{axis, frame}``)."""
+    out: Dict[str, Any] = {}
+    for name in primitive.arguments():
+        value = getattr(primitive, name)
+        out[name] = value.as_argument() if isinstance(value, Direction) else value
+    return out
 
 
 def label_for(primitive: Primitive) -> str:
@@ -94,7 +101,7 @@ def label_for(primitive: Primitive) -> str:
     args = arguments(primitive)
     if verb in ("approach", "grasp"):
         return (f"{verb} {args['object']} with the {args['side']} hand, "
-                f"{args['approach'].replace('_', ' ')}")
+                f"travelling {primitive.direction.label().replace('_', ' ')}")
     if verb == "lift":
         return f"lift {args['object']} by {args['height_m'] * 100:.0f} cm"
     if verb in ("carry", "place"):
@@ -111,6 +118,9 @@ def label_for(primitive: Primitive) -> str:
         return f"back the {args['side']} hand out {args['distance_m'] * 100:.0f} cm"
     if verb == "go_home":
         return "return both arms to HOME"
+    if verb == "handover":
+        return (f"hand {args['object']} from the {args['from_side']} hand to "
+                f"the {args['to_side']} hand")
     if verb == "pour":
         return f"pour {args['source']} into {args['target']}"
     return verb
@@ -157,7 +167,7 @@ def why_nothing(refused: Sequence[Refused], limit: int = 6) -> str:
 # --------------------------------------------------------------------------- #
 
 def candidates_for(world: WorldView, *,
-                   approaches: Sequence[str] = ("top_down", "front"),
+                   directions: Sequence[str] = GRASP_DIRECTIONS,
                    nudge_frame: str = "base",
                    corrections: bool = True) -> List[Primitive]:
     """Everything worth TRYING in this world, before any of it is checked.
@@ -192,15 +202,21 @@ def candidates_for(world: WorldView, *,
         held = gripper.held_object if gripper.holding else None
         if not gripper.holding:
             for name in graspable:
-                for how in approaches:
-                    task.append(Approach(object=name, side=side, approach=how))
-                    task.append(Grasp(object=name, side=side, approach=how))
+                for how in directions:
+                    task.append(Approach(object=name, side=side, direction=how))
+                    task.append(Grasp(object=name, side=side, direction=how))
         elif held:
             task.append(Lift(object=held, side=side))
             for name in destinations:
                 task.append(Carry(object=held, to=name, side=side))
                 task.append(Place(object=held, to=name, side=side))
             task.append(Release(side=side))
+            if Handover.applicable(world):
+                # the receiver travels TOWARD the giver: +y onto a left-hand
+                # giver's object, -y onto a right-hand one's
+                task.append(Handover(object=held, from_side=side,
+                                     to_side="right" if side == "left"
+                                     else "left", direction=side))
         if not corrections:
             continue
         for axis in ("dx", "dy", "dz"):

@@ -1370,6 +1370,11 @@ def test_home_pose_numbers_are_not_copied_into_docs_or_code():
         path = os.path.join(REPO, rel)
         if os.path.islink(path) or os.path.samefile(path, CANONICAL_HOME):
             continue
+        # Recorded hardware fixtures under tests/data/ are measurements of a
+        # robot that happened to stand at HOME, not copies of this file; they
+        # must stay byte-for-byte what the daemon reported.
+        if rel.startswith("tests/data/"):
+            continue
         try:
             with open(path, encoding="utf-8") as f:
                 text = f.read()

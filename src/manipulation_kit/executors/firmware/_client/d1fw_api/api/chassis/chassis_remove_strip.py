@@ -74,7 +74,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ChassisRemoveStripResponse200 | ErrorEnvelope]:
-    """Undock from the charging strip
+    """Clear the mobile base's anti-collision bumper-strip latch
+
+     The vendor's `removeStrip`. The base's `stripStatus` field is its ANTI-COLLISION BUMPER strip (0 not
+    triggered, 1 triggered), which is one of the two inputs behind `bumper_pressed` in `GET
+    /v1/chassis/state`; this clears that latch and does nothing else. It is NOT a charging contact, it
+    does not undock the base, and it does not stop navigation. To leave the charging dock, send a
+    navigation goal or `POST /v1/chassis/stop_nav`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -97,7 +103,13 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ChassisRemoveStripResponse200 | ErrorEnvelope | None:
-    """Undock from the charging strip
+    """Clear the mobile base's anti-collision bumper-strip latch
+
+     The vendor's `removeStrip`. The base's `stripStatus` field is its ANTI-COLLISION BUMPER strip (0 not
+    triggered, 1 triggered), which is one of the two inputs behind `bumper_pressed` in `GET
+    /v1/chassis/state`; this clears that latch and does nothing else. It is NOT a charging contact, it
+    does not undock the base, and it does not stop navigation. To leave the charging dock, send a
+    navigation goal or `POST /v1/chassis/stop_nav`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -116,7 +128,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ChassisRemoveStripResponse200 | ErrorEnvelope]:
-    """Undock from the charging strip
+    """Clear the mobile base's anti-collision bumper-strip latch
+
+     The vendor's `removeStrip`. The base's `stripStatus` field is its ANTI-COLLISION BUMPER strip (0 not
+    triggered, 1 triggered), which is one of the two inputs behind `bumper_pressed` in `GET
+    /v1/chassis/state`; this clears that latch and does nothing else. It is NOT a charging contact, it
+    does not undock the base, and it does not stop navigation. To leave the charging dock, send a
+    navigation goal or `POST /v1/chassis/stop_nav`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,7 +155,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ChassisRemoveStripResponse200 | ErrorEnvelope | None:
-    """Undock from the charging strip
+    """Clear the mobile base's anti-collision bumper-strip latch
+
+     The vendor's `removeStrip`. The base's `stripStatus` field is its ANTI-COLLISION BUMPER strip (0 not
+    triggered, 1 triggered), which is one of the two inputs behind `bumper_pressed` in `GET
+    /v1/chassis/state`; this clears that latch and does nothing else. It is NOT a charging contact, it
+    does not undock the base, and it does not stop navigation. To leave the charging dock, send a
+    navigation goal or `POST /v1/chassis/stop_nav`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
