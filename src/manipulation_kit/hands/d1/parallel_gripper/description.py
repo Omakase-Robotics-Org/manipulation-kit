@@ -161,6 +161,13 @@ PAD_CENTRE_Z_M = 0.100
 PAD_DEPTH_M = 0.058
 PAD_TIP_Z_M = PAD_ROOT_Z_M + PAD_DEPTH_M      # 0.129
 
+#: The pad's width ACROSS the jaw travel (the gripper's y), metres: the jaw
+#: collision box of the composed D1 URDF spans -19 .. +19 mm there
+#: (``generate_d1_urdf.GRIPPER_JAW_BOX``, CAD lateral bounds — the calliper
+#: sketch gave no lateral numbers). What the wrist servo draws the closing
+#: region with (``manipulation_kit.agent.jaws``).
+PAD_WIDTH_M = 0.038
+
 #: Clearance per side an object must leave inside the jaw opening, by WHERE
 #: on the jaws it is taken [m]. At the PADS 4 mm — the clearance the kit has
 #: planned pad grasps with since the driven opening was measured (43.96 mm

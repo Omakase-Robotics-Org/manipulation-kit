@@ -294,7 +294,7 @@ def test_the_servo_carries_the_judges_confidence(agent_examples):
     answers = []
 
     def seventy_percent(look):
-        (choice, _p), = geometry(look).items()
+        (choice, _p), = geometry(look).direction.items()
         answers.append(choice)
         return {choice: 0.7, "not_visible": 0.3}
 
@@ -340,19 +340,21 @@ def test_refine_lands_within_refine_m_of_the_truth(agent_examples):
 
 
 def test_refine_never_takes_a_worse_mark(agent_examples):
-    """A judge that rates the unshifted mark best: the declaration stays."""
+    """A judge that rates the unshifted opening best: the declaration stays
+    at the jaw point of the unshifted opening."""
     robot = _approached()
-    before = robot.world().find("red_block").p.copy()
+    first = []
 
     def centred(look):
-        here = np.allclose(look.declared_p[:2], before[:2], atol=1e-6)
+        first.append(np.asarray(look.reference_p))
+        here = np.allclose(look.reference_p, first[0], atol=1e-6)
         on = 0.9 if here else 0.6
         return {"on": on, "left": 1.0 - on}
 
     report = _align(robot, Servo(_no_frame, photoless(centred), refine=True))
     assert report.outcome == ALIGNED
-    assert "unshifted mark is best" in report.detail
-    assert np.allclose(robot.world().find("red_block").p, before)
+    assert "unshifted opening is best" in report.detail
+    assert np.allclose(robot.world().find("red_block").p, first[0], atol=1e-6)
 
 
 # --------------------------------------------------------------------------- #
@@ -405,7 +407,8 @@ class FakeJev:
         from pathlib import Path
         assert modality == "image" and Path(media).stat().st_size > 0
         self.calls.append(question)
-        return {"probabilities": {o: (0.8 if "entirely inside" in o
+        return {"probabilities": {o: (0.8 if ("entirely inside" in o
+                                              or "in the gap" in o)
                                       else 0.2 / (len(options) - 1))
                                   for o in options}}
 
@@ -733,7 +736,7 @@ def test_a_consistent_lukewarm_judge_steps_until_on(agent_examples):
     _declared, truth, geometry = _misplaced(robot, 0.040)
 
     def lukewarm(look):
-        (choice, _p), = geometry(look).items()
+        (choice, _p), = geometry(look).direction.items()
         return (_lukewarm("left", 0.20, 0.40) if choice == "on"
                 else _lukewarm(choice, 0.36, 0.20))
 
@@ -780,7 +783,7 @@ def test_the_policy_budget_still_ends_a_lukewarm_loop(agent_examples):
     _declared, _truth, geometry = _misplaced(robot, 0.20)
 
     def lukewarm(look):
-        (choice, _p), = geometry(look).items()
+        (choice, _p), = geometry(look).direction.items()
         return _lukewarm(choice, 0.36, 0.20)
 
     from manipulation_kit.agent.policy import PolicyState
@@ -809,7 +812,7 @@ def test_a_photo_written_before_the_move_is_not_judged(agent_examples,
 
     def reads(look):
         judge_answers.append(look)
-        (choice, _p), = geometry(look).items()
+        (choice, _p), = geometry(look).direction.items()
         return {choice: 1.0}
 
     report = _align(robot, Servo(lambda side: old, reads, settle_s=0.0,

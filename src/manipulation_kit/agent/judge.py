@@ -30,14 +30,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (Any, Callable, Dict, List, Mapping, Optional, Sequence,
-                    Tuple)
+                    Tuple, Union)
 
 try:                                     # Python 3.8+: typing.Protocol
     from typing import Protocol
 except ImportError:                      # pragma: no cover
     Protocol = object                    # type: ignore
 
-from .servo import ServoLook
+from .servo import Reading, ServoLook
 
 #: how a question's answer depends on the image axes — what a mirrored view
 #: does to it (:func:`unview`):
@@ -92,6 +92,10 @@ class Formulation(Protocol):
                    ) -> Dict[str, float]: ...
 
     def decorate(self, look: ServoLook, image: Path) -> Path: ...
+
+    # optional: ``to_reading(answers) -> Reading`` — the typed answers
+    # (depth, occlusion, turn, fit) beside the direction; a formulation
+    # without it answers the direction alone (``to_choices``)
 
 
 #: view -> (PIL transpose name or None, image axes it mirrors). Measured on
@@ -301,21 +305,24 @@ class AskingJudge:
         out["_ms"] = ms
         return out
 
-    def __call__(self, look: ServoLook) -> Dict[str, float]:
+    def __call__(self, look: ServoLook) -> Union[Reading, Dict[str, float]]:
         if look.image is None:
             raise RuntimeError(f"{type(self).__name__} judges a photo; this "
                                f"robot gave none (--snapshot-cmd)")
         started = time.time()
         image = self.formulation.decorate(look, Path(look.image))
         answers = self.answers(image, look.object)
-        dist = self.formulation.to_choices(answers)
+        typed = getattr(self.formulation, "to_reading", None)
+        dist = (typed(answers) if typed is not None
+                else self.formulation.to_choices(answers))
         name = getattr(self.formulation, "name", type(self.formulation).__name__)
         self.last = {"answers": answers, "views": list(self.views),
                      "formulation": name,
                      "ms": round((time.time() - started) * 1000.0)}
         if self.log is not None:
+            said = dist.to_json() if isinstance(dist, Reading) else dist
             self.log(f"{self.last['ms']} ms {Path(look.image).name} {name} "
-                     f"x{len(self.views)}: {dist}")
+                     f"x{len(self.views)}: {said}")
         return dist
 
 

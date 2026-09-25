@@ -145,6 +145,8 @@ def rejudge(run_dir: Path, judge: Callable, *, kin, wrist: Mapping[str, Any],
     for line in (run_dir / "trace.jsonl").read_text().splitlines():
         record = json.loads(line)
         turn, world = record["iteration"], record.get("world") or {}
+        gaps = {g["side"]: (g["jaw_gap_m"], "measured") for g in
+                world.get("grippers", []) if g.get("jaw_gap_m") is not None}
         for arm in world.get("arms", []):
             side = arm["side"]
             photo = run_dir / f"turn{turn}_{side}_wrist_0_rgb.jpg"
@@ -159,7 +161,8 @@ def rejudge(run_dir: Path, judge: Callable, *, kin, wrist: Mapping[str, Any],
             for item in _objects(world):
                 if only and item.name != only:
                     continue
-                look = servo.look_at(camera, item, frames, photo, side=side)
+                look = servo.look_at(camera, item, frames, photo, side=side,
+                                     gap=gaps.get(side))
                 if look is None:
                     say(f"turn {turn} {side}_wrist {item.name}: not in frame")
                     continue

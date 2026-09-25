@@ -18,6 +18,53 @@ in one typed robot profile. **It is a clean break**: nothing below is kept
 alive beside its replacement except the one transitional `RawState`
 accessor set, removed in 0.17.
 
+### The servo judges the object against the jaw opening, with its real shape
+
+- **BREAKING: the reference drawn for the judge is the jaw opening, not a
+  box around the declaration.** `Servo` draws the two pads at the current
+  jaw gap (`GripperView.jaw_gap_m`, else `open_gap_m`, else the nominal
+  driven opening), carried along the approach axis to the object's depth
+  and projected through the wrist camera; `ServoLook.u` / `v` are the
+  opening's centre and `box_px` its bounding box (the letters go around
+  it). `on` re-declares the object at the jaw point (`reference_p`,
+  `provenance="judged"`). `refine=True` shifts the drawn opening instead of
+  the declaration. Without a flange pose on the camera the declared centre
+  and box are drawn as before.
+- **NEW `manipulation_kit.agent.jaws`**: `jaw_opening()` / `JawOpening`,
+  `jaw_gap()`, `approach_depth()`, `declared_outline()` (cylinder: the
+  silhouette of its top and footprint circles; box: its corners at the
+  declared yaw; other: the declared footprint), `Outline`,
+  `outline_from_points()`, `convex_hull()`, `principal_axis()`,
+  `wrap_turn()`, `axial_mean()`, `draw()`, and the `ObjectOutline` seam
+  `(photo, look) -> Outline | None` with `declared` as the phase-1 default.
+  `Servo(shapes={name: shape}, object_outline=...)`; a segmenter that finds
+  nothing falls back to the declared shape and the look says so.
+- **NEW typed readings**: `servo.Reading` (direction, distance, depth over
+  `DEPTHS` = ahead / between / behind, occluded, turn_deg, fit),
+  `as_reading()`, `accumulate()` over readings; a judge may still return a
+  bare `{choice: p}`. `AskingJudge` returns a `Reading` when the
+  formulation has `to_reading()`.
+- **NEW actions by a fixed priority** (`servo.choose()`, `Choice`,
+  `ACTIONS`): retreat along the approach axis when the hand hides the
+  object (`occlusion_margin`, 0.5), a 15 deg yaw step about the approach
+  axis for an elongated object (at most `max_turn_rad`, 90 deg; the
+  declaration turns with the hand), the table-plane step, and an approach
+  step along the axis (`approach_step_m`, `max_approach_m`,
+  `approach_clearance_m` above the object's near face and its support).
+  `ServoStep.action` / `reading` / `accumulated_reading`,
+  `record.servo.actions`; `turn_sign()` maps a turn judged in the photo to
+  the hand's yaw.
+- `WristCamera.flange_p` / `flange_r`: the flange pose the camera rides on.
+  `parallel_gripper.description.PAD_WIDTH_M` (38 mm, the composed URDF's
+  jaw box).
+- Examples: the `jaws` / `jaws_words` formulations (`jev_questions.py`,
+  now `jev_servo.py`'s default), `segment_server.py` (SAM 3 through
+  `transformers`, Grounded-SAM-2 fallback; `POST /segment` -> polygon, RLE
+  mask, score, bbox), `segmenter.py` (`RemoteSegmenter`, stdlib HTTP;
+  `--segment-url`, `--object-shape NAME=SHAPE`, a scene file's `"shape"`
+  keys), `jev_jaws_lab.py` (the offline lab). The harness-boundary test
+  also rejects segmentation model names in `src/`.
+
 ### A grasp's hold is graded on the stroke, and a later look can refute it
 
 - **`Holding` grades a grasp on three criteria, each with its own verdict**
