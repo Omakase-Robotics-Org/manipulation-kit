@@ -24,7 +24,14 @@ refuses without ``--no-safety``):
   process.SpeedPolicy` — the caps its CSV was exported with
   (``# mkit-teach: max_joint_vel=… max_joint_acc=…``; the default
   150 deg/s, 600 deg/s^2 for a file without them), or the caller's
-  ``speed`` — with 3 % slack.
+  ``speed`` — with 3 % slack;
+* the RETURN TO HOME, reported on its own (peak velocity, peak acceleration,
+  the speed at which it reaches HOME): a CSV that declares its return
+  (``# mkit-teach: home_return_frames=… home_return_vel=… home_return_acc=…``)
+  is held to that profile, 3 % slack. A file without the keys (exported
+  before the profile existed) is measured on its last segment and only
+  WARNED about when that segment is faster than the default profile or
+  reaches HOME still moving.
 
 ADVISORY findings (``CheckReport.guard_findings``, printed as warnings, never
 a failure): the :class:`~manipulation_kit.guard.MotionGuard` clearances —
@@ -55,14 +62,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..arms.coupled_limits import load_coupled_limits
-from .gesture_csv import (Gesture, JOINT_NAMES, N_JOINTS, sample_path,
+from .gesture_csv import (Gesture, JOINT_NAMES, N_JOINTS, sample, sample_path,
                           trajectory_points)
-from .process import SpeedPolicy, segment_peaks_per_joint
+from .process import (DEFAULT_HOME_RETURN, HomeReturn, SpeedPolicy,
+                      segment_peaks_per_joint)
 
 DEFAULT_STEP_S = 0.01
 RATE_SLACK = 1.03
 #: row 0 / last row further than this from HOME are replaced by the player
 HOME_TOL_DEG = 1e-3
+#: a return reaching HOME faster than this [deg/s] is reaching it still moving
+ARRIVAL_TOL_DEG_S = 2.0
 
 
 #: MotionGuard clearance kinds, in report order
@@ -132,6 +142,35 @@ class CheckReport:
     flange_range_m: Dict[str, Tuple[List[float], List[float]]] = field(default_factory=dict)
     #: the speed ceiling the rates were checked against
     speed: Optional[SpeedPolicy] = None
+    #: the return to HOME: the trailing segments it spans (0 = none), its
+    #: duration, peaks (per joint max), the speed at the HOME knot, and the
+    #: profile it was held to (``home_return_declared``: by the CSV itself)
+    home_return_segments: int = 0
+    home_return_s: float = 0.0
+    home_return_peak_vel_deg_s: List[float] = field(default_factory=list)
+    home_return_peak_acc_deg_s2: List[float] = field(default_factory=list)
+    home_return_arrival_deg_s: float = 0.0
+    home_return: Optional[HomeReturn] = None
+    home_return_declared: bool = False
+
+    def home_return_line(self) -> Optional[str]:
+        """The HOME-return line of :meth:`summary` (``None``: no return)."""
+        if not self.home_return_segments or not self.home_return_peak_vel_deg_s:
+            return None
+        jv = int(np.argmax(self.home_return_peak_vel_deg_s))
+        ja = int(np.argmax(self.home_return_peak_acc_deg_s2))
+        held = ""
+        if self.home_return is not None:
+            held = (f"; profile {self.home_return.peak_vel_deg_s:g} deg/s, "
+                    f"{self.home_return.peak_acc_deg_s2:g} deg/s^2"
+                    + ("" if self.home_return_declared else " (default; not declared "
+                       "by this CSV)"))
+        return (f"  HOME return: {self.home_return_s:.2f} s over "
+                f"{self.home_return_segments} segment(s), peak velocity "
+                f"{self.home_return_peak_vel_deg_s[jv]:.1f} deg/s ({JOINT_NAMES[jv]}), "
+                f"peak acceleration {self.home_return_peak_acc_deg_s2[ja]:.1f} deg/s^2 "
+                f"({JOINT_NAMES[ja]}), {self.home_return_arrival_deg_s:.1f} deg/s at "
+                f"HOME{held}")
 
     @property
     def guard_clear(self) -> bool:
@@ -159,6 +198,9 @@ class CheckReport:
                          f"({JOINT_NAMES[jv]}), peak acceleration "
                          f"{self.peak_acc_deg_s2[ja]:.1f} deg/s^2 ({JOINT_NAMES[ja]})"
                          + (f"; ceiling {self.speed.describe()}" if self.speed else ""))
+        home_line = self.home_return_line()
+        if home_line:
+            lines.append(home_line)
         lines.append(f"  min clearance: body {self.min_body_clearance_m:.3f} m, "
                      f"arm-arm {self.min_arm_arm_m:.3f} m, self "
                      f"{self.min_self_clearance_m:.3f} m")
@@ -309,6 +351,7 @@ def check_gesture(gesture: Gesture, home: Sequence[float], *, guard=None,
                 add(float(points[s]["t"]),
                     f"{JOINT_NAMES[j]} acceleration {report.peak_acc_deg_s2[j]:.1f} "
                     f"deg/s^2 over the {max_acc_deg_s2:g} deg/s^2 cap (segment {s + 1})")
+    _check_home_return(report, gesture, points, peaks, add)
     try:
         per_side: Dict[str, List[List[float]]] = {"left": [], "right": []}
         for row in rows:
@@ -320,6 +363,54 @@ def check_gesture(gesture: Gesture, home: Sequence[float], *, guard=None,
     except (AttributeError, KeyError):
         report.warnings.append("flange FK unavailable from this guard")
     return report
+
+
+def _check_home_return(report: CheckReport, gesture: Gesture, points, peaks, add) -> None:
+    """Measure the return to HOME on its own: the trailing segments the CSV
+    declares (``home_return_frames``), else the last segment. A declared
+    return is held to its declared profile (hard); an undeclared one is
+    compared with the default profile (warning only)."""
+    profile, frames = HomeReturn.from_meta(gesture.meta)
+    declared = profile is not None
+    if not declared:
+        profile, frames = DEFAULT_HOME_RETURN, 1
+    segments = min(int(frames), len(peaks))
+    report.home_return_segments = segments
+    report.home_return = profile
+    report.home_return_declared = declared
+    if not segments:
+        return
+    first = len(peaks) - segments
+    vel = np.array([v for v, _ in peaks[first:]])
+    acc = np.array([a for _, a in peaks[first:]])
+    report.home_return_peak_vel_deg_s = [float(v) for v in vel.max(axis=0)]
+    report.home_return_peak_acc_deg_s2 = [float(v) for v in acc.max(axis=0)]
+    end = float(points[-1]["t"])
+    report.home_return_s = end - float(points[first]["t"])
+    h = min(1e-3, 0.5 * (end - float(points[-2]["t"])))
+    report.home_return_arrival_deg_s = float(
+        np.max(np.abs(sample(points, end) - sample(points, end - h))) / h)
+    peak_vel = max(report.home_return_peak_vel_deg_s)
+    peak_acc = max(report.home_return_peak_acc_deg_s2)
+    t = float(points[first]["t"])
+    if declared:
+        if peak_vel > profile.peak_vel_deg_s * RATE_SLACK:
+            add(t, f"HOME return velocity {peak_vel:.1f} deg/s over its "
+                   f"{profile.peak_vel_deg_s:g} deg/s profile")
+        if peak_acc > profile.peak_acc_deg_s2 * RATE_SLACK:
+            add(t, f"HOME return acceleration {peak_acc:.1f} deg/s^2 over its "
+                   f"{profile.peak_acc_deg_s2:g} deg/s^2 profile")
+        if report.home_return_arrival_deg_s > ARRIVAL_TOL_DEG_S:
+            add(t, f"HOME return reaches HOME at {report.home_return_arrival_deg_s:.1f} "
+                   f"deg/s (not at rest)")
+        return
+    if (peak_vel > profile.peak_vel_deg_s * RATE_SLACK
+            or report.home_return_arrival_deg_s > ARRIVAL_TOL_DEG_S):
+        report.warnings.append(
+            f"the return to HOME (last segment) peaks at {peak_vel:.1f} deg/s and "
+            f"reaches HOME at {report.home_return_arrival_deg_s:.1f} deg/s; this CSV "
+            f"predates the HOME-return profile ({profile.describe()}) — re-export "
+            f"its take (mkit-teach export <take>.json) to give it one")
 
 
 _BARS = " ▁▂▃▄▅▆▇█"

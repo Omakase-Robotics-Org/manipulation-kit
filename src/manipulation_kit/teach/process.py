@@ -27,14 +27,20 @@ HOME RULES (Shu, 2026-09-23), for a hand-guided take:
   the first kept sample at the constant ``home_speed_deg_s`` below — after
   smoothing, so the join is continuous in position, and the daemon's C1
   Catmull-Rom plus the limiter keep it continuous in velocity.
-* **The return to HOME is a constant speed.** The player replaces the last
-  row with HOME, so the last recorded pose is kept as a real row and a HOME
-  row is APPENDED after it, lasting ``max|pose - HOME| / home_speed_deg_s``
-  (20 deg/s — deliberately slow and constant, well under the ceiling, since
-  it is not taught motion): a long return and a short one
-  move at the same joint speed. The HOME-in blend is timed the same way.
-  A stream end (or start) already within ``epsilon_deg`` of HOME is snapped
-  to HOME instead, as gesture_record did.
+* **The return to HOME has its own conservative profile** (:class:`HomeReturn`),
+  because it is not taught motion and nothing about the gesture's speed says
+  how fast it may be. The player replaces the last row with HOME, so the last
+  recorded pose is kept as a real row, a short dwell knot at that pose brings
+  the arm to rest, and a MIN-JERK move to HOME is appended as knots every
+  ``knot_s`` (0.1 s), so the daemon's Catmull-Rom through them is the
+  min-jerk curve: it starts and ARRIVES at rest. It lasts
+  ``max(min_s, 15/8 * max|pose - HOME| / peak_vel, sqrt(5.77 * max|pose -
+  HOME| / peak_acc))`` — 40 deg/s peak, 90 deg/s^2, at least 2 s by default
+  — whatever speed the gesture itself was taught at. (It used to be one knot
+  at the take's own peak speed, clamped to 20..90 deg/s: a 60 deg return then
+  peaked at 113 deg/s on the spline and reached HOME still moving at
+  45 deg/s.) A stream end (or start) already within ``epsilon_deg`` of HOME
+  is snapped to HOME instead, as gesture_record did.
 
 TWO DELIBERATE DEVIATIONS, both because the player changed underneath:
 
@@ -87,13 +93,22 @@ WRIST_JOINTS = (4, 5, 6, 11, 12, 13)
 WRIST_NOISE_DEG = 2.0
 #: export flags a joint whose exported range is this much under the recorded
 PEAK_SHAVE_DEG = 3.0
-#: joint speed of the HOME-in blend and the appended return to HOME [deg/s]:
-#: by default the take's own peak joint speed after smoothing, clamped to
-#: this band (so the return does not feel slower than the gesture, and a
-#: fast flick does not make it a lunge); a keyframe-mode take has no timing
-#: and uses the floor.
+#: joint speed of the HOME-in blend [deg/s]: by default the take's own peak
+#: joint speed after smoothing, clamped to this band; a keyframe-mode take
+#: has no timing and uses the floor. (The return to HOME has its own
+#: profile, :class:`HomeReturn`.)
 HOME_SPEED_DEG_S = 20.0
 HOME_SPEED_MAX_DEG_S = 90.0
+#: the return to HOME (:class:`HomeReturn`): min-jerk, this peak joint speed
+#: [deg/s] and acceleration [deg/s^2], never shorter than ``HOME_RETURN_MIN_S``
+#: [s], sampled as knots every ``HOME_RETURN_KNOT_S`` [s]
+HOME_RETURN_VEL_DEG_S = 40.0
+HOME_RETURN_ACC_DEG_S2 = 90.0
+HOME_RETURN_MIN_S = 2.0
+HOME_RETURN_KNOT_S = 0.1
+#: a min-jerk move of distance D in time T peaks at 15/8 D/T and 10/sqrt(3) D/T^2
+_MIN_JERK_VEL = 15.0 / 8.0
+_MIN_JERK_ACC = 10.0 / math.sqrt(3.0)
 #: the start sag: only the first this-many seconds may be cut [s] ...
 SAG_MAX_S = 0.5
 #: ... and a sample is part of the sag while its joint speed exceeds this
@@ -181,6 +196,141 @@ class SpeedPolicy:
 DEFAULT_SPEED = SpeedPolicy()
 #: gesture_record's ``limitJointDynamics`` caps, the library's repaired speed
 LEGACY_SPEED = SpeedPolicy(25.0, 120.0)
+
+
+def min_jerk(s: float) -> float:
+    """The min-jerk position profile on ``s`` in [0, 1] (0 -> 0, 1 -> 1, zero
+    velocity and acceleration at both ends)."""
+    s = min(max(float(s), 0.0), 1.0)
+    return s * s * s * (10.0 - 15.0 * s + 6.0 * s * s)
+
+
+@dataclass(frozen=True)
+class HomeReturn:
+    """THE profile of the return to HOME appended after a gesture's last pose.
+
+    The return is not taught motion, so it gets neither the gesture's timing
+    nor the gesture's ceiling: a min-jerk move whose PEAK joint speed and
+    acceleration are ``peak_vel_deg_s`` / ``peak_acc_deg_s2`` for the joint
+    that moves furthest, never shorter than ``min_s``. It is written as knots
+    every ``knot_s`` so the daemon's uniform Catmull-Rom through them (a
+    central-difference tangent at every knot) reproduces the min-jerk curve —
+    at rest when it leaves the last pose, at rest when it reaches HOME — and
+    it is preceded by a dwell knot at the last pose that brings the arm to
+    rest there (see :meth:`keyframes`).
+
+    The playback ratio is one per trajectory job, so the return cannot have
+    a ratio of its own; its TIMING is what makes it slow. A controller that
+    tracks the streamed setpoints plays it at this profile whatever ratio
+    the gesture needed.
+
+    The profile travels in the CSV (``# mkit-teach: home_return_vel=…
+    home_return_acc=… home_return_frames=…``) so ``check`` can find the return
+    segment and hold it to its own profile.
+    """
+
+    peak_vel_deg_s: float = HOME_RETURN_VEL_DEG_S
+    peak_acc_deg_s2: float = HOME_RETURN_ACC_DEG_S2
+    min_s: float = HOME_RETURN_MIN_S
+    knot_s: float = HOME_RETURN_KNOT_S
+
+    VEL_KEY = "home_return_vel"
+    ACC_KEY = "home_return_acc"
+    FRAMES_KEY = "home_return_frames"
+
+    def __post_init__(self) -> None:
+        for name in ("peak_vel_deg_s", "peak_acc_deg_s2", "knot_s"):
+            value = float(getattr(self, name))
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+            object.__setattr__(self, name, value)
+        value = float(self.min_s)
+        if not (math.isfinite(value) and value >= 0):
+            raise ValueError(f"min_s must be a finite number >= 0, got {value!r}")
+        object.__setattr__(self, "min_s", value)
+
+    def within(self, speed: SpeedPolicy) -> "HomeReturn":
+        """This profile, no faster than the gesture's ceiling (a return above
+        the ceiling would only be stretched knot by knot by the limiter,
+        which breaks the min-jerk shape)."""
+        return HomeReturn(min(self.peak_vel_deg_s, speed.max_joint_vel_deg_s),
+                          min(self.peak_acc_deg_s2, speed.max_joint_acc_deg_s2),
+                          self.min_s, self.knot_s)
+
+    def duration_s(self, distance_deg: float) -> float:
+        """How long the min-jerk move over ``distance_deg`` (the largest joint
+        distance) takes at this profile [s]."""
+        d = abs(float(distance_deg))
+        return max(self.min_s, _MIN_JERK_VEL * d / self.peak_vel_deg_s,
+                   math.sqrt(_MIN_JERK_ACC * d / self.peak_acc_deg_s2))
+
+    def dwell_s(self, step_deg: float, previous_s: float) -> float:
+        """Duration of the dwell knot at the last pose [s].
+
+        On the daemon's spline the dwell segment leaves the last pose with the
+        tangent the last body segment arrived with, ``step/2`` per segment,
+        and comes to rest; its peak speed is ``step / (2 dwell)`` and its peak
+        acceleration ``2 step / dwell^2`` (the Hermite with one zero tangent).
+        So it lasts at least as long as the last body segment (up to 1 s: the
+        arm does not speed up entering it), and long enough for both peaks to
+        be within this profile."""
+        step = abs(float(step_deg))
+        return max(self.knot_s, min(max(float(previous_s), 0.0), 1.0),
+                   step / (2.0 * self.peak_vel_deg_s),
+                   math.sqrt(2.0 * step / self.peak_acc_deg_s2))
+
+    def keyframes(self, previous: Sequence[float], last: Sequence[float],
+                  home: Sequence[float], previous_s: float) -> List[Keyframe]:
+        """The rows to APPEND after the last pose ``last`` (itself reached
+        from ``previous`` in ``previous_s``): a dwell at ``last``, then the
+        min-jerk knots, the final one exactly HOME. A last pose already at
+        HOME gets a single HOME row."""
+        last = np.asarray(last, dtype=float)
+        home = np.asarray(home, dtype=float)
+        distance = float(np.max(np.abs(last - home)))
+        if distance <= 1e-9:
+            return [Keyframe(self.knot_s, list(home))]
+        step = float(np.max(np.abs(last - np.asarray(previous, dtype=float))))
+        frames = [Keyframe(self.dwell_s(step, previous_s), list(last))]
+        total = self.duration_s(distance)
+        count = max(2, int(math.ceil(total / self.knot_s - 1e-9)))
+        for k in range(1, count + 1):
+            pose = home if k == count else last + (home - last) * min_jerk(k / count)
+            frames.append(Keyframe(total / count, list(pose)))
+        return frames
+
+    def describe(self) -> str:
+        return (f"min-jerk, peak {self.peak_vel_deg_s:g} deg/s, "
+                f"{self.peak_acc_deg_s2:g} deg/s^2, at least {self.min_s:g} s")
+
+    def meta(self, frames: int) -> Dict[str, str]:
+        """The ``# mkit-teach:`` lines that carry this profile in a CSV:
+        ``frames`` = how many trailing rows are the return."""
+        return {self.VEL_KEY: f"{self.peak_vel_deg_s:g}",
+                self.ACC_KEY: f"{self.peak_acc_deg_s2:g}",
+                self.FRAMES_KEY: str(int(frames))}
+
+    @classmethod
+    def from_meta(cls, meta: Mapping[str, str]):
+        """``(profile, frames)`` a CSV declares, or ``(None, None)`` for a file
+        without the keys (exported before the profile existed)."""
+        if cls.FRAMES_KEY not in meta:
+            return None, None
+        try:
+            frames = int(meta[cls.FRAMES_KEY])
+            vel = float(meta.get(cls.VEL_KEY, HOME_RETURN_VEL_DEG_S))
+            acc = float(meta.get(cls.ACC_KEY, HOME_RETURN_ACC_DEG_S2))
+            if frames < 0:
+                raise ValueError(frames)
+            return cls(vel, acc), frames
+        except ValueError as exc:
+            raise GestureFormatError(
+                f"# mkit-teach: {cls.FRAMES_KEY}/{cls.VEL_KEY}/{cls.ACC_KEY} "
+                f"are not a valid HOME-return profile ({exc})") from exc
+
+
+#: the default return to HOME
+DEFAULT_HOME_RETURN = HomeReturn()
 
 
 @dataclass(frozen=True)
@@ -425,16 +575,19 @@ def build_gesture(samples: np.ndarray, times: Sequence[float], kept: Sequence[in
 
 
 def trim_idle(gesture: Gesture, max_idle_s: float,
-              move_eps_deg: float = IDLE_MOVE_EPS_DEG) -> Gesture:
+              move_eps_deg: float = IDLE_MOVE_EPS_DEG, keep_last: int = 0) -> Gesture:
     """teach.py ``_trim_idle_keyframes``: cap the duration of a keyframe that
     does not move (every joint within ``move_eps_deg`` of the previous one) to
     ``max_idle_s``. Poses are untouched, so geometry and velocity only get
-    safer. ``max_idle_s <= 0`` is off (the panel's "Off (keep pauses)")."""
+    safer. ``max_idle_s <= 0`` is off (the panel's "Off (keep pauses)").
+    The last ``keep_last`` rows (the return to HOME, whose dwell is timed on
+    purpose) are left alone."""
     frames = [Keyframe(k.duration, k.positions) for k in gesture.keyframes]
     if not max_idle_s or max_idle_s <= 0 or len(frames) < 2:
         return Gesture(frames, dict(gesture.meta), list(gesture.unsafe))
     prev = frames[0].positions
-    for kf in frames[1:]:
+    last = len(frames) - max(0, int(keep_last))
+    for kf in frames[1:last]:
         delta = max(abs(a - b) for a, b in zip(kf.positions, prev))
         if delta < move_eps_deg and kf.duration > max_idle_s:
             kf.duration = float(max_idle_s)
@@ -552,9 +705,11 @@ class KeyframeOptions:
     speed_limit: bool = True
     speed: SpeedPolicy = DEFAULT_SPEED
     min_keyframe_s: float = MIN_KEYFRAME_S
-    #: HOME-in blend and appended return speed [deg/s]; ``None`` = the take's
-    #: own peak joint speed, clamped to [20, 90] (:func:`auto_home_speed`)
+    #: HOME-in blend speed [deg/s]; ``None`` = the take's own peak joint
+    #: speed, clamped to [20, 90] (:func:`auto_home_speed`)
     home_speed_deg_s: Optional[float] = None
+    #: the appended return to HOME (its own profile, never the take's speed)
+    home_return: HomeReturn = DEFAULT_HOME_RETURN
     #: start-sag cut (0 = off): window [s] and speed threshold [deg/s]
     sag_max_s: float = SAG_MAX_S
     sag_vel_deg_s: float = SAG_VEL_DEG_S
@@ -572,16 +727,20 @@ class Reduction:
     sag_cut_s: float
     pinned: List[int]            #: joints pinned to HOME
     pin_all: bool                #: ``pin_wrist`` (else: the noise rule)
-    home_speed_deg_s: float
+    home_speed_deg_s: float      #: of the HOME-in blend
     connect: bool                #: a HOME -> first pose leg was added
     ret: bool                    #: a last pose -> HOME leg was appended
     recorded_range_deg: List[float] = field(default_factory=list)
     home: List[float] = field(default_factory=list)
+    #: trailing rows that are the return (dwell + min-jerk knots)
+    return_frames: int = 0
+    home_return: Optional[HomeReturn] = None
 
     def _legs(self, g: Gesture):
         played = [k.duration for k in g.keyframes[1:]]
         connect = played[0] if self.connect and played else 0.0
-        ret = played[-1] if self.ret and len(played) > (1 if self.connect else 0) else 0.0
+        n = self.return_frames if self.ret else 0
+        ret = float(sum(played[-n:])) if n and len(played) > n else 0.0
         return connect, ret, sum(played) - connect - ret
 
     @property
@@ -599,7 +758,7 @@ class Reduction:
     def stretched_knots(self):
         """``(count, seconds)`` the speed ceiling added inside the body."""
         lo = 2 if self.connect else 1
-        hi = len(self.gesture.keyframes) - (1 if self.ret else 0)
+        hi = len(self.gesture.keyframes) - (self.return_frames if self.ret else 0)
         grew = [a.duration - b.duration for a, b in
                 zip(self.gesture.keyframes[lo:hi], self.before.keyframes[lo:hi])
                 if a.duration > b.duration + 1e-4]
@@ -619,10 +778,11 @@ class Reduction:
                      else "timing as taught")
         head = (f"recorded {self.recorded_s:.2f} s -> " if self.recorded_s is not None
                 else "")
-        legs = (f" (at {self.home_speed_deg_s:.0f} deg/s)"
-                if self.connect or self.ret else "")
+        connect = f" (at {self.home_speed_deg_s:.0f} deg/s)" if self.connect else ""
+        ret = (f" ({self.home_return.describe()})"
+               if self.ret and self.home_return is not None else "")
         return (f"{head}body {self.body_s:.2f} s ({'; '.join(notes)}) + HOME connect "
-                f"{self.connect_s:.2f} s + return {self.return_s:.2f} s{legs} "
+                f"{self.connect_s:.2f} s{connect} + return {self.return_s:.2f} s{ret} "
                 f"= {self.gesture.played_s:.2f} s")
 
     def range_lines(self, min_deg: float = 1.0) -> List[str]:
@@ -688,6 +848,8 @@ def reduce_samples(times: Sequence[float], samples: np.ndarray,
     kept = enforce_min_spacing(reduce(q, o.epsilon_deg), times, o.min_spacing_s)
     gesture = build_gesture(q, times, kept, first_duration_s=o.min_keyframe_s)
     connect = ret = False
+    return_frames = 0
+    profile = o.home_return.within(o.speed)
     if o.pin_home:
         frames = list(gesture.keyframes)
         if not snap_start:
@@ -697,15 +859,23 @@ def reduce_samples(times: Sequence[float], samples: np.ndarray,
             frames.insert(0, Keyframe(o.min_keyframe_s, list(home_arr)))
             connect = True
         if not snap_end:
-            frames.append(Keyframe(home_move_s(frames[-1].positions, home,
-                                               home_speed, o.min_keyframe_s),
-                                   list(home_arr)))
-            ret = True
+            returning = _home_return(frames, home, profile)
+            frames.extend(returning)
+            ret, return_frames = True, len(returning)
         gesture = Gesture(frames)
     before = Gesture([Keyframe(k.duration, k.positions) for k in gesture.keyframes])
-    return Reduction(before, finish(gesture, home, o), recorded_s, sag_cut_s, pinned,
-                     o.pin_wrist, home_speed, connect, ret, recorded_range,
-                     [float(v) for v in home])
+    return Reduction(before, finish(gesture, home, o, return_frames, profile), recorded_s,
+                     sag_cut_s, pinned, o.pin_wrist, home_speed, connect, ret,
+                     recorded_range, [float(v) for v in home], return_frames,
+                     profile if ret else None)
+
+
+def _home_return(frames: Sequence[Keyframe], home: Sequence[float],
+                 profile: HomeReturn) -> List[Keyframe]:
+    """The return rows for a gesture whose rows so far are ``frames``."""
+    last = frames[-1]
+    previous = frames[-2].positions if len(frames) > 1 else list(home)
+    return profile.keyframes(previous, last.positions, home, last.duration)
 
 
 def keyframes_from_poses(poses: Sequence[Sequence[float]], home: Sequence[float],
@@ -720,42 +890,50 @@ def reduce_poses(poses: Sequence[Sequence[float]], home: Sequence[float],
                  options: Optional[KeyframeOptions] = None) -> Reduction:
     """Operator-stepped keyframes (Enter per pose) -> a gesture: HOME pinned
     before and after (unless ``pin_home`` is off), ``segment_s`` per move
-    (the last one, back to HOME, at ``home_speed_deg_s``, default the floor
-    — a keyframe take has no taught speed), then the same trim/limit as a
-    stream. No smoothing or reduction: every pose was chosen."""
+    (the last one, back to HOME, on the :class:`HomeReturn` profile), then
+    the same trim/limit as a stream. No smoothing or reduction: every pose
+    was chosen."""
     o = options or KeyframeOptions()
     rows = np.array([list(map(float, p)) for p in poses]).reshape(-1, N_JOINTS)
     recorded_range = _ranges(np.vstack([np.asarray(home, float), rows]))
     rows, pinned = pin_wrist(rows, home, pin_all=o.pin_wrist, noise_deg=o.wrist_noise_deg)
     rows = [list(r) for r in rows]
     home_speed = o.home_speed_deg_s if o.home_speed_deg_s is not None else HOME_SPEED_DEG_S
+    profile = o.home_return.within(o.speed)
     if o.pin_home:
-        rows = [list(home)] + rows + [list(home)]
-    if len(rows) < 2:
+        rows = [list(home)] + rows
+    if len(rows) < 2 and not o.pin_home:
         raise ValueError("a gesture needs at least two keyframes")
     frames = [Keyframe(o.min_keyframe_s, rows[0])] + [
         Keyframe(segment_s, r) for r in rows[1:]]
-    if o.pin_home:      # the return to HOME at the HOME speed
-        frames[-1].duration = home_move_s(rows[-2], home, home_speed, o.min_keyframe_s)
+    return_frames = 0
+    if o.pin_home:      # the return to HOME, on its own profile
+        returning = _home_return(frames, home, profile)
+        frames.extend(returning)
+        return_frames = len(returning)
     gesture = Gesture(frames)
     before = Gesture([Keyframe(k.duration, k.positions) for k in gesture.keyframes])
-    return Reduction(before, finish(gesture, home, o), None, 0.0, pinned, o.pin_wrist,
-                     home_speed, False, o.pin_home, recorded_range,
-                     [float(v) for v in home])
+    return Reduction(before, finish(gesture, home, o, return_frames, profile), None, 0.0,
+                     pinned, o.pin_wrist, home_speed, False, o.pin_home, recorded_range,
+                     [float(v) for v in home], return_frames,
+                     profile if o.pin_home else None)
 
 
-def finish(gesture: Gesture, home: Sequence[float], o: KeyframeOptions) -> Gesture:
-    """Trim idle pauses, then limit to ``o.speed``. The result carries the
-    policy (``max_joint_vel`` / ``max_joint_acc``) and, when it had to slow
-    the gesture down, ``speed_stretch`` in its metadata — which ``export``
-    writes into the CSV header."""
+def finish(gesture: Gesture, home: Sequence[float], o: KeyframeOptions,
+           return_frames: int = 0, home_return: Optional[HomeReturn] = None) -> Gesture:
+    """Trim idle pauses (not in the return), then limit to ``o.speed``. The
+    result carries the policy (``max_joint_vel`` / ``max_joint_acc``), the
+    HOME-return profile and row count (``home_return_*``) and, when it had
+    to slow the gesture down, ``speed_stretch`` in its metadata — which
+    ``export`` writes into the CSV header."""
     if o.max_idle_s and o.max_idle_s > 0:
-        gesture = trim_idle(gesture, o.max_idle_s)
+        gesture = trim_idle(gesture, o.max_idle_s, keep_last=return_frames)
     limited = (limit_joint_dynamics(gesture, home, o.speed, o.min_keyframe_s)
                if o.speed_limit else gesture)
     stretch = speed_stretch(gesture, limited, home, o.speed)
     meta = dict(limited.meta)
     meta.update(o.speed.meta())
+    meta.update((home_return or o.home_return.within(o.speed)).meta(return_frames))
     meta.pop(STRETCH_KEY, None)
     if stretch.stretched:
         meta[STRETCH_KEY] = stretch.summary()
@@ -765,4 +943,5 @@ def finish(gesture: Gesture, home: Sequence[float], o: KeyframeOptions) -> Gestu
 #: metadata key: what limiting did to the taught timing (only when it slowed it)
 STRETCH_KEY = "speed_stretch"
 #: the metadata ``export`` carries from a reduced gesture into its CSV
-SPEED_META_KEYS = (SpeedPolicy.VEL_KEY, SpeedPolicy.ACC_KEY, STRETCH_KEY)
+SPEED_META_KEYS = (SpeedPolicy.VEL_KEY, SpeedPolicy.ACC_KEY, STRETCH_KEY,
+                   HomeReturn.VEL_KEY, HomeReturn.ACC_KEY, HomeReturn.FRAMES_KEY)

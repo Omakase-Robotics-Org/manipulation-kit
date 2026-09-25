@@ -112,3 +112,48 @@ def test_play_has_no_guard_option():
     from manipulation_kit.teach.cli import build_parser
     with pytest.raises(SystemExit):
         build_parser().parse_args(["play", "x.csv", "--guard", "full"])
+
+
+def _away_take(tmp_path, offset_deg=60.0):
+    """A stream take that swings A J2 ``offset_deg`` away from HOME and ends there."""
+    import numpy as np  # noqa: PLC0415
+    from manipulation_kit.teach import Recording, load_home  # noqa: PLC0415
+    home = load_home()
+    times = np.arange(0.0, 3.0 + 1e-9, 0.05)
+    q = np.tile(home, (len(times), 1))
+    q[:, 1] -= offset_deg * np.clip((times - 0.5) / 1.5, 0.0, 1.0)
+    rec = Recording("stream", "brake", ["left"], 20.0, list(home),
+                    [float(t) for t in times], [list(map(float, r)) for r in q])
+    path = tmp_path / "away.json"
+    rec.save(path)
+    return path
+
+
+def test_export_and_check_report_the_home_return(tmp_path, capsys):
+    from manipulation_kit.teach.process import HomeReturn  # noqa: PLC0415
+    out = tmp_path / "away_motion.csv"
+    assert main(["export", str(_away_take(tmp_path)), str(out), "--name", "away",
+                 "--usage", "filler"]) == 0
+    text = capsys.readouterr().out
+    assert "return " in text and "(min-jerk, peak 40 deg/s, 90 deg/s^2, at least 2 s)" in text
+    g = load_csv(out)
+    frames = int(g.meta["home_return_frames"])
+    leg = sum(k.duration for k in g.keyframes[-frames + 1:])
+    assert leg == pytest.approx(HomeReturn().duration_s(60.0), abs=1e-3)   # 2.81 s
+    assert main(["check", str(out), "--step-s", "0.05"]) == 0
+    text = capsys.readouterr().out
+    assert "HOME return: " in text and f"over {frames} segment(s)" in text
+    assert "profile 40 deg/s, 90 deg/s^2" in text
+
+
+def test_export_takes_the_home_return_options(tmp_path, capsys):
+    from manipulation_kit.teach.process import HomeReturn  # noqa: PLC0415
+    out = tmp_path / "away_motion.csv"
+    assert main(["export", str(_away_take(tmp_path)), str(out), "--name", "away",
+                 "--usage", "filler", "--home-return-vel", "30",
+                 "--home-return-acc", "60", "--home-return-min-s", "3"]) == 0
+    g = load_csv(out)
+    assert (g.meta["home_return_vel"], g.meta["home_return_acc"]) == ("30", "60")
+    frames = int(g.meta["home_return_frames"])
+    leg = sum(k.duration for k in g.keyframes[-frames + 1:])
+    assert leg == pytest.approx(HomeReturn(30.0, 60.0, 3.0).duration_s(60.0), abs=1e-3)
