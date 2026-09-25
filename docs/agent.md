@@ -50,21 +50,65 @@ print(trace.stop, trace.summary())
   its `object`, `press` on its `target`; not `probe`, which has no named
   target, `handover`, which closes inside its own plan, or `approach`, the
   move to the look) the kit takes a fresh
-  wrist photo (`frame(side) -> path`), DRAWS its belief on it — a green cross
-  at the projected centre and a green box, the object's projected outline
-  grown by `tolerance_m` (default 10 mm) on every side — and asks the judge
-  one five-way question — the object is `on` (inside the box), or sticks out
-  `left` / `right` / `above` / `below` it in the image, or `not_visible`
-  (`judge(look) -> {choice: probability}`). A direction becomes
+  wrist photo (`frame(side) -> path`) and DRAWS on it **where the jaws will
+  close**: the two pads at the current jaw gap (the executor's measured
+  `jaw_gap_m`, else the hand's driven-open gap, else the description's
+  nominal opening), carried along the approach axis to the object's depth
+  and projected through the wrist camera, fisheye included
+  (`manipulation_kit.agent.jaws.jaw_opening`; the camera carries the flange
+  pose it rides on, `WristCamera.flange_p` / `flange_r`) — and the
+  object's outline with its real shape (`jaws.declared_outline`: a cylinder
+  as the silhouette of its top and footprint circles, a box as its eight
+  corners at its declared yaw, anything else as its declared footprint; or
+  a segmenter's polygon through the `object_outline(photo, look)` seam).
+  The reference is the HAND, not the belief: a box drawn around the
+  declared object asks whether the belief agrees with itself once the
+  declaration has moved with the hand. The judge answers about the object
+  relative to the fingers (`judge(look) -> Reading | {choice: p}`): the
+  direction from the opening — `on` (between the jaws), `left` / `right` /
+  `above` / `below` in the image, `not_visible` — and, when asked, how far,
+  the depth against the real fingers (`ahead` / `between` / `behind`),
+  whether the hand hides it, how far the jaws must turn (clockwise in the
+  photo) to close across its narrowest width, and whether it would fit
+  (recorded only). A direction becomes
   one base-frame step through the wrist camera's orientation: the object is
   re-declared that step away as a JUDGEMENT (`provenance="judged"`, the
   judge's probability in `confidence`; verifiers treat it like `declared`,
   never as a sighting) and the hand is moved by the same step with the kit's `Nudge` (coarse 30 mm, then 10
   mm once the answer changes sign), within `max_nudges_per_target`. `on`
-  counts as the look and the grasp runs in the same turn; anything else ends
+  re-declares the object at the jaw point, counts as the look, and the grasp
+  runs in the same turn; anything else ends
   the servo with a named outcome (`unsure`, `nudge_budget`, `servo_budget`,
   `stale_frame`, `not_visible`, `unmappable_direction`) that the model reads
   and chooses on.
+  **Four action kinds, one fixed priority** (`servo.choose()`): `retreat`
+  (the hand hides the object: 30 mm back along the approach axis), `turn`
+  (an elongated object — declared footprint 1.3:1 or more, not a
+  cylinder, or a segmented outline that elongated — and a judged turn of
+  at least half a step: a 15 deg yaw about the approach axis, at most 90
+  deg per alignment, the wrist's coupled limit enforced by the nudge's
+  plan; the declaration turns with the hand, so the stroke plans its jaw
+  roll across the object), `xy` (the step above), `approach` (centred and
+  still `ahead` of the fingertips: 10 mm along the approach axis, at most
+  `max_approach_m` = 30 mm per alignment and never closer than
+  `approach_clearance_m` = 20 mm from the object's near face or a support
+  surface — the stroke's own descent and fingertip contact search do the
+  rest; `behind` backs off 10 mm). Every move is a `Nudge`, counts against
+  the same budget, and is logged with its reason (`ServoStep.action`:
+  `kind`, `reason`, the nudge); `record.servo.actions` counts them by kind.
+  Measured offline (`examples/agent/jev_jaws_lab.py`, four d1-2 wrist
+  photos, the opening drawn at 25 known offsets of up to 40 mm per axis,
+  one photo per decision): the `jaws` formulation (letters around the
+  opening) was right on 97 of 100 with 1 wrong step, 0 premature `on` and 2
+  abstentions on the upright photo alone — the box-around-the-belief
+  formulations reached 90 of 100 at best (`score@rot180`); direction words
+  about the opening (`jaws_words`) stopped early on 22. The depth answer
+  said "ahead" on all 100 (true: the hand at its standoff). The occlusion
+  yes/no stayed near 0.5 with nothing hidden (0.30-0.72), hence
+  `occlusion_margin` = 0.5; the fit yes/no said "no" for a tape that fits
+  (recorded only). The jaw-turn answer against synthetic bars at known
+  angles was at chance (8 of 32 within 22.5 deg), so `jev_servo.py` turns
+  the wrist only with `--servo-turn`.
   **The servo is an inner loop.** Photo -> mark -> judge -> step or stop
   runs at the photo/judge rate inside the one agent turn, until `on`, a cap
   (`budget_s`, default 6 s; `max_iterations`, 12; the policy's nudge
