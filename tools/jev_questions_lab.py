@@ -24,7 +24,10 @@ server's.
 Arms (formulation @ views): ``A`` choice@upright (the servo's question so
 far), ``Aflip`` / ``Arot`` choice@flip_v / @rot180, ``A4`` choice@4 views,
 ``B`` score@upright, ``C`` grasp@upright (B plus the grasp questions),
-``Drot`` score@rot180, ``D2`` score@upright+rot180, ``D4`` score@4 views.
+``Drot`` score@rot180, ``D2`` score@upright+rot180, ``D4`` score@4 views,
+``L`` / ``Lflip`` / ``Lrot`` / ``L4`` letters@upright / flip_v / rot180 /
+4 views (asked in a separate run and merged: ``--formulations letters``,
+then ``--report first.jsonl letters.jsonl``).
 The ``servo_*`` columns are what the servo's own rule
 (``manipulation_kit.agent.servo.decide`` on ``judge.to_choices``) does with
 ONE photo; the inner loop accumulates several.
@@ -43,9 +46,10 @@ from typing import Any, Dict, List, Sequence, Tuple
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "examples" / "agent"))
 
-from manipulation_kit.agent.judge import (ALL_VIEWS, STATE,  # noqa: E402
-                                          questions, read, to_choices,
-                                          unview, view_image)
+from manipulation_kit.agent.judge import (ALL_VIEWS,  # noqa: E402
+                                          draw_letters, questions, read,
+                                          state_for, to_choices, unview,
+                                          view_image)
 from manipulation_kit.agent.servo import DEFAULT_MARGIN, decide  # noqa: E402
 
 #: pixel offsets of the object centre from the box centre, per axis
@@ -56,7 +60,9 @@ ARMS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
     "Arot": ("choice", ("rot180",)), "A4": ("choice", ALL_VIEWS),
     "B": ("score", ("upright",)), "C": ("grasp", ("upright",)),
     "Drot": ("score", ("rot180",)), "D2": ("score", ("upright", "rot180")),
-    "D4": ("score", ALL_VIEWS)}
+    "D4": ("score", ALL_VIEWS),
+    "L": ("letters", ("upright",)), "Lflip": ("letters", ("flip_v",)),
+    "Lrot": ("letters", ("rot180",)), "L4": ("letters", ALL_VIEWS)}
 
 
 def ordinal(offset_px: float, half_box_px: float) -> int:
@@ -69,9 +75,13 @@ def ordinal(offset_px: float, half_box_px: float) -> int:
 
 
 def collect(manifest: Sequence[Dict[str, Any]], judge, out: Path,
-            work: Path, say=print) -> List[Dict[str, Any]]:
-    """Ask every case, every view, every question; one JSON line per
-    (case, view) with per-question probabilities and wall milliseconds."""
+            work: Path, say=print,
+            formulations: Sequence[str] = ("choice", "grasp")
+            ) -> List[Dict[str, Any]]:
+    """Ask every case, every view, every question of ``formulations``; one
+    JSON line per (case, view) with per-question probabilities and wall
+    milliseconds. ``letters`` is asked about the marked photo with the
+    letters drawn on (:func:`~manipulation_kit.agent.judge.draw_letters`)."""
     from manipulation_kit.agent.servo import mark  # noqa: PLC0415
     rows = []
     work.mkdir(parents=True, exist_ok=True)
@@ -79,36 +89,57 @@ def collect(manifest: Sequence[Dict[str, Any]], judge, out: Path,
         for item in manifest:
             u0, v0 = (float(x) for x in item["centre"])
             w, h = (float(x) for x in item["box"])
-            items = [q for f in ("choice", "grasp")
-                     for q in questions(item["object"], f)]
-            state = STATE.format(object=item["object"].replace("_", " "))
             for du in OFFSETS_PX:
                 for dv in OFFSETS_PX:
                     # the box is drawn so the object sits (du, dv) from it
                     u, v = u0 - du, v0 - dv
+                    box = (u - w / 2, v - h / 2, u + w / 2, v + h / 2)
                     tag = f"{item['name']}_{du:+d}_{dv:+d}"
                     marked = mark(Path(item["photo"]), u, v, work / f"{tag}.png",
-                                  box_px=(u - w / 2, v - h / 2,
-                                          u + w / 2, v + h / 2))
+                                  box_px=box)
+                    images = {}
+                    for f in formulations:
+                        images[f] = marked
+                        if f == "letters":
+                            images[f], _where = draw_letters(
+                                marked, box, work / f"{tag}_letters.png")
                     for view in ALL_VIEWS:
-                        shown = view_image(marked, view,
-                                           work / f"{tag}_{view}.png")
                         answers = {}
-                        for q in items:
-                            started = time.time()
-                            probs, _ms = judge._ask(shown, state, [q])
-                            answers[q.id] = {
-                                "probs": probs[0],
-                                "ms": round((time.time() - started) * 1000.0, 1)}
+                        for f in formulations:
+                            shown = view_image(
+                                images[f], view,
+                                work / f"{images[f].stem}_{view}.png")
+                            state = state_for(item["object"], f)
+                            for q in questions(item["object"], f):
+                                started = time.time()
+                                probs, _ms = judge._ask(shown, state, [q])
+                                answers[q.id] = {
+                                    "probs": probs[0],
+                                    "ms": round((time.time() - started)
+                                                * 1000.0, 1)}
                         row = {"photo": item["name"], "du": du, "dv": dv,
                                "half_box": [w / 2, h / 2], "view": view,
                                "answers": answers}
                         record.write(json.dumps(row) + "\n")
                         record.flush()
                         rows.append(row)
-                    say(f"{tag}: asked {len(ALL_VIEWS)} views x {len(items)} "
-                        f"questions")
+                    say(f"{tag}: asked {len(ALL_VIEWS)} views x "
+                        f"{'+'.join(formulations)}")
     return rows
+
+
+def merge(records: Sequence[Sequence[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Several records of the same cases (e.g. a later run asking one more
+    formulation) as one: answers merged per (photo, du, dv, view)."""
+    merged: Dict[Tuple, Dict[str, Any]] = {}
+    for rows in records:
+        for row in rows:
+            key = (row["photo"], row["du"], row["dv"], row["view"])
+            if key in merged:
+                merged[key]["answers"].update(row["answers"])
+            else:
+                merged[key] = {**row, "answers": dict(row["answers"])}
+    return list(merged.values())
 
 
 def arm_answers(rows: Sequence[Dict[str, Any]], formulation: str,
@@ -239,8 +270,11 @@ def axis_spread(rows: Sequence[Dict[str, Any]], views: Sequence[str],
 
 def report(rows: Sequence[Dict[str, Any]], say=print) -> Dict[str, Any]:
     asked = {row["view"] for row in rows}
+    ids = set().union(*(row["answers"] for row in rows))
     table = {name: score_arm(arm_answers(rows, f, views))
-             for name, (f, views) in ARMS.items() if set(views) <= asked}
+             for name, (f, views) in ARMS.items()
+             if set(views) <= asked
+             and {q.id for q in questions("x", f)} <= ids}
     keys = list(next(iter(table.values())))
     say("| arm | " + " | ".join(keys) + " |")
     say("|" + "---|" * (len(keys) + 1))
@@ -248,8 +282,10 @@ def report(rows: Sequence[Dict[str, Any]], say=print) -> Dict[str, Any]:
         say(f"| {name} {ARMS[name][0]}@{'+'.join(ARMS[name][1])} | "
             + " | ".join(str(row[k]) for k in keys) + " |")
     for views in (("upright",), ("rot180",), ALL_VIEWS):
-        if set(views) <= asked:
+        if set(views) <= asked and "horizontal" in ids:
             axis_spread(rows, views, say)
+    if not {q.id for q in questions("x", "grasp")} <= ids:
+        return table
     grasp = arm_answers(rows, "grasp", ("upright",))
     on = [c["answers"]["grasp_here"]["p"] for (_p, du, dv), c in grasp.items()
           if du == dv == 0]
@@ -270,19 +306,23 @@ def main(argv: Sequence[str] = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("lab.jsonl"))
     parser.add_argument("--work", type=Path, default=None,
                         help="where the marked photos go (default: beside --out)")
-    parser.add_argument("--report", type=Path, default=None, metavar="RECORD",
-                        help="recompute the tables from a record; no request")
+    parser.add_argument("--report", type=Path, nargs="+", default=None,
+                        metavar="RECORD", help="recompute the tables from "
+                        "records (merged); no request")
+    parser.add_argument("--formulations", default="choice,grasp",
+                        help="what to ask, e.g. letters")
     args = parser.parse_args(argv)
     if args.report is not None:
-        rows = [json.loads(line) for line in args.report.read_text().splitlines()
-                if line.strip()]
+        rows = merge([[json.loads(line) for line in path.read_text().splitlines()
+                       if line.strip()] for path in args.report])
     else:
         if args.manifest is None:
             parser.error("--manifest, or --report RECORD")
         from jev_judge import RemoteJudge  # noqa: PLC0415
         manifest = json.loads(args.manifest.read_text())
         rows = collect(manifest, RemoteJudge(args.judge_url), args.out,
-                       args.work or args.out.parent / "lab_marked")
+                       args.work or args.out.parent / "lab_marked",
+                       formulations=tuple(args.formulations.split(",")))
     report(rows)
     return 0
 

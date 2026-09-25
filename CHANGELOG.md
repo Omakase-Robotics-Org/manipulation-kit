@@ -51,6 +51,15 @@ accessor set, removed in 0.17.
   ~0.41 m, the model's pixel on the roll's bottom edge, declared 0.353 m —
   55 mm short of the photo (0.408 m); the servo's box was drawn there and
   the grasp closed on the roll's rim.
+- **NEW judge formulation `letters`** (`--judge-questions letters`): a
+  letter on a black disc just outside each side of the box (A above, B
+  right, C below, D left, with short arrows out of the box) and one choice
+  question, "toward which letter" / inside / not in the photo — no
+  direction words. `draw_letters()`, `letter_centres()`, `state_for()`.
+  Measured on the lab's 100 cases it does not beat `score@rot180`: upright
+  it steps the wrong way on 25 of 100 (a bias toward the letter A — with
+  the letters rotated one side the bias follows A to the right), best on
+  the flipped photo at 10 of 100. Not the default.
 - **NEW `tools/jev_questions_lab.py`**: the offline question-design lab
   (real photos, boxes at known offsets, every answer recorded, tables
   recomputed with `--report`).

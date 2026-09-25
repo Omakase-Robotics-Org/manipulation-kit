@@ -234,3 +234,80 @@ def test_the_lab_grades_what_the_servo_would_do(agent_examples, tmp_path):
         assert table[arm]["servo_ok"] == 25, (arm, table[arm])
     assert table["B"]["ordinal_exact"] == "50/50"
     assert said[0].startswith("| arm | cases |")
+
+
+# --------------------------------------------------------------------------- #
+# letters: the answer is a letter drawn beside the box, not a direction word
+# --------------------------------------------------------------------------- #
+
+def test_the_letters_sit_outside_the_box_inside_the_frame():
+    from manipulation_kit.agent.judge import (LETTER_RADIUS_PX, LETTERS,
+                                              letter_centres)
+    box = (275.0, 220.0, 370.0, 314.0)              # d1-2 turn 6, 640 x 480
+    where = letter_centres(box, 640, 480)
+    assert set(where) == {letter for letter, _c in LETTERS}
+    r = LETTER_RADIUS_PX
+    for letter, (u, v) in where.items():
+        assert r <= u <= 640 - r and r <= v <= 480 - r, letter
+        # the whole disc is outside the box
+        du = max(box[0] - u, 0.0, u - box[2])
+        dv = max(box[1] - v, 0.0, v - box[3])
+        assert (du * du + dv * dv) ** 0.5 >= r, letter
+    # a box at the top edge: the top disc is pulled into the frame
+    top = letter_centres((300.0, 5.0, 340.0, 45.0), 640, 480)
+    assert all(r <= v <= 480 - r for _u, v in top.values())
+
+
+def test_each_letter_is_drawn_on_the_side_it_maps_to(tmp_path):
+    """The letter -> side table and the drawing agree: the disc of the
+    letter mapped to a choice lies from the box centre along that choice's
+    image axis, and that axis maps to a table-plane direction for a
+    downward-looking wrist camera (the step the servo takes)."""
+    import numpy as np
+    from PIL import Image
+    from scipy.spatial.transform import Rotation as R
+    from manipulation_kit.agent.judge import LETTERS, draw_letters
+    from manipulation_kit.agent.servo import (_IMAGE_AXIS,
+                                              image_direction_in_base)
+    from manipulation_kit.perception import WristCamera
+    photo = tmp_path / "p.png"
+    Image.new("RGB", (640, 480), (200, 180, 180)).save(photo)
+    box = (270.0, 190.0, 370.0, 290.0)
+    out, where = draw_letters(photo, box, tmp_path / "l.png")
+    image = np.asarray(Image.open(out).convert("RGB")).astype(int)
+    camera = WristCamera.from_flange(
+        "right", np.array([0.4, -0.1, 0.3]), R.from_euler("x", 180, degrees=True),
+        fx=300.0, fy=300.0, cx=320.0, cy=240.0, width=640, height=480)
+    for letter, choice in LETTERS:
+        u, v = where[letter]
+        au, av = _IMAGE_AXIS[choice]
+        assert (u - 320.0) * au + (v - 240.0) * av > 40.0, (letter, choice)
+        # a dark disc behind a light letter: the disc's rim is black
+        rim = image[int(v), int(u) - 11]
+        assert rim.sum() < 100, (letter, rim)
+        assert image_direction_in_base(camera, choice) is not None
+
+
+def test_a_letters_answer_needs_no_mapping_back(tmp_path):
+    """The letters are painted into the photo, so a mirrored view carries
+    them along: "toward A" is the side A is drawn on in every view."""
+    from manipulation_kit.agent.judge import state_for
+    q, = questions("tape", "letters")
+    assert q.ids == ("above", "right", "below", "left", "on", "not_visible")
+    assert all("letter" in o for o in q.options[:4])
+    for view in ALL_VIEWS:
+        assert unview(q, [0.9, 0.1, 0, 0, 0, 0], view) == [0.9, 0.1, 0, 0, 0, 0]
+    assert "letters A, B, C and D" in state_for("tape", "letters")
+
+    class SaysA(AskingJudge):
+        def _ask(self, image, state, items):
+            assert image.name.startswith("m_letters")
+            assert "letters A, B, C" in state
+            return [[1.0, 0, 0, 0, 0, 0] for _q in items], 1.0
+
+    look = _look(tmp_path)
+    look = ServoLook(side="right", object="tape", camera=None, u=32.0, v=24.0,
+                     depth_m=0.2, image=look.image, photo=look.photo,
+                     box_px=(22.0, 14.0, 42.0, 34.0))
+    dist = SaysA(formulation="letters")(look)
+    assert dist["above"] == pytest.approx(1.0)

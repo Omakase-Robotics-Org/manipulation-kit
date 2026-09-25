@@ -87,7 +87,9 @@ print(trace.stop, trace.summary())
   **What the judge is asked** is `manipulation_kit.agent.judge`: the
   formulation (`choice`, the six-way question; `score`, two ordinal axis
   scores and a yes/no "inside", decided by per-question thresholds;
-  `grasp`, `score` plus two grasp-geometry questions) and the VIEWS of the
+  `grasp`, `score` plus two grasp-geometry questions; `letters`, a letter
+  on a disc outside each side of the box and "toward which letter", no
+  direction words) and the VIEWS of the
   photo each answer is averaged over (upright, flipped top-bottom, flipped
   left-right, rotated 180 deg; the answers are mapped back to the upright
   photo). The default is `choice` over all four views: asked about the
