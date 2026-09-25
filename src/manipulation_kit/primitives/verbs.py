@@ -46,8 +46,9 @@ from .types import (ALREADY_HOLDING, ARM_UNKNOWN, AUTO, BAD_SIDE, BOTH,
                     UNREACHABLE_DESTINATION, UNREACHABLE_HANDOVER,
                     UNKNOWN_FRAME, SIDE_CHOICES,
                     UNSUPPORTED_GEOMETRY, Unmet,
-                    Verifier, ContactCriterion, ContactStep, GripStep,
-                    JointStep, SettleStep, Waypoint)
+                    Verifier, ContactCriterion, ContactPolicy, ContactStep,
+                    GripStep, JointStep, SettleStep, VERB_CONTACT_POLICY,
+                    Waypoint)
 
 #: default gap between the finger tips and the object's silhouette at the
 #: standoff [m] (:func:`.grasp_geometry.standoff_point`)
@@ -1027,23 +1028,38 @@ class Grasp(Primitive):
                     q_start = (pre[-1].q if pre else borrowed.joints(side_))
                     path, dist = leg_knots(borrowed, side_, q_start, leg,
                                            meet.d)
+                    # where the SOLVED leg starts the tips, for the back-off
+                    borrowed.kin.set_joints(side_, path[0])
+                    p_start, r_start = borrowed.tool_pose(side_)
             except IncompleteObservation as exc:
                 return [], _incomplete(primitive, side_, exc), []
             if len(path) < 2 or dist[-1] <= 1e-4:
                 return [], PlanError(
                     BAD_ARGUMENT, f"the {side_} fingertip search has no length",
                     primitive=primitive.name(), side=side_), []
+            # CONTACT POLICY back_off (types.ContactPolicy): after a stop ON
+            # the support, retreat before the close — the jaws must not drag
+            # the tips across the table (d1-2 2026-09-24, turn 6)
+            backoff, backoff_note = gg.surface_backoff(
+                meet.item, world_.frames, meet.d, support=meet.support,
+                floor_z=floor,
+                clearance_m=gg.achieved_clearance(p_start, r_start, floor),
+                distance_m=policy_of(kin_).contact_backoff_m)
             contact = ContactStep(
                 side_, Direction(tuple(float(c) for c in meet.d), BASE),
                 float(search_m), ContactCriterion(
                     joint_torque_nm=gg.TIP_CONTACT_NM),
-                waypoint=2, path=tuple(path), s=tuple(dist))
+                waypoint=2, path=tuple(path), s=tuple(dist),
+                policy=(VERB_CONTACT_POLICY[primitive.name()]
+                        if backoff is not None else ContactPolicy.STAY),
+                backoff=backoff)
             measured = ((f"the {scene.contact_target!r} the tips search for "
                          f"is left out of the scene check (the search is "
                          f"meant to touch it)",)
                         if scene.contact_target else ())
             return (pre + [contact], None,
-                    list(notes) + list(measured) + list(_unchecked_note(scene)))
+                    list(notes) + list(measured) + list(_unchecked_note(scene))
+                    + [backoff_note])
 
         def achieved(steps, r_tcp):
             # VALIDATE THE ACHIEVED DESCENT, not the ideal waypoint. The path
@@ -1580,7 +1596,7 @@ def snap(value_m: float) -> float:
     """Snap a translation to the +-10/30/50 mm grid, zero below half of 10 mm.
 
     Coarse AND fine in the same vocabulary. A menu of only 50 mm steps cannot
-    express the 30 mm correction a task needs (Raptor's Jev run, 2026-09-19);
+    express the 30 mm correction a task needs (a classifier-driven run, 2026-09-19);
     a menu of only 10 mm steps pays three turns for every real move.
     """
     value = float(value_m)

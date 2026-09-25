@@ -357,3 +357,44 @@ def test_box_on_its_side_and_a_thin_card():
         0.0015)
     assert gg.insertion_along(card, frames, [0, 0, -1],
                               [0.4, 0.0, 0.1674]) == pytest.approx(0.0046)
+
+
+# --------------------------------------------------------------------------- #
+# a back_off leg classifies its own stop
+# --------------------------------------------------------------------------- #
+
+def _classified(run: RunReport, surface: str, **fields) -> RunReport:
+    import dataclasses
+    return dataclasses.replace(run, contacts=tuple(
+        dataclasses.replace(c, surface=surface, support="table", **fields)
+        for c in run.contacts))
+
+
+def test_the_runner_classification_is_read_when_the_leg_made_one():
+    """``ContactReport.surface`` decides, not the floor-height fallback: a
+    stop the runner put ON the object fails the approach even at a height
+    the fallback would have passed; a stop on the support passes and the
+    record carries the back-off."""
+    grasp, w0, w1, run, _ = turn6()
+    on_object = grasp.verifier(w0)(w1, _classified(run, "object"))
+    approach = on_object.measured["checks"]["approach"]
+    assert on_object.verdict == "false"
+    assert approach["verdict"] == "fail"
+    assert approach["search_surface"] == "object"
+    assert approach["search_stop_above_floor_m"] < SEARCH_STOP_TOL_M
+    on_support = grasp.verifier(w0)(w1, _classified(
+        run, "support", backoff_m=0.001, tip_z_before_m=0.1674,
+        tip_z_after_m=0.1684, backoff_measured_m=0.001))
+    approach = on_support.measured["checks"]["approach"]
+    assert on_support.verdict == "true", on_support.reason
+    assert approach["verdict"] == "pass"
+    assert approach["backoff_m"] == pytest.approx(0.001)
+    assert approach["tip_z_after_m"] == pytest.approx(0.1684)
+    assert approach["search_stop_z_m"] == pytest.approx(0.1674)
+
+
+def test_the_verifier_names_the_executor_surface_vocabulary():
+    from manipulation_kit import executor
+    from manipulation_kit.primitives import verifiers
+    assert verifiers.SURFACE_OBJECT == executor.SURFACE_OBJECT
+    assert verifiers.SURFACE_OBJECT in executor.CONTACT_SURFACES

@@ -1,9 +1,12 @@
-"""Jev-Omni as the wrist-look judge: the words, a local and a remote judge,
-and an offline re-judge of a recorded run's wrist photos.
+"""Jev-Omni as the wrist-look judge: a local and a remote judge, and an
+offline re-judge of a recorded run's wrist photos.
 
 The kit owns the choice ids, the mark, the direction and the step
-(``manipulation_kit.agent.servo``). What is here is the part that knows a
-model exists: how the question is phrased, where the classifier runs.
+(``manipulation_kit.agent.servo``) and the model-neutral seam — typed
+questions, mirrored views (``manipulation_kit.agent.judge``). What Jev is
+asked is ``jev_questions.py``; what is here is where the classifier runs.
+Both judges take ``formulation=`` (a name in ``jev_questions.NAMES``) and
+``views=`` (upright, flip_v, flip_h, rot180).
 
     JevJudge()                 the 12B classifier in THIS process (a GPU with
                                ~47 GB free, measured; loaded on first call)
@@ -22,45 +25,30 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional
 
 import numpy as np
 
 from manipulation_kit.agent import Servo, ServoLook
-
-#: what each kit choice id is called in the question. The ids are the kit's.
-LABELS: Dict[str, str] = {
-    "on": "the {object} is entirely inside the green box",
-    "left": "the {object} sticks out to the LEFT of the green box",
-    "right": "the {object} sticks out to the RIGHT of the green box",
-    "above": "the {object} sticks out ABOVE the green box",
-    "below": "the {object} sticks out BELOW the green box",
-    "not_visible": "the {object} is not in the photo"}
-
-STATE = ("Photo from the camera on a robot hand, looking along the hand past "
-         "its two gripper fingers. A green box has been drawn on the photo "
-         "where the robot BELIEVES the {object} is, slightly larger than the "
-         "{object} should appear; a green cross marks the box's centre.")
-QUESTION = "How does the {object} sit relative to the green box?"
+from manipulation_kit.agent.judge import DEFAULT_VIEWS, AskingJudge
+from jev_questions import FORMULATIONS, LABELS  # noqa: F401
 
 
-def words(look: ServoLook) -> Tuple[str, str, Dict[str, str]]:
-    """(state, question, {choice id: option label}) for one look."""
-    name = look.object.replace("_", " ")
-    return (STATE.format(object=name), QUESTION.format(object=name),
-            {c: LABELS[c].format(object=name) for c in look.choices})
+def _asking(formulation: str, views, debug: bool) -> Dict[str, Any]:
+    """``AskingJudge`` keyword arguments from the examples' flags."""
+    if formulation not in FORMULATIONS:
+        raise ValueError(f"formulation must be one of {tuple(FORMULATIONS)}")
+    return {"formulation": FORMULATIONS[formulation], "views": tuple(views),
+            "log": ((lambda line: print(f"[jev_judge] {line}",
+                                        file=sys.stderr)) if debug else None)}
 
-
-def _by_choice(labels: Dict[str, str], probabilities: Mapping[str, float]):
-    by_label = {label: c for c, label in labels.items()}
-    return {by_label[k]: float(p) for k, p in probabilities.items()}
-
-
-class JevJudge:
+class JevJudge(AskingJudge):
     """Jev-Omni in this process. Loaded on first use."""
 
-    def __init__(self, debug: bool = False):
-        self.classifier, self.debug = None, debug
+    def __init__(self, debug: bool = False, *, formulation: str = "choice",
+                 views=DEFAULT_VIEWS):
+        super().__init__(**_asking(formulation, views, debug))
+        self.classifier = None
 
     def load(self):
         if self.classifier is None:
@@ -70,52 +58,59 @@ class JevJudge:
             self.classifier = load_jev_omni()
         return self.classifier
 
-    def __call__(self, look: ServoLook) -> Dict[str, float]:
-        if look.image is None:
-            raise RuntimeError("Jev judges a photo; this robot gave none "
-                               "(--snapshot-cmd)")
-        state, question, labels = words(look)
-        started = time.time()
-        result = self.load().predict(
-            state=state, question=question, options=list(labels.values()),
-            media=str(look.image), modality="image")
-        out = _by_choice(labels, result["probabilities"])
-        if self.debug:
-            print(f"[jev_judge] {(time.time() - started) * 1000:.0f} ms "
-                  f"{look.image.name}: {out}", file=sys.stderr)
-        return out
+    def _ask(self, image, state, items):
+        started, out = time.time(), []
+        for q in items:
+            result = self.load().predict(state=state, question=q.question,
+                                         options=list(q.options),
+                                         media=str(image), modality="image")
+            out.append([float(result["probabilities"][o]) for o in q.options])
+        return out, (time.time() - started) * 1000.0
 
 
-class RemoteJudge:
+class RemoteJudge(AskingJudge):
     """The ``judge(look)`` seam over HTTP: POST the marked photo and the
-    words to ``jev_judge_server.py``, get a probability per option back."""
+    words to ``jev_judge_server.py``, get a probability per option back.
+    Every question about one view goes in ONE ``/judge_batch`` request when
+    the server's ``/health`` says ``"batch": true``; an older server is
+    asked one ``/judge`` per question."""
 
     def __init__(self, url: str, *, timeout_s: float = 10.0,
-                 debug: bool = False):
-        self.url = url.rstrip("/") + "/judge"
-        self.timeout_s, self.debug = float(timeout_s), debug
+                 debug: bool = False, formulation: str = "choice",
+                 views=DEFAULT_VIEWS):
+        super().__init__(**_asking(formulation, views, debug))
+        self.base = url.rstrip("/")
+        self.url = self.base + "/judge"
+        self.timeout_s = float(timeout_s)
+        self.batch: Optional[bool] = None       # unknown until first asked
 
-    def __call__(self, look: ServoLook) -> Dict[str, float]:
-        if look.image is None:
-            raise RuntimeError("the remote judge judges a photo; this robot "
-                               "gave none (--snapshot-cmd)")
-        state, question, labels = words(look)
-        body = json.dumps({
-            "state": state, "question": question,
-            "options": list(labels.values()),
-            "image_jpeg_b64": base64.b64encode(
-                Path(look.image).read_bytes()).decode("ascii")}).encode()
-        started = time.time()
+    def _post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
         request = urllib.request.Request(
-            self.url, data=body, headers={"Content-Type": "application/json"})
+            self.base + path, data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=self.timeout_s) as reply:
-            answer = json.loads(reply.read())
-        out = _by_choice(labels, answer["probabilities"])
-        if self.debug:
-            print(f"[jev_judge] remote {(time.time() - started) * 1000:.0f} ms "
-                  f"(server {answer.get('ms', '?')} ms) {look.image.name}: "
-                  f"{out}", file=sys.stderr)
-        return out
+            return json.loads(reply.read())
+
+    def _ask(self, image, state, items):
+        photo = base64.b64encode(Path(image).read_bytes()).decode("ascii")
+        started = time.time()
+        if self.batch is None:      # a server says whether it takes batches
+            with urllib.request.urlopen(self.base + "/health",
+                                        timeout=self.timeout_s) as reply:
+                self.batch = bool(json.loads(reply.read()).get("batch"))
+        if self.batch:
+            answer = self._post("/judge_batch", {
+                "state": state, "image_jpeg_b64": photo,
+                "items": [{"question": q.question, "options": list(q.options)}
+                          for q in items]})["answers"]
+        else:
+            answer = [self._post("/judge", {
+                "state": state, "question": q.question,
+                "options": list(q.options), "image_jpeg_b64": photo})
+                for q in items]
+        return ([[float(a["probabilities"][o]) for o in q.options]
+                 for q, a in zip(items, answer)],
+                (time.time() - started) * 1000.0)
 
 
 def _objects(world: Mapping[str, Any]):

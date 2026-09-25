@@ -1,6 +1,6 @@
 """A held object rides the tool. One grasp-transform rule, for everybody.
 
-Astra review 11: the live adapter rebuilt its scene objects unchanged after
+Design review 11: the live adapter rebuilt its scene objects unchanged after
 every action, so ``ObjectRose`` measured ZERO rise after a real lift and every
 later ``Carry``/``Place`` planned against a pose the object had left. The
 planner's hypothetical chain (``primitives.reach``) had its own version of the

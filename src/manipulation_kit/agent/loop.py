@@ -12,7 +12,7 @@ model's opinion::
     with LiveRobot.from_flag("firmware", url=url, policy=policy,
                              scene=scene) as robot:
         trace = run(goal=Place(object="cube", to="cup"), robot=robot,
-                    policy=policy, ask=my_model, system=MY_PROMPT,
+                    policy=policy, ask=my_model, system=MY_SYSTEM_TEXT,
                     trace=DecisionTrace(run_dir / "trace.jsonl"))
 
 ``ask(messages, tools) -> {"name", "arguments", "call_id", "claimed"}`` is
@@ -82,7 +82,7 @@ STOP_REASONS: Tuple[str, ...] = (
 class ObservationError(RuntimeError):
     """A fresh observation (the photos a visual model acts on) could not be
     taken. The loop stops with ``observation_failed`` rather than letting the
-    model act on no picture or an old one (Astra review 14)."""
+    model act on no picture or an old one (design review 14)."""
 
 
 @dataclass
@@ -92,7 +92,7 @@ class Stop:
 
 
 def robot_facts(world: Any = None) -> str:
-    """The numbers the kit OWNS, generated rather than quoted in a prompt:
+    """The numbers the kit OWNS, generated rather than quoted in hand-written text:
     the jaw capacity (from the hand the world measured, else the nominal
     description), the nudge grid and yaw clamp, the contact modes (``tip``
     flagged experimental until the d1-2 tip trial), the tool revision
@@ -144,7 +144,7 @@ def _content(text: str, parts: Sequence[Dict[str, Any]]) -> Any:
 def _forget_images(messages: List[Dict[str, Any]], keep: int) -> None:
     """Replace the photos of all but the last ``keep`` observations with their
     labels — an in-memory history that resends every earlier image grows the
-    request without telling the model anything (Astra review 15)."""
+    request without telling the model anything (design review 15)."""
     with_images = [m for m in messages if isinstance(m.get("content"), list)
                    and any(p.get("type") == "input_image" for p in m["content"])]
     for message in with_images[:max(0, len(with_images) - keep)]:
@@ -289,7 +289,7 @@ class _Loop:
 
     def _turn_recorded(self, turn: int) -> Optional[Stop]:
         """One turn, written to the trace however it ends — a model error, a
-        planning crash or Ctrl-C included (Astra review 15)."""
+        planning crash or Ctrl-C included (design review 15)."""
         record = DecisionRecord(iteration=turn, world={}, task=self.task)
         try:
             stop = self._turn(turn, record)
@@ -757,7 +757,7 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
     ``ask``      ``(messages, tools) -> call``: the model, or a stub
     ``goal``     ``Place(object=, to=)``; ``side="auto"`` is chosen by planning
                  the whole chain for both arms
-    ``system``   the prompt (the caller's; the kit adds the policy and the
+    ``system``   the system text (the caller's; the kit adds the policy and the
                  robot facts it owns as separate messages)
     ``observe``  ``(turn, world) -> content parts`` (photos), or raise
                  :class:`ObservationError`

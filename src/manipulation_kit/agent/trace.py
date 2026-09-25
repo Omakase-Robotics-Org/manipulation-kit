@@ -9,7 +9,7 @@ robot succeeded every time.
 Append-only JSONL so a run can be tailed live and replayed afterwards.
 
 Moved from ``examples/agent/trace.py`` into the wheel (design C.8) with two
-additions the Astra review asked for (item 15): ``effective`` is the call AS
+additions a design review asked for (item 15): ``effective`` is the call AS
 IT RAN — after the operator policy's cap — beside ``choice``, which stays the
 model's request verbatim; and ``error`` records a turn that failed outside the
 transport. :meth:`DecisionTrace.save_messages` writes the model's chat history
@@ -44,7 +44,7 @@ class DecisionRecord:
     effective: Optional[Dict[str, Any]] = None
     #: a wrist look taken on this turn (where the object should appear)
     look: Optional[Dict[str, Any]] = None
-    #: per-choice probability, when the model exposes one (Jev does)
+    #: per-choice probability, when the judge or model exposes one
     distribution: Optional[Dict[str, float]] = None
     #: the System 1 alignment taken on this turn in place of the wrist-look
     #: text (:class:`~manipulation_kit.agent.servo.ServoReport`): every

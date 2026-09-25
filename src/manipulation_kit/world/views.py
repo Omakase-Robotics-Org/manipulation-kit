@@ -19,10 +19,10 @@ Three rules, each of them a bug somebody shipped:
    one only.
 
 Serialisation is part of the contract, not a debug aid: :meth:`WorldView.to_text`
-is what a typed-choice model (Jev) is shown instead of an image, and
+is what a typed-choice model is shown instead of an image, and
 :meth:`WorldView.to_json` is what a trace record stores. Both are stable and
-both are tested for size — a world description that grows without bound is a
-prompt that silently stops fitting.
+both are tested for size — a world description that grows without bound is
+model-facing text that silently stops fitting.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def _round(values: Iterable[float], places: int = 3) -> list:
     return [round(float(v), places) for v in values]
 
 
-#: WHERE AN OBJECT'S POSE CAME FROM (design C.9, Astra review 11). A verifier
+#: WHERE AN OBJECT'S POSE CAME FROM (design C.9, design review 11). A verifier
 #: that reads a pose has to know whether anybody SAW the thing there:
 #:
 #: ``observed``   a sensor or a simulator's ground truth put it there
@@ -500,7 +500,7 @@ class SurfaceView(ObjectView):
     known, when a producer knows: a single camera cannot measure the height
     of the plane it is looking at, so a perceived surface arrives
     ``provisional`` (+-100 mm), ``known-length`` or ``declared``, and that
-    has to reach the world rather than stop at the scene file (Astra review
+    has to reach the world rather than stop at the scene file (design review
     8). ``None`` = the producer did not say.
     """
 
@@ -996,8 +996,8 @@ class WorldView:
     def to_text(self) -> str:
         """The world as a typed-choice model is shown it: line per thing.
 
-        Kept flat, metric and short on purpose. This string is a prompt, and a
-        prompt that grows with the scene is one that silently stops fitting —
+        Kept flat, metric and short on purpose. This string is model-facing text,
+        and text that grows with the scene is one that silently stops fitting —
         ``tests/world/test_serialisation.py`` pins the budget.
         """
         lines = ["WORLD (base frame: +x forward, +y robot-left, +z up; "

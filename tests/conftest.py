@@ -48,7 +48,8 @@ def agent_examples():
     finally:
         if path in sys.path:
             sys.path.remove(path)
-        for name in ("menu", "scene", "snapshot", "astra_loop",
+        for name in ("menu", "scene", "snapshot", "astra_loop", "jev_questions",
+                     "jev_questions_lab",
                      "jev_menu", "jev_servo", "jev_judge", "jev_judge_server",
                      "scripted", "perceive", "detector", "run_scene"):
             sys.modules.pop(name, None)

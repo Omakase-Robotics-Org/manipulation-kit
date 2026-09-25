@@ -2,16 +2,11 @@
 the wrist look — ``astra_loop`` with a :class:`manipulation_kit.agent.Servo`.
 
 Jev-Omni (``akhilaaa3/Jev-Omni``, Apache-2.0) is a 12B multimodal decision
-CLASSIFIER: one image, a question, a few options, a probability per option. It
-cannot write a pixel, so it cannot answer the loop's wrist-look question the
-way a generative model does. What it can do — measured in report
-``jev-servo-loop`` on rendered wrist frames, 8/8 with the mark drawn against
-a prior-shaped answer without it — is place the object RELATIVE TO A MARK the
-kit has drawn. The kit does the rest (``manipulation_kit.agent.servo``).
+CLASSIFIER: it cannot write a pixel, but it places the object RELATIVE TO A
+MARK the kit has drawn; the kit does the rest (``manipulation_kit.agent.servo``).
 
-The part that knows a model exists is here and in ``jev_judge.py`` (the words
-of the question, the option labels, the local and remote judge). Nothing here decides a direction, a step or
-whether the stroke may run::
+The model's side is here and in ``jev_judge.py``; nothing here decides a
+direction, a step or whether the stroke may run::
 
     python examples/agent/jev_servo.py --dry-run --misplace-mm 40   # no model, no key
     python examples/agent/jev_servo.py --model gpt-6-astra --executor firmware \\
@@ -20,13 +15,10 @@ whether the stroke may run::
     # the judge on a workstation (jev_judge_server.py), recorded, never stepping:
     ... --judge-url http://100.x.y.z:8766 --judge-only
     # offline, a finished run's wrist photos judged again (nothing moves):
-    python examples/agent/jev_servo.py --rejudge run/ --robot-profile PATH \
-        --judge-url http://127.0.0.1:8766
+    ... --rejudge run/ --robot-profile PATH --judge-url http://127.0.0.1:8766
 
-Extra needs beyond the kit, for ``--judge jev`` or the server:
-``huggingface_hub``, ``torch``, ``torchvision``, ``transformers`` and a CUDA GPU
-with ~47 GB free (measured); the model's own ``requirements.txt`` omits
-``torchvision`` (needed at load).
+``--judge jev`` or the server need ``huggingface_hub``, ``torch``,
+``torchvision``, ``transformers`` and a CUDA GPU with ~47 GB free.
 """
 
 from __future__ import annotations
@@ -45,7 +37,9 @@ from jev_judge import LABELS, JevJudge, RemoteJudge, rejudge  # noqa: E402,F401
 from manipulation_kit.agent import (DecisionTrace, LiveRobot,  # noqa: E402
                                     OperatorPolicy, Servo, UnknownExecutor,
                                     geometry_judge, run)
-from manipulation_kit.agent.servo import servo_line  # noqa: E402
+from jev_questions import NAMES  # noqa: E402
+from manipulation_kit.agent.judge import ALL_VIEWS  # noqa: E402
+from manipulation_kit.agent.servo import DEFAULT_BUDGET_S, servo_line  # noqa: E402
 from manipulation_kit.agent.robot import (  # noqa: E402
     frames_from, head_camera_from_scene, objects_from,
     wrist_camera_from_scene, with_declared_hand)
@@ -86,30 +80,33 @@ def build_parser():
         help="jev: the classifier here; remote: it behind "
              "jev_judge_server.py (--judge-url); geometry: the no-photo "
              "stand-in (default under --dry-run)")
-    add("--judge-url", default=None, help="the judge server, e.g. "
-        "http://100.x.y.z:8766 (implies --judge remote)")
-    add("--judge-only", action="store_true",
-        help="judge and record every wrist look, never step: the model "
-             "answers the look as without a servo")
-    add("--refine", action="store_true",
-        help="after 'on', re-mark the same photo 5 mm around the declaration "
-             "and move the DECLARATION to the best-judged mark (no motion)")
+    add("--judge-url", default=None, help="implies --judge remote")
+    add("--judge-only", action="store_true", help="judge and record every "
+        "wrist look, never step")
+    add("--refine", action="store_true", help="after 'on', move the "
+        "DECLARATION to the best-judged mark 5 mm around it (no motion)")
     add("--rejudge", type=Path, default=None, metavar="RUN_DIR",
         help="offline: judge the wrist photos a live run saved in RUN_DIR "
              "(trace.jsonl + turn*_*_wrist_0_rgb.jpg) and print each answer")
-    add("--misplace-mm", type=float, default=0.0,
-        help="geometry judge: the TRUE object is this far (base +y) from "
-             "where the scene declares it")
+    add("--misplace-mm", type=float, default=0.0, help="geometry judge: "
+        "the TRUE object is this far (base +y) from the declaration")
+    add("--judge-questions", choices=NAMES, default="choice")
+    add("--judge-views", default=",".join(ALL_VIEWS), help="mirrored views "
+        "averaged per photo, e.g. rot180 (default: all four)")
+    add("--servo-budget-s", type=float, default=DEFAULT_BUDGET_S)
+    add("--verbose-servo", action="store_true", help="per-question answers")
     return parser
 
 
 def make_judge(parser, args, kind: str, world0):
+    how = dict(formulation=args.judge_questions, debug=args.verbose_servo,
+               views=tuple(v for v in args.judge_views.split(",") if v))
     if kind == "jev":
-        return JevJudge(debug=args.debug)
+        return JevJudge(**how)
     if kind == "remote":
         if not args.judge_url:
             parser.error("--judge remote needs --judge-url")
-        return RemoteJudge(args.judge_url, debug=args.debug)
+        return RemoteJudge(args.judge_url, **how)
     declared = world0.find(args.object)
     if declared is None:
         parser.error(f"{args.object!r} is not in the scene; the geometry "
@@ -171,7 +168,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                      f"a photo")
     servo = Servo(wrist_frames(snapshotter) if snapshotter else lambda s: None,
                   make_judge(parser, args, judge_kind, world0), out_dir=run_dir,
-                  observe_only=args.judge_only, refine=args.refine)
+                  observe_only=args.judge_only, refine=args.refine,
+                  budget_s=args.servo_budget_s,
+                  log=lambda line: print(f"[servo] {line}", file=sys.stderr,
+                                         flush=True))
     if dry:
         model = ScriptedModel(args.object, args.destination, declare=(
             two_things_on(world0, obj=args.object, destination=args.destination)

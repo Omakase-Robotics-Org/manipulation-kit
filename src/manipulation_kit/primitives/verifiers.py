@@ -73,6 +73,10 @@ ASSOCIATION_TOL_M = 0.08
 #: read up to that much high. A contact higher than this stopped on something
 #: before the surface — for a grasp, usually the object's own top.
 SEARCH_STOP_TOL_M = 0.010
+#: :attr:`~manipulation_kit.executor.ContactReport.surface` of a stop ON the
+#: object rather than its support (mirrors ``executor.SURFACE_OBJECT``; the
+#: executor imports this package, so it is not imported back)
+SURFACE_OBJECT = "object"
 
 #: :class:`Holding`'s per-criterion outcomes (``measured["checks"]``)
 CHECK_PASS, CHECK_FAIL, CHECK_UNMEASURED = "pass", "fail", "unmeasured"
@@ -316,7 +320,7 @@ def _inferred(world: WorldView, name: str) -> str:
     the stroke, a ``predicted`` one is where the hand let go — both inferences
     (:mod:`manipulation_kit.world.attach`). A verdict computed from either says
     so, and a NEGATIVE one becomes UNKNOWN: a confident FALSE from a pose
-    nobody saw is as wrong as a confident TRUE (Astra review 11).
+    nobody saw is as wrong as a confident TRUE (design review 11).
     """
     item = world.find(name)
     if item is None or item.provenance not in ("attached", "predicted"):
@@ -608,15 +612,32 @@ class Holding(Verifier):
                 fails.append(f"the {self.side} tool stopped "
                              f"{-out['tool_along_m'] * 1000:.0f} mm short of "
                              f"the grasp point along the approach")
-        tip = self._search_stop(world1, run)
-        if stroke.by_contact and tip is not None:
+        stop = self._search_stop(world1, run)
+        if stroke.by_contact and stop is not None:
             evidence = True
-            made, p = tip
+            made, p, report = stop
             above = float(p[2]) - stroke.floor_z
             out.update(search_contact=made,
                        search_stop_z_m=round(float(p[2]), 4),
                        search_stop_above_floor_m=round(above, 4))
-            if made and above > SEARCH_STOP_TOL_M:
+            # THE RUNNER'S OWN CLASSIFICATION, when the leg made one (a
+            # ``back_off`` leg: ``ContactReport.surface``, judged against the
+            # leg's ``band_m``); the floor-height rule only for a record that
+            # does not carry it (a folded contact, an older report)
+            surface = getattr(report, "surface", "") if report is not None else ""
+            if surface:
+                out.update(search_surface=surface,
+                           search_support=report.support,
+                           backoff_m=round(float(report.backoff_m), 5))
+                for key in ("tip_z_before_m", "tip_z_after_m",
+                            "backoff_measured_m"):
+                    value = getattr(report, key)
+                    if value is not None:
+                        out[key] = round(float(value), 5)
+                on_object = surface == SURFACE_OBJECT
+            else:
+                on_object = made and above > SEARCH_STOP_TOL_M
+            if on_object:
                 try:
                     top = stroke.item.top_face_z(self.world0.frames)
                     what = (f"{stroke.item.name!r}'s top is "
@@ -639,22 +660,25 @@ class Holding(Verifier):
         return out
 
     def _search_stop(self, world1: WorldView, run: Any):
-        """``(made, fingertip point)`` where this grasp's search leg stopped:
-        the run's own contact report, else the contact the loop folded into
-        the later world (verb ``grasp``, this side, after ``world0``)."""
+        """``(made, fingertip point, report)`` where this grasp's search leg
+        stopped: the run's own contact report (``report`` is it), else the
+        contact the loop folded into the later world (verb ``grasp``, this
+        side, after ``world0``; ``report`` is None)."""
         from . import grasp_geometry as gg  # noqa: PLC0415
         for report in reversed(tuple(getattr(run, "contacts", ()) or ())):
             if report.side != self.side:
                 continue
             travel = -np.asarray(report.normal_hint, dtype=float)
             travel = travel / max(float(np.linalg.norm(travel)), 1e-12)
-            return (bool(report.made),
-                    np.asarray(report.p_tool, dtype=float)
-                    + travel * gg.PAD.lead_m)
+            tip = np.asarray(report.p_tool, dtype=float) + travel * gg.PAD.lead_m
+            if getattr(report, "tip_z_before_m", None) is not None:
+                tip[2] = float(report.tip_z_before_m)
+            return bool(report.made), tip, report
         for contact in reversed(tuple(world1.contacts)):
             if (contact.side == self.side and contact.verb == "grasp"
                     and float(contact.stamp) >= float(self.world0.stamp)):
-                return bool(contact.made), np.asarray(contact.p, dtype=float)
+                return (bool(contact.made), np.asarray(contact.p, dtype=float),
+                        None)
         return None
 
     def measure(self, world1: WorldView) -> VerdictReport:

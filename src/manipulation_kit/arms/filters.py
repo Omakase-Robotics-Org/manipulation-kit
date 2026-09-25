@@ -8,7 +8,7 @@ constructor arguments so a consumer can filter two things at different rates
 without touching the environment.
 
 See :mod:`manipulation_kit.arms.safety` for the tuning rationale (tremor band, why the
-cutoff must adapt to speed, and the field report that prompted it).
+cutoff must adapt to speed, and the field report that led to it).
 """
 
 from __future__ import annotations

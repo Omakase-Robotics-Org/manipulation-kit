@@ -414,7 +414,8 @@ src/manipulation_kit/     the installed package — this, and only this, is the 
 contrib/         research, not installed (whole-body IK: base + lift + neck)
 examples/        runnable scripts: preflight.py (the live-robot check),
                  gesture generation, preview, click-to-move IK, and agent/ —
-                 the part that knows a model exists
+                 the agents: everything that knows a model exists (the
+                 harness above never imports it)
 tools/vendoring/ CAD re-import; needs the private assets repo, not installed
 dist/            prebuilt, provenance-tracked exports
 docs/            the institutional notes, verbatim
@@ -527,6 +528,21 @@ plane); `Press(target=..., direction="forward", force_nm=...)` pushes, holds
 and returns. Position mode only — a watched straight line, never a torque
 command — and gated on hardware by the same document.
 
+**What a contact leg does once something resists** is a per-verb decision,
+named (`primitives.ContactPolicy`, `VERB_CONTACT_POLICY`), never a field a
+model sets:
+
+| verb | policy | after the stop |
+|---|---|---|
+| `probe` | `stay` | re-commanded at the measured stop; stays touching (the contact is the measurement) |
+| `grasp` (fingertip, by contact) | `back_off` | a stop ON the support the object stands on (within 5 mm of the modelled top, or past it) retreats `ClearancePolicy.contact_backoff_m` (1 mm) along minus the travel before the jaws close; a stop higher up, on the object, closes where it stopped |
+| `press` | `push_through` | holds the frozen command against the face for `hold_s`, then retracts to the standoff |
+
+The run records what a `back_off` leg stopped on and what it did
+(`ContactReport.surface` = `support` / `object` / `none`, `support`,
+`height_m`, `backoff_m`, `tip_z_before_m`, `tip_z_after_m`,
+`backoff_measured_m`).
+
 **`Handover(object="cube")`** passes a held object to the other hand: the
 giving hand meets at a point both arms reach, the receiving hand approaches
 (travelling `direction`, default `left` = toward a left-hand giver) and
@@ -630,21 +646,27 @@ second, independent guard pass over the whole path. Streaming
 `move_joints_both` at 50 Hz stays available for the case that genuinely is a
 stream.
 
-### Where the line between the kit and a model runs
+### Architecture: the harness (`src/`) and the agents (`examples/`)
 
-Shu, 2026-09-19: 「approach とか少し高次のスキルも manip kit に実装するわけで、
-それは agent の中ではなくて、普通に primitive の中に入れる」 and 「agent 的なのは
-examples フォルダに切り離す」. So the split runs between *capability* and *one way
-of driving it* — and after the 2026-09-19 review the line moved, because three
-things had been filed on the wrong side of it:
+`src/manipulation_kit` is the **robot harness**: capabilities, the loop's
+mechanics and the seams an agent plugs into. It knows no agent — no model
+name, no prompt, no question wording, no judge formulation, no provider
+client. Everything that knows a model exists lives under `examples/agent/`.
+Higher-level skills such as `approach` are primitives in the harness, not
+agent code. `tests/test_harness_boundary.py` enforces the line: no file under
+`src/manipulation_kit` may name a specific agent or model family, and no
+module there may import from `examples/` (its allowlist is empty and must
+stay so).
 
-| in the wheel — capability | in `examples/agent/` — the model |
+| in the harness (`src/`) — capability and seams | in `examples/agent/` — the agents |
 |---|---|
-| `world/` — the perception-result types | `astra_loop.py` — the prompt, the provider client, the scripted stand-in, the message bookkeeping |
-| `primitives/` — the verbs, their plans and their measured verifiers | `menu.py` / `jev_menu.py` — the Jev renderer: ranking, the cap, wait/rescan/stop, the question itself |
+| `world/` — the perception-result types | `astra_loop.py` — the planner model's system text, the provider client, the scripted stand-in, the message bookkeeping |
+| `primitives/` — the verbs, their plans and their measured verifiers | `menu.py` / `jev_menu.py` — a typed-choice renderer: ranking, the cap, wait/rescan/stop, the question itself |
 | `primitives/offer.py` — the IK+guard gate: what can this robot do right now | `snapshot.py` — the camera-grab contract |
 | `primitives/schema.py`, `arguments.py` — the canonical argument table, a JSON Schema export, and `decode()` back | `scene.py` — the shared demo scene |
 | `agent/` — `OperatorPolicy`, the provider-independent loop, `LiveRobot` / `KinematicMirror` and the `--executor` registry, the JSONL decision trace | |
+| `agent/servo.py` — the wrist servo's inner loop: project, mark, accumulate the judge's answers, step on the nudge grid, `image_direction_in_base` | `jev_servo.py` — the servo driven by a classifier judge |
+| `agent/judge.py` — **the judge seam**: typed `Question`s (choice / yes-no / ordinal score) and their answers, the `Formulation` protocol, mirrored views mapped back, the letters drawn beside the box, `AskingJudge` over a transport | `jev_questions.py` — what the classifier is asked (wording, labels, the `choice` / `score` / `grasp` / `letters` formulations, their thresholds); `jev_judge.py` / `jev_judge_server.py` — where it runs; `jev_questions_lab.py` — the offline question-design lab |
 | `primitives/reach.py` — which hand can do the WHOLE task | |
 | `executor.py`, `executors/` — how a plan reaches a robot | |
 

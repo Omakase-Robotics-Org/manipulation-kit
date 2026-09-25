@@ -31,8 +31,8 @@ from typing import (Any, Dict, List, Mapping, Optional, Protocol, Sequence,
 import numpy as np
 
 from .primitives.orientation import link7_from_tool, tool_from_link7, tool_revision
-from .primitives.types import (ContactCriterion, ContactStep, GripStep,
-                               JointStep, Plan, SettleStep, Waypoint)
+from .primitives.types import (ContactCriterion, ContactPolicy, ContactStep,
+                               GripStep, JointStep, Plan, SettleStep, Waypoint)
 
 #: wire layout — see the module docstring
 ARM_DOF = 7
@@ -455,6 +455,18 @@ CONTACT_BASELINE_SAMPLES = 3
 #: transient, and a transient does not double the threshold.
 CONTACT_ABORT_FACTOR = 2.0
 
+#: WHAT a ``back_off`` contact leg stopped on (:class:`ContactReport.surface`).
+#: ``support``: the tips stopped on the surface the object stands on (within
+#: :attr:`~manipulation_kit.primitives.types.SurfaceBackoff.band_m` of it) —
+#: the leg retreats. ``object``: they stopped higher up, on the object — it
+#: closes where it stopped. ``none``: nothing resisted. ``""``: the leg's
+#: policy does not classify its stop (``stay``, ``push_through``).
+SURFACE_SUPPORT = "support"
+SURFACE_OBJECT = "object"
+SURFACE_NONE = "none"
+CONTACT_SURFACES: Tuple[str, ...] = ("", SURFACE_SUPPORT, SURFACE_OBJECT,
+                                     SURFACE_NONE)
+
 
 @dataclass(frozen=True)
 class ContactReport:
@@ -472,6 +484,16 @@ class ContactReport:
     ``leg_t_s`` is how far along the leg's own timing the COMMAND had got
     when it was frozen — what a retract plays back from. ``q_stop`` is the
     measured posture itself.
+
+    A ``back_off`` leg (:class:`~manipulation_kit.primitives.types.ContactPolicy`)
+    also says what it stopped ON and what the runner did about it:
+    ``surface`` (:data:`CONTACT_SURFACES`), ``support`` (its name),
+    ``height_m`` (how far short of the modelled support, along the travel,
+    the tool stopped — negative past it), ``backoff_m`` (the retreat
+    COMMANDED, 0 when none), the leading finger tips' base z at the stop
+    (``tip_z_before_m``) and once the runner is done with the leg
+    (``tip_z_after_m``, from the MEASURED posture), and the measured retreat
+    of the tool point along minus the travel (``backoff_measured_m``).
     """
 
     made: bool
@@ -486,11 +508,21 @@ class ContactReport:
     q_stop: Optional[np.ndarray] = None
     leg_t_s: float = 0.0
     elapsed_s: float = 0.0
+    surface: str = ""
+    support: str = ""
+    height_m: float = float("nan")
+    backoff_m: float = 0.0
+    tip_z_before_m: Optional[float] = None
+    tip_z_after_m: Optional[float] = None
+    backoff_measured_m: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.stopped_by not in CONTACT_STOPS:
             raise ValueError(f"unknown contact stop {self.stopped_by!r}; the "
                              f"vocabulary is {CONTACT_STOPS}")
+        if self.surface not in CONTACT_SURFACES:
+            raise ValueError(f"unknown contact surface {self.surface!r}; the "
+                             f"vocabulary is {CONTACT_SURFACES}")
         object.__setattr__(self, "p_tool",
                            np.array(self.p_tool, dtype=float).reshape(3))
         object.__setattr__(self, "normal_hint",
@@ -513,6 +545,16 @@ class ContactReport:
             "elapsed_s": num(self.elapsed_s, 3), "detail": self.detail}
         if self.joint >= 0:
             out["joint"] = int(self.joint)
+        if self.surface:
+            def opt(value: Optional[float]) -> Optional[float]:
+                return None if value is None else num(value, 5)
+            out.update({
+                "surface": self.surface, "support": self.support,
+                "height_m": num(self.height_m, 5),
+                "backoff_m": num(self.backoff_m, 5),
+                "tip_z_before_m": opt(self.tip_z_before_m),
+                "tip_z_after_m": opt(self.tip_z_after_m),
+                "backoff_measured_m": opt(self.backoff_measured_m)})
         return out
 
 
@@ -605,6 +647,99 @@ def retract_path(step: ContactStep, report: "ContactReport"
         if float(t) < here - 1e-9:
             back.append((here - float(t), np.asarray(q, dtype=float)))
     return back
+
+
+def leg_posture_at(step: ContactStep, s_m: float) -> np.ndarray:
+    """The leg's joint posture ``s_m`` along its travel, between the two
+    knots that bracket it — the knots the guard approved on the way in."""
+    s = [float(v) for v in step.s]
+    target = min(max(float(s_m), s[0]), s[-1])
+    for (s0, q0), (s1, q1) in zip(zip(s, step.path), zip(s[1:], step.path[1:])):
+        if target <= s1 + 1e-12:
+            span = s1 - s0
+            f = 1.0 if span <= 1e-12 else (target - s0) / span
+            return (np.asarray(q0, dtype=float)
+                    + f * (np.asarray(q1, dtype=float) - np.asarray(q0, dtype=float)))
+    return np.asarray(step.path[-1], dtype=float)
+
+
+@dataclass(frozen=True)
+class ContactOutcome:
+    """What a ``back_off`` leg's stop was ON, and where the arm goes next.
+
+    ``q_backoff`` is the posture ``distance_m`` short of the stop along the
+    leg, for a stop on the support with a non-zero back-off; ``None``
+    otherwise (the runner then does what ``stay`` does).
+    """
+
+    surface: str
+    height_m: float
+    q_backoff: Optional[np.ndarray] = None
+    distance_m: float = 0.0
+
+
+def contact_outcome(step: ContactStep, report: "ContactReport"
+                    ) -> Optional[ContactOutcome]:
+    """THE ONE RULE both runners apply after a contact leg (``None`` for a
+    leg whose policy is not ``back_off``).
+
+    The stop is ON the support when the measured tool travel reached within
+    ``band_m`` of where the plan's model puts the tips on it
+    (``surface_at_m``), or went past it; further short it is on the object.
+    Only a stop on the support retreats: along the leg's own knots, to
+    ``travel - distance_m`` (never behind the leg start).
+    """
+    if step.policy is not ContactPolicy.BACK_OFF or step.backoff is None:
+        return None
+    b = step.backoff
+    if not report.made:
+        return ContactOutcome(SURFACE_NONE, float("nan"))
+    height = float(b.surface_at_m) - float(report.travel_m)
+    if height > float(b.band_m) + 1e-9:
+        return ContactOutcome(SURFACE_OBJECT, height)
+    if b.distance_m <= 0.0:
+        return ContactOutcome(SURFACE_SUPPORT, height)
+    distance = min(float(b.distance_m), max(0.0, float(report.travel_m)))
+    return ContactOutcome(SURFACE_SUPPORT, height,
+                          leg_posture_at(step, float(report.travel_m) - distance),
+                          distance)
+
+
+def backoff_ticks(step: ContactStep, report: "ContactReport",
+                  outcome: ContactOutcome, hz: float
+                  ) -> List[np.ndarray]:
+    """The retreat as streamed commands: from the measured stop to
+    ``q_backoff`` at the leg's own speed (at least one tick)."""
+    start = (np.asarray(report.q_stop, dtype=float) if report.q_stop is not None
+             else leg_posture_at(step, report.travel_m))
+    span = max(float(outcome.distance_m) / float(step.speed_m_s), 1.0 / float(hz))
+    return [q for _t, q in leg_ticks([(0.0, start), (span, outcome.q_backoff)],
+                                     hz)]
+
+
+def record_outcome(report: "ContactReport", step: ContactStep,
+                   outcome: Optional[ContactOutcome], kin, q_after
+                   ) -> "ContactReport":
+    """``report`` with the back-off record filled in (unchanged for a leg
+    whose policy does not classify its stop). ``q_after`` is the side's
+    MEASURED posture once the runner is done with the leg."""
+    if outcome is None:
+        return report
+    u = -np.asarray(report.normal_hint, dtype=float)
+    lead = float(step.backoff.tip_lead_m)
+    before = float((np.asarray(report.p_tool, dtype=float) + u * lead)[2])
+    after = moved = None
+    if q_after is not None:
+        p_after, _ = ToolGate._tool(kin, report.side or step.side, q_after)
+        p_after = np.asarray(p_after, dtype=float)
+        after = float((p_after + u * lead)[2])
+        moved = float(np.dot(np.asarray(report.p_tool, dtype=float) - p_after, u))
+    return dataclasses.replace(
+        report, surface=outcome.surface, support=step.backoff.support,
+        height_m=float(outcome.height_m),
+        backoff_m=float(outcome.distance_m if outcome.q_backoff is not None
+                        else 0.0),
+        tip_z_before_m=before, tip_z_after_m=after, backoff_measured_m=moved)
 
 
 def contact_kin(executor: Any, kin=None):
@@ -984,7 +1119,7 @@ STROKE_UNFINISHED = "stroke_unfinished"
 #: unfinished stroke can be waited for, a faulted gripper cannot. (d1-2,
 #: 2026-09-22: a firm hold wound its torque to -4.17 Nm, the motor latched,
 #: and every later stroke ended ``fault`` with the jaws stationary — which
-#: the barrier accepted as a finished stroke. Astra review, finding 13.)
+#: the barrier accepted as a finished stroke. Design review, finding 13.)
 GRIPPER_FAULT = "gripper_fault"
 #: A stroke the plan marked ``GripStep.expect_hold`` finished WITHOUT a
 #: measured hold (``StrokeReport.holding`` false or unknown). The run stops
@@ -1732,7 +1867,7 @@ def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
 
     A number with no move attached costs the caller a turn to work out, and
     an agent given one spends that turn re-asking for the same verb with a
-    different argument — measured, five of twelve turns of an Astra trial
+    different argument — measured, five of twelve turns of an agent trial
     (2026-09-21). The two misses have different answers and the barrier knows
     which one it saw.
     """
@@ -1746,7 +1881,7 @@ def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
             and abs(arrival.tool_along_m) > gate.tol_along_m):
         # Lined up and short: that is what CONTACT looks like. Only then — a
         # miss that is off in BOTH is not a story about the surface, and
-        # measured with Astra this wording went out on an arm 320 mm away.
+        # measured in an agent trial this wording went out on an arm 320 mm away.
         return (f"{arrival.detail}. The arm is stationary short of the "
                 f"waypoint along its own approach axis, which is what CONTACT "
                 f"looks like: something is under the fingers. Re-observe, or "
@@ -2211,7 +2346,10 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
                     f"the {step.side} contact leg stopped by "
                     f"{report.stopped_by}: {report.detail}"))
             t_last += max(period, report.elapsed_s)
-            for q in _after_contact(step, report, hz):
+            outcome = contact_outcome(step, report)
+            backing_off = outcome is not None and outcome.q_backoff is not None
+            for q in (backoff_ticks(step, report, outcome, hz) if backing_off
+                      else _after_contact(step, report, hz)):
                 vector = np.array(last_vector, dtype=float)
                 vector[JOINT_SLICE[step.side]] = q
                 t_last += period
@@ -2219,6 +2357,27 @@ def run_steps(plan: Plan, executor: "Executor", *, hz: float = 50.0,
                 last_vector = vector
             joints[step.side] = np.array(last_vector[JOINT_SLICE[step.side]],
                                          dtype=float)
+            if backing_off:
+                # THE RETREAT IS A POSTURE THE ARM MUST REACH before the
+                # jaws close — it leaves the surface — so it is waited for,
+                # and then measured (the barrier's degrees cannot see 1 mm).
+                arrival = _arrival_of(executor, last_vector,
+                                      tol_rad=arrive_tol_rad,
+                                      timeout_s=arrive_timeout_s)
+                arrivals.append(arrival)
+                if not arrival.arrived:
+                    contacts[-1] = record_outcome(
+                        report, step, outcome,
+                        contact_kin(executor, gate.kin), None)
+                    return stop(index, BARRIER_FAILED, (
+                        f"the {step.side} arm did not reach the "
+                        f"{outcome.distance_m * 1000:.1f} mm back-off off "
+                        f"the support: {arrival.detail}"))
+            if outcome is not None:
+                measured = executor.state().joints.get(step.side)
+                contacts[-1] = record_outcome(
+                    report, step, outcome, contact_kin(executor, gate.kin),
+                    measured)
             # A contact leg ends where the contact stopped it, and that is
             # MEASURED by the leg itself; the hold that follows is not a
             # posture the arm is expected to reach through the surface.
