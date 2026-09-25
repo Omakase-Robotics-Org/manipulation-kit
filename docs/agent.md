@@ -84,8 +84,11 @@ print(trace.stop, trace.summary())
   per iteration. The trace keeps every iteration (`record.servo.steps[]`:
   `iteration`, `t_s`, `accumulated`, `frames`, `decision`, `frame_age_s`,
   `timing_s`) and `elapsed_s` / `iterations`.
-  **What the judge is asked** is `manipulation_kit.agent.judge`: the
-  formulation (`choice`, the six-way question; `score`, two ordinal axis
+  **What the judge is asked** is the examples' business
+  (`examples/agent/jev_questions.py`) over the harness's model-neutral seam
+  `manipulation_kit.agent.judge` (typed questions and answers, the
+  `Formulation` protocol, mirrored views, letters drawn beside the box,
+  `AskingJudge`): the formulation (`choice`, the six-way question; `score`, two ordinal axis
   scores and a yes/no "inside", decided by per-question thresholds;
   `grasp`, `score` plus two grasp-geometry questions; `letters`, a letter
   on a disc outside each side of the box and "toward which letter", no
@@ -95,7 +98,7 @@ print(trace.stop, trace.summary())
   photo). The default is `choice` over all four views: asked about the
   upright d1-2 wrist photo alone, the classifier does not read up/down (a
   "below" bias), and on the three photos of the 2026-09-24 live run its
-  accumulated answer steps AWAY from the roll. `tools/jev_questions_lab.py`
+  accumulated answer steps AWAY from the roll. `examples/agent/jev_questions_lab.py`
   measures formulations offline on real photos with boxes drawn at known
   offsets, records every answer and recomputes its tables from the record.
   Every judgement and its distribution is in the trace (`record.servo`). The

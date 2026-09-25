@@ -60,7 +60,7 @@ GOHOME_SIDE_CHOICES: Tuple[str, ...] = SIDES + (AUTO, BOTH)
 
 #: The grasp directions a planner TRIES, in order, when it is choosing one —
 #: aliases of :data:`manipulation_kit.world.ALIASES` (the way the tool travels
-#: onto the object). ONE constant, so the prompt, the example's hand chooser
+#: onto the object). ONE constant, so the model-facing text, the example's hand chooser
 #: and the offer generator cannot disagree about the set or its order again.
 #: It is a search order, not the vocabulary: a verb takes any
 #: :class:`~manipulation_kit.world.Direction`.
@@ -71,8 +71,8 @@ GRASP_DIRECTIONS: Tuple[str, ...] = ("down", "forward", "left", "right")
 GRIPS: Tuple[str, ...] = ("soft", "firm", "strong")
 
 #: The correction grid, metres. Coarse AND fine in the same menu: a task that
-#: needs a 30 mm correction fails when 50 mm is the only offer (Raptor's Jev
-#: run, 2026-09-19), and a menu of only fine steps costs turns.
+#: needs a 30 mm correction fails when 50 mm is the only offer (a classifier-
+#: driven run, 2026-09-19), and a menu of only fine steps costs turns.
 NUDGE_GRID_M: Tuple[float, ...] = (0.010, 0.030, 0.050)
 #: the only rotation a model may ask for, about the approach axis
 NUDGE_MAX_YAW_RAD = math.radians(15.0)
@@ -916,7 +916,7 @@ class Primitive:
         state — ``handover`` needs one hand holding a named thing and the
         other measurably free. :func:`.schema.tool_schemas` leaves a verb out
         when this says ``False``; ``decode`` and ``plan`` still refuse it with
-        the typed reason, so hiding it is a prompt economy, never the check.
+        the typed reason, so hiding it is an economy of model-facing text, never the check.
         """
         return True
 
@@ -956,8 +956,8 @@ class LearnedPrimitive(Primitive):
     lives where the policy lives (``d1-inference``), because ``omakase-core``
     must not depend on that package and the kit must not grow a model runtime.
 
-    Shu, 2026-09-19: 「Pour は ACT」. Astra orchestrates at the VLA's level and
-    the learned policy is the body of one verb.
+    Pouring is a learned policy (ACT): the planner model orchestrates at the
+    VLA's level and the learned policy is the body of one verb.
 
     Subclasses declare their own ``policy`` FIELD (``"act:pourwithsmallpotjp"``
     — the executor resolves it, the kit does not). It is not declared here

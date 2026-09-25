@@ -37,7 +37,8 @@ from jev_judge import LABELS, JevJudge, RemoteJudge, rejudge  # noqa: E402,F401
 from manipulation_kit.agent import (DecisionTrace, LiveRobot,  # noqa: E402
                                     OperatorPolicy, Servo, UnknownExecutor,
                                     geometry_judge, run)
-from manipulation_kit.agent.judge import ALL_VIEWS, FORMULATIONS  # noqa: E402
+from jev_questions import NAMES  # noqa: E402
+from manipulation_kit.agent.judge import ALL_VIEWS  # noqa: E402
 from manipulation_kit.agent.servo import DEFAULT_BUDGET_S, servo_line  # noqa: E402
 from manipulation_kit.agent.robot import (  # noqa: E402
     frames_from, head_camera_from_scene, objects_from,
@@ -89,12 +90,11 @@ def build_parser():
              "(trace.jsonl + turn*_*_wrist_0_rgb.jpg) and print each answer")
     add("--misplace-mm", type=float, default=0.0, help="geometry judge: "
         "the TRUE object is this far (base +y) from the declaration")
-    add("--judge-questions", choices=FORMULATIONS, default="choice")
+    add("--judge-questions", choices=NAMES, default="choice")
     add("--judge-views", default=",".join(ALL_VIEWS), help="mirrored views "
         "averaged per photo, e.g. rot180 (default: all four)")
     add("--servo-budget-s", type=float, default=DEFAULT_BUDGET_S)
-    add("--verbose-servo", action="store_true",
-        help="print each judgement's per-question answers too")
+    add("--verbose-servo", action="store_true", help="per-question answers")
     return parser
 
 

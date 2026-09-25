@@ -15,8 +15,8 @@ moves the hand by the same step with its own
 :class:`~manipulation_kit.primitives.Nudge`, photographs again — until the
 judge says ON or the nudge budget of the operator policy is spent.
 
-Why a drawn mark and a relative question (measured on this branch, report
-``jev-servo-loop``): on rendered wrist frames, the same 12B classifier answered
+Why a drawn mark and a relative question (measured with a 12B image
+classifier as the judge, on rendered wrist frames): asked
 "which way must the hand move" with the same option on every image (a prior,
 not a perception) and put a cup that was outside the jaws "between" them at
 0.86; with the kit's projected pixel drawn on the frame, it placed the cup
@@ -356,8 +356,8 @@ def mark(photo: Path, u: float, v: float, out: Path, *,
     grown by the alignment tolerance. The judge is asked about the object
     RELATIVE to the box: inside it, or sticking out to one side.
 
-    Why a box and not a cross (kinematic-mirror runs with Jev-Omni, report
-    ``jev-servo-loop``): with the cross alone a block 10 mm off — inside any
+    Why a box and not a cross (kinematic-mirror runs with a classifier
+    judge): with the cross alone a block 10 mm off — inside any
     grasp tolerance — was judged "on" at 0.24 and a block 30 mm off got no
     answer above 0.36; the cross was hidden under the object and the judge
     reads overlap, not centres. Against the outline box every direction came
@@ -585,7 +585,7 @@ class Servo:
         """Mark ``photo`` (may be None) with where ``item`` projects in
         ``camera`` and the box grown by ``tolerance_m``: one look, no motion.
         Public so a recorded photo can be judged again offline
-        (``examples/agent/jev_servo.py --rejudge``). None when the item does
+        (the examples' offline re-judge). None when the item does
         not project into the image."""
         tolerance = self.tolerance_m if tolerance_m is None else float(tolerance_m)
         seen = camera.project_object(item, frames)

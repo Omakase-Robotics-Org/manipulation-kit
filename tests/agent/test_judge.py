@@ -1,6 +1,7 @@
-"""``manipulation_kit.agent.judge``: what the servo's judge is asked, in
-which shape, about which view — and the recorded d1-2 answers replayed
-through the servo's accumulation rule."""
+"""``manipulation_kit.agent.judge`` (the model-neutral seam: typed
+questions, mirrored views, letters) and ``examples/agent/jev_questions.py``
+(what Jev is asked) — and the recorded d1-2 answers replayed through the
+servo's accumulation rule."""
 
 from __future__ import annotations
 
@@ -9,9 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from manipulation_kit.agent.judge import (ALL_VIEWS, SCORE_VOTE, AskingJudge,
-                                          questions, read, score_verdict,
-                                          to_choices, unview)
+import sys
+
+from manipulation_kit.agent.judge import (ALL_VIEWS, AskingJudge, Question,
+                                          read, unview)
+
+# what Jev is asked lives with the examples, not in the kit
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples" / "agent"))
+from jev_questions import (FORMULATIONS, SCORE_VOTE, questions,  # noqa: E402
+                           score_verdict, state_for, to_choices)
 from manipulation_kit.agent.servo import (CHOICES, DEFAULT_MARGIN, ServoLook,
                                           accumulate, decide)
 
@@ -107,6 +114,7 @@ class Transport(AskingJudge):
     """A fake transport: 'below' in the photo AS SHOWN, whatever it is."""
 
     def __init__(self, **kwargs):
+        kwargs.setdefault("formulation", FORMULATIONS["choice"])
         super().__init__(**kwargs)
         self.shown = []
 
@@ -195,8 +203,6 @@ def test_the_remote_judge_batches_every_question_of_a_view(agent_examples,
 
 
 def test_the_lab_grades_what_the_servo_would_do(agent_examples, tmp_path):
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
     import jev_questions_lab as lab
     assert lab.ordinal(0, 47) == 0 and lab.ordinal(-40, 47) == -1
     assert lab.ordinal(80, 47) == 2
@@ -291,7 +297,6 @@ def test_each_letter_is_drawn_on_the_side_it_maps_to(tmp_path):
 def test_a_letters_answer_needs_no_mapping_back(tmp_path):
     """The letters are painted into the photo, so a mirrored view carries
     them along: "toward A" is the side A is drawn on in every view."""
-    from manipulation_kit.agent.judge import state_for
     q, = questions("tape", "letters")
     assert q.ids == ("above", "right", "below", "left", "on", "not_visible")
     assert all("letter" in o for o in q.options[:4])
@@ -309,5 +314,18 @@ def test_a_letters_answer_needs_no_mapping_back(tmp_path):
     look = ServoLook(side="right", object="tape", camera=None, u=32.0, v=24.0,
                      depth_m=0.2, image=look.image, photo=look.photo,
                      box_px=(22.0, 14.0, 42.0, 34.0))
-    dist = SaysA(formulation="letters")(look)
+    dist = SaysA(FORMULATIONS["letters"])(look)
     assert dist["above"] == pytest.approx(1.0)
+
+
+def test_a_question_says_its_shape():
+    with pytest.raises(ValueError):
+        Question("q", "essay", "?", ("a", "b"))
+    with pytest.raises(ValueError):
+        Question("q", "noul", "?", ("yes", "no", "maybe"))
+    with pytest.raises(ValueError):
+        Question("q", "score", "?", ("a", "b"), (1,), mirror="u")
+    q = Question("q", "score", "?", ("low", "high"), (-1, 1), mirror="u")
+    assert read(q, [0.25, 0.75])["value"] == pytest.approx(0.5)
+    assert unview(q, [0.25, 0.75], "flip_h") == [0.75, 0.25]
+    assert unview(q, [0.25, 0.75], "flip_v") == [0.25, 0.75]

@@ -50,7 +50,7 @@ model, and are therefore here rather than in ``examples/agent/``:
 
 None of them imports a provider SDK and none of them adds a dependency: the
 package still installs as numpy + scipy. What stays outside the wheel is the
-part that knows a model exists — prompts, authentication, request envelopes,
+part that knows a model exists — model-facing text, authentication, request envelopes,
 ranking, menu capping, the scripted policy and the runnable loops.
 """
 

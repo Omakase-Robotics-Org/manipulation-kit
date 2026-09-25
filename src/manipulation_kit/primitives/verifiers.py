@@ -269,7 +269,7 @@ def _inferred(world: WorldView, name: str) -> str:
     the stroke, a ``predicted`` one is where the hand let go — both inferences
     (:mod:`manipulation_kit.world.attach`). A verdict computed from either says
     so, and a NEGATIVE one becomes UNKNOWN: a confident FALSE from a pose
-    nobody saw is as wrong as a confident TRUE (Astra review 11).
+    nobody saw is as wrong as a confident TRUE (design review 11).
     """
     item = world.find(name)
     if item is None or item.provenance not in ("attached", "predicted"):

@@ -17,8 +17,8 @@ are the third option, offered beside the motion verbs every turn:
                    :mod:`manipulation_kit.agent.loop`).
 
 Neither moves anything, so neither goes through the motion gate. Moved here
-from ``examples/agent/astra_loop.py`` (design C.8): they are loop mechanics,
-not a prompt.
+from the examples (design C.8): they are loop mechanics, not model-facing
+text.
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ def apply_declare_scene(robot: Any, arguments: Dict[str, Any], *,
     position is refused with the reader's own message rather than crashing
     four verbs later. THE DESCENT FLOOR TRUSTS THE OBJECT'S BOTTOM, so a
     declared object is lifted onto the surface it stands on — the kit's rule,
-    which resolves the surface's frame and rotation (Astra review 4).
+    which resolves the surface's frame and rotation (design review 4).
     """
     from ..perception import lift_onto_support  # noqa: PLC0415
     from ..world import FrameGraph, SurfaceView  # noqa: PLC0415

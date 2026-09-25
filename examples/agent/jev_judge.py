@@ -2,10 +2,11 @@
 offline re-judge of a recorded run's wrist photos.
 
 The kit owns the choice ids, the mark, the direction and the step
-(``manipulation_kit.agent.servo``) and what is asked in which shape about
-which view (``manipulation_kit.agent.judge``). What is here is the part that
-knows where the classifier runs. Both judges take ``formulation=`` (choice /
-score / grasp) and ``views=`` (upright, flip_v, flip_h, rot180).
+(``manipulation_kit.agent.servo``) and the model-neutral seam — typed
+questions, mirrored views (``manipulation_kit.agent.judge``). What Jev is
+asked is ``jev_questions.py``; what is here is where the classifier runs.
+Both judges take ``formulation=`` (a name in ``jev_questions.NAMES``) and
+``views=`` (upright, flip_v, flip_h, rot180).
 
     JevJudge()                 the 12B classifier in THIS process (a GPU with
                                ~47 GB free, measured; loaded on first call)
@@ -29,14 +30,24 @@ from typing import Any, Callable, Dict, Mapping, Optional
 import numpy as np
 
 from manipulation_kit.agent import Servo, ServoLook
-from manipulation_kit.agent.judge import (LABELS, QUESTION, STATE,  # noqa: F401
-                                          AskingJudge)
+from manipulation_kit.agent.judge import DEFAULT_VIEWS, AskingJudge
+from jev_questions import FORMULATIONS, LABELS  # noqa: F401
+
+
+def _asking(formulation: str, views, debug: bool) -> Dict[str, Any]:
+    """``AskingJudge`` keyword arguments from the examples' flags."""
+    if formulation not in FORMULATIONS:
+        raise ValueError(f"formulation must be one of {tuple(FORMULATIONS)}")
+    return {"formulation": FORMULATIONS[formulation], "views": tuple(views),
+            "log": ((lambda line: print(f"[jev_judge] {line}",
+                                        file=sys.stderr)) if debug else None)}
 
 class JevJudge(AskingJudge):
     """Jev-Omni in this process. Loaded on first use."""
 
-    def __init__(self, debug: bool = False, **kwargs: Any):
-        super().__init__(debug=debug, **kwargs)
+    def __init__(self, debug: bool = False, *, formulation: str = "choice",
+                 views=DEFAULT_VIEWS):
+        super().__init__(**_asking(formulation, views, debug))
         self.classifier = None
 
     def load(self):
@@ -65,8 +76,9 @@ class RemoteJudge(AskingJudge):
     asked one ``/judge`` per question."""
 
     def __init__(self, url: str, *, timeout_s: float = 10.0,
-                 debug: bool = False, **kwargs: Any):
-        super().__init__(debug=debug, **kwargs)
+                 debug: bool = False, formulation: str = "choice",
+                 views=DEFAULT_VIEWS):
+        super().__init__(**_asking(formulation, views, debug))
         self.base = url.rstrip("/")
         self.url = self.base + "/judge"
         self.timeout_s = float(timeout_s)

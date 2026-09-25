@@ -402,8 +402,8 @@ def contact_to_centre(contact: Located, *, size: Sequence[float],
     roll's far edge (0.38 m) and walking a further half-size away declared
     it at 0.353 m — 55 mm short of the photo, the grasp closed beside it.
 
-    This is what a prompt sentence used to ask a model to do in its head
-    (Astra review, item 7). It is a typed conversion now: a ``centre`` cannot
+    This is what a sentence of model-facing text used to ask a model to do
+    in its head (design review, item 7). It is a typed conversion now: a ``centre`` cannot
     be converted again, and a caller that declares a contact point as a
     centre has to say so by not calling this.
     """

@@ -8,13 +8,13 @@ the object in it and the object's MEASURED centre pixel; the lab draws the
 servo's box (``manipulation_kit.agent.servo.mark``) at that centre shifted by
 known pixel offsets, so each case has a true direction and distance. Every
 case is asked in every view of :data:`manipulation_kit.agent.judge.VIEWS`,
-every question of every formulation, once — and the answers are RECORDED
+every question of every formulation of ``jev_questions``, once — and the answers are RECORDED
 (``--out``), so every table below is recomputed from the record with no
 request (``--report RECORD``)::
 
-    python tools/jev_questions_lab.py --manifest photos.json \\
+    python examples/agent/jev_questions_lab.py --manifest photos.json \\
         --judge-url http://127.0.0.1:8766 --out lab.jsonl
-    python tools/jev_questions_lab.py --report lab.jsonl
+    python examples/agent/jev_questions_lab.py --report lab.jsonl
 
 manifest: ``[{"name", "photo", "object", "centre": [u, v], "box": [w, h]}]``
 (``box``: the drawn box's size in pixels — the object's projected outline
@@ -29,7 +29,7 @@ far), ``Aflip`` / ``Arot`` choice@flip_v / @rot180, ``A4`` choice@4 views,
 4 views (asked in a separate run and merged: ``--formulations letters``,
 then ``--report first.jsonl letters.jsonl``).
 The ``servo_*`` columns are what the servo's own rule
-(``manipulation_kit.agent.servo.decide`` on ``judge.to_choices``) does with
+(``manipulation_kit.agent.servo.decide`` on ``jev_questions.to_choices``) does with
 ONE photo; the inner loop accumulates several.
 """
 
@@ -43,13 +43,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "examples" / "agent"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from manipulation_kit.agent.judge import (ALL_VIEWS,  # noqa: E402
-                                          draw_letters, questions, read,
-                                          state_for, to_choices, unview,
+                                          draw_letters, read, unview,
                                           view_image)
+from jev_questions import questions, state_for, to_choices  # noqa: E402
 from manipulation_kit.agent.servo import DEFAULT_MARGIN, decide  # noqa: E402
 
 #: pixel offsets of the object centre from the box centre, per axis
@@ -197,7 +196,7 @@ def score_arm(cases: Dict[Tuple, Dict[str, Any]]) -> Dict[str, Any]:
     (``choice``: P(right) - P(left); ``score``: the expected score),
     ordinal exactness, "on" AUC and hit/miss gap, and the servo's decision
     on ONE photo (:func:`~manipulation_kit.agent.servo.decide` on
-    :func:`~manipulation_kit.agent.judge.to_choices`, window 1)."""
+    :func:`jev_questions.to_choices`, window 1)."""
     axis_ok, axis_n, exact, exact_n = 0, 0, 0, 0
     axis_pos: List[float] = []
     axis_neg: List[float] = []
