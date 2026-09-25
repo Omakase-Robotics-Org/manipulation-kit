@@ -14,8 +14,11 @@ SRC = ROOT / "src" / "manipulation_kit"
 EXAMPLES = ROOT / "examples"
 
 #: agent-specific names that must not appear anywhere in the harness
-#: (``astral`` — the uv installer's domain — is not one)
-AGENT_NAMES = re.compile(r"jev|astra(?!l)|openai|gpt", re.IGNORECASE)
+#: (``astral`` — the uv installer's domain — is not one): the judge and
+#: planner models, and the segmentation models behind the outline seam
+AGENT_NAMES = re.compile(r"jev|astra(?!l)|openai|gpt|\bsam[ _-]?\d|"
+                         r"grounded.?sam|grounding.?dino|segment.anything",
+                         re.IGNORECASE)
 
 #: files allowed to mention one anyway. It must stay empty: a new entry is a
 #: boundary decision, not a test fix
@@ -76,6 +79,9 @@ def test_the_harness_never_imports_an_example():
 
 def test_the_pattern_catches_what_it_is_for():
     for word in ("Jev-Omni", "jev_judge", "AstraDetector", "astra_loop",
-                 "OpenAI", "gpt-6"):
+                 "OpenAI", "gpt-6", "SAM 3", "facebook/sam3", "sam2.1",
+                 "Grounded-SAM-2", "GroundingDINO", "Segment Anything"):
         assert AGENT_NAMES.search(word), word
-    assert not AGENT_NAMES.search("https://astral.sh/uv/install.sh")
+    for word in ("https://astral.sh/uv/install.sh", "the same shape",
+                 "sample", "sampled"):
+        assert not AGENT_NAMES.search(word), word
