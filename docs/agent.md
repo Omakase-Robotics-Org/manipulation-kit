@@ -44,6 +44,157 @@ print(trace.stop, trace.summary())
   measured wrist mount: `--no-look-before-stroke`** — own the blind grasp
   and turn the look on once a wrist photo is seen to agree with the
   projection.
+- `run(..., servo=Servo(frame, judge))` — **the look answered by a judge
+  that chooses, not by the model** (`manipulation_kit.agent.servo`; System 1
+  under a System 2 model). Before EVERY stroke of `SERVO_VERBS` (`grasp` on
+  its `object`, `press` on its `target`; not `probe`, which has no named
+  target, `handover`, which closes inside its own plan, or `approach`, the
+  move to the look) the kit takes a fresh
+  wrist photo (`frame(side) -> path`) and DRAWS on it **where the jaws will
+  close**: the two pads at the current jaw gap (the executor's measured
+  `jaw_gap_m`, else the hand's driven-open gap, else the description's
+  nominal opening), carried along the approach axis to the object's depth
+  and projected through the wrist camera, fisheye included
+  (`manipulation_kit.agent.jaws.jaw_opening`; the camera carries the flange
+  pose it rides on, `WristCamera.flange_p` / `flange_r`) — and the
+  object's outline with its real shape (`jaws.declared_outline`: a cylinder
+  as the silhouette of its top and footprint circles, a box as its eight
+  corners at its declared yaw, anything else as its declared footprint; or
+  a segmenter's polygon through the `object_outline(photo, look)` seam).
+  The reference is the HAND, not the belief: a box drawn around the
+  declared object asks whether the belief agrees with itself once the
+  declaration has moved with the hand. The judge answers about the object
+  relative to the fingers (`judge(look) -> Reading | {choice: p}`): the
+  direction from the opening — `on` (between the jaws), `left` / `right` /
+  `above` / `below` in the image, `not_visible` — and, when asked, how far,
+  the depth against the real fingers (`ahead` / `between` / `behind`),
+  whether the hand hides it, how far the jaws must turn (clockwise in the
+  photo) to close across its narrowest width, and whether it would fit
+  (recorded only). A direction becomes
+  one base-frame step through the wrist camera's orientation: the object is
+  re-declared that step away as a JUDGEMENT (`provenance="judged"`, the
+  judge's probability in `confidence`; verifiers treat it like `declared`,
+  never as a sighting) and the hand is moved by the same step with the kit's `Nudge` (coarse 30 mm, then 10
+  mm once the answer changes sign), within `max_nudges_per_target`. `on`
+  re-declares the object at the jaw point, counts as the look, and the grasp
+  runs in the same turn; anything else ends
+  the servo with a named outcome (`unsure`, `nudge_budget`, `servo_budget`,
+  `stale_frame`, `not_visible`, `unmappable_direction`) that the model reads
+  and chooses on.
+  **Four action kinds, one fixed priority** (`servo.choose()`): `retreat`
+  (the hand hides the object: 30 mm back along the approach axis), `turn`
+  (an elongated object — declared footprint 1.3:1 or more, not a
+  cylinder, or a segmented outline that elongated — and a judged turn of
+  at least half a step: a 15 deg yaw about the approach axis, at most 90
+  deg per alignment, the wrist's coupled limit enforced by the nudge's
+  plan; the declaration turns with the hand, so the stroke plans its jaw
+  roll across the object), `xy` (the step above), `approach` (centred and
+  still `ahead` of the fingertips: 10 mm along the approach axis, at most
+  `max_approach_m` = 30 mm per alignment and never closer than
+  `approach_clearance_m` = 20 mm from the object's near face or a support
+  surface — the stroke's own descent and fingertip contact search do the
+  rest; `behind` backs off 10 mm). Every move is a `Nudge`, counts against
+  the same budget, and is logged with its reason (`ServoStep.action`:
+  `kind`, `reason`, the nudge); `record.servo.actions` counts them by kind.
+  Measured offline (`examples/agent/jev_jaws_lab.py`, four d1-2 wrist
+  photos, the opening drawn at 25 known offsets of up to 40 mm per axis,
+  one photo per decision): the `jaws` formulation (letters around the
+  opening) was right on 97 of 100 with 1 wrong step, 0 premature `on` and 2
+  abstentions on the upright photo alone — the box-around-the-belief
+  formulations reached 90 of 100 at best (`score@rot180`); direction words
+  about the opening (`jaws_words`) stopped early on 22. The depth answer
+  said "ahead" on all 100 (true: the hand at its standoff). The occlusion
+  yes/no stayed near 0.5 with nothing hidden (0.30-0.72), hence
+  `occlusion_margin` = 0.5; the fit yes/no said "no" for a tape that fits
+  (recorded only). The jaw-turn answer against synthetic bars at known
+  angles was at chance (8 of 32 within 22.5 deg), so `jev_servo.py` turns
+  the wrist only with `--servo-turn`.
+  **The servo is an inner loop.** Photo -> mark -> judge -> step or stop
+  runs at the photo/judge rate inside the one agent turn, until `on`, a cap
+  (`budget_s`, default 6 s; `max_iterations`, 12; the policy's nudge
+  budget) or evidence that stays flat. One photo's shrug does not end it:
+  the judge's distributions over the photos since the last move (`window`,
+  default 3) are averaged, and `decide()` steps when the accumulated
+  direction leads both `on` and its opposite by `margin` (0.10), stops when
+  `on` leads the runner-up by it, takes another photo otherwise, and ends
+  `unsure` ("no blind step") only when `window` photos stayed flat. After a
+  step the next photo must be written after the move ended (and `settle_s`,
+  0.15 s, after it); three older files in a row end the loop `stale_frame`.
+  Every photo is logged as it happens (`log`, default the
+  `manipulation_kit.agent.servo` logger; `jev_servo.py` prints it):
+  `t=+0.83s iter 3 side=right judge below 0.41 (on 0.30, ...) acc[2] below
+  0.38 -> step +10mm along image-below -> base (dx,dy)=(...) m [frame ..s
+  judge ..s step ..s]`, and one exit line with the totals and the seconds
+  per iteration. The trace keeps every iteration (`record.servo.steps[]`:
+  `iteration`, `t_s`, `accumulated`, `frames`, `decision`, `frame_age_s`,
+  `timing_s`) and `elapsed_s` / `iterations`.
+  **What the judge is asked** is the examples' business
+  (`examples/agent/jev_questions.py`) over the harness's model-neutral seam
+  `manipulation_kit.agent.judge` (typed questions and answers, the
+  `Formulation` protocol, mirrored views, letters drawn beside the box,
+  `AskingJudge`): the formulation (`choice`, the six-way question; `score`, two ordinal axis
+  scores and a yes/no "inside", decided by per-question thresholds;
+  `grasp`, `score` plus two grasp-geometry questions; `letters`, a letter
+  on a disc outside each side of the box and "toward which letter", no
+  direction words) and the VIEWS of the
+  photo each answer is averaged over (upright, flipped top-bottom, flipped
+  left-right, rotated 180 deg; the answers are mapped back to the upright
+  photo). The default is `choice` over all four views: asked about the
+  upright d1-2 wrist photo alone, the classifier does not read up/down (a
+  "below" bias), and on the three photos of the 2026-09-24 live run its
+  accumulated answer steps AWAY from the roll. `examples/agent/jev_questions_lab.py`
+  measures formulations offline on real photos with boxes drawn at known
+  offsets, records every answer and recomputes its tables from the record.
+  Every judgement and its distribution is in the trace (`record.servo`). The
+  kit's own stand-in is `geometry_judge(truth)`, which answers from where a
+  known point projects; `examples/agent/jev_servo.py` plugs in Jev-Omni, a
+  12B multimodal decision classifier. Why a drawn box and a relative
+  question: on rendered wrist frames that classifier answered an open "which
+  way" with the same option on every frame; against a drawn mark it placed
+  the object correctly, and against the outline box it aligned a block
+  declared 25-60 mm off in one or two steps on 5 of 5 kinematic-mirror runs
+  (residual 5-30 mm — it accepts a block that overlaps the box's edge, so
+  the box is a coarse tolerance, not a fine one; report `jev-servo-loop`).
+  Roll is not asked for — it stays planner-only (`roll_candidates`).
+  **The model's own wrist look does not replace the servo.** The model may
+  `locate` on a wrist camera before a stroke, as before: its re-measurement
+  re-declares the object and nudges the hand, and it satisfies the operator
+  policy's look. The servo is STILL asked when the stroke comes, on the
+  declaration the model left (the trace keeps it: the locate turn's answer and
+  world, and the servo's first mark, `declared_p`). If the judge steps, the
+  object is re-declared `provenance="judged"` and that is what the stroke
+  plans to — the judged pose wins for the alignment; if it says `on`, the
+  model's declaration stands. (d1-2, 2026-09-24 01:47Z, `--judge-only`: the
+  servo ran only when the look was unmet, the model located before each
+  grasp, and all twelve records had `servo: null` while the tape sat cm off
+  the jaws.) Every judged stroke is recorded — `record.servo` is never null
+  when a servo is configured and the verb is a servo verb; a photo judge
+  with no wrist photo (no snapshotter, or a grab without that hand's file)
+  is not asked and records `{"skipped": "no wrist frame", ...}`, and the
+  model's look rule follows. A judge that answers without a photo says so
+  (`photoless(judge)`; `geometry_judge` is one). The marked photo is saved
+  beside the trace as `turn{N}_servo_{side}.png` (`_2`, `_3` for later
+  steps of the same turn), and `servo_line(record.servo)` is the operator's
+  one-liner, which `jev_servo.py` prints per stroke as it happens
+  (`servo judged: on 0.81 (left 0.12, ...) — recorded only`). **Not yet
+  aligned on hardware**: the judge has been run judge-only on d1-2 once.
+  - `Servo(observe_only=True)` (`jev_servo.py --judge-only`): judge and
+    record before every stroke, never step; the model's look rule then
+    applies as without a servo (the look question when the policy's look is
+    unmet, else the stroke runs). The first live sessions run this way.
+  - `Servo(refine=True)` (`--refine`, off by default): after `on`, the same
+    photo is re-marked on a 3 x 3 grid of 5 mm shifts and the DECLARATION
+    moves to the best-judged one (only if it beats the unshifted mark); the
+    hand does not move. With a perfect judge the residual ends within 5 mm
+    instead of within the 10 mm tolerance. Turn it on only after real photos
+    show the judge separates 5 mm.
+  - The 12B classifier does not fit a D1's Jetson: run
+    `examples/agent/jev_judge_server.py` on a workstation (loopback or a
+    Tailscale address, no authentication) and pass `--judge-url`; expect
+    ~47 GB of GPU memory, 80-200 ms per warm judgement (~0.7-0.8 s for the
+    first) on an RTX PRO 6000, plus the network round trip. `jev_servo.py --rejudge RUN_DIR
+    --robot-profile PATH --judge-url URL` judges a finished run's saved wrist
+    photos again, offline, and prints each distribution beside the mark.
 - `droop_margin_m` (`--droop-margin-m`): how far the real arm sags below the
   commanded pose, added to the fingertip floor of a descent and to every
   scene clearance (`primitives.clearance.ClearancePolicy`). 0.0 = the rigid

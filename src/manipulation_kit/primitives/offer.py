@@ -1,11 +1,11 @@
-"""The gate: an unreachable candidate never becomes a word in a prompt.
+"""The gate: an unreachable candidate never becomes a word the model reads.
 
 **Why this is in the wheel.** Shu's rule is "primitives are kit capabilities,
 not agent internals" (design note 7.1), and *what can this robot do right now*
 is a capability question, not a model question. A script, a teleop assist, a
 collection macro and a learned pipeline all want it, and none of them wants a
 JSON tool schema. The bit that IS model-specific — ranking, menu capping,
-provider envelopes, prompts — stays in ``examples/agent/``.
+provider envelopes, model-facing text — stays in ``examples/agent/``.
 
 The rule itself is the one that separates a robot agent that works from one
 that spends thirty turns asking for a move the guard already refused

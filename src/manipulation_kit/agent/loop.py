@@ -12,7 +12,7 @@ model's opinion::
     with LiveRobot.from_flag("firmware", url=url, policy=policy,
                              scene=scene) as robot:
         trace = run(goal=Place(object="cube", to="cup"), robot=robot,
-                    policy=policy, ask=my_model, system=MY_PROMPT,
+                    policy=policy, ask=my_model, system=MY_SYSTEM_TEXT,
                     trace=DecisionTrace(run_dir / "trace.jsonl"))
 
 ``ask(messages, tools) -> {"name", "arguments", "call_id", "claimed"}`` is
@@ -82,7 +82,7 @@ STOP_REASONS: Tuple[str, ...] = (
 class ObservationError(RuntimeError):
     """A fresh observation (the photos a visual model acts on) could not be
     taken. The loop stops with ``observation_failed`` rather than letting the
-    model act on no picture or an old one (Astra review 14)."""
+    model act on no picture or an old one (design review 14)."""
 
 
 @dataclass
@@ -92,7 +92,7 @@ class Stop:
 
 
 def robot_facts(world: Any = None) -> str:
-    """The numbers the kit OWNS, generated rather than quoted in a prompt:
+    """The numbers the kit OWNS, generated rather than quoted in hand-written text:
     the jaw capacity (from the hand the world measured, else the nominal
     description), the nudge grid and yaw clamp, the contact modes (``tip``
     flagged experimental until the d1-2 tip trial), the tool revision
@@ -144,7 +144,7 @@ def _content(text: str, parts: Sequence[Dict[str, Any]]) -> Any:
 def _forget_images(messages: List[Dict[str, Any]], keep: int) -> None:
     """Replace the photos of all but the last ``keep`` observations with their
     labels — an in-memory history that resends every earlier image grows the
-    request without telling the model anything (Astra review 15)."""
+    request without telling the model anything (design review 15)."""
     with_images = [m for m in messages if isinstance(m.get("content"), list)
                    and any(p.get("type") == "input_image" for p in m["content"])]
     for message in with_images[:max(0, len(with_images) - keep)]:
@@ -174,7 +174,8 @@ class _Loop:
 
     def __init__(self, *, robot, policy: OperatorPolicy, ask: Ask, goal,
                  task: str, system: str, trace: DecisionTrace,
-                 observe: Optional[Observe], on_side, keep_images: int):
+                 observe: Optional[Observe], on_side, keep_images: int,
+                 servo=None):
         if not isinstance(goal, Place):
             raise TypeError("run() takes the task as a Place(object=, to=) "
                             "goal: its verifier is what decides success")
@@ -188,6 +189,7 @@ class _Loop:
         self.trace = trace
         self.observe = observe
         self.on_side = on_side
+        self.servo = servo
         self.keep_images = int(keep_images)
         self.state = PolicyState()
         #: resolved ONCE (L13): the same numbers the executor was built with
@@ -198,6 +200,10 @@ class _Loop:
         self.messages: List[Dict[str, Any]] = []
         self.hand = None
         self.goal_ready = False
+        #: per side, the object a TRUE grasp closed on, as the grasp was
+        #: planned against it — what a later look is tested against
+        #: (:mod:`.hold`)
+        self.grasped: Dict[str, Any] = {}
 
     # -- the arm, chosen by planning the whole chain ------------------------- #
     def plan_the_hand(self, world) -> None:
@@ -283,7 +289,7 @@ class _Loop:
 
     def _turn_recorded(self, turn: int) -> Optional[Stop]:
         """One turn, written to the trace however it ends — a model error, a
-        planning crash or Ctrl-C included (Astra review 15)."""
+        planning crash or Ctrl-C included (design review 15)."""
         record = DecisionRecord(iteration=turn, world={}, task=self.task)
         try:
             stop = self._turn(turn, record)
@@ -361,10 +367,20 @@ class _Loop:
                            + ("" if self.hand.reachable
                               else f", and nothing reaches yet: "
                                    f"{self.hand.reason}"))
-        elif str(arguments.get("camera", "")).endswith("_wrist"):
-            answer = self._correct(arguments, world, cameras, record)
         else:
-            answer = apply_locate(cameras, world, arguments)
+            sighting = self._hold_sighting(arguments, world, cameras)
+            if sighting is not None:
+                record.hold_evidence = sighting.to_json()
+            if sighting is not None and sighting.holding_verified is False:
+                # the look refutes the hold: nothing is re-declared at the
+                # attached height and the holding hand is not "corrected"
+                answer = sighting.to_text()
+            elif str(arguments.get("camera", "")).endswith("_wrist"):
+                answer = self._correct(arguments, world, cameras, record)
+            else:
+                answer = apply_locate(cameras, world, arguments)
+            if sighting is not None and sighting.holding_verified is not False:
+                answer += f" | hold: {sighting.reason}"
         record.observation_after = {"tool": name, "answer": answer}
         _say(self.messages, call_id, answer)
         return None
@@ -385,11 +401,35 @@ class _Loop:
             return None
         side = _side_of(primitive, world)
         arm = world.arm(side) if side else None
+        if self.servo is not None and _servo_target(primitive) and side:
+            # System 1 before EVERY stroke, whatever the model looked at
+            # first: a wrist locate satisfies the policy's look, and the
+            # servo is still asked (d1-2 2026-09-24: it was not, twelve
+            # records had servo: null, the tape was cm off the jaws)
+            report = self._servo(primitive, side, record, call_id)
+            if not (self.servo.observe_only or report.skipped):
+                if not report.aligned:
+                    return None
+                # aligned: the stroke runs in this same turn, planned in the
+                # world the alignment left (the judged declaration)
+                world = self.robot.world()
+                record.world = world.to_json()
+                primitive = decode(name, arguments, world)
+                if isinstance(primitive, PlanError):
+                    record.refused = [primitive.to_json()]
+                    _say(self.messages, call_id,
+                         f"after the alignment that call is malformed: "
+                         f"{primitive}")
+                    return None
+                arm = world.arm(side)
         clamped, unmet = self.policy.clamp(
             primitive, self.state, side=side,
             joints=None if arm is None else arm.joints)
         if unmet and all(u.code == LOOK_REQUIRED for u in unmet):
-            self._look(primitive, side, world, cameras, record, call_id, unmet)
+            # the model's own look: no servo, a judge-only servo, or a
+            # servo with no wrist photo
+            self._look(primitive, side, world, cameras, record, call_id,
+                       unmet)
             return None
         if unmet:
             self._refuse(record, call_id, primitive, PlanError(
@@ -420,8 +460,10 @@ class _Loop:
         after = self.robot.world()
         if contacts:
             after = self._fold_contacts(after, report, clamped)
-        verdict = clamped.verifier(world)(after)
+        # the run's arrivals, stop reason and contact legs are evidence too
+        verdict = clamped.verifier(world)(after, report)
         record.verdict = verdict.to_json()
+        self._remember_grasp(clamped, ran, world, verdict)
         corrected = self._measured_width(verdict, record)
         if corrected:
             notes = list(notes) + corrected
@@ -438,6 +480,65 @@ class _Loop:
         if goal_report.verdict == "true":
             return Stop("goal_verified", goal_report.reason)
         return None
+
+    def _remember_grasp(self, verb, side, world, verdict) -> None:
+        if verb.name() != "grasp" or side not in ("left", "right"):
+            return
+        item = world.find(verb.object)
+        if verdict.verdict == "true" and item is not None:
+            self.grasped[side] = item
+        else:
+            self.grasped.pop(side, None)
+
+    def _hold_sighting(self, arguments, world, cameras):
+        """A ``locate`` of an object a hand HOLDS, graded against the hold
+        (:func:`.hold.hold_sighting`); ``None`` when the call is not about a
+        held object or the look cannot be computed."""
+        from ..perception import NoSupport, NotOnThePlane  # noqa: PLC0415
+        from .hold import hold_sighting  # noqa: PLC0415
+        models = dict(cameras or {})
+        camera = str(arguments.get("camera") or ("head" if "head" in models
+                                                 else next(iter(models), "")))
+        model = models.get(camera)
+        if model is None:
+            return None
+        for side, grasped in self.grasped.items():
+            gripper = world.gripper(side)
+            held = world.find(grasped.name)
+            if (gripper is None or not gripper.holding or held is None
+                    or held.provenance != "attached"
+                    or not self._about(arguments, camera, side, held)):
+                continue
+            ask = dict(arguments, camera=camera)
+            if ask.get("size") is None:
+                ask["size"] = [float(v) for v in held.size]
+            try:
+                located = locate_point(models, world, ask)
+                return hold_sighting(
+                    camera_name=camera, camera=model,
+                    pixel=(float(ask["u"]), float(ask["v"])),
+                    seen_p=located.p, held=held, grasped=grasped,
+                    frames=world.frames, side=side)
+            except (NoSupport, NotOnThePlane, KeyError, TypeError,
+                    ValueError, LookupError):
+                return None
+        return None
+
+    def _about(self, arguments, camera, side, held) -> bool:
+        """Is this locate about ``held``? Its declared size says so; with no
+        size, a wrist locate on the holding hand is about that hand's
+        target, as :meth:`_correct` reads it."""
+        size = arguments.get("size")
+        if size is not None:
+            try:
+                asked = np.asarray(size, dtype=float).reshape(3)
+            except (TypeError, ValueError):
+                return False
+            have = np.asarray(held.size, dtype=float).reshape(3)
+            return bool(np.all(np.abs(asked - have)
+                               <= np.maximum(0.010, 0.25 * have)))
+        return (camera == f"{side}_wrist"
+                and (self.state.target.get(side) or self.obj) == held.name)
 
     def _measured_width(self, verdict, record) -> list:
         """A TRUE grasp that MEASURED the object wider or narrower than it was
@@ -492,6 +593,41 @@ class _Loop:
         self.state.moved(side)
 
     # -- the look, and its correction --------------------------------------- #
+    def _servo(self, primitive, side, record, call_id):
+        """The look before a stroke, answered by the servo's judge. Always
+        recorded (``record.servo``: the judgement, or why none was made).
+        Live and aligned: the look is taken and the stroke may run. Live and
+        not aligned: the model is told why and chooses again. Judge-only or
+        skipped: nothing moved, the model's own look rule follows."""
+        report = self.servo.align(
+            robot=self.robot, policy=self.policy, state=self.state, side=side,
+            name=_servo_target(primitive), settings=self.settings,
+            run_plan=run_plan, turn=record.iteration,
+            out_dir=None if self.trace.path is None else self.trace.path.parent)
+        record.servo = report.to_json()
+        if any(s.step_m is not None for s in report.steps):
+            # the hand and the declaration moved: the record shows the world
+            # the model's next choice is made in, aligned or not
+            record.observation_after = self.robot.world().to_json()
+        looks = [s for s in report.steps if s.kind == "look"]
+        if looks:
+            record.distribution = looks[-1].distribution
+        if self.servo.observe_only or report.skipped:
+            return report
+        if looks:
+            # the servo's look IS the look before this stroke
+            record.look = dict(camera=f"{side}_wrist",
+                               object=_servo_target(primitive), visible=True,
+                               mount=looks[0].look.get("mount"),
+                               **{k: looks[0].look[k]
+                                  for k in ("u", "v", "depth_m")})
+        if not report.aligned:
+            record.refused = [PlanError(PRECONDITION_UNMET, report.to_text(),
+                                        primitive=primitive.name(),
+                                        side=side).to_json()]
+            _say(self.messages, call_id, report.to_text())
+        return report
+
     def _look(self, primitive, side, world, cameras, record, call_id,
               unmet) -> None:
         name = primitive.object
@@ -598,12 +734,20 @@ class _Loop:
                 f"agrees")
 
 
+def _servo_target(primitive) -> str:
+    """The object a :data:`~manipulation_kit.agent.servo.SERVO_VERBS` stroke
+    acts on ("" for every other verb)."""
+    from .servo import SERVO_VERBS  # noqa: PLC0415
+    field_name = SERVO_VERBS.get(primitive.name())
+    return str(getattr(primitive, field_name, "") or "") if field_name else ""
+
+
 def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
         task: str = "", system: str = "",
         trace: Optional[DecisionTrace] = None,
         observe: Optional[Observe] = None,
         on_side: Optional[Callable[[str], None]] = None,
-        keep_images: int = 1) -> DecisionTrace:
+        keep_images: int = 1, servo=None) -> DecisionTrace:
     """Run the loop until the goal is MEASURED, the model stops, or a cap.
 
     ``robot``    a :class:`~manipulation_kit.agent.robot.LiveRobot` (enter it
@@ -613,16 +757,28 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
     ``ask``      ``(messages, tools) -> call``: the model, or a stub
     ``goal``     ``Place(object=, to=)``; ``side="auto"`` is chosen by planning
                  the whole chain for both arms
-    ``system``   the prompt (the caller's; the kit adds the policy and the
+    ``system``   the system text (the caller's; the kit adds the policy and the
                  robot facts it owns as separate messages)
     ``observe``  ``(turn, world) -> content parts`` (photos), or raise
                  :class:`ObservationError`
     ``on_side``  told which arm the planner chose (a scripted stand-in uses it)
+    ``servo``    a :class:`~manipulation_kit.agent.servo.Servo`: its judge
+                 is asked before EVERY stroke of
+                 :data:`~manipulation_kit.agent.servo.SERVO_VERBS` (System 1),
+                 whether or not the model looked or located from the wrist
+                 first, and an aligned stroke runs in the same turn; ``None``
+                 keeps the look as a question to the model. A servo built
+                 with ``observe_only=True`` only records its judge's answer
+                 (``record.servo``) and the model's own look rule follows; a
+                 photo judge with no wrist photo records ``{"skipped": "no
+                 wrist frame"}`` and the model's look rule follows. The
+                 marked photos are ``turn{N}_servo_{side}.png`` beside the
+                 trace (or in the servo's ``out_dir``)
     """
     return _Loop(robot=robot, policy=policy, ask=ask, goal=goal, task=task,
                  system=system, trace=trace if trace is not None
                  else DecisionTrace(), observe=observe, on_side=on_side,
-                 keep_images=keep_images).run()
+                 keep_images=keep_images, servo=servo).run()
 
 
 __all__ = ["Ask", "ObservationError", "Observe", "STOP_REASONS", "Stop",

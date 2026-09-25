@@ -1,8 +1,8 @@
 """What this robot may do tonight — one object instead of eight env vars.
 
 Design C.8, L10, L13, B12. The d1-2 nights of 2026-09-22 grew operator policy
-as environment variables read inside the example (``ASTRA_GRIP_CAP``,
-``ASTRA_APPROACH_ALLOW``, ``ASTRA_VEL_RATIO``, ``ASTRA_ARRIVE_TIMEOUT_S``): a
+as environment variables read inside an example (a grip cap, an
+approach-direction allow list, a velocity ratio, an arrival timeout): a
 wheel customer could not get them, a test could not see them, and the
 refusals they produced were hand-rolled dicts that did not look like any other
 refusal the model learns from. They are fields here:

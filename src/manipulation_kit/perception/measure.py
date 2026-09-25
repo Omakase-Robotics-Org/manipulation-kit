@@ -489,7 +489,7 @@ def table_object(table: TableInBase, camera, *, name: str = "table",
 
     ``plane_source`` and ``height_uncertainty_m`` are TOP-LEVEL fields of the
     item, not only notes: they are what ``SurfaceView`` carries into the
-    world, so a pixel located on this surface later inherits them (Astra
+    world, so a pixel located on this surface later inherits them (design
     review 8 — they used to stop at the file).
     """
     ladder = DEFAULT_LADDER if ladder is None else ladder
@@ -533,8 +533,8 @@ def build_scene(camera, table: TableInBase,
 
     With no detector it contains the CAMERA and the table and no things, which
     is the default and is not an empty file: it is everything the model needs
-    to fill in the things itself (``astra_loop``'s ``declare_scene`` and
-    ``locate``).
+    to fill in the things itself (the loop's ``declare_scene`` and
+    ``locate`` tools).
     """
     objects: List[Dict[str, Any]] = []
     if table.corners is not None:

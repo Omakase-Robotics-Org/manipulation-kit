@@ -5,7 +5,7 @@ own body and off each other. It is stdlib-only on purpose and it never sees a
 :class:`~manipulation_kit.world.WorldView`, so before 0.16.0 NOTHING kept an
 arm off the table: run 5 latched the right forearm into the wagon top with
 every check passing, and the example answered with a policy patch
-(``ASTRA_APPROACH_ALLOW``) for a geometry gap. This module is the scene half of
+(an approach-direction allow list) for a geometry gap. This module is the scene half of
 what :class:`~manipulation_kit.arms.guard.GuardGate` is for the body.
 
 WHAT IS CHECKED, exactly:
@@ -99,10 +99,17 @@ class ClearancePolicy:
     segment_spacing_m: float = 0.004
     #: largest capsule-endpoint travel between two checked postures [m]
     sweep_step_m: float = 0.006
+    #: how far a fingertip grasp retreats along minus its travel after the
+    #: tips stopped ON the support, before the jaws close [m]
+    #: (:data:`.grasp_geometry.CONTACT_BACKOFF_M`; 0 = measure and report the
+    #: stop, move nothing). Raised to the smallest step the executor
+    #: resolves, :data:`.grasp_geometry.CONTACT_BACKOFF_MIN_M`, when smaller.
+    contact_backoff_m: float = 0.001
 
     def __post_init__(self) -> None:
         for name in ("droop_margin_m", "probed_surface_margin_m",
-                     "declared_surface_margin_m", "declared_object_margin_m"):
+                     "declared_surface_margin_m", "declared_object_margin_m",
+                     "contact_backoff_m"):
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0.0:
                 raise ValueError(f"ClearancePolicy.{name} must be a finite "
@@ -124,7 +131,7 @@ class ClearancePolicy:
         return {name: float(getattr(self, name)) for name in (
             "droop_margin_m", "probed_surface_margin_m",
             "declared_surface_margin_m", "declared_object_margin_m",
-            "segment_spacing_m", "sweep_step_m")}
+            "segment_spacing_m", "sweep_step_m", "contact_backoff_m")}
 
 
 DEFAULT_POLICY = ClearancePolicy()

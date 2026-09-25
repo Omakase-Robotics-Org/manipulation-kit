@@ -155,6 +155,11 @@ class WristCamera(PinholeCamera):
     valid_radius_px: Optional[float] = None
     #: which ``plate -> optical`` this pose was built with (:data:`MOUNT_KINDS`)
     mount: str = "nominal"
+    #: the flange (TCP) pose in base this camera rides on — the frame the
+    #: hand's own geometry (the jaws) is expressed in; ``None`` when the
+    #: camera was built without one
+    flange_p: Optional[np.ndarray] = None
+    flange_r: Optional[R] = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -210,7 +215,8 @@ class WristCamera(PinholeCamera):
                    aim_uncertainty_deg=WRIST_AIM_UNCERTAINTY_DEG,
                    calibrated=mount is not None,
                    mount="nominal" if mount is None else "measured",
-                   notes=(frame, f"lens: {lens}."))
+                   notes=(frame, f"lens: {lens}."),
+                   flange_p=flange_p, flange_r=flange_r)
 
     # -- the lens ------------------------------------------------------------
     def _local_ray(self, u: float, v: float) -> np.ndarray:

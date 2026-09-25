@@ -19,10 +19,10 @@ Three rules, each of them a bug somebody shipped:
    one only.
 
 Serialisation is part of the contract, not a debug aid: :meth:`WorldView.to_text`
-is what a typed-choice model (Jev) is shown instead of an image, and
+is what a typed-choice model is shown instead of an image, and
 :meth:`WorldView.to_json` is what a trace record stores. Both are stable and
-both are tested for size — a world description that grows without bound is a
-prompt that silently stops fitting.
+both are tested for size — a world description that grows without bound is
+model-facing text that silently stops fitting.
 """
 
 from __future__ import annotations
@@ -110,21 +110,30 @@ def _round(values: Iterable[float], places: int = 3) -> list:
     return [round(float(v), places) for v in values]
 
 
-#: WHERE AN OBJECT'S POSE CAME FROM (design C.9, Astra review 11). A verifier
+#: WHERE AN OBJECT'S POSE CAME FROM (design C.9, design review 11). A verifier
 #: that reads a pose has to know whether anybody SAW the thing there:
 #:
 #: ``observed``   a sensor or a simulator's ground truth put it there
 #: ``declared``   somebody said so — a tape-measured scene file, or a model
 #:                declaring what it sees in a photograph
+#: ``judged``     a classifier CHOSE it: the wrist-look servo
+#:                (:mod:`manipulation_kit.agent.servo`) moved the declaration
+#:                one step the way its judge said the object sticks out of the
+#:                drawn box. A statement like ``declared`` — nobody measured a
+#:                position — with the judge's probability in ``confidence``
 #: ``attached``   it is in a hand: the pose is the tool pose composed with the
 #:                grasp transform recorded at the stroke
 #:                (:func:`manipulation_kit.world.attach.with_attached`) —
 #:                inferred, not sighted
 #: ``predicted``  where it should be and nobody has looked: let go at the
 #:                last attached pose, or a planner's rolled-forward world
-PROVENANCES: Tuple[str, ...] = ("observed", "declared", "attached", "predicted")
+PROVENANCES: Tuple[str, ...] = ("observed", "declared", "judged", "attached",
+                                "predicted")
 #: the two that are inferences, not sightings
 INFERRED: Tuple[str, ...] = ("attached", "predicted")
+#: the two that are STATEMENTS, not sightings: a verifier may plan from them
+#: but never ties a measurement to the object by their position alone
+STATED: Tuple[str, ...] = ("declared", "judged")
 #: ``ObjectView.size_provenance``: as the producer said, or MEASURED by a grip
 SIZE_PROVENANCES: Tuple[Optional[str], ...] = (None, "measured")
 
@@ -355,7 +364,9 @@ class ObjectView:
         how = {"attached": ", ATTACHED: riding the hand that holds it — "
                            "inferred from the tool pose, not sighted",
                "predicted": ", PREDICTED: where it was let go, not sighted "
-                            "since"}.get(self.provenance, "")
+                            "since",
+               "judged": ", JUDGED: placed by the wrist look's classifier, "
+                         "not measured"}.get(self.provenance, "")
         if self.size_provenance == "measured":
             how += ", size MEASURED by the grip that holds it"
         return (f"{self.name!r}{colour}: centre at ({where[0]:.3f}, "
@@ -489,7 +500,7 @@ class SurfaceView(ObjectView):
     known, when a producer knows: a single camera cannot measure the height
     of the plane it is looking at, so a perceived surface arrives
     ``provisional`` (+-100 mm), ``known-length`` or ``declared``, and that
-    has to reach the world rather than stop at the scene file (Astra review
+    has to reach the world rather than stop at the scene file (design review
     8). ``None`` = the producer did not say.
     """
 
@@ -985,8 +996,8 @@ class WorldView:
     def to_text(self) -> str:
         """The world as a typed-choice model is shown it: line per thing.
 
-        Kept flat, metric and short on purpose. This string is a prompt, and a
-        prompt that grows with the scene is one that silently stops fitting —
+        Kept flat, metric and short on purpose. This string is model-facing text,
+        and text that grows with the scene is one that silently stops fitting —
         ``tests/world/test_serialisation.py`` pins the budget.
         """
         lines = ["WORLD (base frame: +x forward, +y robot-left, +z up; "

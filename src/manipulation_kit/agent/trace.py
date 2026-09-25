@@ -9,7 +9,7 @@ robot succeeded every time.
 Append-only JSONL so a run can be tailed live and replayed afterwards.
 
 Moved from ``examples/agent/trace.py`` into the wheel (design C.8) with two
-additions the Astra review asked for (item 15): ``effective`` is the call AS
+additions a design review asked for (item 15): ``effective`` is the call AS
 IT RAN — after the operator policy's cap — beside ``choice``, which stays the
 model's request verbatim; and ``error`` records a turn that failed outside the
 transport. :meth:`DecisionTrace.save_messages` writes the model's chat history
@@ -44,8 +44,12 @@ class DecisionRecord:
     effective: Optional[Dict[str, Any]] = None
     #: a wrist look taken on this turn (where the object should appear)
     look: Optional[Dict[str, Any]] = None
-    #: per-choice probability, when the model exposes one (Jev does)
+    #: per-choice probability, when the judge or model exposes one
     distribution: Optional[Dict[str, float]] = None
+    #: the System 1 alignment taken on this turn in place of the wrist-look
+    #: text (:class:`~manipulation_kit.agent.servo.ServoReport`): every
+    #: judgement with its distribution, every correction with its run
+    servo: Optional[Dict[str, Any]] = None
     plan: Optional[Dict[str, Any]] = None
     run: Optional[Dict[str, Any]] = None
     #: the model's own claim of completion. Recorded, never believed.
@@ -70,6 +74,11 @@ class DecisionRecord:
     #: measurements that REPLACED a declaration this turn — a grasp that
     #: measured the object's width along the jaws (``width_correction``)
     corrections: List[Dict[str, Any]] = field(default_factory=list)
+    #: a look at an object a hand holds, graded against the hold
+    #: (:class:`~manipulation_kit.agent.hold.HoldSighting`):
+    #: ``holding_verified`` false when the photo puts it back at the grasp
+    #: site while its attached pose rides the hand
+    hold_evidence: Optional[Dict[str, Any]] = None
     stamp: float = field(default_factory=time.time)
 
     def to_json(self) -> Dict[str, Any]:

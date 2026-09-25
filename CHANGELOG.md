@@ -86,6 +86,299 @@ brought up live on d1-2 the same day (seven runs; `docs/teach.md`, *実機ログ
   (d1-firmware #96 and the PD-mode issue); the 600 deg/s^2 cap stretches very
   snappy takes; the coupled J6/J7 limit is checked only by the kit (#99).
 
+### The servo judges the object against the jaw opening, with its real shape
+
+- **BREAKING: the reference drawn for the judge is the jaw opening, not a
+  box around the declaration.** `Servo` draws the two pads at the current
+  jaw gap (`GripperView.jaw_gap_m`, else `open_gap_m`, else the nominal
+  driven opening), carried along the approach axis to the object's depth
+  and projected through the wrist camera; `ServoLook.u` / `v` are the
+  opening's centre and `box_px` its bounding box (the letters go around
+  it). `on` re-declares the object at the jaw point (`reference_p`,
+  `provenance="judged"`). `refine=True` shifts the drawn opening instead of
+  the declaration. Without a flange pose on the camera the declared centre
+  and box are drawn as before.
+- **NEW `manipulation_kit.agent.jaws`**: `jaw_opening()` / `JawOpening`,
+  `jaw_gap()`, `approach_depth()`, `declared_outline()` (cylinder: the
+  silhouette of its top and footprint circles; box: its corners at the
+  declared yaw; other: the declared footprint), `Outline`,
+  `outline_from_points()`, `convex_hull()`, `principal_axis()`,
+  `wrap_turn()`, `axial_mean()`, `draw()`, and the `ObjectOutline` seam
+  `(photo, look) -> Outline | None` with `declared` as the phase-1 default.
+  `Servo(shapes={name: shape}, object_outline=...)`; a segmenter that finds
+  nothing falls back to the declared shape and the look says so.
+- **NEW typed readings**: `servo.Reading` (direction, distance, depth over
+  `DEPTHS` = ahead / between / behind, occluded, turn_deg, fit),
+  `as_reading()`, `accumulate()` over readings; a judge may still return a
+  bare `{choice: p}`. `AskingJudge` returns a `Reading` when the
+  formulation has `to_reading()`.
+- **NEW actions by a fixed priority** (`servo.choose()`, `Choice`,
+  `ACTIONS`): retreat along the approach axis when the hand hides the
+  object (`occlusion_margin`, 0.5), a 15 deg yaw step about the approach
+  axis for an elongated object (at most `max_turn_rad`, 90 deg; the
+  declaration turns with the hand), the table-plane step, and an approach
+  step along the axis (`approach_step_m`, `max_approach_m`,
+  `approach_clearance_m` above the object's near face and its support).
+  `ServoStep.action` / `reading` / `accumulated_reading`,
+  `record.servo.actions`; `turn_sign()` maps a turn judged in the photo to
+  the hand's yaw.
+- `WristCamera.flange_p` / `flange_r`: the flange pose the camera rides on.
+  `parallel_gripper.description.PAD_WIDTH_M` (38 mm, the composed URDF's
+  jaw box).
+- Examples: the `jaws` / `jaws_words` formulations (`jev_questions.py`,
+  now `jev_servo.py`'s default), `segment_server.py` (SAM 3 through
+  `transformers`, Grounded-SAM-2 fallback; `POST /segment` -> polygon, RLE
+  mask, score, bbox), `segmenter.py` (`RemoteSegmenter`, stdlib HTTP;
+  `--segment-url`, `--object-shape NAME=SHAPE`, a scene file's `"shape"`
+  keys), `jev_jaws_lab.py` (the offline lab). The harness-boundary test
+  also rejects segmentation model names in `src/`.
+
+### A grasp's hold is graded on the stroke, and a later look can refute it
+
+- **`Holding` grades a grasp on three criteria, each with its own verdict**
+  in `measured["checks"]` (`pass` / `fail` / `unmeasured`), so a record says
+  which one failed:
+  - `jaw_gap` — the existing `grip_fit` band. Unchanged: the measured gap
+    still outranks the declared width, and `width_window_m` /
+    `matches_declaration` are reported as before.
+  - `insertion` (new) — the finger TIPS at closure (the measured tool point,
+    which is the pad centre, plus `PAD.lead_m` along the approach) against the
+    object's near face along the travel, from the world the grasp was planned
+    in. Reported as `tip_z_m`, `object_top_z_m`, `insertion_m`,
+    `insertion_min_m`. A hold needs
+    `min(GRASP_DEPTH_MIN_M = 8 mm, GRASP_DEPTH_FRACTION = 0.25 x extent)`.
+  - `approach` (new) — the executor's `RunReport`: `completed`, the arrival
+    at the `grasp` waypoint (`tool_along_m` no more than
+    `ARRIVE_TOL_ALONG_M` short), and for a fingertip descent by contact,
+    where the search stopped: more than `SEARCH_STOP_TOL_M = 10 mm` above
+    the descent floor is a collision, not a grasp. Reported as
+    `approach_completed`.
+  A hold is TRUE only with the jaws in the band AND insertion AND a completed
+  approach. An unmeasured insertion (no tool pose) is UNKNOWN. With no run
+  report and no contact record, the approach is `unmeasured` and does not
+  gate the verdict: the world-only call `verb.verifier(w0)(w1)` still works.
+  `Holding` without a stroke (a handover's receiver) is graded on the jaws
+  alone, as before.
+- **`Verifier.__call__(world1, run=None)`** — a verifier may read the run
+  report (`measure_run`). `All` and the roll-choosing grasp verifier forward
+  it. The agent loop passes it for every verb.
+- **NEW `manipulation_kit.agent.hold`** — `hold_sighting()` tests a
+  `locate` of an object a hand holds against two projected silhouettes: the
+  object at its attached pose, and the object where the grasp was planned.
+  A pixel off the held silhouette (`SIGHTING_MARGIN_PX = 12`) whose
+  table-plane position is within `LEFT_BEHIND_M = 80 mm` of the grasp site
+  sets `holding_verified: false`. A pixel on the held silhouette sets
+  `holding_verified: true`. Overlapping silhouettes give `null`. The loop
+  records this as `DecisionRecord.hold_evidence`, and on a contradiction it
+  answers `HOLD CONTRADICTED: …` instead of re-declaring the object at the
+  attached height and nudging the holding hand. No look is added inside
+  `grasp`.
+- Primitive fields and every tool schema are unchanged.
+
+### The servo as an inner loop, and what its judge is asked (PR #25 follow-up)
+
+- **BREAKING `Servo(min_confidence=)` is gone.** One photo's confidence no
+  longer gates anything. `Servo` runs photo -> judge -> step or stop as a
+  closed loop inside the turn and accumulates the judge's distributions
+  over the photos since the last move: `window` (3), `margin` (0.10),
+  `budget_s` (6 s), `max_iterations` (12), `settle_s` (0.15 s), `log`,
+  `clock`, `sleep`. New outcomes `servo_budget` and `stale_frame`; `unsure`
+  now means the evidence stayed flat over `window` photos. New
+  `accumulate()`, `decide()`, `iteration_line()`, `exit_line()`. Every
+  iteration is logged live and recorded (`ServoStep.iteration`, `t_s`,
+  `accumulated`, `frames`, `decision`, `frame_age_s`, `timing_s`;
+  `ServoReport.elapsed_s`, `iterations`). d1-2, 2026-09-24: the servo ran
+  once per turn, the judge said "below" at 0.36 / 0.28 under the 0.50 gate,
+  the hand never moved and the grasp was refused.
+- **NEW `manipulation_kit.agent.judge`** — the model-neutral judge seam:
+  typed `Question`s (`choice` / `noul` / `score`, each with how a mirrored
+  view changes it) and `read()`, the `Formulation` protocol, mirrored
+  `VIEWS` mapped back, `draw_letters()` / `letter_centres()` (a letter on a
+  disc beside each side of the box), and `AskingJudge`, the `judge(look)`
+  seam over a transport. What a particular classifier is asked — the
+  wording, the labels, the `choice` / `score` / `grasp` / `letters`
+  formulations and their thresholds — is `examples/agent/jev_questions.py`;
+  `jev_judge.py`'s `JevJudge` / `RemoteJudge` are transports that take
+  `formulation=` (a name) and `views=` (default: `choice` over all four
+  views); `jev_servo.py` has `--judge-questions`, `--judge-views`,
+  `--servo-budget-s`, `--verbose-servo`. `jev_judge_server.py` answers
+  `POST /judge_batch` (several questions about one photo in one request)
+  and says so in `/health`.
+- **The harness boundary.** `src/manipulation_kit` names no agent or model
+  family and never imports from `examples/`;
+  `tests/test_harness_boundary.py` enforces it (empty allowlist). Docstrings
+  and comments that cited a specific model, agent or review by name were
+  rewritten model-neutral; no runtime text changed.
+- **FIX `locate(..., size=)` on a camera that looks back at the object.**
+  `contact_to_centre(image_up=)`: the silhouette's bottom is the footprint
+  edge furthest down the image, which for a wrist camera beyond the object
+  is its FAR edge; the centre is walked toward the camera there. d1-2,
+  2026-09-24: the right wrist camera at x = 0.488 m, a tape roll at
+  ~0.41 m, the model's pixel on the roll's bottom edge, declared 0.353 m —
+  55 mm short of the photo (0.408 m); the servo's box was drawn there and
+  the grasp closed on the roll's rim.
+- **NEW judge formulation `letters`** (`--judge-questions letters`): a
+  letter on a black disc just outside each side of the box (A above, B
+  right, C below, D left, with short arrows out of the box) and one choice
+  question, "toward which letter" / inside / not in the photo — no
+  direction words. `draw_letters()`, `letter_centres()`, `state_for()`.
+  Measured on the lab's 100 cases it does not beat `score@rot180`: upright
+  it steps the wrong way on 25 of 100 (a bias toward the letter A — with
+  the letters rotated one side the bias follows A to the right), best on
+  the flipped photo at 10 of 100. Not the default.
+- **NEW `examples/agent/jev_questions_lab.py`**: the offline question-design lab
+  (real photos, boxes at known offsets, every answer recorded, tables
+  recomputed with `--report`).
+
+### The look before a stroke, answered by a judge that chooses (System 1, PR #25)
+
+- **NEW `manipulation_kit.agent.servo`** — `Servo(frame, judge)`, passed to
+  `run(..., servo=)`. When a `grasp` needs a wrist look, the kit no longer
+  has to ask the model for a pixel: it takes a fresh wrist photo through the
+  caller's `frame(side) -> path`, DRAWS its belief on it — a green cross at
+  the declared object's projected centre and a green box, the object's
+  projected outline grown by `tolerance_m` (10 mm) on every side — and asks
+  the caller's `judge(look)` one five-way question — the object is `on`
+  (inside the box), or sticks out `left` / `right` / `above` / `below` it in
+  the image (or `not_visible`) — as a probability per choice. The kit maps
+  the chosen image direction to a table-plane step through the wrist
+  camera's orientation, re-declares the object that step away as a
+  JUDGEMENT (`provenance="judged"`, below), moves the hand by the same step
+  with its own `Nudge` (30 mm first,
+  10 mm once the answer changes sign), and looks again — until `on`, which
+  counts as the look so the grasp runs in the same turn, or a named end:
+  `unsure` (best answer below `min_confidence`, default 0.5; no blind step),
+  `nudge_budget` (`OperatorPolicy.max_nudges_per_target`, the same budget the
+  model's nudges spend), `not_visible`, `unmappable_direction` (the image axis
+  is near-vertical in base from this posture). The model reads the outcome
+  and chooses; it never reads a wrist-look question when a servo is set.
+  Without `servo=` nothing changes.
+- **NEW provenance `"judged"`** (`world.views.PROVENANCES`, and
+  `STATED = ("declared", "judged")`). A re-declaration made because a
+  classifier CHOSE a side is not a sighting: the servo writes
+  `provenance="judged"` with the judge's probability in
+  `ObjectView.confidence`, and the object's line in the world text says
+  "JUDGED: placed by the wrist look's classifier, not measured". The
+  verifiers treat it exactly like `declared` (not an inference, so a verdict
+  is not downgraded; not a measurement either). One verifier changed with it:
+  `Holding` no longer ties a stall to the object by a DECLARED or JUDGED
+  position alone — that position is where the grasp aimed, so "it is at the
+  tool point" is true by construction. With no measured jaw gap such a grasp
+  is UNKNOWN; with one, `grip_fit` decides
+  (`association="stated_position+grip_fit"`). A producer that names the held
+  object (`GripperView.held_object`, e.g. `SceneSource`) is unaffected.
+  `observed` stays for real `locate` sightings.
+- **`Servo(observe_only=True)`** — judge-only: the servo photographs, marks
+  and asks, records the distribution (`record.servo`, outcome
+  `judged_only`), and never steps or re-declares; the loop then asks the
+  model the ordinary wrist-look question. The judge rides along on a live
+  run without moving anything.
+- **`Servo(refine=True, refine_m=0.005)`** — the final centring, off by
+  default. `on` means "inside the tolerance box", and the mirror runs ended
+  5-30 mm off. After `on` the SAME photo is re-marked with the declaration
+  shifted on a 3 x 3 grid of `refine_m` along the two mappable image axes,
+  the box grown by `refine_m` only; the declaration moves to the shift the
+  judge rates `on` highest, only when that beats the unshifted mark, and the
+  hand does not move (the grasp plans to the declaration, so the correction
+  needs no nudge). With a perfect judge the grid covers every residual inside
+  the tolerance, so the result is within `refine_m`: with `geometry_judge` a
+  block declared 40 mm off ends 10 mm off without it and 5 mm with it. This
+  replaces the "one more 10 mm step, kept if the judge still says on" idea
+  from the review: a step as large as the tolerance cannot be told from no
+  step by an `on` judgement, so it could make the residual worse unseen,
+  and it costs a motion. Until real photos have shown the judge separates a
+  5 mm shift, keep it off.
+- `Servo.look_at(camera, item, frames, photo)`: one mark + look, no motion
+  (what the offline re-judge uses). `ServoLook` carries `declared_p` and
+  `tolerance_m`; `ServoStep` carries `kind` (`look` / `refine`) and
+  `shift_m`. `geometry_judge(truth, tol_m=)` answers `on` from the table-plane
+  distance to `declared_p` against the look's tolerance (was: pixels against
+  the drawn circle, which put a 10 mm residual on a knife edge between 13.76
+  and 14.0 px after the base's standoff moved).
+- **`DecisionRecord.servo`** — every judgement with its distribution, every
+  correction with its plan, run and verdict; `record.look` and
+  `record.distribution` are filled from it.
+- **`geometry_judge(truth)`** — the kit's stand-in judge: answers from where
+  a known point projects. `tests/agent/test_servo.py` proves with it that a
+  block declared 40 mm off is aligned and grasped in one turn, that the budget
+  stops the servo and the stroke, and that the image→base sign is right for
+  both hands' cameras.
+- Why a drawn box and a relative question (measured, report
+  `jev-servo-loop`): Jev-Omni, a 12B multimodal decision classifier, answered
+  an open "which way must the hand move" with the same option on every one of
+  three rendered wrist frames and put a cup outside the jaws "between" them at
+  0.86; with the kit's projected pixel drawn on the frame it placed the cup
+  relative to the mark correctly on 8 of 8, the six displaced cases at 0.93
+  or better. The yes/no form missed both ON cases, so the question is
+  five-way. A bare cross was then hidden under the object in the loop (a
+  block 30 mm off got no answer above 0.36); against the outline box grown by
+  the tolerance, five kinematic-mirror runs with blocks declared 25-60 mm off
+  all aligned in one or two steps (`on` at 0.82-0.97; residual 5-30 mm — the
+  judge accepts a block overlapping the box's edge, so the box is a coarse
+  tolerance). Roll is not asked for: it stays planner-only, and the same
+  classifier answered "clockwise" for a bar tilted either way. **Not run on
+  hardware yet**: rendered frames only.
+
+#### Examples and docs (PR #25)
+
+- **NEW `examples/agent/jev_servo.py`** (191 lines): `astra_loop` with a
+  `Servo` — Astra decides the verbs, Jev-Omni judges the look. Flags
+  `--judge jev|remote|geometry`, `--judge-url URL` (implies remote),
+  `--judge-only`, `--refine`, and `--rejudge RUN_DIR`: offline, every wrist
+  photo a live run saved (`turn{N}_{left,right}_wrist_0_rgb.jpg` from
+  `--snapshot-cmd`, and each servo judgement's own photo) is marked where
+  the trace's declared objects project through the robot profile's MEASURED
+  wrist lens at that turn's recorded joints, judged again, and printed with
+  its distribution beside the recorded answer — the judge characterised on
+  real photos before it moves anything.
+- **NEW `examples/agent/jev_judge.py`**: the question's words, `JevJudge`
+  (in-process) and `RemoteJudge(url)` (the `judge(look)` seam over HTTP),
+  `rejudge()`. **NEW `examples/agent/jev_judge_server.py`**: Jev-Omni loaded
+  once behind `POST /judge` (marked JPEG + state/question/options ->
+  probability per option) and `GET /health`, judgements serialised, bound to
+  loopback by default (`--host` for a Tailscale address; no authentication).
+  The 12B classifier cannot run on a D1's Jetson. Smoke-tested with the real
+  classifier (RTX PRO 6000, 2026-09-23): the server process held 46.9 GB of
+  GPU memory (not the ~26 GiB first estimated), answered 700 ms for its first
+  judgement and 82-139 ms warm, and `RemoteJudge` through an ssh tunnel added
+  4-6 ms; the three marked mirror frames came back `left` 0.96, `on` 0.97,
+  `on` 0.96, identical on a repeat. The wheel stays free of
+  torch/transformers. The words of
+  the question and the option labels are here; the ids, the direction, the
+  step and the budget are the kit's. `--dry-run --misplace-mm 40` runs the
+  geometry stand-in with no model and no photo. Jev's dependencies (torch,
+  torchvision, transformers, huggingface_hub) are the example's, imported
+  on first use, never the wheel's; note the model's own `requirements.txt`
+  omits `torchvision`, which its processor needs.
+- `docs/agent.md`: the servo bullet. `examples/agent/jev_menu.py` no longer
+  says Jev "never sees an image".
+
+### The servo judges before EVERY stroke (d1-2 judge-only, 2026-09-24)
+
+d1-2's first `--judge-only` run (01:47Z, kit eeeda35): twelve records,
+`servo: null` on every one. The loop ran the servo only when the operator
+policy's look was unmet, and the model called `locate` on the wrist camera
+right before each grasp, which satisfied it — so the judge was never asked
+and the stroke closed with the tape several cm off the jaws.
+
+- The loop now runs the servo before every stroke of the new, explicit
+  `agent.servo.SERVO_VERBS` (`grasp` -> `object`, `press` -> `target`),
+  regardless of what the model looked at first. Live: align, then the stroke
+  in the same turn (as before). `observe_only`: judge and record, then the
+  model's own look rule.
+- A judge reads the photo unless marked `photoless(judge)`
+  (`geometry_judge` is); with no wrist photo a photo judge is not asked and
+  `record.servo` is `{"skipped": "no wrist frame", "outcome": "no_frame", ...}`
+  — never a silent null. **Breaking** for a custom judge that answers
+  without a photo: wrap it in `photoless`.
+- The marked photo is `turn{N}_servo_{side}.png` beside the trace (was
+  `servoNNN_<side>_wrist_marked.jpg`); `Servo.align(turn=, out_dir=)`.
+  Outside a turn (`--rejudge`) it is `servoNNN_<side>.png`.
+- `agent.servo.servo_line(record.servo)`: the per-stroke one-liner
+  (`servo judged: on 0.81 (left 0.12, ...) — recorded only`), printed by
+  `jev_servo.py` as each stroke is judged. `ServoLook.to_json()` and the
+  servo's `record.look` carry the wrist `mount` it was projected through.
+
 ### Wrist camera: the measured mount (issue #28)
 
 d1-2's calibration file now carries each wrist camera's MEASURED mount
@@ -271,6 +564,57 @@ caller of the API below, and pip needs a version that moves.)
 | `reach.plan_chain(..., approach=, jaw_turn_deg=)` | `reach.plan_chain(..., direction=, contact=)` | — |
 
 The consumers are updated in a following sweep, not in this repository.
+
+### A fingertip grasp backs off the support before it closes; a press pushes through (d1-2 judge-only, 2026-09-24)
+
+`servo-judgeonly-2` turn 6: a top-down `grasp(tape, right, down, soft, tip)`
+whose declared centre was 55-62 mm off the roll. The fingertip search stopped
+on the TABLE (tips at z 0.1674, 1.4 mm above the modelled 0.166 top, 6.84 Nm
+rise), the close stroke dragged the tips across it, the friction stalled the
+jaws at 48 mm — inside the 46-54 mm window of the 50 mm declaration — and the
+daemon reported a hold. Nothing at closure tells that drag from an object.
+
+- **NEW `primitives.ContactPolicy`** (`stay` / `back_off` / `push_through`) and
+  `VERB_CONTACT_POLICY` (`probe: stay`, `grasp: back_off`, `press:
+  push_through`): what a contact leg does after the stop is a named per-verb
+  decision. `ContactStep` gains `policy` (derived from `retract` when not
+  given: `push_through` with it, `stay` without) and `backoff`
+  (`SurfaceBackoff`: `distance_m`, `surface_at_m`, `band_m`, `support`,
+  `tip_lead_m`), required by and only allowed with `back_off`.
+- **The fingertip grasp retreats off the support.** When the search stops at
+  most `band_m` short of where the plan's model puts the tips on the support
+  (or past it), both runners (`executor.run_steps` and the firmware
+  `run_plan`) command the leg's own posture `distance_m` back along it —
+  along minus the travel, for any direction — wait for it, and only then
+  close. A stop further short (on the object) behaves as before.
+  `executor.contact_outcome` is the one rule both apply.
+- **Defaults.** `ClearancePolicy.contact_backoff_m` = 1 mm
+  (`grasp_geometry.CONTACT_BACKOFF_M`), raised to
+  `CONTACT_BACKOFF_MIN_M` = 0.5 mm when set below it: the executor resolves
+  a contact-leg knot to <= 0.3 mm at the tool and places the stop to one
+  20 ms poll at 10 mm/s (0.2 mm). `NUDGE_GRID_M` (10 mm at its finest) is the
+  model's correction menu and the arrival barrier (3 deg / 5 mm / 10 mm) a
+  jam deadline; neither is the arm's resolution, and neither can see 1 mm,
+  so the retreat is MEASURED after it ran. `SURFACE_CONTACT_BAND_M` = 5 mm
+  (the tape-measured table's uncertainty, or the support's own
+  `height_uncertainty_m`), capped at half the object's extent along the
+  travel. An object so thin that the retreat would lift the tips past half
+  of it gets no back-off, and the plan says so.
+- **The record.** A `back_off` leg's `ContactReport` (and its `to_json`)
+  carries `surface` (`support` / `object` / `none`), `support`, `height_m`,
+  `backoff_m`, `tip_z_before_m`, `tip_z_after_m` (from the measured posture)
+  and `backoff_measured_m`. Probe and press records are unchanged.
+  `Plan.to_json()["contact_steps"]` gains `policy` (and `backoff_m`); the
+  full step record gains `policy` and `backoff`.
+- **Tool schema: unchanged** (no Primitive field; byte-identical export).
+
+Tests: `tests/primitives/test_grasp_contact_backoff.py` replays turn 6 on a
+contact double of the mirror — with the back-off the jaws sweep to the empty
+gap and the verifier says FALSE; at 0 mm the 48 mm table-drag stall and the
+false TRUE reproduce — plus a stop on the object, a search that touched
+nothing, `press` and `probe` policies, the back-off along `down`, `forward`
+and a 45 deg descent, and the firmware runner's relieve job
+(`tests/executors/test_contact_executor.py`).
 
 ### Fingertip grasps onto a surface finish by contact (d1-2 tip trial, 2026-09-23)
 

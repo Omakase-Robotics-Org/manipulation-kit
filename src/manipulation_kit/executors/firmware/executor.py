@@ -77,8 +77,9 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         ArrivalReport, ContactReport, ContactWatch, LiftState,
                         NeckState, RawState, RunReport, SettleReport,
                         StrokeReport, ToolGate, WIRE_DIM, _final_arrival,
-                        arrive_labels, barrier_refusal, contact_kin, contact_report,
-                        controller_fault, fault_refusal, hold_refusal,
+                        arrive_labels, barrier_refusal, contact_kin,
+                        contact_outcome, contact_report, controller_fault,
+                        fault_refusal, hold_refusal, record_outcome,
                         retract_path, stroke_refusal)
 from ...primitives.types import (ContactCriterion, ContactStep, GripStep,
                                  JointStep, Plan, SettleStep)
@@ -868,7 +869,7 @@ class FirmwareExecutor:
         the object" from "the jaws stopped because the motor is disabled". This
         barrier used to accept two identical ``jaw_rad`` readings, so a faulted
         gripper — whose jaws are the stillest thing in the room — passed it as
-        a completed stroke (Astra review 13; d1-2, 2026-09-22).
+        a completed stroke (design review 13; d1-2, 2026-09-22).
 
         In order: a fault (``HandState.fault``: a ``fault_code``, or a
         ``fault``/``overload`` outcome) is a FAILED barrier carrying the fault;
@@ -1151,6 +1152,11 @@ class FirmwareExecutor:
         job left in place) for ``hold_s`` and then plays the leg back to its
         standoff. Returns the number of waypoints sent.
         """
+        outcome = contact_outcome(step, report)
+        if outcome is not None and outcome.q_backoff is not None:
+            # back_off, stopped on the support: retreat off it before the
+            # close (types.ContactPolicy) — along the leg's own knots
+            return self._play([JointStep(step.side, outcome.q_backoff, index)])
         if not step.retract:
             if report.q_stop is None:
                 return 0
@@ -1381,6 +1387,11 @@ class FirmwareExecutor:
                     sent += 1 + self._after_contact(step, contact, step.waypoint)
                     last[step.side] = np.asarray(
                         self.state().joints[step.side], dtype=float)
+                    # what the stop was ON, and where the tips are now,
+                    # MEASURED after the back-off job completed
+                    contacts[-1] = record_outcome(
+                        contact, step, contact_outcome(step, contact),
+                        contact_kin(self, gate.kin), last[step.side])
                 else:
                     # The firmware runner used to skip an unknown step in
                     # silence while the generic one raised. Same closed set,

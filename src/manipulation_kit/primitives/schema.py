@@ -9,8 +9,8 @@ kit's own action space, which is the kit's to describe; the drift the old
 argument worried about is prevented by the vocabulary living here, not by it
 living somewhere a second copy can grow beside it.
 
-What stays in ``examples/agent/``: provider SDKs, authentication, prompts, the
-scripted policy, Jev request envelopes, ranking and menu capping. Those are
+What stays in ``examples/agent/``: provider SDKs, authentication, model-facing text,
+the scripted policy, judge request envelopes, ranking and menu capping. Those are
 adapters. This is the thing they adapt.
 
 Two renderings come out of the same table
@@ -90,8 +90,8 @@ def _json_schema(spec, names: Optional[Sequence[str]]) -> Dict[str, Any]:
         if names is not None:
             schema["enum"] = list(names)
             if not schema["enum"]:
-                # An EMPTY enum is an unsatisfiable grammar: the Responses API
-                # returns status=incomplete with zero output tokens and no error
+                # An EMPTY enum is an unsatisfiable grammar: a hosted model's API
+                # returned status=incomplete with zero output tokens and no error
                 # (d1-2 2026-09-22, a scene with nothing declared yet). Leave the
                 # name free and say why; decode() still rejects an unknown name.
                 del schema["enum"]
@@ -136,7 +136,7 @@ def _default(value: Any) -> Any:
 
 
 def direction_doc() -> str:
-    """The prompt text for directions, GENERATED from the aliases.
+    """The model-facing text for directions, GENERATED from the aliases.
 
     One line per alias from :meth:`Direction.label` and its vector, so the
     text a model reads cannot drift from what ``decode`` accepts (L11: the old
@@ -225,7 +225,7 @@ def decode(name: str, arguments: Dict[str, Any],
     every field in :data:`NOT_MODEL_BINDABLE`: a model that sends ``policy``
     gets a typed refusal, not a silently-honoured knob (and ``roll_rad``,
     which no verb has, is an unknown argument)
-    (Astra review 5). A direction arrives as an alias or ``{axis, frame}``
+    (design review 5). A direction arrives as an alias or ``{axis, frame}``
     (or a bare ``[x, y, z]``, base frame) and leaves as a ``Direction``.
     """
     cls = BY_VERB.get(name)

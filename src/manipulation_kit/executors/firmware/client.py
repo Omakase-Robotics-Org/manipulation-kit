@@ -66,7 +66,7 @@ ROUTES = ("/v1/arm/{side}/state", "/v1/gripper/{side}/state",
 #: motor latched or refused the stroke, and every stroke after it ends the
 #: same way until it is cleared. A faulted gripper's jaws are perfectly
 #: stationary, which is how a fault used to pass the stroke barrier as a
-#: finished stroke (Astra review 13; d1-2 2026-09-22, the -4.17 Nm hold).
+#: finished stroke (design review 13; d1-2 2026-09-22, the -4.17 Nm hold).
 FAULT_KINDS: Tuple[str, ...] = ("fault", "overload")
 #: ...that mean the stroke stopped ON something before its target.
 STALLED_KINDS: Tuple[str, ...] = ("grasp", "contact")
