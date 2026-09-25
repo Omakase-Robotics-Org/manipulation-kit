@@ -1566,7 +1566,7 @@ def snap(value_m: float) -> float:
     """Snap a translation to the +-10/30/50 mm grid, zero below half of 10 mm.
 
     Coarse AND fine in the same vocabulary. A menu of only 50 mm steps cannot
-    express the 30 mm correction a task needs (Raptor's Jev run, 2026-09-19);
+    express the 30 mm correction a task needs (a classifier-driven run, 2026-09-19);
     a menu of only 10 mm steps pays three turns for every real move.
     """
     value = float(value_m)

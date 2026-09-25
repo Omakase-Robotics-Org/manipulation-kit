@@ -442,7 +442,8 @@ def test_the_remote_judge_answers_over_http(agent_examples, tmp_path,
                      photo=None)
     dist = RemoteJudge(url)(look)
     assert set(dist) == set(CHOICES) and max(dist, key=dist.get) == "on"
-    assert fake.calls == ["How does the red block sit relative to the green box?"]
+    # one question, asked about each of the four views of the photo
+    assert fake.calls == ["How does the red block sit relative to the green box?"] * 4
     with urllib.request.urlopen(url + "/health") as reply:
         assert json.loads(reply.read())["ok"] is True
     bad = urllib.request.Request(url + "/judge", data=b'{"options": []}',
@@ -463,7 +464,7 @@ def test_the_servo_runs_with_the_remote_judge(agent_examples, tmp_path,
                             RemoteJudge(url), out_dir=tmp_path))
     grasp = trace.records[1]
     assert grasp.servo["outcome"] == ALIGNED and grasp.run["completed"]
-    assert len(fake.calls) == 1
+    assert len(fake.calls) == 4
     # the marked photo, beside the servo's out_dir, named by the turn
     assert list(tmp_path.glob("turn1_servo_left.png"))
     # the recorded servo judgement is re-judged offline from its own photo
@@ -671,3 +672,186 @@ def test_the_servo_verbs_are_explicit():
     assert set(SERVO_VERBS) <= set(DIRECTED_VERBS)
     for verb in ("approach", "probe", "handover"):
         assert verb not in SERVO_VERBS
+
+
+# --------------------------------------------------------------------------- #
+# the inner loop: photo -> judge -> accumulate -> step or stop, at the judge
+# rate (d1-2 2026-09-24: one photo per turn, "below" at 0.36 / 0.28 under a
+# 0.50 gate, no step, the grasp refused)
+# --------------------------------------------------------------------------- #
+
+def _lukewarm(top, p, on, rest_to=None):
+    """A distribution the live run would give: ``top`` at ``p``, ``on`` at
+    ``on``, the rest spread evenly."""
+    others = [c for c in CHOICES if c not in (top, "on")]
+    out = {c: (1.0 - p - on) / len(others) for c in others}
+    out.update({top: p, "on": on})
+    return out
+
+
+def test_decide_accumulates_and_never_steps_on_a_contradiction():
+    from manipulation_kit.agent.servo import accumulate, decide
+    one = _lukewarm("below", 0.31, 0.24)          # d1-2 turn 6
+    two = _lukewarm("below", 0.36, 0.14)          # d1-2 turn 8
+    assert decide(one, 1, window=3, margin=0.10)[0] == "more"
+    acc = accumulate([one, two])
+    assert acc["below"] == pytest.approx(0.335)
+    assert decide(acc, 2, window=3, margin=0.10)[0] == "below"
+    # left and right both high: the object is not on two sides at once
+    torn = {"left": 0.4, "right": 0.35, "on": 0.25}
+    assert decide(accumulate([torn] * 3), 3, window=3, margin=0.10)[0] == "flat"
+    assert decide(accumulate([torn]), 1, window=3, margin=0.10)[0] == "more"
+    assert decide({"on": 0.5, "left": 0.3, "below": 0.2}, 1, window=3,
+                  margin=0.10)[0] == "on"
+    assert decide({"not_visible": 0.7, "on": 0.3}, 1, window=3,
+                  margin=0.10)[0] == "not_visible"
+
+
+def test_a_flat_judge_takes_window_photos_and_no_step(agent_examples):
+    robot = _approached()
+    asked = []
+
+    def flat(look):
+        asked.append(look)
+        return {c: 1.0 / len(CHOICES) for c in CHOICES}
+
+    lines = []
+    report = _align(robot, Servo(_no_frame, photoless(flat), log=lines.append))
+    assert report.outcome == "unsure" and len(asked) == 3
+    assert all(s.step_m is None for s in report.steps)
+    assert [s.frames for s in report.steps] == [1, 2, 3]
+    assert "flat over 3 photos" in report.detail
+    assert len(lines) == 4 and lines[-1].startswith("t=+")
+    assert "unsure" in lines[-1] and "3 photos, 0 steps" in lines[-1]
+
+
+def test_a_consistent_lukewarm_judge_steps_until_on(agent_examples):
+    """The judge never exceeds 0.36, but keeps pointing the same way: the
+    loop steps on the grid until the truth is inside the tolerance, and the
+    stroke may run."""
+    robot = _approached()
+    _declared, truth, geometry = _misplaced(robot, 0.040)
+
+    def lukewarm(look):
+        (choice, _p), = geometry(look).items()
+        return (_lukewarm("left", 0.20, 0.40) if choice == "on"
+                else _lukewarm(choice, 0.36, 0.20))
+
+    lines = []
+    report = _align(robot, Servo(_no_frame, photoless(lukewarm),
+                                 log=lines.append))
+    assert report.outcome == ALIGNED, report.detail
+    steps = [s for s in report.steps if s.step_m is not None]
+    assert 1 <= len(steps) <= 3
+    from manipulation_kit.primitives.types import NUDGE_GRID_M
+    for s in steps:
+        assert min(abs(float(np.hypot(*s.step_m)) - g) for g in NUDGE_GRID_M) < 1e-9
+    block = robot.world().find("red_block")
+    assert abs(block.p[1] - truth[1]) <= 0.0101
+    assert any("-> step +30mm along image-" in line for line in lines)
+    assert report.iterations == len(report.steps)
+
+
+def test_the_wall_clock_budget_ends_the_loop(agent_examples):
+    """A judge that keeps asking for another look (never decisive, window
+    never full) runs into the loop's own clock."""
+    from manipulation_kit.agent.servo import TIMEOUT
+    robot = _approached()
+    now = [100.0]
+
+    def clock():
+        now[0] += 1.0                 # every reading: a second later
+        return now[0]
+
+    def flat(look):
+        return {c: 1.0 / len(CHOICES) for c in CHOICES}
+
+    report = _align(robot, Servo(_no_frame, photoless(flat), window=50,
+                                 budget_s=4.0, clock=clock, log=lambda s: None))
+    assert report.outcome == TIMEOUT
+    assert 1 <= report.iterations <= 3
+    report = _align(robot, Servo(_no_frame, photoless(flat), window=50,
+                                 max_iterations=5, log=lambda s: None))
+    assert report.outcome == TIMEOUT and report.iterations == 5
+
+
+def test_the_policy_budget_still_ends_a_lukewarm_loop(agent_examples):
+    robot = _approached()
+    _declared, _truth, geometry = _misplaced(robot, 0.20)
+
+    def lukewarm(look):
+        (choice, _p), = geometry(look).items()
+        return _lukewarm(choice, 0.36, 0.20)
+
+    from manipulation_kit.agent.policy import PolicyState
+    from manipulation_kit.executor import run as run_plan
+    report = Servo(_no_frame, photoless(lukewarm), log=lambda s: None).align(
+        robot=robot, policy=OperatorPolicy(max_nudges_per_target=2),
+        state=PolicyState(), side="left", name="red_block", settings={},
+        run_plan=run_plan)
+    assert report.outcome == BUDGET
+    assert sum(1 for s in report.steps if s.step_m) == 2
+
+
+def test_a_photo_written_before_the_move_is_not_judged(agent_examples,
+                                                       tmp_path):
+    """After a correction the next photo must be written after the move
+    ended: a frame source that keeps handing an old file stops the loop as
+    ``stale_frame`` instead of judging the old pose."""
+    import os
+    from manipulation_kit.agent.servo import STALE
+    robot = _approached()
+    _declared, _truth, geometry = _misplaced(robot, 0.040)
+    old = _photo(tmp_path / "old.jpg")
+    os.utime(old, (1.0, 1.0))                    # written long ago
+    judge = _photo_judge({})
+    judge_answers = []
+
+    def reads(look):
+        judge_answers.append(look)
+        (choice, _p), = geometry(look).items()
+        return {choice: 1.0}
+
+    report = _align(robot, Servo(lambda side: old, reads, settle_s=0.0,
+                                 log=lambda s: None))
+    assert report.outcome == STALE
+    assert sum(1 for s in report.steps if s.step_m) == 1
+    assert len(judge_answers) == 1              # the old photo judged once
+
+
+def test_the_iteration_line_says_what_was_seen_and_done():
+    from manipulation_kit.agent.servo import (ServoReport, ServoStep,
+                                              exit_line, iteration_line)
+    step = ServoStep(look={}, distribution=_lukewarm("below", 0.41, 0.30),
+                     choice="below", confidence=0.41, step_m=(-0.010, 0.0),
+                     iteration=3, t_s=0.83, accumulated=_lukewarm("below", 0.38, 0.29),
+                     frames=2, frame_age_s=0.21,
+                     timing_s={"frame": 0.21, "judge": 0.17, "step": 0.44})
+    line = iteration_line(step, side="right")
+    assert line.startswith("t=+0.83s iter 3 side=right judge below 0.41 "
+                           "(on 0.30, ")
+    assert "acc[2] below 0.38" in line
+    assert ("-> step +10mm along image-below -> base (dx,dy)=(-0.010,+0.000)"
+            " m") in line
+    assert line.endswith("[frame 0.21s judge 0.17s step 0.44s]")
+    report = ServoReport(side="right", object="tape", outcome="aligned",
+                         detail="on the mark at 0.61 over 2 photos",
+                         steps=[step], elapsed_s=2.1, iterations=4)
+    assert exit_line(report) == (
+        "t=+2.10s servo right 'tape': aligned — on the mark at 0.61 over 2 "
+        "photos (4 photos, 1 step, 0.53 s/iteration)")
+
+
+def test_the_trace_keeps_every_iteration(agent_examples):
+    robot = _mirror()
+    _declared, _truth, judge = _misplaced(robot, 0.040)
+    trace = run(goal=GOAL, robot=robot, policy=OperatorPolicy(max_turns=2),
+                ask=Script(APPROACH, GRASP),
+                servo=Servo(_no_frame, judge, log=lambda s: None))
+    servo = trace.records[1].servo
+    assert servo["iterations"] == len(servo["steps"]) >= 2
+    assert servo["elapsed_s"] >= 0.0
+    for i, step in enumerate(servo["steps"], start=1):
+        assert step["iteration"] == i
+        assert set(step["accumulated"]) == set(CHOICES)
+        assert step["decision"] and "judge" in step["timing_s"]

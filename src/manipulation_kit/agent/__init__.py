@@ -1,6 +1,6 @@
 """manipulation_kit.agent — the consumer-shaped layer: policy, loop, robot, trace.
 
-Everything a model-driven loop needs that is NOT a prompt or a provider call
+Everything a model-driven loop needs that is NOT model-facing text or a provider call
 (design C.8, C.12). Before 0.16.0 it lived in ``examples/agent/`` — the
 operator policy as eight environment variables, the executor lifecycle as an
 ``ExitStack``, the held object as ``robot.expect()`` — where a wheel customer
@@ -25,7 +25,7 @@ could not get it and the suite could not see it.
     with LiveRobot.from_flag("firmware", url=url, policy=policy,
                              scene=scene) as robot:
         trace = run(goal=Place(object="cube", to="cup"), robot=robot,
-                    policy=policy, ask=my_model, system=MY_PROMPT)
+                    policy=policy, ask=my_model, system=MY_SYSTEM_TEXT)
     print(trace.summary())
 
 No provider is imported here, and nothing here opens a socket: the firmware

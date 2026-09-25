@@ -526,3 +526,42 @@ def test_the_kit_opens_no_image_without_the_extra():
                          re.MULTILINE)
     for path in (SRC / "perception").glob("*.py"):
         assert not decoder.search(path.read_text(encoding="utf-8")), path
+
+
+def test_a_wrist_contact_seen_from_beyond_the_object_walks_back(d1_arm):
+    """d1-2, 2026-09-24 (servo-judgeonly-2, turn 7): the right wrist camera
+    at x = 0.488 m looked back and down at a tape roll whose photo centre
+    inverse-projects to (0.408, -0.117). The model's pixel for the
+    silhouette's bottom, (335, 283), lands on the plane at x = 0.380 — the
+    roll's FAR edge, because image-down runs away from this camera. The old
+    conversion walked a further half-size away and declared 0.353 (55 mm
+    short: the grasp closed beside the roll); walking along image-up lands
+    within 10 mm of the photo."""
+    from pathlib import Path
+    from manipulation_kit.agent.robot import wrist_camera_from_scene
+    from manipulation_kit.agent.tools import locate
+    from manipulation_kit.description.robot_profile import (RobotProfile,
+                                                            with_profile)
+    from manipulation_kit.perception import WristCamera
+    from manipulation_kit.world import FrameGraph, SurfaceView, WorldView
+    profile = RobotProfile.resolve(
+        Path(__file__).resolve().parents[1] / "data"
+        / "d1-2.camera_calibration.json")
+    wrist = wrist_camera_from_scene(with_profile(None, profile),
+                                    measured_only=True)
+    saved = np.array(d1_arm.joints("right"), dtype=float)
+    try:
+        d1_arm.set_joints("right", np.radians(
+            [27.7, -72.5, -47.0, -82.1, 60.9, 37.1, 52.4]))
+        camera = WristCamera.from_kin(d1_arm, "right", **wrist["right"])
+    finally:
+        d1_arm.set_joints("right", saved)
+    assert camera.p[0] == pytest.approx(0.488, abs=0.002)
+    table = SurfaceView("table", p=[0.506, 0.0, 0.156], size=[0.4, 0.6, 0.02])
+    world = WorldView(objects=(table,), frames=FrameGraph())
+    got = locate({"right_wrist": camera}, world,
+                 {"camera": "right_wrist", "u": 335, "v": 283,
+                  "size": [0.05, 0.05, 0.026]})
+    assert got.kind == "centre"
+    assert abs(got.p[0] - 0.408) <= 0.010, got.p
+    assert abs(got.p[1] - (-0.117)) <= 0.010, got.p

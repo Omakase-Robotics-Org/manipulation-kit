@@ -1,0 +1,331 @@
+"""``manipulation_kit.agent.judge`` (the model-neutral seam: typed
+questions, mirrored views, letters) and ``examples/agent/jev_questions.py``
+(what Jev is asked) — and the recorded d1-2 answers replayed through the
+servo's accumulation rule."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+import sys
+
+from manipulation_kit.agent.judge import (ALL_VIEWS, AskingJudge, Question,
+                                          read, unview)
+
+# what Jev is asked lives with the examples, not in the kit
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples" / "agent"))
+from jev_questions import (FORMULATIONS, SCORE_VOTE, questions,  # noqa: E402
+                           score_verdict, state_for, to_choices)
+from manipulation_kit.agent.servo import (CHOICES, DEFAULT_MARGIN, ServoLook,
+                                          accumulate, decide)
+
+FIXTURE = (Path(__file__).resolve().parents[1] / "data"
+           / "servo_judge_d1_2_20260924.json")
+
+
+def _answers(per_view, formulation, views):
+    """A recorded photo's raw per-view answers, mapped back and averaged —
+    what :class:`AskingJudge` computes from a live transport."""
+    items = questions("tape", formulation)
+    summed = {q.id: [0.0] * len(q.options) for q in items}
+    for view in views:
+        for q in items:
+            for i, p in enumerate(unview(q, per_view[view][q.id], view)):
+                summed[q.id][i] += p / len(views)
+    return {q.id: read(q, summed[q.id]) for q in items}
+
+
+def test_the_formulations_ask_what_they_say():
+    choice, = questions("tape", "choice")
+    assert choice.kind == "choice" and choice.ids == CHOICES
+    score = questions("tape", "score")
+    assert [(q.id, q.kind) for q in score] == [
+        ("inside", "noul"), ("horizontal", "score"), ("vertical", "score")]
+    assert all(q.ids == (-2, -1, 0, 1, 2) for q in score[1:])
+    grasp = questions("tape", "grasp")
+    assert [q.id for q in grasp] == [q.id for q in score] + ["grasp_here",
+                                                             "jaw_turn"]
+    with pytest.raises(ValueError):
+        questions("tape", "sixty_ways")
+
+
+def test_a_mirrored_view_maps_back_to_the_upright_photo():
+    choice, = questions("tape", "choice")
+    # asked about the photo flipped top-bottom, "below" means upright "above"
+    shown = [0.1, 0.0, 0.0, 0.0, 0.9, 0.0]           # below 0.9
+    back = dict(zip(CHOICES, unview(choice, shown, "flip_v")))
+    assert back["above"] == 0.9 and back["below"] == 0.0
+    back = dict(zip(CHOICES, unview(choice, [0, 0.8, 0.2, 0, 0, 0], "rot180")))
+    assert back["right"] == 0.8 and back["left"] == 0.2
+    assert unview(choice, shown, "upright") == shown
+    horizontal = questions("tape", "score")[1]
+    assert unview(horizontal, [1, 0, 0, 0, 0], "flip_h") == [0, 0, 0, 0, 1]
+    assert unview(horizontal, [1, 0, 0, 0, 0], "flip_v") == [1, 0, 0, 0, 0]
+    turn = questions("tape", "grasp")[-1]
+    assert unview(turn, [1, 0, 0, 0, 0], "flip_v") == [0, 0, 0, 0, 1]
+    assert unview(turn, [1, 0, 0, 0, 0], "rot180") == [1, 0, 0, 0, 0]
+
+
+def test_a_score_look_votes_by_its_own_thresholds():
+    def answers(h, v, inside):
+        return {"horizontal": {"value": h}, "vertical": {"value": v},
+                "inside": {"p": inside}}
+    assert score_verdict(answers(-0.9, 0.2, 0.9)) == "left"
+    assert score_verdict(answers(0.1, 1.1, 0.2)) == "below"
+    assert score_verdict(answers(0.1, -0.2, 0.7)) == "on"
+    assert score_verdict(answers(0.3, -0.4, 0.5)) == ""
+    vote = to_choices(answers(0.1, -1.2, 0.3))
+    assert vote["above"] == pytest.approx(SCORE_VOTE)
+    assert sum(vote.values()) == pytest.approx(1.0)
+    assert decide(vote, 1, window=3, margin=DEFAULT_MARGIN)[0] == "above"
+    none = to_choices(answers(0.1, 0.1, 0.1))
+    assert decide(none, 1, window=3, margin=DEFAULT_MARGIN)[0] == "more"
+
+
+def test_the_d1_2_photos_upright_step_the_wrong_way_and_the_fix_does_not():
+    """The three marked photos of the d1-2 live run (the roll 63 px ABOVE
+    the box), their recorded answers replayed through the servo's rule.
+    Upright, the six-way answers — each under 0.37 — accumulate to "below":
+    a step away from the roll. Over the four views the servo does not step;
+    the score form on the rotated photo votes "above" on every photo."""
+    fixture = json.loads(FIXTURE.read_text())
+    photos = list(fixture["photos"].values())
+    assert fixture["truth"]["choice"] == "above" and len(photos) == 3
+
+    def accumulated(formulation, views):
+        dists = [to_choices(_answers(p, formulation, views)) for p in photos]
+        return decide(accumulate(dists), len(dists), window=3,
+                      margin=DEFAULT_MARGIN)[0]
+
+    assert accumulated("choice", ("upright",)) == "below"      # the bias
+    assert accumulated("choice", ALL_VIEWS) not in ("below", "left", "right")
+    assert accumulated("choice", ("flip_v",)) == "above"
+    for photo in photos:
+        answers = _answers(photo, "score", ("rot180",))
+        assert score_verdict(answers) == "above"
+        assert answers["vertical"]["value"] < -0.7
+    assert accumulated("score", ("rot180",)) == "above"
+
+
+class Transport(AskingJudge):
+    """A fake transport: 'below' in the photo AS SHOWN, whatever it is."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("formulation", FORMULATIONS["choice"])
+        super().__init__(**kwargs)
+        self.shown = []
+
+    def _ask(self, image, state, items):
+        self.shown.append(Path(image).name)
+        out = []
+        for q in items:
+            if q.kind == "choice":
+                out.append([1.0 if c == "below" else 0.0 for c in q.ids])
+            elif q.id == "vertical":
+                out.append([0.0, 0.0, 0.0, 0.0, 1.0])
+            else:
+                out.append([0.5] * len(q.options))
+        return out, 1.0
+
+
+def _look(tmp_path):
+    from PIL import Image
+    photo = tmp_path / "m.png"
+    Image.new("RGB", (64, 48), (128, 128, 128)).save(photo)
+    return ServoLook(side="right", object="tape", camera=None, u=0.0, v=0.0,
+                     depth_m=0.2, image=photo, photo=photo)
+
+
+def test_a_judge_that_always_says_below_cancels_over_the_views(tmp_path):
+    """The bias the four views are for: an answer that does not follow the
+    image averages to a tie between above and below, never a step."""
+    judge = Transport()
+    dist = judge(_look(tmp_path))
+    assert dist["above"] == pytest.approx(0.5) and dist["below"] == pytest.approx(0.5)
+    assert decide(dist, 1, window=3, margin=DEFAULT_MARGIN)[0] == "more"
+    assert judge.shown == ["m.png", "m_flip_v.png", "m_flip_h.png",
+                           "m_rot180.png"]
+    assert judge.last["views"] == list(ALL_VIEWS)
+    upright = Transport(views=("upright",))(_look(tmp_path))
+    assert max(upright, key=upright.get) == "below"
+    with pytest.raises(ValueError):
+        Transport(views=("sideways",))
+
+
+# --------------------------------------------------------------------------- #
+# the server's batch endpoint, and the lab that measures formulations
+# --------------------------------------------------------------------------- #
+
+class FakeJev:
+    loaded = True
+
+    def __init__(self):
+        self.calls = []
+
+    def predict(self, *, state, question, options, media, modality):
+        self.calls.append(question)
+        return {"probabilities": {o: (0.7 if i == 0 else 0.3 / (len(options) - 1))
+                                  for i, o in enumerate(options)}}
+
+
+@pytest.fixture
+def server():
+    import threading
+    import jev_judge_server
+    fake = FakeJev()
+    httpd = jev_judge_server.make_server(fake, "127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}", fake
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_the_remote_judge_batches_every_question_of_a_view(agent_examples,
+                                                           tmp_path, server):
+    from jev_judge import RemoteJudge
+    url, fake = server
+    judge = RemoteJudge(url, formulation="score", views=("upright", "rot180"))
+    dist = judge(_look(tmp_path))
+    assert judge.batch is True
+    assert len(fake.calls) == 2 * 3            # 3 questions x 2 views
+    assert set(dist) == set(CHOICES)
+    answers = judge.last["answers"]
+    # option 0 is "yes" / "far left" / "far above" in the photo as shown:
+    # upright and rotated disagree about the axes, so they average to level
+    assert answers["inside"]["p"] == pytest.approx(0.7)
+    assert answers["horizontal"]["value"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_the_lab_grades_what_the_servo_would_do(agent_examples, tmp_path):
+    import jev_questions_lab as lab
+    assert lab.ordinal(0, 47) == 0 and lab.ordinal(-40, 47) == -1
+    assert lab.ordinal(80, 47) == 2
+    assert lab.grade("on", 0, 0) == "ok" and lab.grade("left", 0, 0) == "wrong"
+    assert lab.grade("on", 40, 0) == "premature_on"
+    assert lab.grade("right", 40, -80) == "ok"      # the minor axis, right sign
+    assert lab.grade("above", 40, 0) == "wrong"     # an axis that is on
+    assert lab.grade("more", 40, 0) == "abstain"
+    # a record whose every answer is the truth scores perfectly
+    rows = []
+    items = questions("tape", "choice") + questions("tape", "grasp")
+    for du in lab.OFFSETS_PX:
+        for dv in lab.OFFSETS_PX:
+            truth = ("on" if du == dv == 0 else
+                     ("right" if du > 0 else "left") if abs(du) >= abs(dv)
+                     else ("below" if dv > 0 else "above"))
+            answers = {}
+            for q in items:
+                if q.kind == "choice":
+                    probs = [1.0 if c == truth else 0.0 for c in q.ids]
+                elif q.id in ("horizontal", "vertical"):
+                    want = lab.ordinal(du if q.id == "horizontal" else dv, 47)
+                    probs = [1.0 if v == want else 0.0 for v in q.ids]
+                elif q.id == "inside":
+                    probs = [1.0, 0.0] if du == dv == 0 else [0.0, 1.0]
+                else:
+                    probs = [1.0 / len(q.options)] * len(q.options)
+                answers[q.id] = {"probs": probs, "ms": 1.0}
+            rows.append({"photo": "p", "du": du, "dv": dv, "view": "upright",
+                         "half_box": [47, 47], "answers": answers})
+    said = []
+    table = lab.report(rows, say=said.append)
+    for arm in ("A", "B"):
+        assert table[arm]["servo_wrong"] == 0
+        assert table[arm]["servo_ok"] == 25, (arm, table[arm])
+    assert table["B"]["ordinal_exact"] == "50/50"
+    assert said[0].startswith("| arm | cases |")
+
+
+# --------------------------------------------------------------------------- #
+# letters: the answer is a letter drawn beside the box, not a direction word
+# --------------------------------------------------------------------------- #
+
+def test_the_letters_sit_outside_the_box_inside_the_frame():
+    from manipulation_kit.agent.judge import (LETTER_RADIUS_PX, LETTERS,
+                                              letter_centres)
+    box = (275.0, 220.0, 370.0, 314.0)              # d1-2 turn 6, 640 x 480
+    where = letter_centres(box, 640, 480)
+    assert set(where) == {letter for letter, _c in LETTERS}
+    r = LETTER_RADIUS_PX
+    for letter, (u, v) in where.items():
+        assert r <= u <= 640 - r and r <= v <= 480 - r, letter
+        # the whole disc is outside the box
+        du = max(box[0] - u, 0.0, u - box[2])
+        dv = max(box[1] - v, 0.0, v - box[3])
+        assert (du * du + dv * dv) ** 0.5 >= r, letter
+    # a box at the top edge: the top disc is pulled into the frame
+    top = letter_centres((300.0, 5.0, 340.0, 45.0), 640, 480)
+    assert all(r <= v <= 480 - r for _u, v in top.values())
+
+
+def test_each_letter_is_drawn_on_the_side_it_maps_to(tmp_path):
+    """The letter -> side table and the drawing agree: the disc of the
+    letter mapped to a choice lies from the box centre along that choice's
+    image axis, and that axis maps to a table-plane direction for a
+    downward-looking wrist camera (the step the servo takes)."""
+    import numpy as np
+    from PIL import Image
+    from scipy.spatial.transform import Rotation as R
+    from manipulation_kit.agent.judge import LETTERS, draw_letters
+    from manipulation_kit.agent.servo import (_IMAGE_AXIS,
+                                              image_direction_in_base)
+    from manipulation_kit.perception import WristCamera
+    photo = tmp_path / "p.png"
+    Image.new("RGB", (640, 480), (200, 180, 180)).save(photo)
+    box = (270.0, 190.0, 370.0, 290.0)
+    out, where = draw_letters(photo, box, tmp_path / "l.png")
+    image = np.asarray(Image.open(out).convert("RGB")).astype(int)
+    camera = WristCamera.from_flange(
+        "right", np.array([0.4, -0.1, 0.3]), R.from_euler("x", 180, degrees=True),
+        fx=300.0, fy=300.0, cx=320.0, cy=240.0, width=640, height=480)
+    for letter, choice in LETTERS:
+        u, v = where[letter]
+        au, av = _IMAGE_AXIS[choice]
+        assert (u - 320.0) * au + (v - 240.0) * av > 40.0, (letter, choice)
+        # a dark disc behind a light letter: the disc's rim is black
+        rim = image[int(v), int(u) - 11]
+        assert rim.sum() < 100, (letter, rim)
+        assert image_direction_in_base(camera, choice) is not None
+
+
+def test_a_letters_answer_needs_no_mapping_back(tmp_path):
+    """The letters are painted into the photo, so a mirrored view carries
+    them along: "toward A" is the side A is drawn on in every view."""
+    q, = questions("tape", "letters")
+    assert q.ids == ("above", "right", "below", "left", "on", "not_visible")
+    assert all("letter" in o for o in q.options[:4])
+    for view in ALL_VIEWS:
+        assert unview(q, [0.9, 0.1, 0, 0, 0, 0], view) == [0.9, 0.1, 0, 0, 0, 0]
+    assert "letters A, B, C and D" in state_for("tape", "letters")
+
+    class SaysA(AskingJudge):
+        def _ask(self, image, state, items):
+            assert image.name.startswith("m_letters")
+            assert "letters A, B, C" in state
+            return [[1.0, 0, 0, 0, 0, 0] for _q in items], 1.0
+
+    look = _look(tmp_path)
+    look = ServoLook(side="right", object="tape", camera=None, u=32.0, v=24.0,
+                     depth_m=0.2, image=look.image, photo=look.photo,
+                     box_px=(22.0, 14.0, 42.0, 34.0))
+    dist = SaysA(FORMULATIONS["letters"])(look)
+    assert dist["above"] == pytest.approx(1.0)
+
+
+def test_a_question_says_its_shape():
+    with pytest.raises(ValueError):
+        Question("q", "essay", "?", ("a", "b"))
+    with pytest.raises(ValueError):
+        Question("q", "noul", "?", ("yes", "no", "maybe"))
+    with pytest.raises(ValueError):
+        Question("q", "score", "?", ("a", "b"), (1,), mirror="u")
+    q = Question("q", "score", "?", ("low", "high"), (-1, 1), mirror="u")
+    assert read(q, [0.25, 0.75])["value"] == pytest.approx(0.5)
+    assert unview(q, [0.25, 0.75], "flip_h") == [0.75, 0.25]
+    assert unview(q, [0.25, 0.75], "flip_v") == [0.25, 0.75]

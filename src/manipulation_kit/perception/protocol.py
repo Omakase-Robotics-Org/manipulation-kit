@@ -128,7 +128,7 @@ def lift_onto_support(objects: Sequence[ObjectView],
     """Declared objects, with any that sink into their support lifted onto it.
 
     THE DESCENT FLOOR TRUSTS THE OBJECT'S BOTTOM, so a declared bottom below
-    the table top would send the pad tips into the table (Astra review 4,
+    the table top would send the pad tips into the table (design review 4,
     design L5). An object whose RESOLVED underside
     (:meth:`ObjectView.bottom_z`) is more than ``tol_m`` below its support's
     RESOLVED top (:meth:`SurfaceView.top_z`) is raised, along base +z, until
@@ -198,8 +198,8 @@ def replace_by_name(world: WorldView, objects: Sequence[ObjectView]
 class ScenePerceiver:
     """The reference :class:`Perceiver`: camera models over a world.
 
-    It does no detection at all — that is what a subclass (the example's
-    ``AstraDetector``) or a model adds. What it does is the kit's share:
+    It does no detection at all — that is what a subclass (the examples'
+    detector) or a model adds. What it does is the kit's share:
     turn a pixel into a contact point on the right plane with the plane's
     OWN provenance and height uncertainty, and turn declared objects into a
     world with the support rule applied.

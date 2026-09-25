@@ -692,7 +692,7 @@ class FirmwareExecutor:
         the object" from "the jaws stopped because the motor is disabled". This
         barrier used to accept two identical ``jaw_rad`` readings, so a faulted
         gripper — whose jaws are the stillest thing in the room — passed it as
-        a completed stroke (Astra review 13; d1-2, 2026-09-22).
+        a completed stroke (design review 13; d1-2, 2026-09-22).
 
         In order: a fault (``HandState.fault``: a ``fault_code``, or a
         ``fault``/``overload`` outcome) is a FAILED barrier carrying the fault;

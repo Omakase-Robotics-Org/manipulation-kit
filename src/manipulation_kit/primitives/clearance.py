@@ -5,7 +5,7 @@ own body and off each other. It is stdlib-only on purpose and it never sees a
 :class:`~manipulation_kit.world.WorldView`, so before 0.16.0 NOTHING kept an
 arm off the table: run 5 latched the right forearm into the wagon top with
 every check passing, and the example answered with a policy patch
-(``ASTRA_APPROACH_ALLOW``) for a geometry gap. This module is the scene half of
+(an approach-direction allow list) for a geometry gap. This module is the scene half of
 what :class:`~manipulation_kit.arms.guard.GuardGate` is for the body.
 
 WHAT IS CHECKED, exactly:

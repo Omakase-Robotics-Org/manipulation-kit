@@ -1,7 +1,7 @@
 """The loop's ROBOT: an executor, a world source, and the kinematic model.
 
 ``LiveRobot`` is what an agent loop drives — on a real D1, in Isaac, or in the
-kinematic mirror, with the SAME loop, policy, prompt and trace. Only two
+kinematic mirror, with the SAME loop, policy, system text and trace. Only two
 things differ between them, and they are this module's two seams:
 
 ``executor``      how a checked plan is played (the kit's ``Executor``
@@ -140,7 +140,7 @@ def objects_from(scene: Dict[str, Any]) -> List[ObjectView]:
             extra["interior_measured"] = bool(item["interior_measured"])
         if kind is SurfaceView:
             # How the top's HEIGHT is known travels into the world, not just
-            # the file (Astra review 8).
+            # the file (design review 8).
             for key in ("plane_source", "height_uncertainty_m"):
                 if item.get(key) is not None:
                     extra[key] = item[key]

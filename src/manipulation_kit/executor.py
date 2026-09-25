@@ -984,7 +984,7 @@ STROKE_UNFINISHED = "stroke_unfinished"
 #: unfinished stroke can be waited for, a faulted gripper cannot. (d1-2,
 #: 2026-09-22: a firm hold wound its torque to -4.17 Nm, the motor latched,
 #: and every later stroke ended ``fault`` with the jaws stationary — which
-#: the barrier accepted as a finished stroke. Astra review, finding 13.)
+#: the barrier accepted as a finished stroke. Design review, finding 13.)
 GRIPPER_FAULT = "gripper_fault"
 #: A stroke the plan marked ``GripStep.expect_hold`` finished WITHOUT a
 #: measured hold (``StrokeReport.holding`` false or unknown). The run stops
@@ -1732,7 +1732,7 @@ def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
 
     A number with no move attached costs the caller a turn to work out, and
     an agent given one spends that turn re-asking for the same verb with a
-    different argument — measured, five of twelve turns of an Astra trial
+    different argument — measured, five of twelve turns of an agent trial
     (2026-09-21). The two misses have different answers and the barrier knows
     which one it saw.
     """
@@ -1746,7 +1746,7 @@ def _remedy(arrival: ArrivalReport, gate: "ToolGate") -> str:
             and abs(arrival.tool_along_m) > gate.tol_along_m):
         # Lined up and short: that is what CONTACT looks like. Only then — a
         # miss that is off in BOTH is not a story about the surface, and
-        # measured with Astra this wording went out on an arm 320 mm away.
+        # measured in an agent trial this wording went out on an arm 320 mm away.
         return (f"{arrival.detail}. The arm is stationary short of the "
                 f"waypoint along its own approach axis, which is what CONTACT "
                 f"looks like: something is under the fingers. Re-observe, or "
