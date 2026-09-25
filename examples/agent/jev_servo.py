@@ -5,20 +5,21 @@ Jev-Omni (``akhilaaa3/Jev-Omni``, Apache-2.0) is a 12B multimodal decision
 CLASSIFIER: it cannot write a pixel, but it places the object RELATIVE TO A
 MARK the kit has drawn; the kit does the rest (``manipulation_kit.agent.servo``).
 
-The model's side is here and in ``jev_judge.py``; nothing here decides a
-direction, a step or whether the stroke may run::
+The model's side is here, in ``jev_judge.py`` and ``segmenter.py``; nothing
+here decides a direction, a step or whether the stroke may run::
 
     python examples/agent/jev_servo.py --dry-run --misplace-mm 40   # no model, no key
     python examples/agent/jev_servo.py --model gpt-6-astra --executor firmware \\
         --robot http://d1-2:4750 --scene my_scene.json --robot-profile PATH \\
         --snapshot-cmd "grab_frames.sh --turn {turn} --out {out_dir}"
-    # the judge on a workstation (jev_judge_server.py), recorded, never stepping:
-    ... --judge-url http://100.x.y.z:8766 --judge-only
+    # the judge (jev_judge_server.py) and the outline (segment_server.py) on
+    # a workstation, recorded, never stepping:
+    ... --judge-url http://100.x.y.z:8766 --segment-url http://100.x.y.z:8767 \
+        --object-shape tape=cylinder --judge-only
     # offline, a finished run's wrist photos judged again (nothing moves):
     ... --rejudge run/ --robot-profile PATH --judge-url http://127.0.0.1:8766
 
-``--judge jev`` or the server need ``huggingface_hub``, ``torch``,
-``torchvision``, ``transformers`` and a CUDA GPU with ~47 GB free.
+``--judge jev`` / the servers need torch, transformers and a CUDA GPU.
 """
 
 from __future__ import annotations
@@ -47,6 +48,8 @@ from manipulation_kit.primitives import Place  # noqa: E402
 from run_scene import resolve_profile, scene_for_run  # noqa: E402
 from scene import DEMO_WRIST_CAMERA, demo_scene  # noqa: E402
 from scripted import ScriptedModel, two_things_on  # noqa: E402
+from segmenter import add_outline_flags, outline_options  # noqa: E402
+
 
 class SaidTrace(DecisionTrace):
     """The trace, and one line per judged stroke as it happens."""
@@ -56,20 +59,6 @@ class SaidTrace(DecisionTrace):
             print(f"turn {record.iteration}: {servo_line(record.servo)}",
                   flush=True)
         return super().write(record)
-
-
-def wrist_frames(snapshotter):
-    """``Servo``'s frame seam over the example's camera-grab contract: one
-    fresh grab per look, that hand's wrist file out of it."""
-    counter = {"n": 1000}
-
-    def frame(side: str) -> Optional[Path]:
-        counter["n"] += 1
-        for _label, path in snapshotter.capture(counter["n"]):
-            if path.name.endswith(f"_{side}_wrist_0_rgb.jpg"):
-                return path
-        return None
-    return frame
 
 
 def build_parser():
@@ -90,17 +79,22 @@ def build_parser():
              "(trace.jsonl + turn*_*_wrist_0_rgb.jpg) and print each answer")
     add("--misplace-mm", type=float, default=0.0, help="geometry judge: "
         "the TRUE object is this far (base +y) from the declaration")
-    add("--judge-questions", choices=NAMES, default="choice")
-    add("--judge-views", default=",".join(ALL_VIEWS), help="mirrored views "
-        "averaged per photo, e.g. rot180 (default: all four)")
+    add("--judge-questions", choices=NAMES, default="jaws")
+    add("--judge-views", default=None, help="mirrored views averaged per "
+        "photo, e.g. rot180 (default: upright for jaws*, else all four)")
+    add("--servo-turn", action="store_true", help="let the servo turn the "
+        "wrist on the judge's jaw-turn answer (off: at chance in the lab)")
     add("--servo-budget-s", type=float, default=DEFAULT_BUDGET_S)
     add("--verbose-servo", action="store_true", help="per-question answers")
+    add_outline_flags(parser)
     return parser
 
 
 def make_judge(parser, args, kind: str, world0):
+    views = args.judge_views or ("upright" if args.judge_questions.startswith(
+        "jaws") else ",".join(ALL_VIEWS))
     how = dict(formulation=args.judge_questions, debug=args.verbose_servo,
-               views=tuple(v for v in args.judge_views.split(",") if v))
+               views=tuple(v for v in views.split(",") if v))
     if kind == "jev":
         return JevJudge(**how)
     if kind == "remote":
@@ -141,7 +135,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     snapshotter = None
     run_dir = (args.trace or Path("run/trace.jsonl")).parent
     if args.snapshot_cmd:
-        from snapshot import Snapshotter  # noqa: PLC0415
+        from snapshot import Snapshotter, wrist_frames  # noqa: PLC0415
         snapshotter = Snapshotter(args.snapshot_cmd, run_dir)
     (world0, kin), options = demo_scene(), {}
     scene = scene_for_run(args, snapshotter=snapshotter, profile=profile)
@@ -169,7 +163,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     servo = Servo(wrist_frames(snapshotter) if snapshotter else lambda s: None,
                   make_judge(parser, args, judge_kind, world0), out_dir=run_dir,
                   observe_only=args.judge_only, refine=args.refine,
-                  budget_s=args.servo_budget_s,
+                  budget_s=args.servo_budget_s, **outline_options(args),
+                  **({} if args.servo_turn else {"max_turn_rad": 0.0}),
                   log=lambda line: print(f"[servo] {line}", file=sys.stderr,
                                          flush=True))
     if dry:
