@@ -52,7 +52,7 @@ from .planning import (DUPLICATE_KNOT_RAD, IncompleteObservation, Kin,  # noqa: 
 from .types import (AUTO, BAD_ARGUMENT, BAD_SIDE, ARM_UNKNOWN, JOINT_LIMIT,
                     ContactCriterion, ContactStep, GripStep, JointStep, Plan,
                     PlanBinding, PlanError, Primitive, SIDES, SettleStep,
-                    Unmet, Verifier, Waypoint)
+                    Unmet, VERB_CONTACT_POLICY, Verifier, Waypoint)
 from .verbs import (SETTLE_S, _coerce_direction, _incomplete, _locate,
                     _must_be_free, _resolve, _resolved_side, _unchecked_note)
 
@@ -329,7 +329,8 @@ def _contact_plan(verb: Primitive, world: WorldView, kin, side: str, *,
     contact = ContactStep(side, Direction(tuple(d), BASE), float(travel_m),
                           criterion, waypoint=1, path=tuple(path),
                           s=tuple(dist), speed_m_s=float(speed_m_s),
-                          hold_s=float(hold_s), retract=bool(retract))
+                          hold_s=float(hold_s), retract=bool(retract),
+                          policy=VERB_CONTACT_POLICY[verb.name()])
     all_steps = ((GripStep(side, _closedness(verb.hand), "soft", 0),)
                  + tuple(standoff) + (contact, SettleStep(SETTLE_S)))
     measured = ((f"the {scene.contact_target!r} it is aimed at is left out "
@@ -371,6 +372,9 @@ def _box_margin(kin, side: str, steps) -> Tuple[float, str]:
 @dataclass(frozen=True)
 class Probe(Primitive):
     """Move the hand in one direction until something resists, and report WHERE.
+
+    CONTACT POLICY ``stay`` (:class:`~.types.ContactPolicy`): the arm is
+    re-commanded where it measured the stop and stays touching.
 
     From where the hand is now: it is turned so its fingertips lead along
     ``direction``, then travels at most ``max_travel_m`` and stops at the
@@ -502,6 +506,11 @@ class Probe(Primitive):
 @dataclass(frozen=True)
 class Press(Primitive):
     """Push the hand against a target's near face, hold, and back out.
+
+    CONTACT POLICY ``push_through`` (:class:`~.types.ContactPolicy`): the
+    press keeps its frozen command against the face for ``hold_s`` — a wall
+    button needs the push — and only then retracts. It never backs off at
+    the first touch the way a fingertip ``grasp`` does.
 
     Stands off ``target`` along ``-direction``, travels onto its near face and
     up to ``depth_m`` past it, stops when a joint's torque has risen

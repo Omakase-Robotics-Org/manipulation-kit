@@ -17,8 +17,8 @@ are the third option, offered beside the motion verbs every turn:
                    :mod:`manipulation_kit.agent.loop`).
 
 Neither moves anything, so neither goes through the motion gate. Moved here
-from ``examples/agent/astra_loop.py`` (design C.8): they are loop mechanics,
-not a prompt.
+from the examples (design C.8): they are loop mechanics, not model-facing
+text.
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ def apply_declare_scene(robot: Any, arguments: Dict[str, Any], *,
     position is refused with the reader's own message rather than crashing
     four verbs later. THE DESCENT FLOOR TRUSTS THE OBJECT'S BOTTOM, so a
     declared object is lifted onto the surface it stands on — the kit's rule,
-    which resolves the surface's frame and rotation (Astra review 4).
+    which resolves the surface's frame and rotation (design review 4).
     """
     from ..perception import lift_onto_support  # noqa: PLC0415
     from ..world import FrameGraph, SurfaceView  # noqa: PLC0415
@@ -206,8 +206,22 @@ def locate(cameras: Any, world: Any, arguments: Dict[str, Any]):
     if arguments.get("size") is not None:
         located = contact_to_centre(
             located, size=arguments["size"], viewpoint=models[name].p,
-            yaw_rad=float(arguments.get("yaw_rad", 0.0)))
+            yaw_rad=float(arguments.get("yaw_rad", 0.0)),
+            image_up=_image_up(perceiver, name, arguments, located))
     return located
+
+
+def _image_up(perceiver, name, arguments, located):
+    """The table-plane direction the image's up axis runs at the located
+    pixel (a pixel above it, located on the same plane), or None where that
+    pixel has no plane point (the horizon)."""
+    from ..perception import NoSupport, NotOnThePlane  # noqa: PLC0415
+    try:
+        above = perceiver.locate(name, float(arguments["u"]),
+                                 float(arguments["v"]) - 8.0)
+    except (NoSupport, NotOnThePlane, ValueError):
+        return None
+    return above.p - located.p
 
 
 def apply_locate(cameras: Any, world: Any, arguments: Dict[str, Any]) -> str:

@@ -14,7 +14,7 @@ Two ways in, and they are different on purpose:
   lift states the firmware executor reports (``neck_state()`` /
   ``lift_state()``). It FAILS CLOSED: no neck state, or a neck that is moving,
   is not a camera pose, and a default of "level" is exactly the silent
-  override Astra review item 9 found.
+  override design review item 9 found.
 * :meth:`HeadCamera.from_robot` — joint space, for a RECORDED frame whose
   neck angle somebody wrote down (the committed d1-2 fixtures, the CLI).
 
@@ -242,7 +242,7 @@ class HeadCamera(PinholeCamera):
         return out
 
     def to_text(self) -> str:
-        """The camera, for a model's own prompt: all robot facts."""
+        """The camera, for a model's own system text: all robot facts."""
         axis = self.r.as_matrix()[:, 2]
         down = math.degrees(math.asin(max(-1.0, min(1.0, -axis[2]))))
         label = ("calibrated mount" if self.calibrated

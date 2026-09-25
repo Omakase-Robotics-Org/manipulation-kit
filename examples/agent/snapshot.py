@@ -24,7 +24,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from manipulation_kit.agent import ObservationError
 
@@ -81,3 +81,17 @@ class Snapshotter:
                           "image_url": f"data:image/jpeg;base64,{data}",
                           "_file": path.name})
         return parts
+
+
+def wrist_frames(snapshotter):
+    """``Servo``'s frame seam over the example's camera-grab contract: one
+    fresh grab per look, that hand's wrist file out of it."""
+    counter = {"n": 1000}
+
+    def frame(side: str) -> Optional[Path]:
+        counter["n"] += 1
+        for _label, path in snapshotter.capture(counter["n"]):
+            if path.name.endswith(f"_{side}_wrist_0_rgb.jpg"):
+                return path
+        return None
+    return frame

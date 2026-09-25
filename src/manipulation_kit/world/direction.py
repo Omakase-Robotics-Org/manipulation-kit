@@ -160,7 +160,7 @@ ALIASES: Dict[str, Direction] = {
     "along_tool": Direction((0.0, 0.0, 1.0), frame=TOOL),
 }
 
-#: one line per alias, for generated prompt text (never hand-copied)
+#: one line per alias, for generated model-facing text (never hand-copied)
 ALIAS_MEANING: Dict[str, str] = {
     "down": "travel straight down (base -z)",
     "up": "travel straight up (base +z)",

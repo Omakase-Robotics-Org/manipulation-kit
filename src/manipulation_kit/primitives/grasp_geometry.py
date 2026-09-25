@@ -44,7 +44,7 @@ from ..world import (UPRIGHT_TOL_RAD, BASE, FrameError, FrameGraph,
                      ObjectView, SurfaceView)
 from ..world.direction import Direction, object_frame
 from . import orientation as _o
-from .types import OBJECT_TOO_FLAT, OBJECT_TOO_WIDE, Unmet
+from .types import OBJECT_TOO_FLAT, OBJECT_TOO_WIDE, SurfaceBackoff, Unmet
 
 __all__ = [
     "GraspReference", "PAD", "TIP", "REFERENCES", "CONTACTS", "GraspSpec",
@@ -55,6 +55,8 @@ __all__ = [
     "achieved_clearance", "tilted", "own_face_direction",
     "TIP_CONTACT_THIN_M", "TIP_SEARCH_START_M", "CONTACT_OVERTRAVEL_M",
     "TIP_CONTACT_NM", "descends_by_contact",
+    "GRASP_DEPTH_MIN_M", "GRASP_DEPTH_FRACTION", "fingertip_point",
+    "near_face_along", "insertion_along", "min_insertion_m",
 ]
 
 
@@ -448,6 +450,67 @@ def achieved_clearance(p_tool, r_tcp: R, floor_z: float) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# how far the fingers got INTO the object
+# --------------------------------------------------------------------------- #
+
+#: How far past the object's near face (its TOP, for a descent) the finger
+#: TIPS must be when the jaws close, for the pads to be on the object's body
+#: rather than on its edge [m]. A stall at a plausible width is not enough on
+#: its own: jaws that stop on a tape roll's rim stall inside the width window
+#: too. PROVISIONAL, and capped for thin things by :data:`GRASP_DEPTH_FRACTION`.
+#: What it has to admit: a pad grasp of a 26 mm roll leaves the tips at
+#: the 3 mm support clearance plus the 12 mm droop margin, i.e. 11 mm
+#: past the top; a fingertip grasp by contact reaches the table.
+GRASP_DEPTH_MIN_M = 0.008
+#: ...or this fraction of the object's extent along the approach, whichever is
+#: less: a 6 mm card taken at the tips needs 1.5 mm, not 8.
+GRASP_DEPTH_FRACTION = 0.25
+
+
+def fingertip_point(tool_p, tool_r: R) -> np.ndarray:
+    """The LEADING finger tip for a measured tool point (the pad centre,
+    :data:`.orientation.TOOL_Z_M`) and orientation: :data:`PAD` ``lead_m``
+    further along TCP +z, the approach axis. The number to compare with an
+    object's geometry — the tool point of a fingertip grasp over a 26 mm
+    roll is ABOVE the roll's top while its tips are at the table."""
+    return (np.asarray(tool_p, dtype=float).reshape(3)
+            + tool_r.apply([0.0, 0.0, PAD.lead_m]))
+
+
+def near_face_along(obj: ObjectView, frames: FrameGraph, d) -> float:
+    """Where ``obj`` begins along the unit travel ``d``: the projection onto
+    ``d`` of its first face met, for any orientation (the box's extent along
+    ``d``, :meth:`~manipulation_kit.world.ObjectView.extent_along`). An
+    upright cylinder is its bounding box here, so its near face for a
+    descent is its top; a cylinder lying down presents its diameter."""
+    d = np.asarray(d, dtype=float).reshape(3)
+    d = d / max(float(np.linalg.norm(d)), 1e-12)
+    p, _r = obj.pose_in_base(frames)
+    return float(np.dot(p, d)) - obj.extent_along(d, frames) / 2.0
+
+
+def insertion_along(obj: ObjectView, frames: FrameGraph, d, tip_p) -> float:
+    """How far past ``obj``'s near face the point ``tip_p`` is along ``d``
+    [m]: for a descent, the object's top z minus the tip z. Negative is short
+    of the object — on its top, or above it."""
+    d = np.asarray(d, dtype=float).reshape(3)
+    d = d / max(float(np.linalg.norm(d)), 1e-12)
+    return (float(np.dot(np.asarray(tip_p, dtype=float).reshape(3), d))
+            - near_face_along(obj, frames, d))
+
+
+def min_insertion_m(obj: ObjectView, frames: FrameGraph, d, *,
+                    depth_m: float = GRASP_DEPTH_MIN_M,
+                    fraction: float = GRASP_DEPTH_FRACTION) -> float:
+    """The insertion a hold needs: :data:`GRASP_DEPTH_MIN_M`, or
+    :data:`GRASP_DEPTH_FRACTION` of the object's extent along ``d`` for
+    something thinner."""
+    return min(float(depth_m),
+               float(fraction) * float(obj.extent_along(d, frames)))
+
+
+
+# --------------------------------------------------------------------------- #
 # the fingertip descent that finishes by contact
 # --------------------------------------------------------------------------- #
 
@@ -495,3 +558,109 @@ def descends_by_contact(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
     if not _o.is_descent(d):
         return False
     return support is not None or obj.vertical_extent(frames) < TIP_CONTACT_THIN_M
+
+
+# --------------------------------------------------------------------------- #
+# after the tips touched: back off the support before closing
+# --------------------------------------------------------------------------- #
+
+#: How far a fingertip grasp retreats along minus its travel once the search
+#: stopped ON THE SUPPORT, before the jaws close [m] — the default of
+#: :attr:`.clearance.ClearancePolicy.contact_backoff_m`.
+#:
+#: WHY. Jaws closed with the tips pressed on the table drag across it: on
+#: d1-2 (2026-09-24, ``servo-judgeonly-2`` turn 6) a tape grasp whose declared
+#: centre was 55 mm off stopped its search on the table, the close stroke
+#: dragged the tips across the surface and the friction stalled the jaws at
+#: 48 mm — inside the 46-54 mm window of the 50 mm declaration — and the
+#: daemon reported a hold. At closure nothing tells that drag from an object.
+#: Lifted clear of the surface, jaws with nothing between them close to the
+#: empty gap and say so.
+#:
+#: WHY 1 mm. Enough that the tips no longer touch, small enough that a thin
+#: thing is still between them (an 8 mm slab keeps 7 mm of it). It is above
+#: what the executor resolves (:data:`CONTACT_BACKOFF_MIN_M`) by twice.
+CONTACT_BACKOFF_M = 0.001
+
+#: The smallest back-off the executor carries out reliably [m]. Built from
+#: the numbers the executor owns, not from the ones it verifies with:
+#:
+#: * an ``exact`` contact-leg knot is solved to 0.2 mm / 1 mrad at Link7,
+#:   <= 0.3 mm at the tool (``planning`` / ``docs/probe-hardware-trial.md``),
+#:   and the daemon's joint interpolation between 5 mm knots bows < 0.01 mm
+#:   (``planning.CONTACT_KNOT_M``);
+#: * the stop itself is placed to one state poll at the leg speed:
+#:   10 mm/s x 20 ms = 0.2 mm (``contact.PROBE_SPEED_M_S``), and ten d1-2
+#:   table contacts repeated to sigma 0.09 mm.
+#:
+#: 0.3 + 0.2 = 0.5 mm. NOT the model's correction grid
+#: (:data:`~.types.NUDGE_GRID_M`, 10 mm at its finest — a menu of corrections
+#: a model may ask for, not the arm's resolution), and NOT the arrival
+#: barrier (3 deg / 5 mm across / 10 mm along — deadlines against a jam, far
+#: too coarse to see a millimetre): the back-off is therefore MEASURED after
+#: it ran (``ContactReport.tip_z_after_m``) rather than trusted to a barrier.
+CONTACT_BACKOFF_MIN_M = 0.0005
+
+#: A search stop at most this far short of the modelled support (or anywhere
+#: past it) is a stop ON the support [m] — the 5 mm a tape-measured table
+#: height is published to (:data:`CONTACT_OVERTRAVEL_M`), unless the support
+#: states a tighter ``height_uncertainty_m``. Capped at half the object's
+#: extent along the travel, so a stop on a thin object's top is not taken for
+#: the table (an 8 mm slab: 4 mm).
+SURFACE_CONTACT_BAND_M = CONTACT_OVERTRAVEL_M
+
+__all__ += ["CONTACT_BACKOFF_M", "CONTACT_BACKOFF_MIN_M",
+            "SURFACE_CONTACT_BAND_M", "surface_backoff"]
+
+
+def surface_backoff(obj: ObjectView, frames: FrameGraph, d, *,
+                    support: Optional[SurfaceView], floor_z: float,
+                    clearance_m: float, distance_m: float):
+    """``(SurfaceBackoff | None, note)`` for a fingertip search along ``d``.
+
+    ``clearance_m`` is how far the SOLVED leg start leaves the tips above
+    ``floor_z`` (:func:`achieved_clearance`), so ``surface_at_m`` — where the
+    tips meet the modelled support along the leg — is that height over the
+    travel's descent rate. ``distance_m`` is the policy's back-off, raised to
+    :data:`CONTACT_BACKOFF_MIN_M` when it is below it. ``None`` (the stop is
+    only reported, nothing moves) when the retreat would lift the tips past
+    half the object's own extent along the travel: so thin a thing is taken
+    with the tips on the surface or not at all.
+    """
+    d = np.asarray(d, dtype=float).reshape(3)
+    d = d / max(float(np.linalg.norm(d)), 1e-12)
+    descent = max(-float(d[2]), 1e-6)
+    surface_at = float(clearance_m) / descent
+    extent = float(obj.extent_along(d, frames))
+    uncertainty = (None if support is None
+                   else getattr(support, "height_uncertainty_m", None))
+    band = min(SURFACE_CONTACT_BAND_M if uncertainty is None
+               else float(uncertainty), extent / 2.0)
+    name = "" if support is None else support.name
+    where = (f"{name}'s top" if name else
+             f"{obj.name}'s own declared underside")
+    distance = float(distance_m)
+    raised = ""
+    if 0.0 < distance < CONTACT_BACKOFF_MIN_M:
+        raised = (f" (raised from {distance * 1000:.2f} mm to the "
+                  f"{CONTACT_BACKOFF_MIN_M * 1000:.1f} mm the executor "
+                  f"resolves)")
+        distance = CONTACT_BACKOFF_MIN_M
+    if distance > extent / 2.0:
+        return None, (
+            f"no back-off after the tips touch: {obj.name} is "
+            f"{extent * 1000:.1f} mm along the travel, and a "
+            f"{distance * 1000:.1f} mm retreat would lift the tips past half "
+            f"of it; the jaws close where the tips stopped")
+    lead = PAD_TIP_Z_M - _o.TOOL_Z_M
+    backoff = SurfaceBackoff(distance, surface_at, band, name, lead)
+    if distance <= 0.0:
+        return backoff, (
+            f"contact policy back_off with a 0 mm back-off: a stop on "
+            f"{where} is recorded and nothing is retracted")
+    return backoff, (
+        f"contact policy back_off: when the tips stop on {where} (at most "
+        f"{band * 1000:.1f} mm short of it, {surface_at * 1000:.1f} mm into "
+        f"the search) the hand retreats {distance * 1000:.1f} mm along minus "
+        f"the travel before the jaws close{raised}; a stop higher up, on "
+        f"{obj.name}, closes where it stopped")

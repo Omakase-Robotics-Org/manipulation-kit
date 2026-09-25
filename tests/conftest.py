@@ -48,9 +48,10 @@ def agent_examples():
     finally:
         if path in sys.path:
             sys.path.remove(path)
-        for name in ("menu", "scene", "snapshot", "astra_loop",
-                     "jev_menu", "scripted", "perceive", "detector",
-                     "run_scene"):
+        for name in ("menu", "scene", "snapshot", "astra_loop", "jev_questions",
+                     "jev_questions_lab",
+                     "jev_menu", "jev_servo", "jev_judge", "jev_judge_server",
+                     "scripted", "perceive", "detector", "run_scene"):
             sys.modules.pop(name, None)
 
 
@@ -64,6 +65,29 @@ def observe():
     packages on some interpreters. The suite has to run on 3.9 and 3.12.
     """
     return _observe
+
+
+@pytest.fixture
+def at_grasp():
+    """``at_grasp(kin, world0, world1, verb)``: ``world1`` with the grasp's
+    arm MEASURED at the pose the grasp closes the jaws at — its own geometry
+    (``Grasp._meet``: the grasp point, the squared wrist), no IK and no
+    guard. A grasp verdict grades where the fingers got to, so an "after"
+    world whose arm never left the start pose is a hand that closed in the
+    air, not a hold."""
+    return _at_grasp
+
+
+def _at_grasp(kin, world0, world1, verb):
+    from manipulation_kit.world import ArmView
+    meet, unmet = verb._meet(world0)
+    assert meet is not None, unmet
+    arms = dict(world1.arms)
+    arm = arms[meet.side]
+    arms[meet.side] = ArmView(meet.side, joints=arm.joints,
+                              tool_p=meet.p_grasp, tool_r=meet.r_tcp(0.0),
+                              mode=arm.mode)
+    return world1.with_(arms=arms)
 
 
 def _observe(kin, *, block_p=(0.38, 0.25, 0.05), box_p=(0.33, 0.34, 0.03),

@@ -379,20 +379,31 @@ def _intersect(p, rotation: np.ndarray, local_ray: np.ndarray,
 
 def contact_to_centre(contact: Located, *, size: Sequence[float],
                       viewpoint, yaw_rad: float = 0.0,
-                      normal: Sequence[float] = (0.0, 0.0, 1.0)) -> Located:
+                      normal: Sequence[float] = (0.0, 0.0, 1.0),
+                      image_up: Optional[Sequence[float]] = None) -> Located:
     """A CONTACT point at the bottom of a silhouette -> the object's CENTRE.
 
     The bottom of an object's silhouette meets the surface at the footprint's
-    NEAR edge — the side facing the camera — not under the object's middle.
-    So the centre is:
+    edge that lies furthest DOWN THE IMAGE. For a camera looking forward and
+    down past the object (the head) that is the NEAR edge — the side facing
+    the camera; for a camera ahead of the object looking back and down at it
+    (a wrist camera past the standoff) image-down runs AWAY from the camera
+    and the bottom of the silhouette is the FAR edge. So the centre is:
 
-    * half the footprint's extent along the viewing direction FURTHER from
-      the camera, in the surface plane (the extent of a ``size[0] x size[1]``
-      rectangle yawed by ``yaw_rad``, measured along that direction), and
+    * half the footprint's extent along the viewing direction, in the
+      surface plane (the extent of a ``size[0] x size[1]`` rectangle yawed by
+      ``yaw_rad``, measured along that direction) — FURTHER from the camera,
+      unless ``image_up`` (the surface-plane direction the image's up axis
+      runs at the contact pixel) points back toward it, and then toward it;
     * half the object's height UP the support normal.
 
-    This is what a prompt sentence used to ask a model to do in its head
-    (Astra review, item 7). It is a typed conversion now: a ``centre`` cannot
+    d1-2, 2026-09-24: the right wrist camera at x = 0.488 m looked back at a
+    tape roll at 0.41 m; the pixel of the silhouette's bottom landed on the
+    roll's far edge (0.38 m) and walking a further half-size away declared
+    it at 0.353 m — 55 mm short of the photo, the grasp closed beside it.
+
+    This is what a sentence of model-facing text used to ask a model to do
+    in its head (design review, item 7). It is a typed conversion now: a ``centre`` cannot
     be converted again, and a caller that declares a contact point as a
     centre has to say so by not calling this.
     """
@@ -415,6 +426,13 @@ def contact_to_centre(contact: Located, *, size: Sequence[float],
         raise ValueError("the camera is directly above this point; a contact "
                          "edge has no direction to be corrected along")
     away = away / norm
+    if image_up is not None:
+        up_image = np.array(image_up, dtype=float).reshape(3)
+        up_image = up_image - up * float(up_image @ up)
+        if float(up_image @ away) < 0.0:
+            # image-down runs away from the camera: the silhouette's bottom
+            # is the far edge, the centre is back toward the camera
+            away = -away
     # the object's own horizontal axes, yawed about the support normal
     turn = R.from_rotvec(up * float(yaw_rad))
     along_x = turn.apply([1.0, 0.0, 0.0])
