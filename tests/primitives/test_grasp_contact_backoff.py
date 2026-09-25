@@ -57,7 +57,19 @@ TAPE_DECLARED = ObjectView("tape", p=(0.351, -0.118, 0.179),
                            size=(0.05, 0.05, 0.026))
 #: where the later looks put the roll (turn 8 re-declared it here)
 TAPE_TRUE_XY = (0.413, -0.111)
-Q0_DEG = {"left": (-52.26, 87.38, 88.3, -114.32, 86.67, -1.1, 13.05),
+
+
+def _left_home_deg():
+    """The left arm stood at HOME in the record; read it from the canonical
+    file (test_description_consistency forbids inlining the angles)."""
+    from pathlib import Path
+    cfg = (Path(__file__).resolve().parents[2] / "src" / "manipulation_kit"
+           / "config" / "home_pose.json")
+    return tuple(round(float(v), 2)
+                 for v in json.load(open(cfg))["home_pose"][0:7])
+
+
+Q0_DEG = {"left": _left_home_deg(),
           "right": (32.06, -64.88, -46.06, -98.86, 63.67, 43.33, 44.08)}
 OPEN_GAP_M = 0.064
 #: the recorded plan's final (grasp) posture of the right arm [deg]
