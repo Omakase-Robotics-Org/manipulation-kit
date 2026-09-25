@@ -18,6 +18,48 @@ in one typed robot profile. **It is a clean break**: nothing below is kept
 alive beside its replacement except the one transitional `RawState`
 accessor set, removed in 0.17.
 
+### A grasp's hold is graded on the stroke, and a later look can refute it
+
+- **`Holding` grades a grasp on three criteria, each with its own verdict**
+  in `measured["checks"]` (`pass` / `fail` / `unmeasured`), so a record says
+  which one failed:
+  - `jaw_gap` — the existing `grip_fit` band. Unchanged: the measured gap
+    still outranks the declared width, and `width_window_m` /
+    `matches_declaration` are reported as before.
+  - `insertion` (new) — the finger TIPS at closure (the measured tool point,
+    which is the pad centre, plus `PAD.lead_m` along the approach) against the
+    object's near face along the travel, from the world the grasp was planned
+    in. Reported as `tip_z_m`, `object_top_z_m`, `insertion_m`,
+    `insertion_min_m`. A hold needs
+    `min(GRASP_DEPTH_MIN_M = 8 mm, GRASP_DEPTH_FRACTION = 0.25 x extent)`.
+  - `approach` (new) — the executor's `RunReport`: `completed`, the arrival
+    at the `grasp` waypoint (`tool_along_m` no more than
+    `ARRIVE_TOL_ALONG_M` short), and for a fingertip descent by contact,
+    where the search stopped: more than `SEARCH_STOP_TOL_M = 10 mm` above
+    the descent floor is a collision, not a grasp. Reported as
+    `approach_completed`.
+  A hold is TRUE only with the jaws in the band AND insertion AND a completed
+  approach. An unmeasured insertion (no tool pose) is UNKNOWN. With no run
+  report and no contact record, the approach is `unmeasured` and does not
+  gate the verdict: the world-only call `verb.verifier(w0)(w1)` still works.
+  `Holding` without a stroke (a handover's receiver) is graded on the jaws
+  alone, as before.
+- **`Verifier.__call__(world1, run=None)`** — a verifier may read the run
+  report (`measure_run`). `All` and the roll-choosing grasp verifier forward
+  it. The agent loop passes it for every verb.
+- **NEW `manipulation_kit.agent.hold`** — `hold_sighting()` tests a
+  `locate` of an object a hand holds against two projected silhouettes: the
+  object at its attached pose, and the object where the grasp was planned.
+  A pixel off the held silhouette (`SIGHTING_MARGIN_PX = 12`) whose
+  table-plane position is within `LEFT_BEHIND_M = 80 mm` of the grasp site
+  sets `holding_verified: false`. A pixel on the held silhouette sets
+  `holding_verified: true`. Overlapping silhouettes give `null`. The loop
+  records this as `DecisionRecord.hold_evidence`, and on a contradiction it
+  answers `HOLD CONTRADICTED: …` instead of re-declaring the object at the
+  attached height and nudging the holding hand. No look is added inside
+  `grasp`.
+- Primitive fields and every tool schema are unchanged.
+
 ### The servo as an inner loop, and what its judge is asked (PR #25 follow-up)
 
 - **BREAKING `Servo(min_confidence=)` is gone.** One photo's confidence no

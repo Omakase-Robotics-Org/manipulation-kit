@@ -55,6 +55,8 @@ __all__ = [
     "achieved_clearance", "tilted", "own_face_direction",
     "TIP_CONTACT_THIN_M", "TIP_SEARCH_START_M", "CONTACT_OVERTRAVEL_M",
     "TIP_CONTACT_NM", "descends_by_contact",
+    "GRASP_DEPTH_MIN_M", "GRASP_DEPTH_FRACTION", "fingertip_point",
+    "near_face_along", "insertion_along", "min_insertion_m",
 ]
 
 
@@ -444,6 +446,67 @@ def achieved_clearance(p_tool, r_tcp: R, floor_z: float) -> float:
     tips = (np.asarray(p_tool, dtype=float)
             + r_tcp.apply([0.0, 0.0, PAD_TIP_Z_M - _o.TOOL_Z_M]))
     return float(tips[2]) - float(floor_z)
+
+
+
+# --------------------------------------------------------------------------- #
+# how far the fingers got INTO the object
+# --------------------------------------------------------------------------- #
+
+#: How far past the object's near face (its TOP, for a descent) the finger
+#: TIPS must be when the jaws close, for the pads to be on the object's body
+#: rather than on its edge [m]. A stall at a plausible width is not enough on
+#: its own: jaws that stop on a tape roll's rim stall inside the width window
+#: too. PROVISIONAL, and capped for thin things by :data:`GRASP_DEPTH_FRACTION`.
+#: What it has to admit: a pad grasp of a 26 mm roll leaves the tips at
+#: the 3 mm support clearance plus the 12 mm droop margin, i.e. 11 mm
+#: past the top; a fingertip grasp by contact reaches the table.
+GRASP_DEPTH_MIN_M = 0.008
+#: ...or this fraction of the object's extent along the approach, whichever is
+#: less: a 6 mm card taken at the tips needs 1.5 mm, not 8.
+GRASP_DEPTH_FRACTION = 0.25
+
+
+def fingertip_point(tool_p, tool_r: R) -> np.ndarray:
+    """The LEADING finger tip for a measured tool point (the pad centre,
+    :data:`.orientation.TOOL_Z_M`) and orientation: :data:`PAD` ``lead_m``
+    further along TCP +z, the approach axis. The number to compare with an
+    object's geometry — the tool point of a fingertip grasp over a 26 mm
+    roll is ABOVE the roll's top while its tips are at the table."""
+    return (np.asarray(tool_p, dtype=float).reshape(3)
+            + tool_r.apply([0.0, 0.0, PAD.lead_m]))
+
+
+def near_face_along(obj: ObjectView, frames: FrameGraph, d) -> float:
+    """Where ``obj`` begins along the unit travel ``d``: the projection onto
+    ``d`` of its first face met, for any orientation (the box's extent along
+    ``d``, :meth:`~manipulation_kit.world.ObjectView.extent_along`). An
+    upright cylinder is its bounding box here, so its near face for a
+    descent is its top; a cylinder lying down presents its diameter."""
+    d = np.asarray(d, dtype=float).reshape(3)
+    d = d / max(float(np.linalg.norm(d)), 1e-12)
+    p, _r = obj.pose_in_base(frames)
+    return float(np.dot(p, d)) - obj.extent_along(d, frames) / 2.0
+
+
+def insertion_along(obj: ObjectView, frames: FrameGraph, d, tip_p) -> float:
+    """How far past ``obj``'s near face the point ``tip_p`` is along ``d``
+    [m]: for a descent, the object's top z minus the tip z. Negative is short
+    of the object — on its top, or above it."""
+    d = np.asarray(d, dtype=float).reshape(3)
+    d = d / max(float(np.linalg.norm(d)), 1e-12)
+    return (float(np.dot(np.asarray(tip_p, dtype=float).reshape(3), d))
+            - near_face_along(obj, frames, d))
+
+
+def min_insertion_m(obj: ObjectView, frames: FrameGraph, d, *,
+                    depth_m: float = GRASP_DEPTH_MIN_M,
+                    fraction: float = GRASP_DEPTH_FRACTION) -> float:
+    """The insertion a hold needs: :data:`GRASP_DEPTH_MIN_M`, or
+    :data:`GRASP_DEPTH_FRACTION` of the object's extent along ``d`` for
+    something thinner."""
+    return min(float(depth_m),
+               float(fraction) * float(obj.extent_along(d, frames)))
 
 
 

@@ -200,6 +200,10 @@ class _Loop:
         self.messages: List[Dict[str, Any]] = []
         self.hand = None
         self.goal_ready = False
+        #: per side, the object a TRUE grasp closed on, as the grasp was
+        #: planned against it — what a later look is tested against
+        #: (:mod:`.hold`)
+        self.grasped: Dict[str, Any] = {}
 
     # -- the arm, chosen by planning the whole chain ------------------------- #
     def plan_the_hand(self, world) -> None:
@@ -363,10 +367,20 @@ class _Loop:
                            + ("" if self.hand.reachable
                               else f", and nothing reaches yet: "
                                    f"{self.hand.reason}"))
-        elif str(arguments.get("camera", "")).endswith("_wrist"):
-            answer = self._correct(arguments, world, cameras, record)
         else:
-            answer = apply_locate(cameras, world, arguments)
+            sighting = self._hold_sighting(arguments, world, cameras)
+            if sighting is not None:
+                record.hold_evidence = sighting.to_json()
+            if sighting is not None and sighting.holding_verified is False:
+                # the look refutes the hold: nothing is re-declared at the
+                # attached height and the holding hand is not "corrected"
+                answer = sighting.to_text()
+            elif str(arguments.get("camera", "")).endswith("_wrist"):
+                answer = self._correct(arguments, world, cameras, record)
+            else:
+                answer = apply_locate(cameras, world, arguments)
+            if sighting is not None and sighting.holding_verified is not False:
+                answer += f" | hold: {sighting.reason}"
         record.observation_after = {"tool": name, "answer": answer}
         _say(self.messages, call_id, answer)
         return None
@@ -446,8 +460,10 @@ class _Loop:
         after = self.robot.world()
         if contacts:
             after = self._fold_contacts(after, report, clamped)
-        verdict = clamped.verifier(world)(after)
+        # the run's arrivals, stop reason and contact legs are evidence too
+        verdict = clamped.verifier(world)(after, report)
         record.verdict = verdict.to_json()
+        self._remember_grasp(clamped, ran, world, verdict)
         corrected = self._measured_width(verdict, record)
         if corrected:
             notes = list(notes) + corrected
@@ -464,6 +480,65 @@ class _Loop:
         if goal_report.verdict == "true":
             return Stop("goal_verified", goal_report.reason)
         return None
+
+    def _remember_grasp(self, verb, side, world, verdict) -> None:
+        if verb.name() != "grasp" or side not in ("left", "right"):
+            return
+        item = world.find(verb.object)
+        if verdict.verdict == "true" and item is not None:
+            self.grasped[side] = item
+        else:
+            self.grasped.pop(side, None)
+
+    def _hold_sighting(self, arguments, world, cameras):
+        """A ``locate`` of an object a hand HOLDS, graded against the hold
+        (:func:`.hold.hold_sighting`); ``None`` when the call is not about a
+        held object or the look cannot be computed."""
+        from ..perception import NoSupport, NotOnThePlane  # noqa: PLC0415
+        from .hold import hold_sighting  # noqa: PLC0415
+        models = dict(cameras or {})
+        camera = str(arguments.get("camera") or ("head" if "head" in models
+                                                 else next(iter(models), "")))
+        model = models.get(camera)
+        if model is None:
+            return None
+        for side, grasped in self.grasped.items():
+            gripper = world.gripper(side)
+            held = world.find(grasped.name)
+            if (gripper is None or not gripper.holding or held is None
+                    or held.provenance != "attached"
+                    or not self._about(arguments, camera, side, held)):
+                continue
+            ask = dict(arguments, camera=camera)
+            if ask.get("size") is None:
+                ask["size"] = [float(v) for v in held.size]
+            try:
+                located = locate_point(models, world, ask)
+                return hold_sighting(
+                    camera_name=camera, camera=model,
+                    pixel=(float(ask["u"]), float(ask["v"])),
+                    seen_p=located.p, held=held, grasped=grasped,
+                    frames=world.frames, side=side)
+            except (NoSupport, NotOnThePlane, KeyError, TypeError,
+                    ValueError, LookupError):
+                return None
+        return None
+
+    def _about(self, arguments, camera, side, held) -> bool:
+        """Is this locate about ``held``? Its declared size says so; with no
+        size, a wrist locate on the holding hand is about that hand's
+        target, as :meth:`_correct` reads it."""
+        size = arguments.get("size")
+        if size is not None:
+            try:
+                asked = np.asarray(size, dtype=float).reshape(3)
+            except (TypeError, ValueError):
+                return False
+            have = np.asarray(held.size, dtype=float).reshape(3)
+            return bool(np.all(np.abs(asked - have)
+                               <= np.maximum(0.010, 0.25 * have)))
+        return (camera == f"{side}_wrist"
+                and (self.state.target.get(side) or self.obj) == held.name)
 
     def _measured_width(self, verdict, record) -> list:
         """A TRUE grasp that MEASURED the object wider or narrower than it was

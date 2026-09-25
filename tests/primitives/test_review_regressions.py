@@ -357,7 +357,8 @@ def test_a_gripper_holding_something_else_does_not_verify_this_grasp(
     assert "OTHER" in report.reason
 
 
-def test_a_hold_with_no_identity_and_no_object_is_unknown(d1_arm, observe):
+def test_a_hold_with_no_identity_and_no_object_is_unknown(d1_arm, observe,
+                                                          at_grasp):
     """R11. A torque stall cannot tell a named block from anything else of the
     same width. With no association evidence the answer is UNKNOWN, and the
     verdict says what would settle it."""
@@ -368,19 +369,26 @@ def test_a_hold_with_no_identity_and_no_object_is_unknown(d1_arm, observe):
                                       held_object=None, jaw_gap_m=0.040,
                                       jaw_stalled=True),
                   "right": world.gripper("right")})
-    report = Grasp(object="red_block", side="left").verifier(world)(after)
+    grasp = Grasp(object="red_block", side="left")
+    report = grasp.verifier(world)(at_grasp(d1_arm, world, after, grasp))
     assert report.verdict == Verdict.UNKNOWN
     assert "held_object" in report.reason
 
 
-def test_a_named_object_measured_away_from_the_pads_is_false(d1_arm, observe):
-    """R11. The other half: the object is observed, and it is not in the hand."""
+def test_a_named_object_measured_away_from_the_pads_is_false(d1_arm, observe,
+                                                            at_grasp):
+    """R11. The other half: the object is observed, and it is not in the hand
+    — the hand closed at the grasp pose, and the block is measured 80+ mm
+    from it."""
     world = observe(d1_arm, block_p=REACHABLE)
-    after = world.with_(grippers={
+    grasp = Grasp(object="red_block", side="left")
+    moved = observe(d1_arm, block_p=(REACHABLE[0], REACHABLE[1] + 0.12,
+                                     REACHABLE[2]))
+    after = moved.with_(grippers={
         "left": GripperView("left", 1.0, holding=True, held_object=None,
                             jaw_gap_m=0.040, jaw_stalled=True),
         "right": world.gripper("right")})
-    report = Grasp(object="red_block", side="left").verifier(world)(after)
+    report = grasp.verifier(world)(at_grasp(d1_arm, world, after, grasp))
     assert report.verdict == Verdict.FALSE
     assert "from the tool point" in report.reason
 
