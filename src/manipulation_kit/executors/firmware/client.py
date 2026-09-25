@@ -39,6 +39,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
@@ -48,8 +49,8 @@ import numpy as np
 from ...executor import HandState, JointState, LiftState, NeckState
 from ...hands.d1.parallel_gripper.description import gap_from_motor_rad
 from .ensure import ClientTree, document_bytes, ensure_client
-from .errors import (DeviceUnavailable, FirmwareError, ProtocolError,
-                     TrajectoryInvalid)
+from .errors import (ClientTimeout, DeviceUnavailable, FirmwareError,
+                     OperationUnavailable, ProtocolError, TrajectoryInvalid)
 
 #: The wire spelling of a side, as the daemon names them.
 SIDES: Tuple[str, str] = ("a", "b")
@@ -272,12 +273,15 @@ class FirmwareClient:
     release ships (spec hashes match) or one regenerated from *this* daemon's
     document. ``tree=`` skips that when the caller has already resolved it.
 
-    ``timeout`` is the per-request default for the non-blocking reads. An
-    operation the document marks with ``x-timeout-seconds`` (the blocking
-    gripper stroke: 40 s on 0.3.0) gets that instead
-    (:meth:`operation_timeout_s`), so a real close is not cut off at two
-    seconds — the reason the example used to build this client with a blanket
-    20 s.
+    ``timeout`` is the per-request floor. EVERY request — generated
+    operation or enveloped :meth:`request` — waits at least the document's
+    ``x-timeout-seconds`` for its route (:meth:`timeout_for`: the blocking
+    gripper stroke 40 s, ``recover`` 65 s, ``mode`` / brakes 10 s on the
+    bundled document), never less than ``timeout``. A client that hangs up
+    early is not harmless: the daemon cancels the handler (d1-2 2026-09-23
+    20:46Z, a recover cancelled at exactly the old blanket 2 s). Running
+    out of even that raises :class:`ClientTimeout`, which says the KIT gave
+    up — distinct from a :class:`FirmwareError` refusal.
     """
 
     def __init__(self, base_url: str = "http://127.0.0.1:4750", *,
@@ -293,6 +297,7 @@ class FirmwareClient:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         self.base_url = base_url.rstrip("/")
+        self.timeout = float(timeout)
         self.tree = tree if tree is not None else ensure_client(
             self.base_url, policy=policy, cache_dir=cache_dir)
         #: The generated package — every operation the daemon publishes.
@@ -306,6 +311,7 @@ class FirmwareClient:
             timeout=httpx.Timeout(timeout))
         self._http = self.api_client.get_httpx_client()
         self._document: Optional[Dict[str, Any]] = None
+        self._route_timeouts: Optional[list] = None
 
     # -- provenance -------------------------------------------------------- #
     @property
@@ -327,26 +333,56 @@ class FirmwareClient:
                 f"GET /openapi.json: HTTP {response.status_code}, "
                 f"not an OpenAPI document") from exc
 
-    def operation_timeout_s(self, method: str, route: str) -> Optional[float]:
-        """The document's ``x-timeout-seconds`` for one operation, or ``None``.
-
-        Read from the document the client in use was GENERATED from (the
-        generator does not carry vendor extensions into the code), so it is
-        the same contract, not a kit constant.
-        """
+    def _spec(self) -> Dict[str, Any]:
         if self._document is None:
             try:
                 self._document = json.loads(document_bytes(self.tree.resolution))
             except (OSError, ValueError):
                 self._document = {}
-        operation = (self._document.get("paths", {}).get(route, {})
+        return self._document
+
+    def operation_timeout_s(self, method: str, route: str) -> Optional[float]:
+        """The document's ``x-timeout-seconds`` for one operation, or ``None``.
+
+        ``route`` is the document's template (``/v1/arm/{side}/recover``).
+        Read from the document the client in use was GENERATED from (the
+        generator does not carry vendor extensions into the code), so it is
+        the same contract, not a kit constant.
+        """
+        operation = (self._spec().get("paths", {}).get(route, {})
                      .get(method.lower(), {}))
-        value = operation.get("x-timeout-seconds")
+        value = operation.get("x-timeout-seconds") if isinstance(operation, dict) else None
         try:
             value = float(value)
         except (TypeError, ValueError):
             return None
         return value if math.isfinite(value) and value > 0 else None
+
+    def timeout_for(self, method: str, path: str) -> float:
+        """How long ONE request to the concrete ``path`` may take [s]: the
+        document's ``x-timeout-seconds`` for the route it instantiates, never
+        below this client's ``timeout``. A literal route outranks a templated
+        one (``/v1/arm/lease`` is not ``/v1/arm/{side}``)."""
+        if self._route_timeouts is None:
+            table = []
+            for route, ops in self._spec().get("paths", {}).items():
+                if not isinstance(ops, dict):
+                    continue
+                pattern = re.compile("^" + "/".join(
+                    "[^/]+" if part.startswith("{") and part.endswith("}")
+                    else re.escape(part) for part in route.split("/")) + "$")
+                templated = route.count("{")
+                for verb in ops:
+                    value = self.operation_timeout_s(verb, route)
+                    if value is not None:
+                        table.append((verb.upper(), templated, pattern, value))
+            table.sort(key=lambda row: row[1])
+            self._route_timeouts = table
+        path = path.split("?", 1)[0]
+        for verb, _templated, pattern, value in self._route_timeouts:
+            if verb == method.upper() and pattern.match(path):
+                return max(self.timeout, value)
+        return self.timeout
 
     def api_module(self, dotted: str):
         """Import one generated operation module, e.g. ``"arm.arm_state"``.
@@ -385,9 +421,13 @@ class FirmwareClient:
         method = str(kwargs.get("method", "GET")).upper()
         path = str(kwargs.get("url", ""))
         send = {k: v for k, v in kwargs.items() if k not in ("method", "url")}
-        if timeout_s is not None:
-            send["timeout"] = self._httpx.Timeout(float(timeout_s))
-        response = self._http.request(method, path, **send)
+        if timeout_s is None:
+            timeout_s = self.timeout_for(method, path)
+        send["timeout"] = self._httpx.Timeout(float(timeout_s))
+        try:
+            response = self._http.request(method, path, **send)
+        except self._httpx.TimeoutException as exc:
+            raise ClientTimeout(method, path, timeout_s) from exc
         try:
             envelope = json.loads(response.content)
         except ValueError as exc:
@@ -468,8 +508,6 @@ class FirmwareClient:
         body = self.model("GripperTarget")(**fields)
         kwargs = self.api_module("gripper.gripper_set")._get_kwargs(
             side=self.model("ArmSide")(wire), body=body)
-        if timeout_s is None:
-            timeout_s = self.operation_timeout_s("POST", "/v1/gripper/{side}/set")
         data = self._send(kwargs, timeout_s=timeout_s)
         if data is not None:
             raise ProtocolError(f"POST /v1/gripper/{wire}/set: the document "
@@ -513,6 +551,129 @@ class FirmwareClient:
         data = self._send(self.api_module("arm.arm_trajectory_cancel")
                           ._get_kwargs(id=int(job)))
         return self._status(data, f"POST /v1/arm/trajectory/{int(job)}/cancel")
+
+    # -- arm modes and holding brakes (hand guiding: manipulation_kit.teach) #
+    def operation(self, dotted: str, route: str):
+        """One generated operation module, or :class:`OperationUnavailable`.
+
+        For the operations a daemon may or may not publish (the holding brake
+        arrived in d1-firmware PR #92; the bundled snapshot carries it since
+        spec ``a9c8b0d2…``, but an older daemon's regenerated client does
+        not). The client in use is generated from THIS daemon's document
+        when ``ensure`` could regenerate it, so a missing module means the
+        daemon — or the tree this machine could produce for it — does not
+        offer the route. That is said, not worked around with a hand-built
+        request.
+        """
+        try:
+            return self.api_module(dotted)
+        except ImportError as exc:
+            raise OperationUnavailable(
+                f"{route} is not in the OpenAPI document this client was "
+                f"generated from (spec {self.spec_sha256[:12]}, source "
+                f"{self.tree.source}). Either the daemon predates it, or the "
+                f"client could not be regenerated for a newer daemon on this "
+                f"machine (see manipulation_kit.executors.firmware.ensure: "
+                f"regeneration needs `uv` or openapi-python-client on PATH, "
+                f"or refresh the bundled snapshot with "
+                f"`mkit-firmware-client refresh --url ...`).") from exc
+
+    def arm_mode(self, side: str, mode: str, *, holder: Optional[str] = None,
+                 **fields: Any) -> None:
+        """``POST /v1/arm/{side}/mode`` through the generated ``ArmModeCommand``.
+
+        ``mode`` is one of the document's ``ArmModeCommandMode`` words
+        (``idle``, ``position``, ``torque``, ``cartesian_impedance``,
+        ``force_compliance``); ``fields`` are that command's own optional
+        fields, by their document names. An unknown field is a ``TypeError``
+        from the generated model, not a key silently sent.
+        """
+        wire = side_name(side)
+        words = tuple(m.value for m in self.model("ArmModeCommandMode"))
+        if mode not in words:
+            raise ValueError(f"mode must be one of {words}, got {mode!r}")
+        if holder is not None:
+            fields["holder"] = str(holder)
+        body = self.model("ArmModeCommand")(
+            mode=self.model("ArmModeCommandMode")(mode), **fields)
+        data = self._send(self.api_module("arm.arm_mode")._get_kwargs(
+            side=self.model("ArmSide")(wire), body=body))
+        if data is not None:
+            raise ProtocolError(f"POST /v1/arm/{wire}/mode: the document says "
+                                f"this returns null, got {data!r}")
+
+    def arm_recover(self, side: str, *, vel_ratio: Optional[float] = None,
+                    acc_ratio: Optional[float] = None) -> Any:
+        """``POST /v1/arm/{side}/recover`` — clear errors and hold position
+        AT THE MEASURED POSE (the document: "anchors the commanded pose at the
+        measured pose and confirms position mode"). Returns the generated
+        ``ArmRecoverReport`` (or the raw ``data`` if the document has none)."""
+        wire = side_name(side)
+        fields: Dict[str, Any] = {}
+        if vel_ratio is not None:
+            fields["vel_ratio"] = float(vel_ratio)
+        if acc_ratio is not None:
+            fields["acc_ratio"] = float(acc_ratio)
+        body = self.model("ArmRecoverRequest")(**fields)
+        data = self._send(self.api_module("arm.arm_recover")._get_kwargs(
+            side=self.model("ArmSide")(wire), body=body))
+        try:
+            return self.model("ArmRecoverReport").from_dict(data)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return data
+
+    def arm_tool_state(self, side: str) -> Any:
+        """``GET /v1/arm/{side}/tool`` -> generated ``ArmToolStatus``: what the
+        daemon registered for gravity compensation, and from where (``source``
+        ``none`` = an empty flange). The kit never re-registers the tool; the
+        daemon's configured ``[arm] end_effector`` is the source of truth."""
+        wire = side_name(side)
+        return self._read("arm.arm_tool_state", "ArmToolStatus",
+                          f"/v1/arm/{wire}/tool", side=self.model("ArmSide")(wire))
+
+    def brake_release(self, side: str, *, seconds: float,
+                      holder: Optional[str] = None) -> Any:
+        """``POST /v1/arm/{side}/brake_release`` — THE ARM DROPS.
+
+        Sends the document's confirm word ``RELEASE_BRAKE``; the daemon engages
+        the brakes itself after ``seconds`` (1..120, its own bounds). Returns
+        the generated ``ArmBrakeReport``. :class:`OperationUnavailable` on a
+        daemon whose document does not publish the route (before PR #92).
+        """
+        wire = side_name(side)
+        seconds = float(seconds)
+        if not (math.isfinite(seconds) and 1.0 <= seconds <= 120.0):
+            raise ValueError("seconds must be within the document's 1..120")
+        op = self.operation("arm.arm_brake_release",
+                            "POST /v1/arm/{side}/brake_release")
+        fields: Dict[str, Any] = {"confirm": "RELEASE_BRAKE", "seconds": seconds}
+        if holder is not None:
+            fields["holder"] = str(holder)
+        body = self.model("ArmBrakeReleaseBody")(**fields)
+        data = self._send(op._get_kwargs(side=self.model("ArmSide")(wire),
+                                         body=body))
+        return self._brake(data, f"POST /v1/arm/{wire}/brake_release")
+
+    def brake_engage(self, side: str) -> Any:
+        """``POST /v1/arm/{side}/brake_engage`` — stop-shaped, ungated."""
+        wire = side_name(side)
+        op = self.operation("arm.arm_brake_engage",
+                            "POST /v1/arm/{side}/brake_engage")
+        data = self._send(op._get_kwargs(side=self.model("ArmSide")(wire)))
+        return self._brake(data, f"POST /v1/arm/{wire}/brake_engage")
+
+    def brake_state(self, side: str) -> Any:
+        """``GET /v1/arm/{side}/brake`` -> generated ``ArmBrakeReport``."""
+        wire = side_name(side)
+        op = self.operation("arm.arm_brake", "GET /v1/arm/{side}/brake")
+        data = self._send(op._get_kwargs(side=self.model("ArmSide")(wire)))
+        return self._brake(data, f"GET /v1/arm/{wire}/brake")
+
+    def _brake(self, data: Any, what: str):
+        try:
+            return self.model("ArmBrakeReport").from_dict(data)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ProtocolError(f"{what}: not an ArmBrakeReport: {exc!r}") from exc
 
     def _status(self, data: Any, what: str):
         try:

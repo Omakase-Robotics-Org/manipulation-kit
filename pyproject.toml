@@ -96,6 +96,8 @@ mkit-toolconfig = "manipulation_kit.hands.cli:main"
 # daemon or from a spec file. Consumers never need it — their client self-heals
 # into ~/.cache at connect time.
 mkit-firmware-client = "manipulation_kit.executors.firmware.cli:main"
+# Teach omakaseos gestures by hand over d1-firmwared (docs/teach.md).
+mkit-teach = "manipulation_kit.teach.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

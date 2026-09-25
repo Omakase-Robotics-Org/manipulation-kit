@@ -6,8 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.arm_move_joint_body import ArmMoveJointBody
-from ...models.arm_move_joint_response_200 import ArmMoveJointResponse200
+from ...models.arm_brake_engage_response_200 import ArmBrakeEngageResponse200
 from ...models.arm_side import ArmSide
 from ...models.error_envelope import ErrorEnvelope
 from ...types import Response
@@ -15,31 +14,23 @@ from ...types import Response
 
 def _get_kwargs(
     side: ArmSide,
-    *,
-    body: ArmMoveJointBody,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/arm/{side}/move_joint".format(
+        "url": "/v1/arm/{side}/brake_engage".format(
             side=quote(str(side), safe=""),
         ),
     }
 
-    _kwargs["json"] = body.to_dict()
-
-    headers["Content-Type"] = "application/json"
-
-    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
+) -> ArmBrakeEngageResponse200 | ErrorEnvelope | None:
     if response.status_code == 200:
-        response_200 = ArmMoveJointResponse200.from_dict(response.json())
+        response_200 = ArmBrakeEngageResponse200.from_dict(response.json())
 
         return response_200
 
@@ -76,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
+) -> Response[ArmBrakeEngageResponse200 | ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -89,30 +80,27 @@ def sync_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmMoveJointBody,
-) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
-    """Command one joint of one arm
+) -> Response[ArmBrakeEngageResponse200 | ErrorEnvelope]:
+    """Engage one arm's holding brakes
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
-    the other six are the arm's current feedback values, from the same read the guard checks. Same
-    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
-    `/v1/arm/{side}/move_joints`.
+     Forces the holding brakes closed (`BRAK0`/`BRAK1` = 1) and ends any release. Stop-shaped, so like
+    `estop` it is gated by nothing — not the soft kill, not the lease — and takes no body. Always sent,
+    even when this daemon's record says the brakes are engaged: the controller does not report them
+    back, and an earlier daemon process may have died with them open.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ArmMoveJointResponse200 | ErrorEnvelope]
+        Response[ArmBrakeEngageResponse200 | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
         side=side,
-        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -126,31 +114,28 @@ def sync(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmMoveJointBody,
-) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
-    """Command one joint of one arm
+) -> ArmBrakeEngageResponse200 | ErrorEnvelope | None:
+    """Engage one arm's holding brakes
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
-    the other six are the arm's current feedback values, from the same read the guard checks. Same
-    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
-    `/v1/arm/{side}/move_joints`.
+     Forces the holding brakes closed (`BRAK0`/`BRAK1` = 1) and ends any release. Stop-shaped, so like
+    `estop` it is gated by nothing — not the soft kill, not the lease — and takes no body. Always sent,
+    even when this daemon's record says the brakes are engaged: the controller does not report them
+    back, and an earlier daemon process may have died with them open.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ArmMoveJointResponse200 | ErrorEnvelope
+        ArmBrakeEngageResponse200 | ErrorEnvelope
     """
 
     return sync_detailed(
         side=side,
         client=client,
-        body=body,
     ).parsed
 
 
@@ -158,30 +143,27 @@ async def asyncio_detailed(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmMoveJointBody,
-) -> Response[ArmMoveJointResponse200 | ErrorEnvelope]:
-    """Command one joint of one arm
+) -> Response[ArmBrakeEngageResponse200 | ErrorEnvelope]:
+    """Engage one arm's holding brakes
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
-    the other six are the arm's current feedback values, from the same read the guard checks. Same
-    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
-    `/v1/arm/{side}/move_joints`.
+     Forces the holding brakes closed (`BRAK0`/`BRAK1` = 1) and ends any release. Stop-shaped, so like
+    `estop` it is gated by nothing — not the soft kill, not the lease — and takes no body. Always sent,
+    even when this daemon's record says the brakes are engaged: the controller does not report them
+    back, and an earlier daemon process may have died with them open.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ArmMoveJointResponse200 | ErrorEnvelope]
+        Response[ArmBrakeEngageResponse200 | ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
         side=side,
-        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -193,31 +175,28 @@ async def asyncio(
     side: ArmSide,
     *,
     client: AuthenticatedClient | Client,
-    body: ArmMoveJointBody,
-) -> ArmMoveJointResponse200 | ErrorEnvelope | None:
-    """Command one joint of one arm
+) -> ArmBrakeEngageResponse200 | ErrorEnvelope | None:
+    """Engage one arm's holding brakes
 
-     `joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints:
-    the other six are the arm's current feedback values, from the same read the guard checks. Same
-    motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as
-    `/v1/arm/{side}/move_joints`.
+     Forces the holding brakes closed (`BRAK0`/`BRAK1` = 1) and ends any release. Stop-shaped, so like
+    `estop` it is gated by nothing — not the soft kill, not the lease — and takes no body. Always sent,
+    even when this daemon's record says the brakes are engaged: the controller does not report them
+    back, and an earlier daemon process may have died with them open.
 
     Args:
         side (ArmSide): Selects one of the two physical arms.
-        body (ArmMoveJointBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ArmMoveJointResponse200 | ErrorEnvelope
+        ArmBrakeEngageResponse200 | ErrorEnvelope
     """
 
     return (
         await asyncio_detailed(
             side=side,
             client=client,
-            body=body,
         )
     ).parsed

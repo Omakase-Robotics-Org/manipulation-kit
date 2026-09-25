@@ -90,8 +90,10 @@ def sync_detailed(
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
-    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
-    WebSocket.
+    once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):
@@ -125,8 +127,10 @@ def sync(
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
-    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
-    WebSocket.
+    once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):
@@ -155,8 +159,10 @@ async def asyncio_detailed(
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
-    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
-    WebSocket.
+    once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):
@@ -188,8 +194,10 @@ async def asyncio(
      Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists
     at a time and only the most recent job's status is retained. The arms must already be in a clean
     position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at
-    once, before the job is created, with the same `advisory` the motion verbs carry. Not available over
-    WebSocket.
+    once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample
+    is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's
+    clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at
+    playback. The clearance guard cannot be switched off. Not available over WebSocket.
 
     Args:
         body (ArmTrajectoryStartBody):

@@ -106,20 +106,35 @@ def test_the_bundled_client_is_a_real_tree_not_an_empty_directory():
         "tree holds — a partial commit")
 
 
-#: sha256 of the OpenAPI document d1-firmwared 0.3.0 served on d1-2 at
-#: ``GET /openapi.json`` on 2026-09-22 — the daemon the kit is driven against.
-D1_2_SPEC_SHA256 = ("388bcd087a2426a8a8c61ca767439cfed6e094f8bc9e059029ed6c62"
-                    "002cf275")
+#: sha256 of d1-firmware ``openapi/d1-firmwared.v1.json`` at 0077deb (PR #106,
+#: branch feat/guard-joint-moves): the always-on guard, with the trajectory
+#: ``guard`` field and ``TrajectoryGuard`` removed. A superset of what d1-2
+#: serves until its daemon is redeployed; against that daemon ``ensure``
+#: regenerates at connect.
+BUNDLED_SPEC_SHA256 = ("3b354c25563e46aabd49c6a42819e5f32de0e5a7e003f3e4d97a3e56"
+                       "7048cfb9")
 
 
-def test_the_bundled_client_matches_the_d1_2_document(spec_document):
-    """The snapshot is the d1-2 daemon's own document, not an older one.
+def test_the_bundled_client_is_the_always_on_guard_document(spec_document):
+    """The snapshot is the pinned document, not an older one.
 
-    A bundled client generated from an older spec is what made every connect
-    to d1-2 regenerate (or, without a generator, fall back to a client that
-    provably did not match). The hash is computed from the file on disk, so a
-    hand-edited ``SNAPSHOT.json`` cannot satisfy this.
+    The hash is computed from the file on disk, so a hand-edited
+    ``SNAPSHOT.json`` cannot satisfy this.
     """
-    assert ensure.bundled_spec_sha256() == D1_2_SPEC_SHA256
-    assert ensure.snapshot()["spec_sha256"] == D1_2_SPEC_SHA256
+    assert ensure.bundled_spec_sha256() == BUNDLED_SPEC_SHA256
+    assert ensure.snapshot()["spec_sha256"] == BUNDLED_SPEC_SHA256
     assert spec_document["info"]["version"] == "0.3.0"
+    schemas = spec_document["components"]["schemas"]
+    assert "TrajectoryGuard" not in schemas
+    assert "guard" not in schemas["TrajectoryRequest"]["properties"]
+
+
+@needs_310
+def test_the_bundled_document_publishes_the_brake_routes(spec_document):
+    """mkit-teach's default guide releases the holding brakes; the bundled
+    client has to carry those operations, not regenerate for them."""
+    for route in ("/v1/arm/{side}/brake_release", "/v1/arm/{side}/brake_engage",
+                  "/v1/arm/{side}/brake"):
+        assert route in spec_document["paths"], route
+    from manipulation_kit.executors.firmware._client.d1fw_api.api.arm import (  # noqa: F401
+        arm_brake, arm_brake_engage, arm_brake_release)

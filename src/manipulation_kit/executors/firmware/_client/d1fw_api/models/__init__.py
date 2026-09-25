@@ -3,6 +3,13 @@
 from .advisory import Advisory
 from .advisory_code import AdvisoryCode
 from .advisory_severity import AdvisorySeverity
+from .arm_brake_engage_reason import ArmBrakeEngageReason
+from .arm_brake_engage_response_200 import ArmBrakeEngageResponse200
+from .arm_brake_release_body import ArmBrakeReleaseBody
+from .arm_brake_release_request import ArmBrakeReleaseRequest
+from .arm_brake_release_response_200 import ArmBrakeReleaseResponse200
+from .arm_brake_report import ArmBrakeReport
+from .arm_brake_response_200 import ArmBrakeResponse200
 from .arm_calibration import ArmCalibration
 from .arm_check_pose_request import ArmCheckPoseRequest
 from .arm_check_pose_response_200 import ArmCheckPoseResponse200
@@ -454,6 +461,13 @@ __all__ = (
     "Advisory",
     "AdvisoryCode",
     "AdvisorySeverity",
+    "ArmBrakeEngageReason",
+    "ArmBrakeEngageResponse200",
+    "ArmBrakeReleaseBody",
+    "ArmBrakeReleaseRequest",
+    "ArmBrakeReleaseResponse200",
+    "ArmBrakeReport",
+    "ArmBrakeResponse200",
     "ArmCalibration",
     "ArmCheckPoseRequest",
     "ArmCheckPoseResponse200",

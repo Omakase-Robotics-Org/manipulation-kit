@@ -99,6 +99,10 @@ class FakeClient:
     latch_after_play: Optional[str] = None
     neck: FakeNeckState = field(default_factory=FakeNeckState)
     slider: FakeSliderState = field(default_factory=FakeSliderState)
+    #: arm_state reads before a requested mode is REPORTED (the route
+    #: answers on acceptance, the controller transitions afterwards)
+    mode_polls: int = 0
+    _mode_due: Dict[str, Any] = field(default_factory=dict)
     _pending: Dict[str, Any] = field(default_factory=dict)
     _stroke: Dict[str, Any] = field(default_factory=dict)
     cancelled: List[int] = field(default_factory=list)
@@ -112,6 +116,7 @@ class FakeClient:
         if path == "/v1/arm/lease" and method == "DELETE":
             return None
         if path.endswith("/mode"):
+            self._mode_due[path.split("/")[3]] = [body["mode"], int(self.mode_polls)]
             return None
         if path == "/v1/arm/move_joints_both":
             # THE ARM FOLLOWS. A fake whose feedback never moves cannot tell
@@ -152,6 +157,13 @@ class FakeClient:
 
     def arm_state(self, side: str) -> FakeArmState:
         self.calls.append(("GET", f"/v1/arm/{side}/state", None))
+        due = self._mode_due.get(side)
+        if due is not None:
+            if due[1] > 0:
+                due[1] -= 1
+            else:
+                self.arms[side].mode = due[0]
+                del self._mode_due[side]
         state = self.arms[side]
         if self.settle_after > 0:
             self.settle_after -= 1
@@ -315,6 +327,29 @@ def test_engaging_position_from_idle_is_allowed_when_it_is_anchored(executor):
     executor.client.arms["a"] = FakeArmState(
         mode="idle", command_joints=(ANCHOR_GAP_DEG - 0.5,) + (0.0,) * 6)
     executor.position_mode()      # no raise
+
+
+def test_position_mode_waits_until_the_arm_reports_position(executor):
+    """The mode route answers on ACCEPTANCE; the controller reports the
+    transition later (d1-2 2026-09-23: 11 ms). position_mode returns only
+    once both arms report ``position``."""
+    fake = executor.client
+    for arm in fake.arms.values():
+        arm.mode = "idle"
+    fake.mode_polls = 4
+    executor.position_mode()
+    assert {arm.mode for arm in fake.arms.values()} == {"position"}
+    reads = [p for m, p, _ in fake.calls if p == "/v1/arm/a/state"]
+    assert len(reads) >= 1 + 5
+
+
+def test_position_mode_that_is_never_reported_is_a_clear_error(executor):
+    from manipulation_kit.executors.firmware import ModeUnconfirmed
+    fake = executor.client
+    fake.arms["a"].mode = "idle"
+    fake.mode_polls = 10 ** 9
+    with pytest.raises(ModeUnconfirmed, match="last reported mode 'idle'"):
+        executor.position_mode()
 
 
 # --------------------------------------------------------------------------- #

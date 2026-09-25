@@ -103,6 +103,90 @@
         ],
         "type": "string"
       },
+      "ArmBrakeEngageReason": {
+        "description": "Why the brakes were last engaged.",
+        "enum": [
+          "operator",
+          "window_elapsed",
+          "emergency_stop",
+          "soft_kill",
+          "release_aborted"
+        ],
+        "type": "string"
+      },
+      "ArmBrakeReleaseRequest": {
+        "description": "`POST /v1/arm/{side}/brake_release`.",
+        "properties": {
+          "confirm": {
+            "description": "Must be exactly `RELEASE_BRAKE`. Anything else is a `400`, and the body\nis required: the arm drops under gravity the moment the brakes open,\nand an empty POST is how a console button or a curl retry reaches a\nroute by accident.",
+            "type": "string"
+          },
+          "seconds": {
+            "description": "How long the brakes stay open before the daemon engages them itself,\nin seconds, `1..=120`. Omitted is `30`. Sending the request again while\nreleased restarts the window.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "ArmBrakeReport": {
+        "description": "One arm's holding-brake state as this daemon commanded it.",
+        "properties": {
+          "holder": {
+            "description": "The arm-lease holder that asked for the current release, when the\nrequest named one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_engage_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ArmBrakeEngageReason",
+                "description": "Why the brakes were last engaged by this daemon, if they ever were."
+              }
+            ]
+          },
+          "released": {
+            "description": "Whether this daemon has forced this arm's holding brakes OPEN and not\nclosed them since. While `true`, nothing holds the arm but whoever is\nsupporting it.\n\nThe controller acknowledges brake writes but does not report the brake\nstate back, so this is the daemon's command record, not a sensor.",
+            "type": "boolean"
+          },
+          "remaining_s": {
+            "description": "Seconds left before the daemon re-engages the brakes itself. `None`\nwhile engaged; `0` if the window ran out and the re-engage has not\nbeen confirmed yet (see the daemon log).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "side": {
+            "$ref": "#/components/schemas/ArmSide",
+            "description": "The arm this describes."
+          },
+          "window_s": {
+            "description": "The window the current release was granted, in seconds. `None` while\nengaged.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "side",
+          "released"
+        ],
+        "type": "object"
+      },
       "ArmCalibration": {
         "description": "One arm's calibration block from `robot.ini` (e.g. `R.A0`).",
         "properties": {
@@ -824,6 +908,10 @@
                 "description": "An INFO-level suggestion about the state above, when it earns one.\n\nAdditive and absent when it does not, so a consumer that has never\nheard of it reads exactly the state it always read.\n\nThis is the one field on this struct the arm BACKEND never fills: it\nfolds in the arm soft-kill latch, which is the daemon's own state and\nnot anything a controller reports, so it is attached where the daemon\nhands an [`ArmState`] out ([`crate::D1::arm_state`],\n[`crate::D1::arm_preflight`] and the `/v1/state` snapshot) and is\n`None` on every read taken straight from the device. See\n[`crate::arm_advisory`]."
               }
             ]
+          },
+          "brakes_released": {
+            "description": "Whether this daemon has forced this arm's holding brakes OPEN for hand\nguiding (`POST /v1/arm/{side}/brake_release`) and not engaged them\nsince. While `true` nothing holds the arm but whoever is supporting\nit; `GET /v1/arm/{side}/brake` has the window and who asked.\n\nLike [`Self::advisory`], this is the daemon's own record and not\nsomething the controller reports, so it is attached where the daemon\nhands an [`ArmState`] out and is `false` on a read taken straight from\nthe device. It is NOT [`ArmMode::Release`], which is a controller mode.",
+            "type": "boolean"
           },
           "command_joints": {
             "$ref": "#/components/schemas/Joints7",
@@ -8043,7 +8131,7 @@
     },
     "/v1/arm/move_joints_both": {
       "post": {
-        "description": "Guarded as one dual-arm pose, so it accepts poses that two single-arm calls in sequence would not. Angles are degrees.\n\nBoth arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If either is not, the call is refused at once with `kind: refused` and no command is written to either arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.",
+        "description": "Angles are degrees. The motion guard checks the straight joint-space path from both arms' current feedback pose to the two targets, sampled at 1 degree per joint, each sample one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins; the targets are checked against the URDF joint limits. Because the two paths are checked together it accepts a coordinated move (arm A going where arm B is while B leaves) that \"A, then B\" as two single-arm calls would refuse. A path that fails is refused with `kind: refused` before anything is written, naming the sample, the moving joints and each pair under its margin with its distance; a path that starts inside a margin is accepted while no clearance gets smaller than at the start. The clearance guard cannot be switched off.\n\nStreaming (teleop sends this route at up to 200 Hz): a refused command is not written, so the arms hold the last accepted target; nothing latches, and the next command whose path is clear is accepted at once, so a streaming client just keeps streaming. A per-tick delta under one degree is one guard check.\n\nBoth arms have to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If either is not, the call is refused at once with `kind: refused` and no command is written to either arm; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it.",
         "operationId": "arm_move_joints_both",
         "requestBody": {
           "content": {
@@ -8184,7 +8272,7 @@
     },
     "/v1/arm/trajectory/start": {
       "post": {
-        "description": "Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists at a time and only the most recent job's status is retained. The arms must already be in a clean position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at once, before the job is created, with the same `advisory` the motion verbs carry. Not available over WebSocket.",
+        "description": "Returns as soon as the job is accepted; poll `/v1/arm/trajectory/{id}/status`. Only one job exists at a time and only the most recent job's status is retained. The arms must already be in a clean position or torque hold within 3 degrees of the first waypoint; an arm that is not is refused at once, before the job is created, with the same `advisory` the motion verbs carry. Every 1 ms sample is checked against the URDF joint limits, the 350 deg/s per-joint step cap and the guard's clearances (body and chest keep-out, arm-arm, same-arm self-collision) at upload and again at playback. The clearance guard cannot be switched off. Not available over WebSocket.",
         "operationId": "arm_trajectory_start",
         "requestBody": {
           "content": {
@@ -8400,6 +8488,235 @@
           "arm"
         ],
         "x-rest-only": true
+      }
+    },
+    "/v1/arm/{side}/brake": {
+      "get": {
+        "description": "The daemon's own record of what it commanded, not a sensor: whether the brakes are released, the window, the seconds left before the daemon engages them, who asked, and why they were last engaged.",
+        "operationId": "arm_brake",
+        "parameters": [
+          {
+            "description": "Which arm: `a` is the robot's physical LEFT arm, `b` its physical RIGHT arm.",
+            "in": "path",
+            "name": "side",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArmSide"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArmBrakeReport"
+                    },
+                    "message": {
+                      "description": "Always null on success.",
+                      "type": "null"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "data",
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The success envelope."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
+          }
+        },
+        "summary": "Read one arm's holding-brake release state",
+        "tags": [
+          "arm"
+        ],
+        "x-ws-method": "arm.{side}.brake"
+      }
+    },
+    "/v1/arm/{side}/brake_engage": {
+      "post": {
+        "description": "Forces the holding brakes closed (`BRAK0`/`BRAK1` = 1) and ends any release. Stop-shaped, so like `estop` it is gated by nothing — not the soft kill, not the lease — and takes no body. Always sent, even when this daemon's record says the brakes are engaged: the controller does not report them back, and an earlier daemon process may have died with them open.",
+        "operationId": "arm_brake_engage",
+        "parameters": [
+          {
+            "description": "Which arm: `a` is the robot's physical LEFT arm, `b` its physical RIGHT arm.",
+            "in": "path",
+            "name": "side",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArmSide"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArmBrakeReport"
+                    },
+                    "message": {
+                      "description": "Always null on success.",
+                      "type": "null"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "data",
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The success envelope."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
+          }
+        },
+        "summary": "Engage one arm's holding brakes",
+        "tags": [
+          "arm"
+        ],
+        "x-timeout-seconds": 10.0,
+        "x-ws-method": "arm.{side}.brake_engage"
+      }
+    },
+    "/v1/arm/{side}/brake_release": {
+      "post": {
+        "description": "DANGEROUS. Forces this arm's holding brakes OPEN (the controller's `BRAK0`/`BRAK1` = 2 override, the vendor's recovery recipe for an arm twisted outside its limits) so a person can move it by hand. The servos are off, so **nothing holds the arm: it falls under gravity the instant the brakes open unless somebody is supporting it.**\n\nThe body must carry `{\"confirm\": \"RELEASE_BRAKE\"}` (otherwise `400`). Accepted only while the arm's servos are off — mode `idle` or `error`; any other mode is a `409` naming the call that idles it. Gated by the arm soft-kill latch and, while somebody holds it, by the arm lease (`x-arm-lease`). REST-only.\n\nThe release is TIMED: `seconds` (`1..=120`, default `30`) after it lands the daemon engages the brakes itself. Sending it again while released restarts the window. The brakes are also engaged by `/v1/arm/{side}/brake_engage`, by `/v1/arm/{side}/estop`, and by the soft kill (which the daemon also runs on shutdown). While released, `mode`, `recover` and a trajectory are refused on this arm, `ArmState` carries `brakes_released: true` and preflight lists it as blocking.",
+        "operationId": "arm_brake_release",
+        "parameters": [
+          {
+            "description": "Which arm: `a` is the robot's physical LEFT arm, `b` its physical RIGHT arm.",
+            "in": "path",
+            "name": "side",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArmSide"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ArmBrakeReleaseRequest"
+                  },
+                  {
+                    "description": "Operator arbitration. See `POST /v1/arm/lease`.",
+                    "properties": {
+                      "holder": {
+                        "description": "The arm lease holder issuing this command. Required only while somebody holds the lease: with no lease held the field is ignored, and with one held a request whose `holder` does not match is refused with 409.",
+                        "type": "string"
+                      }
+                    },
+                    "title": "ArmLeaseHolder",
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ArmBrakeReport"
+                    },
+                    "message": {
+                      "description": "Always null on success.",
+                      "type": "null"
+                    },
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "data",
+                    "message"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The success envelope."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "504": {
+            "$ref": "#/components/responses/GatewayTimeout"
+          }
+        },
+        "summary": "Release one arm's holding brakes for hand guiding (the arm DROPS)",
+        "tags": [
+          "arm"
+        ],
+        "x-arm-lease": true,
+        "x-rest-only": true,
+        "x-timeout-seconds": 10.0
       }
     },
     "/v1/arm/{side}/clamp_pose": {
@@ -8699,7 +9016,7 @@
     },
     "/v1/arm/{side}/move_joint": {
       "post": {
-        "description": "`joint` is a zero-based index in `0..=6`; `position` is degrees. The other six joints hold their last commanded targets. Same mode precondition and same `advisory` on refusal as `/v1/arm/{side}/move_joints`.",
+        "description": "`joint` is a zero-based index in `0..=6`; `position` is degrees. The daemon sends all seven joints: the other six are the arm's current feedback values, from the same read the guard checks. Same motion guard over the path from feedback, same mode precondition and same `advisory` on refusal as `/v1/arm/{side}/move_joints`.",
         "operationId": "arm_move_joint",
         "parameters": [
           {
@@ -8794,7 +9111,7 @@
     },
     "/v1/arm/{side}/move_joints": {
       "post": {
-        "description": "Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.\n\nThe arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it. Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout waiting for a convergence that servo-off joints cannot reach.",
+        "description": "Angles are degrees. With `wait: true` the call blocks until the arm reports arrival.\n\nThe motion guard checks the straight joint-space path from the arm's current feedback pose to the target, with the other arm at its own feedback pose, sampled at 1 degree per joint: each sample is one dual-arm pose checked for body and chest keep-out, arm-arm and same-arm clearance at the configured margins, and the target is checked against the URDF joint limits. A path that fails is refused with `kind: refused` before anything is written, naming the sample, the moving joints and each pair under its margin with its distance; a path that starts inside a margin is accepted while no clearance gets smaller than at the start. The clearance guard cannot be switched off.\n\nThe arm has to be in a mode that acts on a joint command (`position`, `pvt` or a torque mode). If it is not, the call is refused at once with `kind: refused` and nothing is written; an arm that is merely idle carries an `advisory` in the failure envelope naming the recover call that energises it. Without that refusal a waited call to an idle arm would sit out the full 30-second move timeout waiting for a convergence that servo-off joints cannot reach.",
         "operationId": "arm_move_joints",
         "parameters": [
           {
