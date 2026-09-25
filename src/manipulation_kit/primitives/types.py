@@ -953,6 +953,13 @@ class Verifier:
 
     Built from the world BEFORE the primitive ran, so it can measure a
     difference rather than a state. Subclasses implement :meth:`measure`.
+
+    ``run`` is the executor's :class:`~manipulation_kit.executor.RunReport`
+    for the run between the two worlds, when the caller has it (the agent
+    loop always does): its arrivals, stop reason and contact legs are
+    measurements too. A verifier that reads them overrides
+    :meth:`measure_run`; every other one ignores them, and a caller that
+    has no report gets the world-only verdict.
     """
 
     #: what this verifier checks, one line, for a menu or a trace
@@ -962,7 +969,10 @@ class Verifier:
         self.primitive = primitive
         self.world0 = world0
 
-    def __call__(self, world1: WorldView) -> VerdictReport:
+    def __call__(self, world1: WorldView, run: Any = None) -> VerdictReport:
+        return self.measure_run(world1, run)
+
+    def measure_run(self, world1: WorldView, run: Any = None) -> VerdictReport:
         return self.measure(world1)
 
     def measure(self, world1: WorldView) -> VerdictReport:  # pragma: no cover

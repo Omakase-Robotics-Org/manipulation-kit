@@ -718,12 +718,15 @@ class _AtTheRollTaken(Verifier):
                           + " (at the candidate roll the planner took)")
 
     def measure(self, world1: WorldView):
+        return self.measure_run(world1, None)
+
+    def measure_run(self, world1: WorldView, run: Any = None):
         arm = world1.arm(self.side)
         if arm is None or arm.tool_r is None:
-            return self.options[0][1](world1)
+            return self.options[0][1](world1, run)
         _r, chosen = min(self.options,
                          key=lambda o: _facing_error(arm.tool_r, o[0]))
-        return chosen(world1)
+        return chosen(world1, run)
 
 
 def _by_roll(primitive: str, world0: WorldView, meet: _Meet, build) -> Verifier:
@@ -1122,9 +1125,20 @@ class Grasp(Primitive):
         if unmet:
             return V.Never(self.name(), world0,
                            f"grasp cannot be verified: {unmet[0]}")
+        # the travel the plan made, so the hold is graded on where the
+        # fingers got to and whether the approach finished — not on the jaw
+        # gap alone (V.GraspStroke)
+        floor, _ = gg.descent_floor(meet.item, world0.frames, meet.support)
+        stroke = V.GraspStroke(
+            meet.d, meet.item, floor_z=floor,
+            by_contact=gg.descends_by_contact(meet.item, world0.frames,
+                                              meet.spec, meet.support),
+            floor_name=("" if meet.support is None
+                        else f"{meet.support.name}'s top"))
         return _by_roll(self.name(), world0, meet, lambda r_tcp: V.Holding(
             self.name(), world0, meet.side, meet.item,
-            jaw_axis=ap.jaw_axis(r_tcp), reference=meet.spec.reference))
+            jaw_axis=ap.jaw_axis(r_tcp), reference=meet.spec.reference,
+            stroke=stroke))
 
 
 # --------------------------------------------------------------------------- #
