@@ -55,8 +55,6 @@ __all__ = [
     "achieved_clearance", "tilted", "own_face_direction",
     "TIP_CONTACT_THIN_M", "TIP_SEARCH_START_M", "CONTACT_OVERTRAVEL_M",
     "TIP_CONTACT_NM", "descends_by_contact",
-    "CONTACT_BACKOFF_M", "CONTACT_BACKOFF_MIN_M", "SURFACE_CONTACT_BAND_M",
-    "surface_backoff",
 ]
 
 
@@ -547,6 +545,9 @@ CONTACT_BACKOFF_MIN_M = 0.0005
 #: extent along the travel, so a stop on a thin object's top is not taken for
 #: the table (an 8 mm slab: 4 mm).
 SURFACE_CONTACT_BAND_M = CONTACT_OVERTRAVEL_M
+
+__all__ += ["CONTACT_BACKOFF_M", "CONTACT_BACKOFF_MIN_M",
+            "SURFACE_CONTACT_BAND_M", "surface_backoff"]
 
 
 def surface_backoff(obj: ObjectView, frames: FrameGraph, d, *,
