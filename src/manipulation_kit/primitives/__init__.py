@@ -71,13 +71,14 @@ from .reach import (HANDOVER_MEETING_POINTS_M, ChainLink, ChainPlan,
 from .reach import choose_side as choose_side_for_task
 from .schema import (NOT_MODEL_BINDABLE, decode, direction_doc, domains,
                      domains_in, tool_schemas, verbs_in)
-from .types import (AUTO, BOTH, ContactCriterion, ContactStep,
+from .types import (AUTO, BOTH, ContactCriterion, ContactPolicy, ContactStep,
                     GOHOME_SIDE_CHOICES, GRIPS,
                     GRASP_DIRECTIONS, NUDGE_FRAMES, NUDGE_GRID_M,
                     NUDGE_MAX_YAW_RAD, PLAN_REASONS, PRIMITIVE_CONTRACT, SIDES,
                     SIDE_CHOICES, UNMET_CODES, GripStep, JointStep,
                     LearnedPrimitive, Plan, PlanBinding,
-                    PlanError, Primitive, SettleStep, Step, Unmet, Verdict,
+                    PlanError, Primitive, SettleStep, Step, SurfaceBackoff,
+                    Unmet, VERB_CONTACT_POLICY, Verdict,
                     VerdictReport, Verifier, Waypoint)
 from .verbs import (BY_VERB, PRIMITIVES, Approach, Carry, GoHome, Grasp,
                     Handover, Lift, Nudge, Place, Pour, Release, Retreat,
@@ -106,7 +107,8 @@ __all__ = [
     # contract
     "Primitive", "LearnedPrimitive", "PRIMITIVE_CONTRACT",
     "Plan", "PlanBinding", "PlanError", "Waypoint", "JointStep", "GripStep",
-    "SettleStep", "ContactStep", "ContactCriterion", "Step", "UNMET_CODES",
+    "SettleStep", "ContactStep", "ContactCriterion", "ContactPolicy",
+    "SurfaceBackoff", "VERB_CONTACT_POLICY", "Step", "UNMET_CODES",
     "Unmet", "Verdict", "VerdictReport", "Verifier",
     # vocabulary
     "AUTO", "BOTH", "GOHOME_SIDE_CHOICES", "GRASP_DIRECTIONS", "GRIPS",

@@ -404,3 +404,70 @@ def test_a_probe_plan_runs_on_the_firmware_executor_and_reports_its_contact(
     assert contact.made and contact.stopped_by == "contact"
     assert contact.travel_m == pytest.approx(2.0 * step.speed_m_s, abs=0.004)
     assert report.to_json()["contacts"][0]["stopped_by"] == "contact"
+
+
+def test_the_firmware_runner_backs_off_the_support_through_the_same_rule(
+        d1_arm):
+    """A ``back_off`` leg on ``run_plan``: stopped ON the support, the relieve
+    job goes to the posture 1 mm back along the leg (not to the measured
+    stop), and the record measures where the tips ended up."""
+    import dataclasses
+
+    from manipulation_kit.executor import SURFACE_SUPPORT, leg_posture_at
+    from manipulation_kit.primitives import ContactPolicy, SurfaceBackoff
+
+    d1_arm.set_joints("left", np.radians(
+        [-21.091, -68.997, 37.832, -84.469, -5.509, -34.506, -50.0]))
+    world = _observe(d1_arm)
+    plan = Probe(side="left", direction="down").plan(world, d1_arm)
+    assert plan.ok, str(plan)
+    leg = next(s for s in plan.steps if isinstance(s, ContactStep))
+    backed = dataclasses.replace(
+        leg, policy=ContactPolicy.BACK_OFF,
+        backoff=SurfaceBackoff(0.001, surface_at_m=0.020, band_m=0.005,
+                               support="table", tip_lead_m=0.029))
+    plan = dataclasses.replace(plan, steps=tuple(
+        backed if s is leg else s for s in plan.steps))
+    q0 = np.degrees(backed.path[0])
+    client = FakeGeneratedClient(clock={"t": 0.0}, block_at_s=2.0)
+    for wire_side, side in (("a", "left"), ("b", "right")):
+        here = tuple(np.degrees(d1_arm.joints(side)))
+        client.arms[wire_side] = _Arm(feedback_joints=here, command_joints=here,
+                                      feedback_torque=LOAD)
+    robot = _firmware(client)
+    client.gripper_set = (                    # type: ignore[attr-defined]
+        lambda side, closedness, *, grip=None, timeout_s=None: None)
+    uploads: List[Any] = []
+    request = client.request
+
+    def recording(method, path, body=None):
+        if path == "/v1/arm/trajectory/start":
+            uploads.append(body)
+        return request(method, path, body)
+    client.request = recording               # type: ignore[assignment]
+    original = robot.move_until
+
+    def contact_leg(path, **kwargs):
+        client.legacy_play = False
+        client.arms["a"].feedback_joints = tuple(q0)
+        out = original(path, **kwargs)
+        client.legacy_play = True
+        uploads.clear()                      # only what comes AFTER the leg
+        return out
+
+    robot.move_until = contact_leg           # type: ignore[assignment]
+    client.legacy_play = True
+    report = robot.run_plan(plan)
+    assert report.completed, report.error
+    (contact,) = report.contacts
+    assert contact.made and contact.surface == SURFACE_SUPPORT
+    assert contact.support == "table" and contact.backoff_m == 0.001
+    (relieve,) = uploads
+    want = np.degrees(leg_posture_at(backed, contact.travel_m - 0.001))
+    assert np.allclose(relieve["waypoints"][-1]["a"], want, atol=1e-6)
+    # measured after the job: 1 mm up, tips included
+    assert contact.backoff_measured_m == pytest.approx(0.001, abs=1e-4)
+    assert contact.tip_z_after_m - contact.tip_z_before_m == pytest.approx(
+        0.001, abs=1e-4)
+    record = report.to_json()["contacts"][0]
+    assert record["surface"] == "support" and record["backoff_m"] == 0.001

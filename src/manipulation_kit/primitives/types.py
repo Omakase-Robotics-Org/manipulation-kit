@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, fields
+from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -369,6 +370,93 @@ class ContactCriterion:
 CONTACT_KNOT_MIN_DT_S = 0.02
 
 
+class ContactPolicy(str, Enum):
+    """What a contact leg does ONCE SOMETHING HAS RESISTED — a per-verb design
+    decision, named, so no runner special-cases a verb.
+
+    ``stay``          stop and stay touching: the arm is re-commanded at the
+                      posture it MEASURED at the stop (``probe``: the contact
+                      IS the measurement).
+    ``back_off``      stop, and when the leading finger tips stopped ON THE
+                      SUPPORT the object stands on, retreat along minus the
+                      travel by :attr:`SurfaceBackoff.distance_m` before
+                      anything else happens (a fingertip ``grasp``: jaws
+                      closed with the tips pressed on the table drag across
+                      it, and the friction stalls them inside the declared
+                      width window — d1-2 2026-09-24, turn 6). A stop ABOVE
+                      the support (on the object) behaves as ``stay``.
+    ``push_through``  keep pushing: hold the frozen command for ``hold_s``,
+                      then retract along the leg (``press``: a button needs
+                      the push, and the retract is the release).
+
+    Planner-internal. It is not a :class:`Primitive` field and never reaches
+    a tool schema: which policy a verb uses is the kit's decision, not the
+    model's (:data:`VERB_CONTACT_POLICY`).
+    """
+
+    STAY = "stay"
+    BACK_OFF = "back_off"
+    PUSH_THROUGH = "push_through"
+
+
+#: The contact policy of every verb that plans a :class:`ContactStep`. A new
+#: contact verb (an insert, a push) is added here by name.
+VERB_CONTACT_POLICY: Dict[str, "ContactPolicy"] = {
+    "probe": ContactPolicy.STAY,
+    "grasp": ContactPolicy.BACK_OFF,
+    "press": ContactPolicy.PUSH_THROUGH,
+}
+
+
+@dataclass(frozen=True)
+class SurfaceBackoff:
+    """Where a ``back_off`` leg's support is, and how far to leave it.
+
+    Every length is along the leg (``ContactStep.direction``), so the rule
+    holds for any travel, not only ``down``.
+
+    ``distance_m``    the retreat after a stop on the support [m], along
+                      minus the travel. 0 = measure and report, do not move.
+    ``surface_at_m``  the leg distance at which the leading finger tips meet
+                      the MODELLED support [m] (forward kinematics of the
+                      solved leg start against the plan's descent floor).
+    ``band_m``        a stop at most this far SHORT of ``surface_at_m`` (or
+                      anywhere past it) is a stop on the support; further
+                      short, the tips met something standing on it — the
+                      object — and nothing is retracted [m].
+    ``support``       the support's name, for the record ("" = the object's
+                      own declared underside, no surface under it).
+    ``tip_lead_m``    how far the finger tips lead the tool point along the
+                      travel [m], so the record can say where the TIPS were.
+    """
+
+    distance_m: float
+    surface_at_m: float
+    band_m: float
+    support: str = ""
+    tip_lead_m: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("distance_m", "band_m", "tip_lead_m"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"SurfaceBackoff.{name} must be a finite "
+                                 f"non-negative length, got "
+                                 f"{getattr(self, name)!r}")
+            object.__setattr__(self, name, value)
+        at = float(self.surface_at_m)
+        if not math.isfinite(at):
+            raise ValueError(f"SurfaceBackoff.surface_at_m must be finite, "
+                             f"got {self.surface_at_m!r}")
+        object.__setattr__(self, "surface_at_m", at)
+
+    def to_json(self) -> Dict[str, Any]:
+        return {"distance_m": round(self.distance_m, 5),
+                "surface_at_m": round(self.surface_at_m, 5),
+                "band_m": round(self.band_m, 5), "support": self.support,
+                "tip_lead_m": round(self.tip_lead_m, 5)}
+
+
 @dataclass(frozen=True)
 class ContactStep:
     """A straight leg that STOPS ON WHATEVER RESISTS, and reports where.
@@ -412,8 +500,28 @@ class ContactStep:
     speed_m_s: float = 0.01
     hold_s: float = 0.0
     retract: bool = False
+    #: what happens after the stop (:class:`ContactPolicy`); ``None`` is
+    #: derived from ``retract`` — ``push_through`` with one, ``stay`` without
+    policy: Optional[ContactPolicy] = None
+    #: the support a ``back_off`` leg retreats from; required by, and only
+    #: allowed with, ``back_off``
+    backoff: Optional[SurfaceBackoff] = None
 
     def __post_init__(self) -> None:
+        policy = self.policy
+        if policy is None:
+            policy = (ContactPolicy.PUSH_THROUGH if self.retract
+                      else ContactPolicy.STAY)
+        policy = ContactPolicy(policy)
+        object.__setattr__(self, "policy", policy)
+        if (policy is ContactPolicy.PUSH_THROUGH) != bool(self.retract):
+            raise ValueError(f"ContactStep: policy {policy.value!r} with "
+                             f"retract={self.retract!r}; push_through is the "
+                             f"one policy that retracts along the leg")
+        if (policy is ContactPolicy.BACK_OFF) != (self.backoff is not None):
+            raise ValueError(f"ContactStep: policy {policy.value!r} "
+                             f"{'needs' if self.backoff is None else 'takes no'}"
+                             f" SurfaceBackoff")
         path = tuple(np.array(q, dtype=float).reshape(7) for q in self.path)
         for q in path:
             q.setflags(write=False)
@@ -639,6 +747,9 @@ def _step_json(step: Step) -> Dict[str, Any]:
                 "speed_m_s": round(float(step.speed_m_s), 4),
                 "hold_s": round(float(step.hold_s), 3),
                 "retract": bool(step.retract),
+                "policy": step.policy.value,
+                **({"backoff": step.backoff.to_json()}
+                   if step.backoff is not None else {}),
                 "waypoint": int(step.waypoint),
                 "s_m": [round(float(v), 5) for v in step.s],
                 "q_rad": [[round(float(v), 6) for v in q] for q in step.path]}
@@ -716,7 +827,9 @@ class Plan:
                  "max_travel_m": round(float(s.max_travel_m), 4),
                  "criterion": s.criterion.to_json(),
                  "hold_s": round(float(s.hold_s), 3),
-                 "retract": bool(s.retract)} for s in contacts]
+                 "retract": bool(s.retract), "policy": s.policy.value,
+                 **({"backoff_m": round(s.backoff.distance_m, 5)}
+                    if s.backoff is not None else {})} for s in contacts]
         if full:
             out["steps"] = [_step_json(step) for step in self.steps]
         else:
