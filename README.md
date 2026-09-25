@@ -528,6 +528,21 @@ plane); `Press(target=..., direction="forward", force_nm=...)` pushes, holds
 and returns. Position mode only — a watched straight line, never a torque
 command — and gated on hardware by the same document.
 
+**What a contact leg does once something resists** is a per-verb decision,
+named (`primitives.ContactPolicy`, `VERB_CONTACT_POLICY`), never a field a
+model sets:
+
+| verb | policy | after the stop |
+|---|---|---|
+| `probe` | `stay` | re-commanded at the measured stop; stays touching (the contact is the measurement) |
+| `grasp` (fingertip, by contact) | `back_off` | a stop ON the support the object stands on (within 5 mm of the modelled top, or past it) retreats `ClearancePolicy.contact_backoff_m` (1 mm) along minus the travel before the jaws close; a stop higher up, on the object, closes where it stopped |
+| `press` | `push_through` | holds the frozen command against the face for `hold_s`, then retracts to the standoff |
+
+The run records what a `back_off` leg stopped on and what it did
+(`ContactReport.surface` = `support` / `object` / `none`, `support`,
+`height_m`, `backoff_m`, `tip_z_before_m`, `tip_z_after_m`,
+`backoff_measured_m`).
+
 **`Handover(object="cube")`** passes a held object to the other hand: the
 giving hand meets at a point both arms reach, the receiving hand approaches
 (travelling `direction`, default `left` = toward a left-hand giver) and

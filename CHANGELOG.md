@@ -408,6 +408,57 @@ caller of the API below, and pip needs a version that moves.)
 
 The consumers are updated in a following sweep, not in this repository.
 
+### A fingertip grasp backs off the support before it closes; a press pushes through (d1-2 judge-only, 2026-09-24)
+
+`servo-judgeonly-2` turn 6: a top-down `grasp(tape, right, down, soft, tip)`
+whose declared centre was 55-62 mm off the roll. The fingertip search stopped
+on the TABLE (tips at z 0.1674, 1.4 mm above the modelled 0.166 top, 6.84 Nm
+rise), the close stroke dragged the tips across it, the friction stalled the
+jaws at 48 mm — inside the 46-54 mm window of the 50 mm declaration — and the
+daemon reported a hold. Nothing at closure tells that drag from an object.
+
+- **NEW `primitives.ContactPolicy`** (`stay` / `back_off` / `push_through`) and
+  `VERB_CONTACT_POLICY` (`probe: stay`, `grasp: back_off`, `press:
+  push_through`): what a contact leg does after the stop is a named per-verb
+  decision. `ContactStep` gains `policy` (derived from `retract` when not
+  given: `push_through` with it, `stay` without) and `backoff`
+  (`SurfaceBackoff`: `distance_m`, `surface_at_m`, `band_m`, `support`,
+  `tip_lead_m`), required by and only allowed with `back_off`.
+- **The fingertip grasp retreats off the support.** When the search stops at
+  most `band_m` short of where the plan's model puts the tips on the support
+  (or past it), both runners (`executor.run_steps` and the firmware
+  `run_plan`) command the leg's own posture `distance_m` back along it —
+  along minus the travel, for any direction — wait for it, and only then
+  close. A stop further short (on the object) behaves as before.
+  `executor.contact_outcome` is the one rule both apply.
+- **Defaults.** `ClearancePolicy.contact_backoff_m` = 1 mm
+  (`grasp_geometry.CONTACT_BACKOFF_M`), raised to
+  `CONTACT_BACKOFF_MIN_M` = 0.5 mm when set below it: the executor resolves
+  a contact-leg knot to <= 0.3 mm at the tool and places the stop to one
+  20 ms poll at 10 mm/s (0.2 mm). `NUDGE_GRID_M` (10 mm at its finest) is the
+  model's correction menu and the arrival barrier (3 deg / 5 mm / 10 mm) a
+  jam deadline; neither is the arm's resolution, and neither can see 1 mm,
+  so the retreat is MEASURED after it ran. `SURFACE_CONTACT_BAND_M` = 5 mm
+  (the tape-measured table's uncertainty, or the support's own
+  `height_uncertainty_m`), capped at half the object's extent along the
+  travel. An object so thin that the retreat would lift the tips past half
+  of it gets no back-off, and the plan says so.
+- **The record.** A `back_off` leg's `ContactReport` (and its `to_json`)
+  carries `surface` (`support` / `object` / `none`), `support`, `height_m`,
+  `backoff_m`, `tip_z_before_m`, `tip_z_after_m` (from the measured posture)
+  and `backoff_measured_m`. Probe and press records are unchanged.
+  `Plan.to_json()["contact_steps"]` gains `policy` (and `backoff_m`); the
+  full step record gains `policy` and `backoff`.
+- **Tool schema: unchanged** (no Primitive field; byte-identical export).
+
+Tests: `tests/primitives/test_grasp_contact_backoff.py` replays turn 6 on a
+contact double of the mirror — with the back-off the jaws sweep to the empty
+gap and the verifier says FALSE; at 0 mm the 48 mm table-drag stall and the
+false TRUE reproduce — plus a stop on the object, a search that touched
+nothing, `press` and `probe` policies, the back-off along `down`, `forward`
+and a 45 deg descent, and the firmware runner's relieve job
+(`tests/executors/test_contact_executor.py`).
+
 ### Fingertip grasps onto a surface finish by contact (d1-2 tip trial, 2026-09-23)
 
 The d1-2 tip trial (8 mm slab of business cards, 91 x 55 mm, left hand,
