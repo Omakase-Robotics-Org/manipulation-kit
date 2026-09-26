@@ -124,7 +124,8 @@ mkit-teach export take.json out.csv --name wave --sentiment neutral --usage fill
 | 開始時の落ち込みを捨てる（ブレーキ解放直後、最初の 0.5 s 以内で 8 deg/s を超えた最後のサンプルまで） | on | `--sag-max-s` / `--sag-vel` / `--no-sag-trim` |
 | 手首 J5–J7 は**教えたまま残す**。可動範囲が 2 deg 未満の手首関節だけ（垂れ・ノイズ）HOME に固定し、その旨を表示 | 固定しない | `--pin-wrist`（旧 gesture_record の全固定） |
 | 平滑化: 1 サンプルだけの飛び（両側が平ら）を除去 → 2 次の Savitzky–Golay。**速い折り返しの高さを削らない**（旧 gesture_record の中央値 → 平均は task7 の L7 −70.0 deg を −58.4 deg に削っていた） | 5 サンプル | `--smooth-window N` / `--no-smooth` |
-| HOME から最初の姿勢へつなぐ区間と、最後の姿勢から HOME へ戻る区間を一定の関節速度で追加 | テイク自身のピーク関節速度（平滑化後）を 20–90 deg/s に収めた値（キーフレームモードは 20） | `--home-speed` / `--no-home` |
+| HOME から最初の姿勢へつなぐ区間を一定の関節速度で追加 | テイク自身のピーク関節速度（平滑化後）を 20–90 deg/s に収めた値（キーフレームモードは 20） | `--home-speed` / `--no-home` |
+| 最後の姿勢から HOME へ戻る区間を**専用の控えめなプロファイル**で追加: 最後の姿勢で一旦止まる dwell ノット → min-jerk（0.1 s ごとのノット）。ジェスチャーの速さとは無関係。時間 = max(最短, 15/8 × 最大関節距離 / ピーク速度, √(5.77 × 距離 / ピーク加速度)) | ピーク 40 deg/s・90 deg/s²・最短 2 s（速度上限より速くはしない） | `--home-return-vel` / `--home-return-acc` / `--home-return-min-s` / `--no-home` |
 | キーフレーム削減（直線から ε 以内を間引き） | 1.5 deg, collinear | `--epsilon-deg` / `--method dp` / `--min-spacing-s` |
 | 停止区間の短縮 | off | `--max-idle-s 0.25/0.5/1` |
 | 速度上限まで時間だけ延ばす（下記「速度」） | 150 deg/s・600 deg/s² | `--max-joint-vel` / `--max-joint-acc` / `--no-speed-limit` |
@@ -134,7 +135,7 @@ mkit-teach export take.json out.csv --name wave --sentiment neutral --usage fill
 export は必ず**時間の内訳**と**関節ごとの可動範囲**を表示する:
 
 ```
-timing: recorded 5.24 s -> body 5.10 s (speed cap stretched 3 knot(s), +0.20 s) + HOME connect 0.40 s + return 0.60 s (at 45 deg/s) = 6.35 s
+timing: recorded 5.24 s -> body 5.10 s (speed cap stretched 3 knot(s), +0.20 s) + HOME connect 0.40 s (at 45 deg/s) + return 2.60 s (min-jerk, peak 40 deg/s, 90 deg/s^2, at least 2 s) = 8.10 s
 joint range recorded -> exported [deg]: L1 40.0 -> 39.2, L7 35.7 -> 35.1, R5 1.2 -> 0.0 (pinned: under 2 deg, sag/noise)
 ```
 
@@ -169,6 +170,13 @@ mkit-teach check ~/teach/wave_motion.csv --ascii
 * **不合格（exit 1）**: 関節リミット（クリップせず違反扱い）、手首ロールの連成
   リミット（J6 に応じた |J7| 上限）、速度・加速度（CSV の上限）、時刻と角度の
   有限性。
+* **HOME への復帰区間は別に表示**（`HOME return: … s over N segment(s), peak
+  velocity … deg/s, peak acceleration … deg/s^2, … deg/s at HOME; profile 40
+  deg/s, 90 deg/s^2`）。CSV が `# mkit-teach: home_return_frames/vel/acc` で
+  復帰区間を宣言していれば、そのプロファイル超過と HOME 到着時に動いている
+  こと（2 deg/s 超）は不合格。宣言の無い古い CSV は最後の区間を測り、既定
+  プロファイルより速い・HOME に動いたまま着く場合に警告だけ出す（テイクから
+  export し直せば直る）。
 * **警告だけ（exit 0）**: MotionGuard の胴体・胸・両腕間・自己干渉。最も近づいた
   距離・フレーム名・時刻を出す。教示は手で実際に通った姿勢なので、キットの
   カプセルモデルは裁かない（Shu 2026-09-23）。ただし**デーモンは同じ違反で再生を
@@ -200,7 +208,9 @@ UNSAFE 印・チェック NG・コントローラ異常のいずれでも何も�
 * 選んだ比と理由を動かす前に表示する（`playback ratio 1.00: gesture peak 117.8
   deg/s x 1.3 …; HOME approach at 0.30`）。
 * ジェスチャー前の HOME への事前移動は**落ち着いた 0.3**。ジェスチャー内の HOME
-  接続・復帰区間は本体と同じ比。`--vel-ratio` は両方をその値に固定する。
+  接続・復帰区間は本体と同じ比（比は 1 回のトラジェクトリにつき 1 つ）。復帰区間が
+  遅いのは比ではなく**タイミング**による（ピーク 40 deg/s の min-jerk）。
+  `--vel-ratio` は両方をその値に固定する。
 
 ### 5. 登録する（register）
 
@@ -316,12 +326,19 @@ was deleted; it simply stopped being able to reach the arm.
   the join is continuous in position, and the daemon's C1 Catmull-Rom plus the
   limiter keep it continuous in velocity and under the caps.
 * The player replaces the LAST row with HOME, so the last recorded pose is kept
-  as a real row and a HOME row is appended after it, lasting
-  `max|q_last - HOME| / home_speed_deg_s` (by default the take's own peak
-  joint speed after smoothing, clamped to 20..90 deg/s): the return is at the
-  same joint speed whether it is long or short. The limiter
-  may still stretch it (acceleration), never shorten it. Keyframe-mode takes
-  time their last move the same way.
+  as a real row and the return is appended after it on its own profile
+  (`process.HomeReturn`, not the take's speed): a dwell knot at the last pose
+  (at least as long as the last body segment, up to 1 s, and long enough for
+  the dwell's peak speed/acceleration to be within the profile), then min-jerk
+  knots every 0.1 s to HOME, so the daemon's Catmull-Rom leaves the pose and
+  reaches HOME at rest. Duration
+  `max(min_s, 15/8 * max|q_last - HOME| / peak_vel, sqrt(5.77 * max|q_last -
+  HOME| / peak_acc))`, default 40 deg/s, 90 deg/s^2, 2 s, never above the
+  gesture's speed ceiling. The CSV declares it (`home_return_vel`,
+  `home_return_acc`, `home_return_frames`) and `check` reports and holds it
+  separately. Idle trimming leaves it alone. Keyframe-mode takes return the
+  same way. (Before: one HOME row at the take's clamped peak speed; a 60 deg
+  return peaked at 113 deg/s on the spline and reached HOME at 45 deg/s.)
 * A start/end already within `epsilon_deg` of HOME is snapped to HOME, as
   gesture_record did (the golden wave take is such a take).
 * The wrist is kept as taught: gesture_record pinned J5–J7 to HOME against

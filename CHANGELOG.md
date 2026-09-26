@@ -7,6 +7,34 @@ in particular what it **breaks** — the repository's rule is a clean break with
 loud reason, not a legacy path kept alive beside the new one.
 
 
+## 0.16.1 — unreleased
+
+### Teach: the return to HOME has its own conservative profile
+
+- The return appended after a gesture's last pose no longer inherits the
+  take's speed (its own peak joint speed clamped to 20..90 deg/s, one knot).
+  On the daemon's Catmull-Rom that single knot peaked at 1.25x its average
+  and reached HOME still moving (a 60 deg return: 113 deg/s peak, 45 deg/s at
+  the HOME knot, then the stream ends), which a controller that tracks the
+  streamed setpoints faithfully would execute as given.
+- New `process.HomeReturn` (default `DEFAULT_HOME_RETURN`: 40 deg/s peak,
+  90 deg/s^2, at least 2 s, knots every 0.1 s): a dwell knot at the last pose,
+  then min-jerk knots to HOME; never faster than the gesture's SpeedPolicy.
+  `KeyframeOptions.home_return`; CLI `--home-return-vel`,
+  `--home-return-acc`, `--home-return-min-s` on `export` / `keyframes`.
+  `--home-speed` now sets the HOME-in blend only.
+- The CSV declares the return (`# mkit-teach: home_return_vel=…
+  home_return_acc=… home_return_frames=…`). `check` prints a `HOME return:`
+  line (duration, peak velocity/acceleration, speed at HOME) and fails a
+  declared return that exceeds its profile or reaches HOME moving; a CSV
+  without the keys gets a warning when its last segment is faster than the
+  default profile or reaches HOME moving.
+- `trim_idle(..., keep_last=n)` leaves the return's rows alone.
+- `Reduction.return_frames` / `.home_return`; the breakdown names the profile.
+- The golden `tests/data/teach/wave_motion.csv` gains the three metadata
+  lines (its take ends at HOME: `home_return_frames=0`, rows unchanged).
+
+
 ## 0.16.0 — unreleased
 
 The root-cause redesign of PR #21 (design `DESIGN.md`, steps 1-9): the

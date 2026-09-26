@@ -26,9 +26,10 @@ from . import registry
 from .check import ascii_preview, check_gesture
 from .export import UnsafeGesture, export
 from .gesture_csv import Gesture, Keyframe, load_csv, load_home, save_csv
-from .process import (DEFAULT_SPEED, EPSILON_DEG,
+from .process import (DEFAULT_SPEED, EPSILON_DEG, HOME_RETURN_ACC_DEG_S2,
+                      HOME_RETURN_MIN_S, HOME_RETURN_VEL_DEG_S,
                       MIN_KEYFRAME_S, SAG_MAX_S, SAG_VEL_DEG_S, SMOOTH_WINDOW,
-                      STRETCH_KEY, KeyframeOptions, SpeedPolicy,
+                      STRETCH_KEY, HomeReturn, KeyframeOptions, SpeedPolicy,
                       reduce_poses, reduce_samples)
 from .record import (BRAKE_CONTRACT, BRAKE_WINDOW_S, COMPLIANCE, DEFAULT_RATE_HZ,
                      RecordAborted, Recording, record)
@@ -362,6 +363,8 @@ def _options(args) -> KeyframeOptions:
         pin_home=not args.no_home, max_idle_s=args.max_idle_s,
         speed_limit=not args.no_speed_limit, speed=_speed(args),
         min_keyframe_s=args.min_keyframe_s, home_speed_deg_s=args.home_speed,
+        home_return=HomeReturn(args.home_return_vel, args.home_return_acc,
+                               args.home_return_min_s),
         sag_max_s=0.0 if args.no_sag_trim else args.sag_max_s,
         sag_vel_deg_s=args.sag_vel)
 
@@ -636,9 +639,18 @@ def _keyframe_args(p) -> None:
     _speed_args(g)
     g.add_argument("--min-keyframe-s", type=float, default=MIN_KEYFRAME_S)
     g.add_argument("--home-speed", type=float, default=None,
-                   help="joint speed [deg/s] of the HOME-in blend and the "
-                        "appended return to HOME (default: the take's own peak "
-                        "joint speed, clamped to 20..90; keyframe mode 20)")
+                   help="joint speed [deg/s] of the HOME-in blend (default: the "
+                        "take's own peak joint speed, clamped to 20..90; keyframe "
+                        "mode 20). The return to HOME has its own profile below")
+    g.add_argument("--home-return-vel", type=float, default=HOME_RETURN_VEL_DEG_S,
+                   help="peak joint speed [deg/s] of the min-jerk return to HOME "
+                        f"(default {HOME_RETURN_VEL_DEG_S:g}; never above the "
+                        "gesture's ceiling)")
+    g.add_argument("--home-return-acc", type=float, default=HOME_RETURN_ACC_DEG_S2,
+                   help="peak joint acceleration [deg/s^2] of the return to HOME "
+                        f"(default {HOME_RETURN_ACC_DEG_S2:g})")
+    g.add_argument("--home-return-min-s", type=float, default=HOME_RETURN_MIN_S,
+                   help=f"shortest return to HOME [s] (default {HOME_RETURN_MIN_S:g})")
     g.add_argument("--sag-max-s", type=float, default=SAG_MAX_S,
                    help="cut the brake-release sag within this many seconds "
                         "of the start (default 0.5)")

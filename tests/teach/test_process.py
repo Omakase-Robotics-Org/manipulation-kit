@@ -2,6 +2,8 @@
 idle trimming and the playability limiter on the daemon's spline."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -15,6 +17,8 @@ from manipulation_kit.teach.process import (DEFAULT_SPEED, HOME_SPEED_DEG_S,
                                             enforce_min_spacing,
                                             reduce_collinear,
                                             reduce_douglas_peucker, segment_peaks)
+from manipulation_kit.teach.process import HomeReturn, reduce_poses
+from manipulation_kit.teach.gesture_csv import parse_csv, sample, to_csv
 
 HOME = np.array(load_home())
 
@@ -109,11 +113,12 @@ def test_trim_idle_caps_only_keyframes_that_do_not_move():
 
 def test_stepped_keyframes_get_home_around_them():
     pose = HOME + np.r_[0, 10.0, np.zeros(12)]
-    g = keyframes_from_poses([pose], HOME, 1.5)
-    rows = g.array()
-    assert len(rows) == 3
+    red = reduce_poses([pose], HOME, 1.5)
+    rows = red.gesture.array()
+    # HOME, the pose, then the return: a dwell at the pose + min-jerk knots
+    assert len(rows) == 2 + red.return_frames
     assert rows[0] == pytest.approx(HOME) and rows[-1] == pytest.approx(HOME)
-    assert rows[1][1] == pytest.approx(pose[1])
+    assert rows[1][1] == pytest.approx(pose[1]) and rows[2][1] == pytest.approx(pose[1])
 
 
 # -- HOME rules for a hand-guided take (Shu, 2026-09-23) --------------------- #
@@ -177,52 +182,149 @@ def _ends_away(offset_deg):
     return times, q
 
 
-@pytest.mark.parametrize("offset", [6.0, 12.0, 24.0])
-def test_the_return_to_home_is_appended_at_a_constant_speed(offset):
+def _home_leg(red):
+    """``(points, first segment index)`` of the return on the daemon's spline."""
+    points = trajectory_points(red.gesture, HOME)
+    return points, len(points) - 1 - red.return_frames
+
+
+def _leg_peaks(red):
+    points, first = _home_leg(red)
+    peaks = segment_peaks_per_joint(points)[first:]
+    return (max(float(np.max(v)) for v, _ in peaks),
+            max(float(np.max(a)) for _, a in peaks))
+
+
+def _arrival_deg_s(red):
+    points = trajectory_points(red.gesture, HOME)
+    end, h = points[-1]["t"], 1e-3
+    return float(np.max(np.abs(sample(points, end) - sample(points, end - h))) / h)
+
+
+def test_home_return_duration_law():
+    p = HomeReturn()
+    assert (p.peak_vel_deg_s, p.peak_acc_deg_s2, p.min_s) == (40.0, 90.0, 2.0)
+    assert p.duration_s(5.0) == 2.0                                # the floor
+    assert p.duration_s(60.0) == pytest.approx(15 / 8 * 60 / 40)   # velocity-bound
+    steep = HomeReturn(peak_vel_deg_s=400.0, peak_acc_deg_s2=20.0, min_s=0.0)
+    assert steep.duration_s(60.0) == pytest.approx(math.sqrt(10 / math.sqrt(3) * 60 / 20))
+    assert p.within(LEGACY_SPEED) == HomeReturn(25.0, 90.0)       # never over the ceiling
+    with pytest.raises(ValueError):
+        HomeReturn(peak_vel_deg_s=0.0)
+
+
+@pytest.mark.parametrize("offset", [6.0, 12.0, 24.0, 60.0, 90.0])
+def test_the_return_to_home_is_a_min_jerk_leg_within_its_profile(offset):
     times, q = _ends_away(offset)
-    o = KeyframeOptions(speed_limit=False)
-    g = keyframes_from_samples(times, q, HOME, o)
+    red = reduce_samples(times, q, HOME)
+    g = red.gesture
     rows = g.array()
+    assert red.ret and red.return_frames >= 3
     assert rows[-1] == pytest.approx(HOME)
-    assert rows[-2][1] == pytest.approx(HOME[1] - offset, abs=0.05)  # pose kept
-    assert g.keyframes[-1].duration == pytest.approx(offset / HOME_SPEED_DEG_S,
-                                                     rel=0.01)
+    tail = rows[-red.return_frames - 1:]
+    assert tail[0][1] == pytest.approx(HOME[1] - offset, abs=0.05)   # pose kept
+    assert tail[1] == pytest.approx(tail[0])                          # the dwell
+    # the min-jerk leg lasts exactly the profile's duration
+    leg = sum(k.duration for k in g.keyframes[-red.return_frames + 1:])
+    assert leg == pytest.approx(HomeReturn().duration_s(offset), rel=1e-6)
+    vel, acc = _leg_peaks(red)
+    assert vel <= 40.0 * 1.03 and acc <= 90.0 * 1.03
+    assert _arrival_deg_s(red) < 1.0                                  # at rest at HOME
+    assert red.return_s == pytest.approx(
+        sum(k.duration for k in g.keyframes[-red.return_frames:]))
+    assert check_gesture(g, HOME, step_s=0.05).ok
 
 
-def test_return_duration_is_proportional_to_distance_after_the_limiter_too():
-    durations = []
-    for offset in (8.0, 16.0, 32.0):
-        times, q = _ends_away(offset)
-        durations.append(keyframes_from_samples(times, q, HOME).keyframes[-1].duration)
-    assert durations[0] < durations[1] < durations[2]
-    assert durations[2] / durations[1] == pytest.approx(2.0, rel=0.2)
-
-
-def test_a_keyframe_take_returns_home_at_the_same_speed():
-    far = HOME + np.r_[0, -20.0, np.zeros(12)]
-    g = keyframes_from_poses([far], HOME, 1.5, KeyframeOptions(speed_limit=False))
-    assert g.keyframes[-1].duration == pytest.approx(20.0 / HOME_SPEED_DEG_S)
-
-
-def test_the_home_legs_run_at_the_takes_own_speed_clamped():
-    """The return must not feel slower than the gesture: the HOME legs run
-    at the take's peak joint speed after smoothing, within [20, 90] deg/s."""
-    def take(peak_amp, seconds):
+def test_the_return_ignores_how_fast_the_gesture_was_taught():
+    """A fast take used to return at its own peak speed (up to 90 deg/s, one
+    knot: 113 deg/s on the spline, 45 deg/s at HOME). The return's duration
+    now depends on the distance only."""
+    def take(seconds):
         times = np.arange(0.0, seconds + 2.0, 0.05)
         s = np.clip((times - 0.5) / seconds, 0, 1)
         q = np.tile(HOME, (len(times), 1))
-        q[:, 7] += peak_amp * np.sin(np.pi * s / 2)          # out, and stays
+        q[:, 7] += 60.0 * s * s * s * (10 - 15 * s + 6 * s * s)   # out, and stays
         return times, q
-    slow = reduce_samples(*take(10.0, 4.0), HOME)
-    assert slow.home_speed_deg_s == HOME_SPEED_DEG_S          # floor
-    mid = reduce_samples(*take(40.0, 1.0), HOME)
-    assert HOME_SPEED_DEG_S < mid.home_speed_deg_s < HOME_SPEED_MAX_DEG_S
-    fast = reduce_samples(*take(60.0, 0.3), HOME)
-    assert fast.home_speed_deg_s == HOME_SPEED_MAX_DEG_S      # ceiling
-    assert mid.ret and mid.return_s == pytest.approx(
-        max(40.0 / mid.home_speed_deg_s, mid.return_s), rel=0.05)
-    forced = reduce_samples(*take(40.0, 1.0), HOME, KeyframeOptions(home_speed_deg_s=20.0))
-    assert forced.home_speed_deg_s == 20.0 and forced.return_s > mid.return_s
+    slow, fast = reduce_samples(*take(4.0), HOME), reduce_samples(*take(0.6), HOME)
+    assert fast.home_speed_deg_s == HOME_SPEED_MAX_DEG_S      # HOME-in unchanged
+    assert slow.home_speed_deg_s < fast.home_speed_deg_s
+    for red in (slow, fast):
+        leg = sum(k.duration for k in red.gesture.keyframes[-red.return_frames + 1:])
+        assert leg == pytest.approx(HomeReturn().duration_s(60.0), rel=1e-6)
+        vel, _ = _leg_peaks(red)
+        assert vel <= 40.0 * 1.03
+    custom = reduce_samples(*take(0.6), HOME,
+                            KeyframeOptions(home_return=HomeReturn(30.0, 60.0, 3.0)))
+    assert custom.return_s > fast.return_s and _leg_peaks(custom)[0] <= 30.0 * 1.03
+
+
+def test_the_dwell_brings_a_moving_end_to_rest_within_the_profile():
+    """A take that stops recording mid-motion: the dwell segment carries the
+    last body tangent and must still be within the return's profile."""
+    times = np.arange(0.0, 2.0 + 1e-9, 0.05)
+    q = np.tile(HOME, (len(times), 1))
+    q[:, 1] -= 30.0 * np.clip((times - 0.5) / 1.5, 0.0, 1.0)     # still moving at the end
+    red = reduce_samples(times, q, HOME)
+    points, first = _home_leg(red)
+    vel, acc = segment_peaks_per_joint(points)[first]
+    assert float(np.max(vel)) <= 40.0 * 1.03 and float(np.max(acc)) <= 90.0 * 1.03
+    assert check_gesture(red.gesture, HOME, step_s=0.05).ok
+
+
+def test_idle_trim_leaves_the_return_alone():
+    times, q = _ends_away(24.0)
+    plain = reduce_samples(times, q, HOME)
+    trimmed = reduce_samples(times, q, HOME, KeyframeOptions(max_idle_s=0.05))
+    n = plain.return_frames
+    assert [k.duration for k in trimmed.gesture.keyframes[-n:]] == pytest.approx(
+        [k.duration for k in plain.gesture.keyframes[-n:]])
+
+
+def test_a_keyframe_take_returns_home_on_the_same_profile():
+    far = HOME + np.r_[0, -20.0, np.zeros(12)]
+    red = reduce_poses([far], HOME, 1.5, KeyframeOptions(speed_limit=False))
+    leg = sum(k.duration for k in red.gesture.keyframes[-red.return_frames + 1:])
+    assert leg == pytest.approx(HomeReturn().duration_s(20.0))
+    assert _leg_peaks(red)[0] <= 40.0 * 1.03 and _arrival_deg_s(red) < 1.0
+
+
+def test_the_csv_declares_the_return_and_check_reports_it_on_its_own():
+    times, q = _ends_away(60.0)
+    red = reduce_samples(times, q, HOME)
+    text = to_csv(red.gesture)
+    assert "# mkit-teach: home_return_vel=40" in text
+    assert "# mkit-teach: home_return_acc=90" in text
+    assert f"# mkit-teach: home_return_frames={red.return_frames}" in text
+    g = parse_csv(text)
+    rep = check_gesture(g, HOME, step_s=0.05)
+    assert rep.ok and rep.home_return_declared
+    assert rep.home_return_segments == red.return_frames
+    assert rep.home_return_s == pytest.approx(red.return_s, abs=1e-4 * red.return_frames)
+    assert max(rep.home_return_peak_vel_deg_s) <= 40.0 * 1.03
+    assert rep.home_return_arrival_deg_s < 1.0
+    line = rep.home_return_line()
+    assert line.startswith(f"  HOME return: {red.return_s:.2f} s over {red.return_frames} "
+                           f"segment(s), peak velocity ")
+    assert "profile 40 deg/s, 90 deg/s^2" in line and line in rep.summary()
+    # a CSV that declares a slower profile than its return is a HARD failure
+    g.meta[HomeReturn.VEL_KEY] = "10"
+    bad = check_gesture(g, HOME, step_s=0.05)
+    assert not bad.ok and any("HOME return velocity" in v for v in bad.violations)
+
+
+def test_check_warns_about_a_legacy_one_knot_return():
+    """The return as it was exported before the profile: one knot at the
+    take's clamped peak speed. Warned about, not refused."""
+    far = HOME + np.r_[0, -60.0, np.zeros(12)]
+    g = Gesture([Keyframe(0.05, HOME), Keyframe(1.5, far), Keyframe(0.5, far),
+                 Keyframe(60.0 / 90.0, HOME)],
+                meta={"max_joint_vel": "150", "max_joint_acc": "600"})
+    rep = check_gesture(g, HOME, step_s=0.05)
+    assert rep.ok and not rep.home_return_declared and rep.home_return_segments == 1
+    assert max(rep.home_return_peak_vel_deg_s) > 100.0        # ~113 deg/s
+    assert rep.home_return_arrival_deg_s > 40.0               # ~45 deg/s at HOME
+    assert any("predates the HOME-return profile" in w for w in rep.warnings)
+    assert "(default; not declared by this CSV)" in rep.summary()
 
 
 def test_the_breakdown_adds_up_and_shows_a_lost_joint():

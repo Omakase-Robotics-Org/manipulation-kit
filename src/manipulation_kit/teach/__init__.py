@@ -22,14 +22,15 @@ from .export import UnsafeGesture, export
 from .gesture_csv import (HEADER, JOINT_NAMES, Gesture, GestureFormatError,
                           Keyframe, load_csv, load_home, parse_csv, save_csv,
                           to_csv, trajectory_points)
-from .process import (DEFAULT_SPEED, KeyframeOptions, SpeedPolicy, SpeedStretch,
+from .process import (DEFAULT_HOME_RETURN, DEFAULT_SPEED, HomeReturn,
+                      KeyframeOptions, SpeedPolicy, SpeedStretch,
                       keyframes_from_poses,
                       keyframes_from_samples, limit_joint_dynamics,
                       settle_index, smooth_samples, trim_idle)
 from .record import GUIDES, Recording, record
 
 __all__ = [
-    "CheckReport", "DEFAULT_SPEED", "GUIDES", "Gesture", "GuardFinding", "GestureFormatError", "HEADER",
+    "CheckReport", "DEFAULT_HOME_RETURN", "DEFAULT_SPEED", "HomeReturn", "GUIDES", "Gesture", "GuardFinding", "GestureFormatError", "HEADER",
     "JOINT_NAMES", "Keyframe", "KeyframeOptions", "Recording", "UnsafeGesture",
     "ascii_preview", "check_gesture", "export", "keyframes_from_poses",
     "keyframes_from_samples", "limit_joint_dynamics", "load_csv", "load_home",
