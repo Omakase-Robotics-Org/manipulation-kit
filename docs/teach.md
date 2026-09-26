@@ -14,7 +14,9 @@ running, over `ssh -L 4750:127.0.0.1:4750`.
 
 前提: ロボット上で `d1-firmwared` が動いている。手元 PC から
 `ssh -L 4750:127.0.0.1:4750 d1-2` でトンネルし、`pip install
-'manipulation-kit[firmware]'` 済みの環境で実行する（`--url` の既定は
+'manipulation-kit[firmware]'` 済みの環境で実行する。ロボット上ではチェックアウトで
+`make sync` を一度打てば `mkit-teach` が `~/.local/bin` に入り、venv の activate は
+要らない（更新は `git pull && make sync`）（`--url` の既定は
 `$D1FW_URL` または `http://127.0.0.1:4750`）。**腕を動かすのは record と play
 だけ**。export / check / register / keyframes はロボットに触れない。
 

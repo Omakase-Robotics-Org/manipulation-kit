@@ -161,3 +161,10 @@ where = ["src"]
 # its own module.
 addopts = "--import-mode=importlib"
 testpaths = ["tests"]
+
+[dependency-groups]
+# What a plain `uv sync` installs on top of the base dependencies: the firmware
+# client's runtime (so mkit-teach and FirmwareExecutor work) and the test deps.
+# uv syncs the `dev` group by default; pip ignores this table, so the
+# `pip install -e '.[...]'` paths above are unchanged.
+dev = ["manipulation-kit[firmware,dev]"]

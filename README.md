@@ -39,6 +39,8 @@ face the jaws close on), and a tape measure.
 ### 1. Install
 
 ```sh
+make sync                        # uv: .venv from uv.lock (+[firmware,dev]); mkit-* linked into ~/.local/bin
+# or, without uv:
 pip install -e .                 # numpy + scipy. Planning only.
 pip install -e '.[firmware]'     # + httpx/attrs, for the one module with a wire
 ```
