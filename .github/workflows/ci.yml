@@ -12,6 +12,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request cancels the run it supersedes. Every
+# push to main gets its own group (the run id), so no commit on main is ever
+# cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # The advertised install: `pip install -e .` and nothing else. Inverse
   # kinematics runs on the numpy substrate, so this job is not a reduced
@@ -19,6 +26,9 @@ jobs:
   # must stay green on its own.
   test-no-mujoco:
     runs-on: ubuntu-latest
+    # Serial runs measured 13-31 minutes on this runner; in parallel they are
+    # a third of that. A ceiling against a hung run, not a target.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +48,7 @@ jobs:
         # client checks actually run rather than skip.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,firmware]'
+          pip install -e '.[dev,firmware]' pytest-xdist
       - name: mujoco really is absent
         # Otherwise a transitive dependency could quietly install it and this
         # job would stop testing the thing it exists to test.
@@ -47,7 +57,14 @@ jobs:
         # -rs: the mujoco-only checks skip here by design and the summary has
         # to SAY so. A run that is green because it quietly tested nothing is
         # the failure mode.
-        run: pytest -q -rs
+        #
+        # -n auto: the same tests, spread over one worker per runner core
+        # (pytest-xdist, installed above for CI only; a local `pytest` is
+        # unchanged). The suite is CPU-bound IK and planning with no shared
+        # state between tests: measured on 3.9 without mujoco and on 3.12
+        # with it, a 4-worker run passes and skips exactly the tests a serial
+        # run does, in about a third of the time.
+        run: pytest -q -rs -n auto
       - name: IK with nothing but the package
         # The whole claim of the default substrate, from /: no checkout, no
         # $D1_SDK_DIR, no physics engine.
@@ -67,6 +84,7 @@ jobs:
 
   test-mujoco:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -82,13 +100,14 @@ jobs:
         # numpy default would be unverified against anything.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[mujoco,dev,firmware]'
+          pip install -e '.[mujoco,dev,firmware]' pytest-xdist
       - name: Tests
         # -rs on purpose: this runner has no CAD (it is not in this
         # repository — LICENSE-STATUS.md), so the checks that OPEN a mesh skip
         # themselves and the summary has to SAY which. To run them, add
         # MKIT_ASSETS_DIR pointing at a manipulation-kit-assets checkout.
-        run: pytest -q -rs
+        # -n auto: see the same step in test-no-mujoco.
+        run: pytest -q -rs -n auto
       - name: The URDFs are what the generator emits
         run: |
           mkit-urdf build
@@ -108,6 +127,7 @@ jobs:
     # examples and the CAD vendoring tools are top-level on purpose; if one of
     # them slips back under src/ this is what notices.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -156,6 +176,7 @@ jobs:
     # venv with no network beyond PyPI must be able to import the executor —
     # and that is checked below, offline.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -240,6 +261,7 @@ jobs:
     # project.version unchanged therefore installs "successfully" on a robot
     # and changes nothing — see docs/HISTORY.md for the day that happened.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
