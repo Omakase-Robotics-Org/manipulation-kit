@@ -7,6 +7,82 @@ in particular what it **breaks** — the repository's rule is a clean break with
 loud reason, not a legacy path kept alive beside the new one.
 
 
+## 0.17.0 — unreleased
+
+Three measurements the harness made wrongly for small objects in open trays,
+found in an Isaac color-sort run (30 mm cubes, 156 x 156 mm trays with a
+17 mm-deep interior) where the model's declarations were right and the kit's
+reading of them was not.
+
+### BREAKING: `ContainerView.contains_object` is container-aware
+
+- A container whose depth is declared (a measured `interior`, or a
+  `rim_height_m`; `ContainerView.depth_declared()`) contains an object when
+  the object's footprint is inside the interior horizontally and its
+  UNDERSIDE is between the interior floor and the rim. It used to test the
+  object's extent on all three axes, so a 30 mm cube standing on the floor of
+  a 17 mm-deep tray was never inside it: `Place`'s verifier and the loop's
+  goal could not measure a sorted cube as sorted. A cube held above the rim
+  is still outside.
+- A container with NO declared depth (the `INTERIOR_FRACTION` estimate and no
+  `rim_height_m`) keeps the three-axis test: its floor and rim are a guess.
+- New `ContainerView.rim_local_z()`. Tests:
+  `tests/world/test_views.py::test_a_cube_standing_on_a_shallow_trays_floor_is_inside_it`
+  and the three beside it.
+
+### BREAKING: `contact_to_centre(viewpoint=, image_up=, image_right=)`
+
+- The walk from a silhouette's lowest pixel to the centre goes
+  perpendicular to the image ROW through that pixel (for a camera without
+  roll, its forward axis flattened onto the table), not along the lens ->
+  contact ray. The lowest pixel of a footprint is its extreme point across
+  the row; for a thing off to the side of the camera the lens ray runs
+  diagonally. Replayed on the run's 25 head-camera `locate(size=)` calls:
+  cube centre error median 17.8 -> 8.6 mm, tray 70.7 -> 29.7 mm (the rest is
+  where the model clicked); with the served camera, the true poses and an
+  exact click, tray 55.7 -> 1.1 mm and cube 13.9 -> 0.7 mm. Straight ahead of
+  the camera the two walks agree within 2 mm.
+- Where image-down runs AWAY from the lens (a wrist camera looking down at
+  an object beyond its nadir) the lowest pixel is the far edge of the TOP
+  face, so the contact is taken where the ray crosses the plane one
+  object-height up, then walked back toward the camera. It used to be read
+  as a point on the table: replayed on the run's 24 wrist `locate(size=)`
+  calls, the cube centre error median 15.3 -> 5.1 mm; the four fingertip
+  grasps that closed 14-31 mm beside a 30 mm cube were aimed at those
+  centres. The d1-2 tape-roll case (`test_a_wrist_contact_seen_from_beyond_the_object_walks_back`)
+  now lands 0.6 mm from the photo centre's ray at the roll's top face.
+- `image_right` and `image_up` are required plane directions (the agent
+  tool measures both from neighbouring pixels, `agent.tools.IMAGE_STEP_PX`);
+  `viewpoint` is the real lens. `agent.tools._image_up` is gone.
+- Tests: `tests/perception/test_perception_interface.py::test_locate_walks_to_the_centre_along_the_forward_axis`,
+  `::test_forward_axis_locate_leaves_a_thing_ahead_of_the_camera_alone`,
+  `::test_a_camera_looking_down_past_the_object_sees_its_far_top_edge`.
+
+### BREAKING: the pad "too flat" test is the pad contact it needs
+
+- `object_too_flat` for a pad grasp is now "with the tips at the floor
+  clearance, the pad faces would cover less than `PAD_MIN_CONTACT_M` (16 mm)
+  of the object". It used to be "the pad CENTRE would be above the object's
+  top", which refused everything under 32 mm (the 29 mm tip lead plus the
+  3 mm clearance) although the pads run from the tips 58 mm up: a pad grasp
+  held a 30 mm cube with the tips 1 mm over the table (pads covering 29 mm,
+  31.4 mm jaw gap). 16 mm is twice `GRASP_DEPTH_MIN_M`, the insertion the
+  grasp verifier requires after closure. A fingertip grasp still needs only
+  that the tips reach the object.
+- `GraspReference.min_contact_m` (PAD 16 mm, TIP 0). The refusal's
+  `measured` carries `covered_m` and `min_contact_m` (was `lead_m`).
+- Tests: `tests/primitives/test_grasp_geometry.py::test_a_pad_grasp_takes_a_cube_the_pads_cover`
+  (28 / 30 / 34 mm), `::test_the_pad_flat_limit_is_the_contact_it_needs`;
+  `tests/agent/test_loop.py::test_the_turn_zero_chain_is_planned_for_the_callers_contact`
+  now uses a 14 mm block.
+
+### Example prompt
+
+- `examples/agent/astra_loop.py`'s `SYSTEM` asks for the LOWEST pixel of the
+  silhouette for `locate(size=)`, not "where the object touches the table"
+  (from a wrist camera looking down, those are different edges).
+
+
 ## 0.16.1 — unreleased
 
 ### A contact rise that holds ends the leg (`CONTACT_HOLD_S`)

@@ -378,34 +378,48 @@ def _intersect(p, rotation: np.ndarray, local_ray: np.ndarray,
 
 
 def contact_to_centre(contact: Located, *, size: Sequence[float],
-                      viewpoint, yaw_rad: float = 0.0,
-                      normal: Sequence[float] = (0.0, 0.0, 1.0),
-                      image_up: Optional[Sequence[float]] = None) -> Located:
+                      viewpoint, image_up: Sequence[float],
+                      image_right: Sequence[float], yaw_rad: float = 0.0,
+                      normal: Sequence[float] = (0.0, 0.0, 1.0)) -> Located:
     """A CONTACT point at the bottom of a silhouette -> the object's CENTRE.
 
-    The bottom of an object's silhouette meets the surface at the footprint's
-    edge that lies furthest DOWN THE IMAGE. For a camera looking forward and
-    down past the object (the head) that is the NEAR edge — the side facing
-    the camera; for a camera ahead of the object looking back and down at it
-    (a wrist camera past the standoff) image-down runs AWAY from the camera
-    and the bottom of the silhouette is the FAR edge. So the centre is:
+    ``contact`` is where the ray through the LOWEST pixel of the object's
+    silhouette meets the support plane; ``viewpoint`` is the lens it was cast
+    from; ``image_up`` / ``image_right`` are the support-plane directions
+    the image's up and right axes run at that pixel (a pixel above it and a
+    pixel to its right, located on the same plane). Two facts decide the
+    conversion.
 
-    * half the footprint's extent along the viewing direction, in the
-      surface plane (the extent of a ``size[0] x size[1]`` rectangle yawed by
-      ``yaw_rad``, measured along that direction) — FURTHER from the camera,
-      unless ``image_up`` (the surface-plane direction the image's up axis
-      runs at the contact pixel) points back toward it, and then toward it;
-    * half the object's height UP the support normal.
+    WHICH EDGE the lowest pixel is. Where image-down on the plane runs toward
+    the lens (a head camera looking forward and down past the object), it is
+    the footprint's NEAR BOTTOM edge, on the support plane: the contact is
+    that edge. Where image-down runs AWAY from the lens (a wrist camera
+    looking down at an object beyond its nadir), it is the FAR TOP edge: the
+    top face is closer to the lens and projects further out, so the contact
+    on the support plane is past the object, and the edge is where the same
+    ray crosses the plane ``size[2]`` higher. d1-2, 2026-09-24: a wrist camera
+    looking back at a tape roll put the table-plane contact on the far side of
+    the roll; in Isaac, 2026-09-26, a wrist camera 8 deg off vertical over a
+    30 mm cube put the kit's centre 15-24 mm past the cube and four fingertip
+    grasps closed beside it.
 
-    d1-2, 2026-09-24: the right wrist camera at x = 0.488 m looked back at a
-    tape roll at 0.41 m; the pixel of the silhouette's bottom landed on the
-    roll's far edge (0.38 m) and walking a further half-size away declared
-    it at 0.353 m — 55 mm short of the photo, the grasp closed beside it.
+    WHICH WAY the centre lies. An image ROW is a line on the plane, so the
+    lowest pixel is the footprint's extreme point ACROSS the row: the centre
+    is half the footprint's extent (the ``size[0] x size[1]`` rectangle
+    yawed by ``yaw_rad``, measured along that direction) further UP THE
+    IMAGE, perpendicular to the row. For a camera without roll that is its
+    forward (optical) axis flattened onto the plane. It is not the lens ->
+    contact ray: for a thing off to the side of the camera that ray runs
+    diagonally, and walking a 180 mm tray's half-depth along it put the
+    declared centre 50-73 mm off (Isaac color-sort, 2026-09-26).
 
-    This is what a sentence of model-facing text used to ask a model to do
-    in its head (design review, item 7). It is a typed conversion now: a ``centre`` cannot
-    be converted again, and a caller that declares a contact point as a
-    centre has to say so by not calling this.
+    The height is then half the object's height up the support normal from
+    the support plane.
+
+    This is what a sentence of model-facing text used to ask a model to do in
+    its head (design review, item 7). It is a typed conversion: a ``centre``
+    cannot be converted again, and a caller that declares a contact point as
+    a centre has to say so by not calling this.
     """
     if contact.kind != "contact":
         raise ValueError(f"only a contact point converts to a centre; this "
@@ -416,30 +430,40 @@ def contact_to_centre(contact: Located, *, size: Sequence[float],
     _finite("yaw_rad", yaw_rad)
     up = np.array(normal, dtype=float).reshape(3)
     up = up / float(np.linalg.norm(up))
+
+    def flat(vector, what):
+        v = np.array(vector, dtype=float).reshape(3)
+        v = v - up * float(v @ up)
+        norm = float(np.linalg.norm(v))
+        if not math.isfinite(norm) or norm < 1e-9:
+            raise ValueError(f"{what} has no direction on the support plane")
+        return v / norm
+
+    rows = flat(image_right, "image_right")
+    image_up_flat = flat(image_up, "image_up")
+    walk = np.cross(up, rows)
+    if float(walk @ image_up_flat) < 0.0:
+        walk = -walk
     eye = np.array(viewpoint, dtype=float).reshape(3)
-    away = contact.p - eye
+    point = np.array(contact.p, dtype=float).reshape(3)
+    away = point - eye
     away = away - up * float(away @ up)
-    norm = float(np.linalg.norm(away))
-    if norm < 1e-9:
-        # Looking straight down the normal: the silhouette's bottom is not an
-        # edge of anything, and there is no "away" to walk.
-        raise ValueError("the camera is directly above this point; a contact "
-                         "edge has no direction to be corrected along")
-    away = away / norm
-    if image_up is not None:
-        up_image = np.array(image_up, dtype=float).reshape(3)
-        up_image = up_image - up * float(up_image @ up)
-        if float(up_image @ away) < 0.0:
-            # image-down runs away from the camera: the silhouette's bottom
-            # is the far edge, the centre is back toward the camera
-            away = -away
-    # the object's own horizontal axes, yawed about the support normal
+    if float(away @ -image_up_flat) > 0.0:
+        # image-down runs away from the lens: the lowest pixel is the far TOP
+        # edge, where the ray crosses the plane one object-height up
+        to_lens = eye - point
+        rise = float(to_lens @ up)
+        if rise <= float(extent[2]):
+            raise ValueError("the lens is not above the object's top face; "
+                             "its silhouette's lowest pixel is not an edge "
+                             "of that face")
+        point = point + to_lens * (float(extent[2]) / rise) - up * float(extent[2])
     turn = R.from_rotvec(up * float(yaw_rad))
     along_x = turn.apply([1.0, 0.0, 0.0])
     along_y = turn.apply([0.0, 1.0, 0.0])
-    half_depth = 0.5 * (abs(float(away @ along_x)) * extent[0]
-                        + abs(float(away @ along_y)) * extent[1])
-    centre = contact.p + away * half_depth + up * (extent[2] / 2.0)
+    half_depth = 0.5 * (abs(float(walk @ along_x)) * extent[0]
+                        + abs(float(walk @ along_y)) * extent[1])
+    centre = point + walk * half_depth + up * (extent[2] / 2.0)
     return replace(contact, p=centre, kind="centre")
 
 

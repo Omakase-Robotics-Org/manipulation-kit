@@ -78,8 +78,12 @@ its own underside only when not (`grasp_geometry.grasp_pose`,
 — descending to a 40 mm cube's centre asks for the tips 9 mm *under the
 table*, which jams the fingers and stops the arm 17 mm high and 19 mm to the
 side. The pads are 58 mm deep, so the raised grasp still has 37 mm of pad
-against the cube. An object too flat for the tips to reach beside is refused
-(`object_too_flat`) rather than grasped over.
+against the cube. What decides "too flat" is how much of the object the pad
+faces cover with the tips at that clearance: a pad grasp needs
+`grasp_geometry.PAD_MIN_CONTACT_M` (16 mm, twice the verifier's 8 mm insertion
+minimum), so a 30 mm cube is a pad grasp and a 12 mm slab is refused
+(`object_too_flat`) rather than grasped over; a fingertip grasp needs only
+that the tips reach the object.
 
 **A refusal is a typed value, never a silent no-op.** `PlanError` carries the
 reason, the waypoint index and label, and the residual:

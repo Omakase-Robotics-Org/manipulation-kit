@@ -42,23 +42,31 @@ def _python_files(*roots):
 # review 7: a contact point is not a centre, and the kit converts it
 # --------------------------------------------------------------------------- #
 
+def _plane_directions(camera, u, v, plane_z):
+    """The support-plane directions of image up and image right at (u, v)."""
+    here = camera.locate(u, v, plane_z=plane_z).p
+    return (camera.locate(u, v - 8.0, plane_z=plane_z).p - here,
+            camera.locate(u + 8.0, v, plane_z=plane_z).p - here)
+
+
 @pytest.mark.parametrize("yaw_deg", [0.0, 30.0])
 def test_a_contact_point_is_converted_to_a_centre(yaw_deg):
     """Place a box, look at the bottom-middle of its NEAR face — the pixel a
     silhouette's bottom gives — and the conversion must land on the box's
-    centre: half the footprint further away, half the height up."""
+    centre: half the footprint further along the camera's forward axis, half
+    the height up."""
     from manipulation_kit.perception import contact_to_centre
     camera = _head()
     table_z = 0.166
     size = np.array([0.06, 0.04, 0.10])
     centre = np.array([0.50, -0.12, table_z + size[2] / 2.0])
     yaw = math.radians(yaw_deg)
-    away = centre[:2] - camera.p[:2]
-    away = away / np.linalg.norm(away)
+    forward = camera.r.apply([0.0, 0.0, 1.0])[:2]
+    forward = forward / np.linalg.norm(forward)
     ax = np.array([math.cos(yaw), math.sin(yaw)])
     ay = np.array([-math.sin(yaw), math.cos(yaw)])
-    half_depth = 0.5 * (abs(away @ ax) * size[0] + abs(away @ ay) * size[1])
-    near_edge = np.array([*(centre[:2] - away * half_depth), table_z])
+    half_depth = 0.5 * (abs(forward @ ax) * size[0] + abs(forward @ ay) * size[1])
+    near_edge = np.array([*(centre[:2] - forward * half_depth), table_z])
     u, v = camera.project(near_edge)
 
     contact = camera.locate(u, v, plane_z=table_z)
@@ -66,17 +74,133 @@ def test_a_contact_point_is_converted_to_a_centre(yaw_deg):
     assert "CONTACT" in contact.to_text()
     assert np.allclose(contact.p, near_edge, atol=1e-9)
 
+    up, right = _plane_directions(camera, u, v, table_z)
     got = contact_to_centre(contact, size=size, viewpoint=camera.p,
-                            yaw_rad=yaw)
+                            yaw_rad=yaw, image_up=up, image_right=right)
     assert got.kind == "centre"
-    assert np.allclose(got.p, centre, atol=1e-9), got.p - centre
+    assert np.allclose(got.p, centre, atol=1e-6), got.p - centre
     assert got.uncertainty_m == contact.uncertainty_m
     assert "CENTRE" in got.to_text()
     # a centre is not converted twice, and a bad size is refused
     with pytest.raises(ValueError):
-        contact_to_centre(got, size=size, viewpoint=camera.p)
+        contact_to_centre(got, size=size, viewpoint=camera.p, image_up=up,
+                          image_right=right)
     with pytest.raises(ValueError):
-        contact_to_centre(contact, size=(0.05, 0.0, 0.1), viewpoint=camera.p)
+        contact_to_centre(contact, size=(0.05, 0.0, 0.1), viewpoint=camera.p,
+                          image_up=up, image_right=right)
+
+
+#: The Isaac color-sort head camera as it was served (its calibration's
+#: head_link -> optical mount on the kit head link, neck tilt 0.608 rad).
+SERVED_HEAD = dict(fx=607.72, fy=608.4, cx=324.95, cy=255.07, width=640,
+                   height=480, p=np.array([0.1194, 0.0303, 0.6783]),
+                   r=R.from_quat([0.63586, -0.67905, 0.26275, -0.25601]),
+                   calibrated=True)
+COLOR_SORT_TABLE_Z = 0.170
+
+
+def _silhouette_bottom_click(camera, centre, size, yaw):
+    """The pixel a model gives for "the bottom of the silhouette": the
+    lowest image row any corner of the box reaches, at the column of the
+    near face's midpoint."""
+    rot = R.from_euler("z", yaw)
+    corners = [np.asarray(centre) + rot.apply([sx * size[0] / 2, sy * size[1] / 2,
+                                               sz * size[2] / 2])
+               for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+    v = max(camera.project(c)[1] for c in corners)
+    u = camera.project(np.asarray(centre) + rot.apply(
+        [-size[0] / 2, 0.0, -size[2] / 2]))[0]
+    return u, v
+
+
+@pytest.mark.parametrize("what, centre, size, yaw_deg, lens_ray_mm, max_mm", [
+    # the robot-right tray, 23 cm to the side of the head camera
+    ("tray", (0.5431, -0.2039, 0.180), (0.156, 0.156, 0.020), -2.94, 40.0, 3.0),
+    # a 30 mm cube beside it
+    ("cube", (0.4097, -0.2202, 0.185), (0.030, 0.030, 0.030), 0.0, 10.0, 2.0),
+])
+def test_locate_walks_to_the_centre_along_the_forward_axis(
+        what, centre, size, yaw_deg, lens_ray_mm, max_mm):
+    """The lowest pixel of a footprint is its extreme point ACROSS the image
+    row, so the centre is half the footprint further along the camera's
+    forward axis. Walking along the lens -> contact ray instead runs
+    diagonally for a thing off to the side: Isaac color-sort, 2026-09-26,
+    the tray's declared centre 73 mm off (17 mm walking forward), a cube's
+    18.6 mm (5.7 mm). Here with the served camera and the true poses."""
+    from manipulation_kit.perception import PinholeCamera, contact_to_centre
+    camera = PinholeCamera(**SERVED_HEAD)
+    yaw = math.radians(yaw_deg)
+    u, v = _silhouette_bottom_click(camera, centre, size, yaw)
+    contact = camera.locate(u, v, plane_z=COLOR_SORT_TABLE_Z)
+    up, right = _plane_directions(camera, u, v, COLOR_SORT_TABLE_Z)
+    got = contact_to_centre(contact, size=size, viewpoint=camera.p,
+                            yaw_rad=yaw, image_up=up, image_right=right)
+    err_mm = np.linalg.norm(got.p[:2] - np.asarray(centre)[:2]) * 1000
+    assert err_mm < max_mm, err_mm
+    assert got.p[2] == pytest.approx(centre[2], abs=1e-6)
+    # the lens-ray walk this replaces, for the record: it is the diagonal
+    away = contact.p[:2] - camera.p[:2]
+    away = away / np.linalg.norm(away)
+    rot = R.from_euler("z", yaw).as_matrix()[:2, :2]
+    half = 0.5 * sum(abs(away @ rot[:, i]) * size[i] for i in (0, 1))
+    ray_mm = np.linalg.norm(contact.p[:2] + away * half
+                            - np.asarray(centre)[:2]) * 1000
+    assert ray_mm > lens_ray_mm, ray_mm
+
+
+def test_forward_axis_locate_leaves_a_thing_ahead_of_the_camera_alone():
+    """Straight ahead of the head camera the lens ray and the forward axis
+    are the same line; the change is nil there."""
+    from manipulation_kit.perception import PinholeCamera, contact_to_centre
+    camera = PinholeCamera(**SERVED_HEAD)
+    centre = np.array([0.45, float(camera.p[1]), COLOR_SORT_TABLE_Z + 0.015])
+    size = (0.03, 0.03, 0.03)
+    u, v = _silhouette_bottom_click(camera, centre, size, 0.0)
+    contact = camera.locate(u, v, plane_z=COLOR_SORT_TABLE_Z)
+    up, right = _plane_directions(camera, u, v, COLOR_SORT_TABLE_Z)
+    got = contact_to_centre(contact, size=size, viewpoint=camera.p,
+                            image_up=up, image_right=right)
+    assert np.linalg.norm(got.p[:2] - centre[:2]) < 2e-3
+    # ...and within 2 mm of what the lens-ray walk gave there
+    away = contact.p[:2] - camera.p[:2]
+    ray = contact.p[:2] + away / np.linalg.norm(away) * 0.015
+    assert np.linalg.norm(got.p[:2] - ray) < 2e-3
+
+
+def test_a_camera_looking_down_past_the_object_sees_its_far_top_edge():
+    """A wrist camera over a 30 mm cube, optical axis 8 deg off vertical,
+    the cube 60 mm toward image-down. The lowest silhouette pixel is a
+    corner of the TOP face (it is nearer the lens and projects further out);
+    reading it as a point on the table put the centre 15-24 mm past the
+    cube (Isaac, 2026-09-26: four fingertip grasps closed beside it). The
+    kit takes the ray to the top plane and walks back toward the camera."""
+    from manipulation_kit.perception import PinholeCamera, contact_to_centre
+    table_z = COLOR_SORT_TABLE_Z
+    size = (0.03, 0.03, 0.03)
+    # looking down, image-up toward base +x, tilted 8 deg toward +x
+    look = R.from_euler("xyz", [180.0, 0.0, 90.0], degrees=True)
+    look = R.from_euler("y", 8.0, degrees=True) * look
+    lens = np.array([0.45, -0.20, table_z + 0.030 + 0.180])
+    camera = PinholeCamera(fx=320.0, cx=320.0, cy=240.0, width=640,
+                           height=480, p=lens, r=look, calibrated=True)
+    down = camera.r.apply([0.0, 1.0, 0.0])             # image-down on the table
+    down[2] = 0.0
+    down = down / np.linalg.norm(down)
+    centre = np.array([*(lens[:2] + down[:2] * 0.060), table_z + 0.015])
+    corners = [centre + np.array([sx * 0.015, sy * 0.015, sz * 0.015])
+               for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+    lowest = max(corners, key=lambda c: camera.project(c)[1])
+    assert lowest[2] > centre[2]                        # a TOP corner
+    far_top_mid = centre + np.append(down[:2] * 0.015, 0.015)
+    u = camera.project(far_top_mid)[0]
+    v = camera.project(lowest)[1]
+    contact = camera.locate(u, v, plane_z=table_z)
+    assert np.linalg.norm(contact.p[:2] - centre[:2]) > 0.015
+    up, right = _plane_directions(camera, u, v, table_z)
+    got = contact_to_centre(contact, size=size, viewpoint=camera.p,
+                            image_up=up, image_right=right)
+    assert np.linalg.norm(got.p[:2] - centre[:2]) < 0.002, got.p - centre
+    assert got.p[2] == pytest.approx(centre[2], abs=1e-6)
 
 
 def test_the_loops_locate_tool_does_the_conversion_given_a_size(
@@ -536,8 +660,11 @@ def test_a_wrist_contact_seen_from_beyond_the_object_walks_back(d1_arm):
     silhouette's bottom, (335, 283), lands on the plane at x = 0.380 — the
     roll's FAR edge, because image-down runs away from this camera. The old
     conversion walked a further half-size away and declared 0.353 (55 mm
-    short: the grasp closed beside the roll); walking along image-up lands
-    within 10 mm of the photo."""
+    short: the grasp closed beside the roll). The lowest pixel there is the
+    far edge of the roll's TOP face, so the kit crosses the ray at the top
+    plane and walks back toward the camera: it lands within 10 mm of where
+    the photo centre's ray crosses the roll's mid-height (x = 0.413; the
+    0.408 above is the same ray on the table, 13 mm lower)."""
     from pathlib import Path
     from manipulation_kit.agent.robot import wrist_camera_from_scene
     from manipulation_kit.agent.tools import locate
@@ -564,5 +691,5 @@ def test_a_wrist_contact_seen_from_beyond_the_object_walks_back(d1_arm):
                  {"camera": "right_wrist", "u": 335, "v": 283,
                   "size": [0.05, 0.05, 0.026]})
     assert got.kind == "centre"
-    assert abs(got.p[0] - 0.408) <= 0.010, got.p
+    assert abs(got.p[0] - 0.413) <= 0.010, got.p
     assert abs(got.p[1] - (-0.117)) <= 0.010, got.p

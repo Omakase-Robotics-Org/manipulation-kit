@@ -60,6 +60,54 @@ def _tips(p_tool, r_tcp) -> np.ndarray:
 # the fingertip reference
 # --------------------------------------------------------------------------- #
 
+@pytest.mark.parametrize("height_mm", [28.0, 30.0, 34.0])
+def test_a_pad_grasp_takes_a_cube_the_pads_cover(d1_arm, height_mm):
+    """The pads run from the finger tips 58 mm up, so with the tips at the
+    3 mm floor clearance a 28 / 30 / 34 mm cube is 25 / 27 / 31 mm of pad —
+    more than PAD_MIN_CONTACT_M. Isaac color-sort, 2026-09-26: a pad grasp
+    held a 30 mm cube with the tips 1 mm over the table; the pad-CENTRE rule
+    this replaces refused anything under 32 mm as ``object_too_flat``."""
+    h = height_mm / 1000.0
+    cube = ObjectView("cube", p=(0.38, 0.25, TABLE_TOP + h / 2.0),
+                      size=(0.030, 0.030, h))
+    world = _world(d1_arm, [cube, TABLE])
+    grasp = Grasp(object="cube", side="left")
+    assert grasp.preconditions(world) == []
+    plan = grasp.plan(world, d1_arm)
+    assert isinstance(plan, Plan), str(plan)
+    at = _tips(*next((w.p, w.r) for w in plan.waypoints if w.label == "grasp"))
+    covered = TABLE_TOP + h - float(at[2])
+    assert covered >= gg.PAD_MIN_CONTACT_M
+    assert covered == pytest.approx(h - ap.SUPPORT_CLEARANCE_M, abs=1e-6)
+
+
+def test_the_pad_flat_limit_is_the_contact_it_needs(d1_arm):
+    """Either side of the limit: the pads covering PAD_MIN_CONTACT_M is the
+    shortest object a pad grasp takes, a millimetre less is too flat, and
+    the refusal says how much pad it would have had."""
+    limit = gg.PAD_MIN_CONTACT_M + ap.SUPPORT_CLEARANCE_M
+
+    def codes(h):
+        cube = ObjectView("cube", p=(0.38, 0.25, TABLE_TOP + h / 2.0),
+                          size=(0.030, 0.030, h))
+        world = _world(d1_arm, [cube, TABLE])
+        return Grasp(object="cube", side="left").preconditions(world)
+
+    assert codes(limit + 0.0005) == []
+    short = codes(limit - 0.001)
+    flat = [u for u in short if u.code == "object_too_flat"]
+    assert flat, short
+    assert flat[0].measured["covered_m"] == pytest.approx(
+        gg.PAD_MIN_CONTACT_M - 0.001, abs=1e-6)
+    assert flat[0].measured["min_contact_m"] == gg.PAD_MIN_CONTACT_M
+    # the fingertip grasp takes it
+    cube = ObjectView("cube", p=(0.38, 0.25, TABLE_TOP + (limit - 0.001) / 2.0),
+                      size=(0.030, 0.030, limit - 0.001))
+    world = _world(d1_arm, [cube, TABLE])
+    assert Grasp(object="cube", side="left", contact="tip").preconditions(
+        world) == []
+
+
 def test_a_6mm_card_is_grasped_at_the_tips_and_refused_at_the_pads(d1_arm):
     """A 6 mm slab lying on a table. The pads reach 29 mm past their centre,
     so a pad grasp would close above it with the tips on the table; the TIP
