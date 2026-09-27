@@ -66,6 +66,20 @@ def test_a_rise_on_a_moving_arm_is_not_contact_until_it_stops():
     assert verdicts[:5] == ["confirming"] * 5 and verdicts[-1] == "contact"
 
 
+def test_a_rise_that_holds_is_contact_even_if_the_arm_never_reads_stalled():
+    """A frozen command and a rise that does not go away is resistance; a
+    transport whose velocity jitters over the stall threshold (a simulator in
+    contact) must still end the leg, at ``CONTACT_HOLD_S``."""
+    from manipulation_kit.executor import CONTACT_HOLD_S
+    watch = ContactWatch(ContactCriterion(joint_torque_nm=4.0, settle_s=0.1),
+                         np.zeros(7))
+    jitter = np.full(7, 0.05)
+    verdicts = [watch.sample(0.02 * k, _arm(_rise(5.0), qd=jitter))
+                for k in range(int(CONTACT_HOLD_S / 0.02) + 2)]
+    assert "contact" not in verdicts[:int(CONTACT_HOLD_S / 0.02) - 1]
+    assert verdicts[-1] == "contact"
+
+
 def test_twice_the_threshold_is_contact_at_once():
     watch = ContactWatch(ContactCriterion(joint_torque_nm=4.0), np.zeros(7))
     assert watch.sample(0.0, _arm(_rise(8.1), qd=np.full(7, 1.0))) == "contact"

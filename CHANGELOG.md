@@ -9,6 +9,17 @@ loud reason, not a legacy path kept alive beside the new one.
 
 ## 0.16.1 — unreleased
 
+### A contact rise that holds ends the leg (`CONTACT_HOLD_S`)
+
+- `ContactWatch` answers `contact` once a rise past the threshold has held for
+  `CONTACT_HOLD_S` (1.0 s), stalled or not. It used to need the arm to read
+  stalled (`stall_velocity_rad_s`) as well, and a transport whose joint
+  velocity jitters over that threshold while pushing on a surface (Isaac, a
+  fingertip grasp's search on the table) confirmed forever: the leg never
+  ended. The command is frozen while a rise is confirmed, so a rise that
+  persists is resistance. Test:
+  `tests/executors/test_contact_executor.py::test_a_rise_that_holds_is_contact_even_if_the_arm_never_reads_stalled`.
+
 ### The loop's turn-zero chain check plans the caller's grasp contact
 
 - `manipulation_kit.agent.run(..., contact="pad"|"tip")`: the up-front

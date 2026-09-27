@@ -454,6 +454,14 @@ CONTACT_BASELINE_SAMPLES = 3
 #: without waiting out ``settle_s``: the confirm window exists to reject a
 #: transient, and a transient does not double the threshold.
 CONTACT_ABORT_FACTOR = 2.0
+#: A rise past the threshold that has HELD this long is contact whether or
+#: not the arm reads stalled [s]. While a rise is being confirmed the command
+#: is frozen, so a rise that persists is the arm pushing on something; without
+#: this bound a transport whose joint velocity never settles under
+#: ``stall_velocity_rad_s`` (a simulator's contact jitter) confirms forever and
+#: the leg never ends (Isaac color-sort, 2026-09-26: one fingertip grasp held
+#: its search for 9,000 ticks).
+CONTACT_HOLD_S = 1.0
 
 #: WHAT a ``back_off`` contact leg stopped on (:class:`ContactReport.surface`).
 #: ``support``: the tips stopped on the surface the object stands on (within
@@ -586,6 +594,8 @@ class ContactWatch:
         self.peak_nm = 0.0
         self.joint = -1
         self._since: Optional[float] = None
+        #: when the rise first crossed the threshold (still or not)
+        self._risen: Optional[float] = None
 
     def sample(self, t: float, arm: JointState) -> str:
         rise = np.abs(np.asarray(arm.torque_nm, dtype=float) - self.baseline)
@@ -597,7 +607,12 @@ class ContactWatch:
             return self.CONTACT
         if float(rise[j]) < threshold:
             self._since = None
+            self._risen = None
             return self.FREE
+        if self._risen is None:
+            self._risen = float(t)
+        if float(t) - self._risen >= CONTACT_HOLD_S - 1e-9:
+            return self.CONTACT
         still = (arm.qd is None or float(np.max(np.abs(arm.qd)))
                  <= self.criterion.stall_velocity_rad_s)
         if not still:
