@@ -172,7 +172,7 @@ def test_a_camera_looking_down_past_the_object_sees_its_far_top_edge():
     the cube 60 mm toward image-down. The lowest silhouette pixel is a
     corner of the TOP face (it is nearer the lens and projects further out);
     reading it as a point on the table put the centre 15-24 mm past the
-    cube (Isaac, 2026-09-26: four fingertip grasps closed beside it). The
+    cube (Isaac, 2026-09-26: three fingertip grasps closed beside it). The
     kit takes the ray to the top plane and walks back toward the camera."""
     from manipulation_kit.perception import PinholeCamera, contact_to_centre
     table_z = COLOR_SORT_TABLE_Z

@@ -47,7 +47,7 @@ reading of them was not.
   face, so the contact is taken where the ray crosses the plane one
   object-height up, then walked back toward the camera. It used to be read
   as a point on the table: replayed on the run's 24 wrist `locate(size=)`
-  calls, the cube centre error median 15.3 -> 5.1 mm; the four fingertip
+  calls, the cube centre error median 15.3 -> 5.1 mm; the three fingertip
   grasps that closed 14-31 mm beside a 30 mm cube were aimed at those
   centres. The d1-2 tape-roll case (`test_a_wrist_contact_seen_from_beyond_the_object_walks_back`)
   now lands 0.6 mm from the photo centre's ray at the roll's top face.

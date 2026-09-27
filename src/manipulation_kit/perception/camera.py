@@ -400,7 +400,7 @@ def contact_to_centre(contact: Located, *, size: Sequence[float],
     ray crosses the plane ``size[2]`` higher. d1-2, 2026-09-24: a wrist camera
     looking back at a tape roll put the table-plane contact on the far side of
     the roll; in Isaac, 2026-09-26, a wrist camera 8 deg off vertical over a
-    30 mm cube put the kit's centre 15-24 mm past the cube and four fingertip
+    30 mm cube put the kit's centre 15-24 mm past the cube and three fingertip
     grasps closed beside it.
 
     WHICH WAY the centre lies. An image ROW is a line on the plane, so the
