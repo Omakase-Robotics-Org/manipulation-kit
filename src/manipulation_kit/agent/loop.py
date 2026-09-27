@@ -175,7 +175,7 @@ class _Loop:
     def __init__(self, *, robot, policy: OperatorPolicy, ask: Ask, goal,
                  task: str, system: str, trace: DecisionTrace,
                  observe: Optional[Observe], on_side, keep_images: int,
-                 servo=None):
+                 servo=None, contact: str = "pad"):
         if not isinstance(goal, Place):
             raise TypeError("run() takes the task as a Place(object=, to=) "
                             "goal: its verifier is what decides success")
@@ -190,6 +190,9 @@ class _Loop:
         self.observe = observe
         self.on_side = on_side
         self.servo = servo
+        #: where the grasp the chain is planned for makes contact
+        #: (``grasp_geometry`` reference: "pad" or "tip")
+        self.contact = str(contact)
         self.keep_images = int(keep_images)
         self.state = PolicyState()
         #: resolved ONCE (L13): the same numbers the executor was built with
@@ -215,7 +218,8 @@ class _Loop:
         # (the ONE sweep, design D.1 row 3), and a Grasp continues the roll
         # its Approach stood at.
         self.hand = choose_side(world, self.robot.kin, obj=self.obj,
-                                destination=self.destination)
+                                destination=self.destination,
+                                contact=self.contact)
         if self.goal.side in ("", "auto"):
             self.goal = dataclasses.replace(self.goal, side=self.hand.side)
         if self.on_side is not None:
@@ -747,7 +751,7 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
         trace: Optional[DecisionTrace] = None,
         observe: Optional[Observe] = None,
         on_side: Optional[Callable[[str], None]] = None,
-        keep_images: int = 1, servo=None) -> DecisionTrace:
+        keep_images: int = 1, servo=None, contact: str = "pad") -> DecisionTrace:
     """Run the loop until the goal is MEASURED, the model stops, or a cap.
 
     ``robot``    a :class:`~manipulation_kit.agent.robot.LiveRobot` (enter it
@@ -774,11 +778,16 @@ def run(*, robot: Any, policy: OperatorPolicy, ask: Ask, goal: Place,
                  wrist frame"}`` and the model's look rule follows. The
                  marked photos are ``turn{N}_servo_{side}.png`` beside the
                  trace (or in the servo's ``out_dir``)
+    ``contact``  where the grasp the up-front chain check plans makes contact:
+                 ``"pad"`` (default) or ``"tip"`` — the one the caller's grasp
+                 will use. An object too short for a pad grasp (a 30 mm cube)
+                 is ``unreachable_task`` at turn zero under ``"pad"`` although
+                 a fingertip grasp takes it
     """
     return _Loop(robot=robot, policy=policy, ask=ask, goal=goal, task=task,
                  system=system, trace=trace if trace is not None
                  else DecisionTrace(), observe=observe, on_side=on_side,
-                 keep_images=keep_images, servo=servo).run()
+                 keep_images=keep_images, servo=servo, contact=contact).run()
 
 
 __all__ = ["Ask", "ObservationError", "Observe", "STOP_REASONS", "Stop",

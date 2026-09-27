@@ -9,6 +9,16 @@ loud reason, not a legacy path kept alive beside the new one.
 
 ## 0.16.1 — unreleased
 
+### The loop's turn-zero chain check plans the caller's grasp contact
+
+- `manipulation_kit.agent.run(..., contact="pad"|"tip")`: the up-front
+  `choose_side` check (which refuses an impossible task as
+  `unreachable_task` before anything moves) now plans the grasp with the
+  contact the caller's grasp will use. It always planned a PAD grasp, so an
+  object too short for one — a 30 mm cube, `object_too_flat` — was refused at
+  turn zero although `Grasp(contact="tip")` takes it. The default stays
+  `"pad"`. Test: `tests/agent/test_loop.py::test_the_turn_zero_chain_is_planned_for_the_callers_contact`.
+
 ### Teach: the return to HOME has its own conservative profile
 
 - The return appended after a gesture's last pose no longer inherits the
