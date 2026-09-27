@@ -240,17 +240,18 @@ def test_a_grasp_that_measured_the_width_corrects_the_world(agent_examples):
 
 
 def test_the_turn_zero_chain_is_planned_for_the_callers_contact(agent_examples):
-    """A 30 mm cube is too short for a PAD grasp (``object_too_flat``) and
-    fine at the finger TIPS. The up-front chain check has to plan the grasp
-    the caller will make: with ``contact="pad"`` the run refuses at turn zero,
-    with ``contact="tip"`` it starts."""
+    """A 14 mm block is too short for a PAD grasp (``object_too_flat``: the
+    pads would cover 11 mm of it) and fine at the finger TIPS. The up-front
+    chain check has to plan the grasp the caller will make: with
+    ``contact="pad"`` the run refuses at turn zero, with ``contact="tip"`` it
+    starts."""
     from scene import DEMO_WRIST_CAMERA, observe
     from manipulation_kit.arms import get_arm_kinematics
     from manipulation_kit.world import ObjectView
 
     kin = get_arm_kinematics("d1/arm", quiet=True)
     world = observe(kin)
-    cube = ObjectView("red_block", p=(0.38, 0.25, 0.025), size=(0.03, 0.03, 0.03),
+    cube = ObjectView("red_block", p=(0.38, 0.25, 0.017), size=(0.03, 0.03, 0.014),
                       colour="red")
     world = world.with_(objects=tuple(cube if o.name == "red_block" else o
                                       for o in world.objects))

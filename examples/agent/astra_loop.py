@@ -48,8 +48,8 @@ it is inside the container.
 YOU ARE THE DETECTOR: nothing on this robot measures where things are. First
 `declare_scene` each thing the task needs from the head photo, in base
 metres, with its tight outer size (its outline, never its shadow).
-`locate(u, v)` walks a pixel's ray to the table: use it on the pixel where the
-object TOUCHES the table and give its size to get the centre. If the table height is
+`locate(u, v)` walks a pixel's ray to the table: use it on the LOWEST pixel of
+the object's silhouette and give its size to get the centre. If the table height is
 `provisional`, say so. Re-declare whenever a photo disagrees with the text;
 before a grasp the robot takes a wrist look, and a disagreeing wrist photo is
 answered with `locate` on that wrist camera.

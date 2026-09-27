@@ -201,27 +201,39 @@ def locate(cameras: Any, world: Any, arguments: Dict[str, Any]):
     name = str(arguments.get("camera") or ("head" if "head" in models
                                            else next(iter(models), "head")))
     perceiver = ScenePerceiver(models, world)
-    located = perceiver.locate(name, float(arguments["u"]),
-                               float(arguments["v"]))
+    u, v = float(arguments["u"]), float(arguments["v"])
+    located = perceiver.locate(name, u, v)
     if arguments.get("size") is not None:
         located = contact_to_centre(
             located, size=arguments["size"], viewpoint=models[name].p,
             yaw_rad=float(arguments.get("yaw_rad", 0.0)),
-            image_up=_image_up(perceiver, name, arguments, located))
+            image_up=_image_direction(perceiver, name, u, v, located, 0.0, -1.0),
+            image_right=_image_direction(perceiver, name, u, v, located,
+                                         1.0, 0.0))
     return located
 
 
-def _image_up(perceiver, name, arguments, located):
-    """The table-plane direction the image's up axis runs at the located
-    pixel (a pixel above it, located on the same plane), or None where that
-    pixel has no plane point (the horizon)."""
+#: how far [px] the neighbouring pixel that measures an image direction on
+#: the plane is from the located one
+IMAGE_STEP_PX = 8.0
+
+
+def _image_direction(perceiver, name, u, v, located, du, dv):
+    """The support-plane direction the image axis ``(du, dv)`` runs at the
+    located pixel: a pixel :data:`IMAGE_STEP_PX` along it, located on the
+    same plane, minus the located point — or, where that pixel has no plane
+    point (past the horizon), the negated direction to the pixel the other
+    way. Raises ``ValueError`` when neither side lands on the plane."""
     from ..perception import NoSupport, NotOnThePlane  # noqa: PLC0415
-    try:
-        above = perceiver.locate(name, float(arguments["u"]),
-                                 float(arguments["v"]) - 8.0)
-    except (NoSupport, NotOnThePlane, ValueError):
-        return None
-    return above.p - located.p
+    for sign in (1.0, -1.0):
+        try:
+            other = perceiver.locate(name, u + sign * du * IMAGE_STEP_PX,
+                                     v + sign * dv * IMAGE_STEP_PX)
+        except (NoSupport, NotOnThePlane, ValueError):
+            continue
+        return sign * (other.p - located.p)
+    raise ValueError("the pixels beside this one are not on the plane, so "
+                     "the image's direction there cannot be measured")
 
 
 def apply_locate(cameras: Any, world: Any, arguments: Dict[str, Any]) -> str:

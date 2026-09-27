@@ -445,24 +445,57 @@ class ContainerView(ObjectView):
         half = np.asarray(self.interior, dtype=float) / 2.0 + float(pad_m)
         return bool(np.all(np.abs(local) <= half))
 
+    def depth_declared(self) -> bool:
+        """Does this container say how deep it is — a MEASURED ``interior``
+        or a ``rim_height_m``? Only then does :meth:`contains_object` know
+        where its floor and rim are; a container with neither is only the
+        :data:`INTERIOR_FRACTION` estimate of a box."""
+        return bool(self.interior_measured) or self.rim_height_m is not None
+
+    def rim_local_z(self) -> float:
+        """The rim's height above the container's centre, along its own z
+        [m]: ``rim_height_m`` when declared, else half the outer height."""
+        return (float(self.size[2]) / 2.0 if self.rim_height_m is None
+                else float(self.rim_height_m))
+
     def contains_object(self, obj: "ObjectView", frames: FrameGraph, *,
                         pad_m: float = 0.0) -> bool:
-        """Is the whole of ``obj`` — its extent, not its centre — inside?
+        """Is ``obj`` inside — its whole footprint, not its centre?
 
-        A 120 mm bar whose centre sits over a 100 mm bin is not in the bin.
-        The centre test passed it (R12); this one measures the object's own
-        support width along each of the container's axes.
+        HORIZONTALLY the object's own support width along each of the
+        container's two horizontal axes must lie within the interior: a
+        120 mm bar whose centre sits over a 100 mm bin is not in the bin
+        (R12).
+
+        VERTICALLY, for a container whose depth is declared
+        (:meth:`depth_declared`), the object's UNDERSIDE must be between the
+        interior floor and the rim. An open-top container holds what stands
+        on its floor however far it stands proud of the rim: a 30 mm cube on
+        the floor of a 17 mm-deep tray is in the tray, and a cube hovering
+        above the rim is not. For a container with NO declared depth (an
+        estimated interior and no ``rim_height_m``) the floor and rim are a
+        guess, and the object's whole extent must fit inside the estimated
+        interior box on all three axes, as before.
+
+        ``pad_m`` widens every bound by that much.
         """
         p, r = self.pose_in_base(frames)
         op, orot = obj.pose_in_base(frames)
         local = r.inv().apply(np.asarray(op, dtype=float).reshape(3) - p)
         half = np.asarray(self.interior, dtype=float) / 2.0 + float(pad_m)
         columns = r.as_matrix()
-        for i in range(3):
+        for i in (0, 1):
             reach = _extent_along(columns[:, i], obj.size, orot) / 2.0
             if abs(float(local[i])) + reach > float(half[i]):
                 return False
-        return True
+        vertical = _extent_along(columns[:, 2], obj.size, orot) / 2.0
+        if not self.depth_declared():
+            return abs(float(local[2])) + vertical <= float(half[2])
+        underside = float(local[2]) - vertical
+        # 1e-9: an object built standing exactly on the floor is on it, not
+        # a float's last bit below it
+        return (-float(half[2]) - 1e-9 <= underside
+                <= self.rim_local_z() + float(pad_m) + 1e-9)
 
     def fits_inside(self, obj: "ObjectView", frames: FrameGraph, *,
                     pad_m: float = 0.0) -> bool:

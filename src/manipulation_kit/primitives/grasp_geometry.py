@@ -20,8 +20,10 @@ everything else about a grasp, on a resolved
   first, then the quarter turns whose presented width still fits. The verbs
   try them in that order; nothing else in the package generates a roll.
 * **the fit test** — :func:`fits`: the width across the jaws against the
-  reference's clearance, and the flat test from the reference's lead, so a
-  6 mm card is graspable at the tips and refused at the pads.
+  reference's clearance, and the flat test from how much of the object the
+  jaw faces cover with the tips at the floor clearance
+  (``GraspReference.min_contact_m``), so a 6 mm card is graspable at the
+  tips and refused at the pads, and a 30 mm cube is taken at either.
 
 Every waypoint the planner sees is still the pose of the pad centre
 (:data:`.orientation.TOOL_Z_M`): a fingertip grasp is converted onto it here,
@@ -55,7 +57,8 @@ __all__ = [
     "achieved_clearance", "tilted", "own_face_direction",
     "TIP_CONTACT_THIN_M", "TIP_SEARCH_START_M", "CONTACT_OVERTRAVEL_M",
     "TIP_CONTACT_NM", "descends_by_contact",
-    "GRASP_DEPTH_MIN_M", "GRASP_DEPTH_FRACTION", "fingertip_point",
+    "GRASP_DEPTH_MIN_M", "GRASP_DEPTH_FRACTION", "PAD_MIN_CONTACT_M",
+    "fingertip_point",
     "near_face_along", "insertion_along", "min_insertion_m",
 ]
 
@@ -73,22 +76,42 @@ class GraspReference:
                     it along the approach [m] — what the descent floor and the
                     flat test are computed from;
     ``clearance_per_side_m``  what a grasped object must leave free on each
-                    side inside the jaw opening [m].
+                    side inside the jaw opening [m];
+    ``min_contact_m``  how much of the object, along the approach, the jaw
+                    faces must cover at the lowest legal contact point for
+                    the grasp to close on it rather than above it [m] — what
+                    the flat test compares with.
     """
 
     name: str
     offset_z_m: float
     lead_m: float
     clearance_per_side_m: float
+    min_contact_m: float = 0.0
 
+
+#: How much of an object's height the PAD FACES must cover, tips at the
+#: support clearance, for a pad grasp [m]. The pads are the 58 mm from the
+#: pad root to the finger tips (``PAD_ROOT_Z_M`` .. ``PAD_TIP_Z_M``), so what
+#: they cover is the object's height minus the tips' height over the floor,
+#: whatever that is relative to the pad CENTRE. The number is twice
+#: :data:`GRASP_DEPTH_MIN_M` — the insertion the grasp verifier requires
+#: after the jaws close — so a plan it admits still passes that check with
+#: 8 mm of error in the declared height or the arm's stop.
+#: MEASURED (Isaac color-sort, 2026-09-26): with the tips 1 mm over the table
+#: the pads covered 29 mm of a 30 mm cube and held it (31.4 mm jaw gap, five
+#: of five pad grasps); the pad-centre rule this replaces refused every
+#: object under 32 mm (the 29 mm tip lead plus the 3 mm clearance).
+PAD_MIN_CONTACT_M = 0.016
 
 #: The pad CENTRE: the 58 mm pad face closes on the object, the tips reach
 #: 29 mm further. The default, and the only reference before 0.16.0.
 PAD = GraspReference("pad", PAD_CENTRE_Z_M, PAD_TIP_Z_M - PAD_CENTRE_Z_M,
-                     PAD_CLEARANCE_PER_SIDE_M)
+                     PAD_CLEARANCE_PER_SIDE_M, PAD_MIN_CONTACT_M)
 #: The finger TIPS: nothing leads them, so a descent may bring them to the
-#: support's clearance — which is how a 6 mm card is taken off a table.
-TIP = GraspReference("tip", PAD_TIP_Z_M, 0.0, TIP_CLEARANCE_PER_SIDE_M)
+#: support's clearance — which is how a 6 mm card is taken off a table. The
+#: tips close on whatever they reach, so they need only reach the object.
+TIP = GraspReference("tip", PAD_TIP_Z_M, 0.0, TIP_CLEARANCE_PER_SIDE_M, 0.0)
 
 REFERENCES = {PAD.name: PAD, TIP.name: TIP}
 #: the ``contact`` argument's closed set, in the order a model is shown it
@@ -351,20 +374,24 @@ def fit_problems(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
     """Everything that stops ``spec`` closing on ``obj`` with the jaws at
     ``r_tcp`` (empty when it can). :func:`fits` is the first of these.
 
-    FLAT first: when the contact point had to be backed out past the object's
-    near face to keep the tips off the floor, the jaws would close on air.
-    That is computed from ``reference.lead_m``, so it fires for a 6 mm card at
-    the pads (29 mm lead) and not at the tips (none). Then WIDE: the object's
-    extent ALONG THE JAW AXIS (not its smallest side, R9) against
-    :func:`graspable_width_m` for this reference and this hand.
+    FLAT first: at the lowest legal contact point (the tips
+    :data:`~.orientation.SUPPORT_CLEARANCE_M` over the floor), how much of
+    the object do the jaw faces cover along the approach — how far past its
+    near face are the finger tips? Less than the reference's
+    ``min_contact_m`` and the jaws would close above it: a pad grasp needs
+    :data:`PAD_MIN_CONTACT_M` of pad on the object, so it refuses a 6 mm card
+    and takes a 30 mm cube; a fingertip grasp needs the tips to reach it.
+    Then WIDE: the object's extent ALONG THE JAW AXIS (not its smallest
+    side, R9) against :func:`graspable_width_m` for this reference and this
+    hand.
     """
     d = _unit_d(obj, frames, spec)
     ref = spec.reference
     problems: List[Unmet] = []
     p_contact, _raised, _floor, floor_note = _contact(obj, frames, spec, support)
-    centre = np.asarray(obj.pose_in_base(frames)[0], dtype=float)
-    depth = float(np.dot(p_contact - centre, d))
-    if depth < -obj.extent_along(d, frames) / 2.0:
+    tips = np.asarray(p_contact, dtype=float) + d * float(ref.lead_m)
+    covered = insertion_along(obj, frames, d, tips)
+    if covered < float(ref.min_contact_m) - 1e-9:
         tall = obj.vertical_extent(frames)
         hint = ("grasp it at the fingertips (contact='tip'), come in from the "
                 "side, or use a different tool" if ref is PAD else
@@ -372,13 +399,14 @@ def fit_problems(obj: ObjectView, frames: FrameGraph, spec: GraspSpec,
                 "slide it to an edge or use a different tool")
         problems.append(Unmet(
             OBJECT_TOO_FLAT,
-            f"{obj.name} stands {tall * 1000:.0f} mm tall and a {ref.name} "
-            f"grasp's finger tips reach {ref.lead_m * 1000:.0f} mm past its "
-            f"contact point, so it would close above the object with the tips "
-            f"still {_o.SUPPORT_CLEARANCE_M * 1000:.0f} mm over the floor "
-            f"({floor_note})",
+            f"{obj.name} stands {tall * 1000:.0f} mm tall; with the finger "
+            f"tips {_o.SUPPORT_CLEARANCE_M * 1000:.0f} mm over the floor "
+            f"({floor_note}) a {ref.name} grasp's jaw faces would cover "
+            f"{max(covered, 0.0) * 1000:.0f} mm of it, and it needs "
+            f"{ref.min_contact_m * 1000:.0f} mm",
             hint, {"height_m": round(tall, 4), "contact": ref.name,
-                   "lead_m": round(ref.lead_m, 4)}))
+                   "covered_m": round(covered, 4),
+                   "min_contact_m": round(float(ref.min_contact_m), 4)}))
     width = _o.grasp_width(obj, frames, r_tcp)
     graspable = graspable_width_m(ref, open_gap_m)
     if width > graspable:
@@ -465,6 +493,9 @@ GRASP_DEPTH_MIN_M = 0.008
 #: ...or this fraction of the object's extent along the approach, whichever is
 #: less: a 6 mm card taken at the tips needs 1.5 mm, not 8.
 GRASP_DEPTH_FRACTION = 0.25
+
+assert PAD_MIN_CONTACT_M == 2.0 * GRASP_DEPTH_MIN_M, \
+    "the pad flat test is twice the verifier's insertion minimum"
 
 
 def fingertip_point(tool_p, tool_r: R) -> np.ndarray:
