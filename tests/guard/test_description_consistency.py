@@ -464,7 +464,7 @@ def test_wholebody_fk_uses_calibrated_lift_mount():
 # two things that are easy to get wrong and invisible in a position-only check:
 # the mount frame, and the HANDEDNESS (a wrist mount in this codebase has
 # already shipped with the two per-arm rotations swapped).
-# All MEASURED on d1-3 2026-09-16 (Shu, callipers). The CAD/d1-sdk values
+# All MEASURED on d1-3 2026-09-16 (callipers). The CAD/d1-sdk values
 # they replace were 0.035 / 0.136 / 0.1435.
 GRIPPER_JAW_STROKE = 0.032          # per jaw, m -> a 64 mm pad-to-pad opening
 GRIPPER_TCP_Z = 0.129               # registered tool config = the pad TIP
@@ -682,7 +682,7 @@ def test_gripper_handedness_is_mirrored_pose_identical_part():
 
 
 def test_gripper_mass_is_the_measured_15kg_not_the_cad_mass():
-    """Shu weighed the gripper at 1.5 kg (2026-07-29), confirming the value
+    """The gripper weighs 1.5 kg (scale, 2026-07-29), confirming the value
     this SDK registers as ToolConfig::defaultGripper(). The vendor CAD claimed
     0.3279 kg — a shell-only export, 4.6x light. The URDF must carry the
     measured figure: anything loading this file for dynamics would otherwise
@@ -1285,7 +1285,7 @@ def test_no_unmodelled_void_between_the_flange_and_the_gripper():
 
 def test_the_flange_spacer_is_labelled_measured():
     """The band between the camera plate and the gripper body used to be an
-    ASSUMED 8 .. 16.5 mm gripper-end plate. Shu put callipers on it on d1-3
+    ASSUMED 8 .. 16.5 mm gripper-end plate. Callipers on d1-3 measured it
     (2026-09-16): 2 mm of camera plate then a 7 mm spacer, so the band is
     2 .. 9 mm and is no longer an assumption. Its FOOTPRINT is still a CAD
     bound rather than a measured shape, and the file has to say which is

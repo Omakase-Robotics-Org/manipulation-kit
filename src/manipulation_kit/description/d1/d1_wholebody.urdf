@@ -113,7 +113,7 @@
       <origin xyz="0.08415 0.003 0.495" rpy="0 0 0"/>
       <geometry><box size="0.0323 0.119 0.119"/></geometry>
     </collision>
-    <!-- _omakase body shell, belly band - MEASURED on the built robot (Shu, 2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45) -->
+    <!-- _omakase body shell, belly band - MEASURED on the built robot (2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45) -->
     <collision name="torso_belly">
       <origin xyz="0.0025 0 0.315" rpy="0 0 0"/>
       <geometry><box size="0.265 0.22 0.25"/></geometry>

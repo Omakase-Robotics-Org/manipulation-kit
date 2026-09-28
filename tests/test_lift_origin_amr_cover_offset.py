@@ -6,7 +6,7 @@ vendor chain says.  The description applies that once, at the lift joint
 origin (``base_footprint -> dual_base``: 0.484 -> 0.513 m).  See the AMR COVER
 HEIGHT OFFSET block in ``description/d1/tools/generate_d1_urdf.py``.
 
-MEASURED by Shu with a tape on d1-3, 2026-09-16, lift at 0, floor-referenced,
+MEASURED with a tape on d1-3, 2026-09-16, lift at 0, floor-referenced,
 ±2 mm.  The fit is over four frames spanning 660 mm of the robot:
 
     frame                              URDF+29    measured    residual

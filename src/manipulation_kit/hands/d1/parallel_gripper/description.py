@@ -12,7 +12,7 @@ composition and belongs to the robot repo, not here).
 ``xml.etree`` is in the standard library, so unlike ``dh116s.description``
 this loader needs no optional third-party package.
 
-MEASURED TOOL GEOMETRY (d1-3, 2026-09-16, Shu, callipers)
+MEASURED TOOL GEOMETRY (d1-3, 2026-09-16, callipers)
 ---------------------------------------------------------
 Everything along the tool axis below is now a CALLIPER MEASUREMENT taken on
 the assembled robot, not the vendor CAD. Measured from the Marvin arm flange
@@ -151,8 +151,8 @@ DRIVEN_OPEN_Q = (JAW_OPEN_GAP_M - DRIVEN_OPEN_GAP_M) / 2.0
 
 #: Distance from the mounting flange (``base_link`` origin) to the PAD ROOT,
 #: PAD CENTRE and PAD TIP along the gripper's +Z approach axis, and the
-#: graspable pad depth between the first two. MEASURED on d1-3 2026-09-16 by
-#: Shu with callipers; the previous 108.5 mm centre / 143.5 mm tip came from
+#: graspable pad depth between the first two. MEASURED on d1-3 2026-09-16 with
+#: callipers; the previous 108.5 mm centre / 143.5 mm tip came from
 #: the vendor CAD export. The jaw links hang off PAD_CENTRE_Z_M and the
 #: REGISTERED TCP is PAD_TIP_Z_M (see
 #: :mod:`~manipulation_kit.hands.d1.parallel_gripper.toolconfig`).

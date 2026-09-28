@@ -172,8 +172,8 @@ def test_the_measured_scene_picks_the_right_arm_and_says_what_stops_it(
     """The honest outcome, pinned.
 
     Frame D's charger MEASURES 50 mm across its footprint and the driven jaws
-    take 44 mm, so the chain Shu's hand-made scene planned does not plan off
-    the measurement — his file declared the charger 20 mm across y, which is a
+    take 44 mm, so the chain the hand-made scene planned does not plan off
+    the measurement — that file declared the charger 20 mm across y, which is a
     number a single view cannot produce. The right arm is still the one
     chosen, and the refusal is ``object_too_wide`` with both numbers in it.
     """

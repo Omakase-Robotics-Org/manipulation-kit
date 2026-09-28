@@ -12,6 +12,13 @@ Comments and docs only: every rule the kit states now carries its technical
 reason instead of naming who asked for it. Nothing a consumer imports behaves
 differently; the bump exists because `src/` docstrings changed.
 
+The same rule covers measurement provenance: a measured number keeps what was
+measured, where, with what and when (e.g. "MEASURED on d1-3 2026-09-16,
+callipers"), and no longer names who measured it. That touches comments inside
+the generated URDFs (`mkit-urdf build`) and `dist/d1-collision/d1.urdf`, so
+their bytes change while no joint, link, collision or inertial value does;
+d1-firmware's vendored `d1.urdf` follows at its next `KIT_COMMIT` bump.
+
 ## 0.18.0 — unreleased
 
 **The guard's model is the real robot's shape, and its margins are real air.**
@@ -23,13 +30,13 @@ the front with its top edge in the shoulder sleeve, and a sampled
 segment-to-box distance. The 30 mm / 60 mm margins compensated for all of that
 without anyone having measured it: HOME sat 30.3 mm from the torso box against
 a 30 mm margin, and the arm hanging at the side was refused by 1.7 mm. The real
-air at HOME is ~50 mm (Shu, measured).
+air at HOME is ~50 mm (measured).
 
 ### Changed
 
 * **Arm model = tubes + joint housings** (`ARM_CAPSULES` in
   `generate_d1_urdf.py`, fitted by the new `tools/fit_arm_capsules.py` to the
-  vendor meshes; Shu's shape, 2026-09-23):
+  vendor meshes; the shape the arm is built with):
   * a tube per link at the link's real tube radius (the housings excluded):
     Link2 / Link3 42.5 mm, Link4 46.5, Link5 48.2, Link6 31.3, Link7 34.5;
   * the shoulder (J2) and elbow (J4) housings as the measured 97 mm
@@ -49,7 +56,7 @@ air at HOME is ~50 mm (Shu, measured).
   * Collision names are `<link>_<side>_capsule_<part>` (`tube`,
     `housing_j2`, `housing_j4`).
 * **`torso_belly` is the measured torso**: x -0.130 .. +0.135, y +/-0.110
-  (220 x 265 mm, Shu on the built robot at HOME), z 0.19 .. 0.44. The top is
+  (220 x 265 mm, measured on the built robot at HOME), z 0.19 .. 0.44. The top is
   where the CAD shell stops being torso and widens into the shoulder sleeve
   (0.43 -> 0.45); the exempt shoulder shell and the chest keep-out now start
   at 0.44.
@@ -858,8 +865,8 @@ three. Two findings:
   appears on those plans (golden cases with a fingertip descent change
   accordingly). `planning.leg_knots` is the one knot/distance builder for
   every contact leg (probe, press, fingertip grasp).
-* **Jaw axis — no kit bug; the slab lay 90 deg from its declaration.** Shu's
-  photos show the open jaws spanning the slab's 91 mm side. The recorded
+* **Jaw axis — no kit bug; the slab lay 90 deg from its declaration.** Photos
+  of the run show the open jaws spanning the slab's 91 mm side. The recorded
   plan's grasp quaternion `[0, 1, 0, 0]` puts TCP x (the jaw axis) along base
   -x; the kit's FK of the executed joints, and an independent walk of the
   gripper description's prismatic finger joints, both give the finger
@@ -1814,7 +1821,7 @@ invented from the image border) on the two that clip it; `--table-width 0.60`
 solves the height to 0.150-0.153 m on all five against a tape's 0.166 — a
 consistent ~14 mm low, which is the lens position inside a 90 mm housing and
 is a BIAS, not noise. With the height declared, the two objects on the run2
-frame land within 20 mm of the positions Shu used for that run.
+frame land within 20 mm of the positions the run's hand-made scene used.
 
 ### What this does NOT do
 
@@ -1824,8 +1831,8 @@ frame land within 20 mm of the positions Shu used for that run.
   silhouette, so the width is written on BOTH horizontal axes and yaw is 0 (a
   square footprint is rotation-invariant, which makes that zero harmless
   rather than invented). On the run2 frame the charger measures 50 mm across
-  its footprint and the driven jaws take 44 mm, so the chain Shu's hand-made
-  file planned does not plan off the measurement — his file declared the
+  its footprint and the driven jaws take 44 mm, so the chain the hand-made
+  scene file planned does not plan off the measurement — that file declared the
   charger 20 mm across y, which is a tape measurement, not a picture. Both
   halves are pinned in `tests/agent/test_perceive.py`, and `--size` /
   `declare_scene` are how you put it back.
@@ -2077,7 +2084,7 @@ was failing to state.
 
 * **The head-camera mount tilt is a named HARDWARE REVISION, not a literal.**
   15° is a property of the head PART: d1-1, d1-2 and d1-3 wear it by design,
-  and the units built next are 20° (Shu, 2026-09-20). So
+  and the units built next are 20° (2026-09-20). So
   `manipulation_kit.description.HEAD_CAMERA_TILT_DEG` maps `"rev1" -> 15.0`
   and `"rev2" -> 20.0`, `head_camera_tilt_deg(revision)` resolves one (an
   unknown revision raises rather than defaulting), the generated URDFs name

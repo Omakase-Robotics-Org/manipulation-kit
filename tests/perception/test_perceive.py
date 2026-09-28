@@ -8,7 +8,7 @@ tests in ``tests/agent/test_perceive_cli.py``.
 Five real frames of the d1-2 JP wagon are in ``tests/data/perceive``, and the
 numbers below are not round: they are what a throw-away OpenCV script produced
 on the night the loop's first hand-made scene was written (2026-09-22), plus
-what Shu then measured with a tape. A rewrite that quietly moves a corner by
+what was then measured with a tape. A rewrite that quietly moves a corner by
 20 px or a cup by 4 cm still produces a tidy JSON file, so the corners, the
 depths and the footprints are all pinned — and PR #21's "Validated" table is
 pinned row by row (:func:`test_pr21_validated_table_is_reproduced`).
@@ -52,7 +52,7 @@ REFERENCE_CORNERS = {
     "E": ((123.0, 188.6), (548.7, 179.5)),
 }
 
-#: The wagon top Shu measured with a tape: 0.40 m deep, 0.60 m wide.
+#: The wagon top as measured with a tape: 0.40 m deep, 0.60 m wide.
 TRUE_DEPTH_M = 0.40
 TRUE_WIDTH_M = 0.60
 
@@ -424,7 +424,7 @@ def test_a_known_length_fixes_the_height_in_closed_form(perceive,
                                                         camera_module, frames):
     """``--table-width``: the one optional scene number, and what it buys.
 
-    Shu's tape says the wagon top is 0.166 m above ``base``. The nominal head
+    The tape says the wagon top is 0.166 m above ``base``. The nominal head
     mount puts it ~14 mm low, consistently, on every frame — that is the lens
     position inside a 90 mm housing, and it is a BIAS, not noise.
     """
@@ -484,7 +484,7 @@ def test_the_level_correction_is_a_scale_free_diagnostic(perceive,
 # checked against with no network
 # --------------------------------------------------------------------------- #
 
-#: What Shu used for run2, from frame D, quoted to +-20 mm. The scene there
+#: What the hand-made run2 scene used, from frame D, quoted to +-20 mm. The scene there
 #: was pinned by a tape on the far edge; here only the height is declared and
 #: the rest comes from the robot's own camera pose, so the agreement is the
 #: measurement of BOTH.

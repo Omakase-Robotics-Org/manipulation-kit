@@ -39,8 +39,8 @@ def test_generator_capsules_are_the_fit_record():
         assert _norm(gen.ARM_CAPSULES[link]) == _norm(entry["capsules"]), link
 
 
-#: The residual Shu accepted on 2026-09-23 (Link4's elbow-housing rim is the
-#: worst); a refit that leaves more of the arm outside must be looked at.
+#: The accepted residual (covering it takes ~200 capsules per arm; Link4's
+#: elbow-housing rim is the worst); a refit that leaves more of the arm outside must be looked at.
 ACCEPTED_RESIDUAL_MM = 25.0
 
 

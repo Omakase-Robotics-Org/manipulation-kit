@@ -113,7 +113,7 @@
       <origin xyz="0.08415 0.003 0.495" rpy="0 0 0"/>
       <geometry><box size="0.0323 0.119 0.119"/></geometry>
     </collision>
-    <!-- _omakase body shell, belly band - MEASURED on the built robot (Shu, 2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45) -->
+    <!-- _omakase body shell, belly band - MEASURED on the built robot (2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45) -->
     <collision name="torso_belly">
       <origin xyz="0.0025 0 0.315" rpy="0 0 0"/>
       <geometry><box size="0.265 0.22 0.25"/></geometry>
@@ -683,13 +683,13 @@
 
   <!-- D1 stock parallel gripper on arm R — vendor CAD via
        hands/d1/parallel_gripper, with the tool geometry MEASURED on
-       d1-3 2026-09-16 (Shu, callipers): pad root 71 mm, pad CENTRE
+       d1-3 2026-09-16 (callipers): pad root 71 mm, pad CENTRE
        100 mm (the jaw joints), pad TIP 129 mm (the registered TCP),
        58 mm pads, 64 mm maximum opening. The previous 108.5 mm
        centre and 136 mm TCP came from vendor CAD and a d1-sdk
        default carried over with it. base_link IS the tool flange, so
        the mount is TCP_Link with no translation (+y up on both arms; _R takes the half turn).
-       Mass 1.5 kg MEASURED (Shu 2026-07-29); the CAD's own 0.3279 kg
+       Mass 1.5 kg MEASURED (2026-07-29); the CAD's own 0.3279 kg
        was a shell-only export. Per-link split is an estimate, the
        total and the assembly COM (68 mm) are not. -->
   <joint name="gripper_R_flange" type="fixed">
@@ -714,7 +714,7 @@
       <geometry><box size="0.057 0.057 0.007"/></geometry>
       <material name="gripper_spacer"><color rgba="0.55 0.42 0.16 1"/></material>
     </visual>
-    <!-- MEASURED 7 mm spacer block between the camera plate and the gripper body (d1-3, Shu, callipers, 2026-09-16); footprint is still the CAD's own mount-plate square, which bounds a round collar or a square plate -->
+    <!-- MEASURED 7 mm spacer block between the camera plate and the gripper body (d1-3, callipers, 2026-09-16); footprint is still the CAD's own mount-plate square, which bounds a round collar or a square plate -->
     <collision name="gripper_R_gripper_spacer">
       <origin xyz="0 0 0.0055" rpy="0 0 0"/>
       <geometry><box size="0.057 0.057 0.007"/></geometry>
@@ -804,7 +804,7 @@
       <geometry><mesh filename="meshes/gripper/camera_plate_full.STL"/></geometry>
       <material name="gripper_camera_plate"><color rgba="0.75 0.75 0.78 1"/></material>
     </visual>
-    <!-- arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the flange stack (d1-3, Shu, callipers, 2026-09-16). The CAD drop and the committed camera_plate.STL both model an 8 mm disc; only the primitive follows the calliper, because replacing a mesh needs a CAD drop -->
+    <!-- arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the flange stack (d1-3, callipers, 2026-09-16). The CAD drop and the committed camera_plate.STL both model an 8 mm disc; only the primitive follows the calliper, because replacing a mesh needs a CAD drop -->
     <collision name="gripper_R_camera_plate_disc">
       <origin xyz="0 0 0.001" rpy="0 0 0"/>
       <geometry><box size="0.072 0.072 0.002"/></geometry>
@@ -1172,13 +1172,13 @@
 
   <!-- D1 stock parallel gripper on arm L — vendor CAD via
        hands/d1/parallel_gripper, with the tool geometry MEASURED on
-       d1-3 2026-09-16 (Shu, callipers): pad root 71 mm, pad CENTRE
+       d1-3 2026-09-16 (callipers): pad root 71 mm, pad CENTRE
        100 mm (the jaw joints), pad TIP 129 mm (the registered TCP),
        58 mm pads, 64 mm maximum opening. The previous 108.5 mm
        centre and 136 mm TCP came from vendor CAD and a d1-sdk
        default carried over with it. base_link IS the tool flange, so
        the mount is TCP_Link with no translation (+y already up).
-       Mass 1.5 kg MEASURED (Shu 2026-07-29); the CAD's own 0.3279 kg
+       Mass 1.5 kg MEASURED (2026-07-29); the CAD's own 0.3279 kg
        was a shell-only export. Per-link split is an estimate, the
        total and the assembly COM (68 mm) are not. -->
   <joint name="gripper_L_flange" type="fixed">
@@ -1203,7 +1203,7 @@
       <geometry><box size="0.057 0.057 0.007"/></geometry>
       <material name="gripper_spacer"><color rgba="0.55 0.42 0.16 1"/></material>
     </visual>
-    <!-- MEASURED 7 mm spacer block between the camera plate and the gripper body (d1-3, Shu, callipers, 2026-09-16); footprint is still the CAD's own mount-plate square, which bounds a round collar or a square plate -->
+    <!-- MEASURED 7 mm spacer block between the camera plate and the gripper body (d1-3, callipers, 2026-09-16); footprint is still the CAD's own mount-plate square, which bounds a round collar or a square plate -->
     <collision name="gripper_L_gripper_spacer">
       <origin xyz="0 0 0.0055" rpy="0 0 0"/>
       <geometry><box size="0.057 0.057 0.007"/></geometry>
@@ -1293,7 +1293,7 @@
       <geometry><mesh filename="meshes/gripper/camera_plate_full.STL"/></geometry>
       <material name="gripper_camera_plate"><color rgba="0.75 0.75 0.78 1"/></material>
     </visual>
-    <!-- arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the flange stack (d1-3, Shu, callipers, 2026-09-16). The CAD drop and the committed camera_plate.STL both model an 8 mm disc; only the primitive follows the calliper, because replacing a mesh needs a CAD drop -->
+    <!-- arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the flange stack (d1-3, callipers, 2026-09-16). The CAD drop and the committed camera_plate.STL both model an 8 mm disc; only the primitive follows the calliper, because replacing a mesh needs a CAD drop -->
     <collision name="gripper_L_camera_plate_disc">
       <origin xyz="0 0 0.001" rpy="0 0 0"/>
       <geometry><box size="0.072 0.072 0.002"/></geometry>

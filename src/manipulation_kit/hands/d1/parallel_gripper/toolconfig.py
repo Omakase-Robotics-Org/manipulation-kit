@@ -7,9 +7,9 @@ flange:
     TCP 129 mm along flange Z, mass 1.5 kg, COM z 68 mm,
     cylinder-approximated inertia 0.003 / 0.003 / 0.001.
 
-Provenance of each: mass 1.5 kg 【MEASURED — Shu weighed the gripper at the
-robot 2026-07-29 (「グリッパーは1.5kg」)】. TCP 129 mm 【MEASURED on d1-3
-2026-09-16 by Shu with callipers: flange face to pad TIP. The previous
+Provenance of each: mass 1.5 kg 【MEASURED — weighed at the
+robot 2026-07-29】. TCP 129 mm 【MEASURED on d1-3
+2026-09-16 with callipers: flange face to pad TIP. The previous
 136 mm came from ``d1-sdk``'s hardcoded
 ``omakase_arm::ToolConfig::defaultGripper()`` and was "confirmed" against the
 vendor CAD's 143.5 mm jaw tips — i.e. one CAD number checking another. The
@@ -35,7 +35,7 @@ here, a factor of 4.6. Three numbers described one object:
     vendor CAD, as received                        0.3279 kg   COM z 51.1 mm
     d1-isaaclab sim primitives, per side           0.37   kg   (no COM claim)
 
-Shu settled it with a scale: **1.5 kg**. So:
+A scale settled it: **1.5 kg**. So:
 
 * **1.5 kg is correct** and stays. It was never a guess, only undocumented.
 * **The CAD export is incomplete.** It models outer shells only. Put the
@@ -74,7 +74,7 @@ from __future__ import annotations
 
 from ...toolconfig import ToolConfig
 
-#: Total gripper mass as WEIGHED at the robot (Shu 2026-07-29). Equals the
+#: Total gripper mass as WEIGHED at the robot (2026-07-29). Equals the
 #: registered ``mass_kg`` below, and the sum of the link masses in
 #: ``descriptions/gripper.urdf``. The one authoritative figure.
 MEASURED_MASS_KG = 1.5
@@ -90,7 +90,7 @@ CAD_MASS_KG = 0.327917
 CAD_COM_MM = (0.14, -7.60, 51.06)
 
 #: Distance from the flange to the pad TIPS along +Z, mm — MEASURED on d1-3
-#: 2026-09-16 by Shu with callipers, and the registered TCP below. The pad
+#: 2026-09-16 with callipers, and the registered TCP below. The pad
 #: CENTRE (where the jaw links hang) is 100 mm and the pad root 71 mm; see
 #: :mod:`~manipulation_kit.hands.d1.parallel_gripper.description`.
 MEASURED_JAW_TIP_Z_MM = 129.0
@@ -103,8 +103,8 @@ CAD_JAW_TIP_Z_MM = 143.5
 
 _PROVENANCE = (
     "D1 stock parallel gripper. Mass 1.5 kg "
-    "MEASURED at the robot (Shu 2026-07-29), confirming the long-registered "
-    "value; TCP 129 mm MEASURED on d1-3 2026-09-16 (Shu, callipers) — the "
+    "MEASURED at the robot (2026-07-29), confirming the long-registered "
+    "value; TCP 129 mm MEASURED on d1-3 2026-09-16 (callipers) — the "
     "flange-to-pad-tip stack, superseding the 136 mm carried over from "
     "d1-sdk defaultGripper() and the vendor CAD's 143.5 mm jaw tips; "
     "the 68 mm COM lever was validated on the real D1. The vendor CAD's own "

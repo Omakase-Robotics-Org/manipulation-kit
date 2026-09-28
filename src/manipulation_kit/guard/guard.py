@@ -42,9 +42,10 @@ stays checked; TCP_Link plus the whole YUBI hand (palm / camera /
 fingers) is the tool side and is excluded.  See EE_LINK_PREFIXES /
 is_ee_body().
 
-(Owner directive, 2026-07-20 VR-teleop field feedback: "EEは無視した範囲
-でIKのガード計算した方がいい" — bimanual contact is intended, so the
-hands must not be blocked from touching things or each other.)
+(Why: bimanual contact is intended — the hands are the working surfaces
+and must not be blocked from touching objects or each other; VR-teleop
+field use, 2026-07-20, showed a guard that included them refusing the
+contacts the task needs.)
 
 Compared to the C++ ArmCollisionModel this model covers the arm chain up
 to Link7 (the C++ model stops at Joint7); the TCP flange and YUBI hand

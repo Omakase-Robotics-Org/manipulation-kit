@@ -44,7 +44,7 @@ ROS package and the two joint names it lists are already in the URDF.
 | Envelope | body 57 × 58 mm across, Z 9 → 71 mm (2 mm camera plate + 7 mm spacer ahead of it) |
 | Mass (as committed) | **1.5 kg** — measured, see below. The CAD claimed 0.327917 kg |
 
-**Every Z above is a CALLIPER MEASUREMENT** taken by Shu on d1-3 on
+**Every Z above is a CALLIPER MEASUREMENT** taken on d1-3 on
 2026-09-16, not the vendor CAD. Measured outward from the Marvin arm flange
 face: 2 mm camera mounting plate, 7 mm spacer block, 42 mm gripper body,
 20 mm finger base plate, 58 mm pads — so the pad tip is at 129 mm and the pad
@@ -135,7 +135,7 @@ fresh drop rather than hand-editing the committed files.
 
 ## Mass: the CAD said 0.328 kg, the scale says 1.5 kg
 
-Shu weighed the gripper at the robot on 2026-07-29: **1.5 kg**, confirming the
+The gripper was weighed at the robot on 2026-07-29: **1.5 kg**, confirming the
 value d1-sdk has registered all along (`defaultGripper()`). The CAD export sums
 to 0.327917 kg — light by **1.1721 kg**.
 

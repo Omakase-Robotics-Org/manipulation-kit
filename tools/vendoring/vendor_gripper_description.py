@@ -30,13 +30,13 @@ vendor drop — see ``descriptions/README.md``):
    part. Same policy as ``leadshine/dh116s/descriptions`` (visual quality
    only — kinematics and joint limits are untouched).
 5. **Inertials corrected to the measured 1.5 kg.** The CAD sums to 0.3279 kg;
-   Shu weighed the gripper at 1.5 kg (2026-07-29), confirming the value
+   The gripper weighs 1.5 kg (scale, 2026-07-29), confirming the value
    d1-sdk has always registered. The CAD export models outer shells only, so
    the missing 1.1721 kg is put on ``base_link`` — see MASS below for why it
    can go nowhere else — and its COM is solved so the ASSEMBLY COM lands on
    the hardware-validated 68 mm. Marked in the file as an estimate.
-6. **Jaw joints retargeted to the MEASURED tool geometry.** Shu put callipers
-   on d1-3 on 2026-09-16: the pads sit 71 … 129 mm from the flange face, so
+6. **Jaw joints retargeted to the MEASURED tool geometry.** Callipers on d1-3
+   on 2026-09-16: the pads sit 71 … 129 mm from the flange face, so
    their CENTRE is 100 mm, not the CAD's 108.47 mm, and the pad faces open to
    64 mm, not the CAD's 70 mm. Both jaw joints are moved to the measured pad
    centre and their limits to ± 32 mm. This is the FIRST edit here that
@@ -88,7 +88,7 @@ FINGER_VELOCITY_MPS = 0.05
 # --------------------------------------------------------------------------
 # MASS
 #
-# Shu weighed the gripper at the robot on 2026-07-29: 1.5 kg, confirming the
+# The gripper was weighed at the robot on 2026-07-29: 1.5 kg, confirming the
 # value d1-sdk has registered all along. The CAD sums to 0.3279 kg — it is
 # light by 1.1721 kg, a factor of 4.6.
 #
@@ -113,7 +113,7 @@ FINGER_VELOCITY_MPS = 0.05
 #
 # The jaw inertials are left VERBATIM: at 41.6 g each they are 5.5 % of the
 # total, so their default-material density barely moves the assembly.
-MEASURED_MASS_KG = 1.5                    # scale, Shu 2026-07-29
+MEASURED_MASS_KG = 1.5                    # scale, 2026-07-29
 REGISTERED_COM_Z_M = 0.068                # d1-sdk defaultGripper(), validated
 CAD_JAW_MASS_KG = 0.0415744002939907      # kept verbatim
 CAD_BODY_MASS_KG = 0.244768569107893
@@ -126,7 +126,7 @@ CAD_BODY_INERTIA = {                      # about the CAD body COM
 # --------------------------------------------------------------------------
 # GEOMETRY
 #
-# MEASURED on d1-3 2026-09-16 by Shu with callipers, along the tool axis from
+# MEASURED on d1-3 2026-09-16 with callipers, along the tool axis from
 # the Marvin arm flange face outward:
 #
 #     0 …   2 mm   camera mounting plate     (the CAD plate drop said 8 mm)
@@ -171,8 +171,8 @@ HEADER = """<?xml version="1.0" encoding="utf-8"?>
      Frame: base_link is the arm tool flange, fingers extend along +Z, the
      jaws travel along +/-X.
 
-     GEOMETRY along +Z is MEASURED, not CAD: Shu put callipers on d1-3 on
-     2026-09-16 and read 2 mm camera plate, 7 mm spacer, 42 mm body, 20 mm
+     GEOMETRY along +Z is MEASURED, not CAD: callipers on d1-3 on
+     2026-09-16 read 2 mm camera plate, 7 mm spacer, 42 mm body, 20 mm
      finger base plate, 58 mm pads. So the pads run 71 .. 129 mm from the
      flange face, the jaw links hang at their CENTRE (Z = 100 mm) and the
      registered TCP is the pad TIP, Z = 129 mm (see toolconfig.py). The
@@ -194,7 +194,7 @@ HEADER = """<?xml version="1.0" encoding="utf-8"?>
      fully CLOSED. This is the OPPOSITE polarity to the CAN 2.0 wire command,
      where 0.0 is closed. Do not wire one to the other without inverting.
 
-     MASS: the link masses here sum to the MEASURED 1.5 kg (scale, Shu
+     MASS: the link masses here sum to the MEASURED 1.5 kg (scale,
      2026-07-29), not to the 0.3279 kg the CAD export claimed. That export
      models outer shells only and its implied densities are default material
      values, so it was light by a factor of 4.6. The missing mass is carried
@@ -309,7 +309,7 @@ def _rewrite_base_inertial(text: str) -> str:
     block = (
         '<inertial>\n'
         '      <!-- ESTIMATE, not the CAD values. Mass is the MEASURED 1.5 kg\n'
-        '           assembly (Shu 2026-07-29) minus the two CAD jaws; the CAD\n'
+        '           assembly (2026-07-29) minus the two CAD jaws; the CAD\n'
         '           export claimed 0.2448 kg for this link and models outer\n'
         '           shells only. COM z is solved so the ASSEMBLY COM lands on\n'
         '           the hardware validated 68 mm. The tensor is the CAD tensor\n'

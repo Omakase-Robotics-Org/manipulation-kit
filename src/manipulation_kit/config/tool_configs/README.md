@@ -33,7 +33,7 @@ registering the wrong tool fails torque-mode entry
 DH116S values: TCP 100 mm / COM z 40 mm / mass **0.4 kg** — the
 registration set supplied by the arm engineer 2026-08-08 (compliance-mode
 fix on d1-1). It supersedes the measured 2026-07 set (TCP 210 mm / COM z
-120 mm, Shu 2026-07-18; 0.380 kg weighed at the robot, Shu 2026-07-29);
+120 mm, 2026-07-18; 0.380 kg weighed at the robot, 2026-07-29);
 the reference-point change behind the TCP/COM shift is documented as an
 open question in `hands/leadshine/dh116s/toolconfig.py`. Inertia is a
 solid-cylinder estimate pending load identification (see the `_comment`

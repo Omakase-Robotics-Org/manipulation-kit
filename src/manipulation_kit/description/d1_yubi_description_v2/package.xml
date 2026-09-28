@@ -3,7 +3,7 @@
 <package format="3">
   <name>d1_yubi_description_v2</name>
   <version>0.2.0</version>
-  <description>D1 dual-arm + YUBI hands URDF v2 (2026-07 zip) (dual_base torso + 2× D1 arm M6-S 7-DOF arms + YUBI hands; RViz/robot_state_publisher). Vendored from Shu's v2 zip.</description>
+  <description>D1 dual-arm + YUBI hands URDF v2 (2026-07 zip) (dual_base torso + 2× D1 arm M6-S 7-DOF arms + YUBI hands; RViz/robot_state_publisher). Vendored from the 2026-07 v2 zip.</description>
   <maintainer email="shuichi.nagao@omakase.ai">Omakase Robotics</maintainer>
   <license>Proprietary</license>
 

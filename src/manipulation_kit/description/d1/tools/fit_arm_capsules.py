@@ -2,7 +2,7 @@
 
 The motion guard models each arm link as a tube, plus a joint housing where
 the link carries one, in the link's own frame (``ARM_CAPSULES`` in
-``generate_d1_urdf.py``), built the way the arm is built (Shu, 2026-09-23):
+``generate_d1_urdf.py``), built the way the arm is built (2026-09-23):
 
 * the **tube** runs along the link at the radius of the link's tube section
   (the joint housings excluded, a radius quantile of the vertices there):
@@ -17,8 +17,8 @@ the link carries one, in the link's own frame (``ARM_CAPSULES`` in
 
 This does **not** contain every vertex: the housing cover-plate rims (a
 capsule cannot fit a squat cylinder's edge) and the tubes' flat ends stick
-out. Covering them took ~200 offset capsules per arm, which Shu rejected for
-the guard's call rate; the residual is recorded instead, per link and side,
+out. Covering them took ~200 offset capsules per arm, too many for the
+guard's call rate; the residual is recorded instead, per link and side,
 in ``arm_capsule_fit.json`` (``max_protrusion_mm``, up to ~24 mm on Link4),
 and ``tests/guard/test_arm_capsule_fit.py`` fails if a mesh ever sticks out
 further than its recorded residual + 1 mm. A true cylinder primitive may
@@ -93,7 +93,7 @@ def protrusion(P, capsules):
     return np.min(np.stack([seg_dist(P, a, b) - r for _, a, b, r in capsules]), axis=0)
 
 
-#: The shoulder (J2) and elbow (J4) housings: 97 mm cylinders (Shu, 2026-09-23).
+#: The shoulder (J2) and elbow (J4) housings: 97 mm cylinders (2026-09-23).
 HOUSING_R = 0.0485
 #: Slack the mesh test allows on top of a link's recorded residual.
 TOLERANCE_M = 0.001
@@ -172,7 +172,8 @@ def fit_all():
         "link's real tube radius and the 97 mm J2/J4 housings, trimmed to the "
         "mesh ends. max_protrusion_mm is the largest distance of any mesh "
         "vertex OUTSIDE the link's capsules: the housing cover-plate rims and "
-        "tube ends the model does not cover, accepted by Shu 2026-09-23. CI "
+        "tube ends the model does not cover, accepted because covering them "
+        "takes ~200 capsules per arm, too many for the guard's call rate. CI "
         "checks the committed capsules against this record; with the CAD "
         "present it re-measures the meshes and fails past residual + 1 mm."),
         "links": {}}

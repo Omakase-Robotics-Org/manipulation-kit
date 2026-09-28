@@ -112,7 +112,7 @@ def test_finger_joints_can_actually_move():
 
 
 def test_measured_pad_stack_is_self_consistent():
-    """The calliper stack (d1-3, Shu, 2026-09-16) has to close: pad root plus
+    """The calliper stack (d1-3, 2026-09-16) has to close: pad root plus
     pad depth is the pad tip, the centre is halfway, and the registered TCP is
     the tip. Cheap, but this is the arithmetic a transcription error hides in,
     and every one of these numbers is now load-bearing for planning."""
@@ -276,7 +276,7 @@ def test_the_jaw_mesh_faces_measure_the_measured_half_opening():
 
 
 def test_urdf_mass_is_the_measured_mass_not_the_cad_mass():
-    """The committed URDF must sum to the WEIGHED 1.5 kg (Shu 2026-07-29), not
+    """The committed URDF must sum to the WEIGHED 1.5 kg (2026-07-29), not
     the 0.3279 kg the shell-only CAD export claimed. Shipping the CAD number
     would put a 4.6x-light mass, with CAD provenance making it look
     authoritative, into anything that loads this file for dynamics."""

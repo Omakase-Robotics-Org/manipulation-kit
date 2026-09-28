@@ -62,7 +62,7 @@ import numpy as np
 #: a bare robot python with no package install (importing the package pulls
 #: in the CAN driver chain). tests/test_calibrate_wrist_camera_mount.py
 #: asserts these against the package, so they cannot drift.
-#: All three MEASURED on d1-3 2026-09-16 (Shu, callipers); they were
+#: All three MEASURED on d1-3 2026-09-16 (callipers); they were
 #: 0.035 / 0.14350 / 0.090 from the vendor CAD before that.
 JAW_STROKE_M = 0.032
 JAW_TIP_Z_M = 0.129

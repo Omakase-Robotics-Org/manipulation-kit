@@ -149,7 +149,7 @@ def test_clocking_constants():
     right with yaw 0 (measured from the d1 teleop dataset, 2026-08-21)."""
     assert CAMERA_ARM_YAW_RAD["left"] == pytest.approx(math.pi)
     assert CAMERA_ARM_YAW_RAD["right"] == 0.0
-    # MEASURED on d1-3 2026-09-16 (Shu, callipers); the CAD drop and the
+    # MEASURED on d1-3 2026-09-16 (callipers); the CAD drop and the
     # committed camera_plate.STL both still model an 8 mm disc.
     assert CAMERA_PLATE_THICKNESS_M == 0.002
 

@@ -2,7 +2,7 @@
 
 Two findings, one test group each:
 
-1. THE JAW AXIS. Shu's photos show the open jaws spanning the slab's 91 mm
+1. THE JAW AXIS. Photos of the run show the open jaws spanning the slab's 91 mm
    side. The recorded plan put the jaws along base x (quaternion
    ``[0, 1, 0, 0]``: TCP x = base -x) across a slab DECLARED at yaw 90 deg
    (long side along base y), i.e. across its 55 mm; ``fits()`` agreed

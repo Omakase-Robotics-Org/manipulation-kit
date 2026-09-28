@@ -1,5 +1,5 @@
 {
- "_comment": "Fit record of the guard's arm capsules (ARM_CAPSULES in generate_d1_urdf.py), written by tools/fit_arm_capsules.py from the vendor arm meshes in manipulation-kit-assets: a tube per link at the link's real tube radius and the 97 mm J2/J4 housings, trimmed to the mesh ends. max_protrusion_mm is the largest distance of any mesh vertex OUTSIDE the link's capsules: the housing cover-plate rims and tube ends the model does not cover, accepted by Shu 2026-09-23. CI checks the committed capsules against this record; with the CAD present it re-measures the meshes and fails past residual + 1 mm.",
+ "_comment": "Fit record of the guard's arm capsules (ARM_CAPSULES in generate_d1_urdf.py), written by tools/fit_arm_capsules.py from the vendor arm meshes in manipulation-kit-assets: a tube per link at the link's real tube radius and the 97 mm J2/J4 housings, trimmed to the mesh ends. max_protrusion_mm is the largest distance of any mesh vertex OUTSIDE the link's capsules: the housing cover-plate rims and tube ends the model does not cover, accepted because covering them takes ~200 capsules per arm, too many for the guard's call rate. CI checks the committed capsules against this record; with the CAD present it re-measures the meshes and fails past residual + 1 mm.",
  "links": {
   "Base": {
    "capsules": [

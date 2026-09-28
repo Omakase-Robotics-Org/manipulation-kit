@@ -8,8 +8,8 @@
      Frame: base_link is the arm tool flange, fingers extend along +Z, the
      jaws travel along +/-X.
 
-     GEOMETRY along +Z is MEASURED, not CAD: Shu put callipers on d1-3 on
-     2026-09-16 and read 2 mm camera plate, 7 mm spacer, 42 mm body, 20 mm
+     GEOMETRY along +Z is MEASURED, not CAD: callipers on d1-3 on
+     2026-09-16 read 2 mm camera plate, 7 mm spacer, 42 mm body, 20 mm
      finger base plate, 58 mm pads. So the pads run 71 .. 129 mm from the
      flange face, the jaw links hang at their CENTRE (Z = 100 mm) and the
      registered TCP is the pad TIP, Z = 129 mm (see toolconfig.py). The
@@ -31,7 +31,7 @@
      fully CLOSED. This is the OPPOSITE polarity to the CAN 2.0 wire command,
      where 0.0 is closed. Do not wire one to the other without inverting.
 
-     MASS: the link masses here sum to the MEASURED 1.5 kg (scale, Shu
+     MASS: the link masses here sum to the MEASURED 1.5 kg (scale,
      2026-07-29), not to the 0.3279 kg the CAD export claimed. That export
      models outer shells only and its implied densities are default material
      values, so it was light by a factor of 4.6. The missing mass is carried
@@ -46,7 +46,7 @@
     name="base_link">
     <inertial>
       <!-- ESTIMATE, not the CAD values. Mass is the MEASURED 1.5 kg
-           assembly (Shu 2026-07-29) minus the two CAD jaws; the CAD
+           assembly (2026-07-29) minus the two CAD jaws; the CAD
            export claimed 0.2448 kg for this link and models outer
            shells only. COM z is solved so the ASSEMBLY COM lands on
            the hardware validated 68 mm. The tensor is the CAD tensor
@@ -217,7 +217,7 @@
        edit, re-run the script. Provenance: descriptions/README.md.
 
        The plate (arm-end connection plate V2.0) is the first 2 mm of the
-       flange stack: Shu measured it at 2 mm with callipers on d1-3
+       flange stack: it measures 2 mm with callipers on d1-3
        (2026-09-16), against the 8 mm of the CAD drop. Behind it sits a 7 mm
        spacer block, also measured, which is why the gripper body starts
        at 9 mm. The plate MESH here still models the CAD's 8 mm disc; only a

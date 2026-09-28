@@ -11,7 +11,7 @@ link weighs.
 
 **Head-camera mount tilt.** 15 deg is a DESIGN value of one head part, not a
 constant of the D1: d1-1..d1-3 wear it and the next units are built at 20 deg
-(Shu, 2026-09-20). So it is a named hardware revision, the committed URDFs say
+(2026-09-20). So it is a named hardware revision, the committed URDFs say
 which revision they are, and a consumer composing its own asset selects one by
 name. What a robot's camera ACTUALLY points at is its per-robot ArUco
 calibration, which is an absolute head_link -> camera extrinsic and must never
