@@ -1,0 +1,36 @@
+{
+  "_comment": "D1 dual-arm HOME_CLEAR pose -- HOME (home_pose.json) with the shoulder J2 of both arms 10.0 deg lower (87.38 -> 77.38), which swings the upper arm (Link2) out from the torso_belly box. Every other joint is HOME's. At HOME, Link2 is the binding link: 36.3 mm (arm B, logical right) and 30.3 mm (arm A, logical left) from torso_belly against the guard's 30 mm body margin, and only 75.7 % / 48.7 % of the +/-0.1 rad joint band around HOME passes the kit (GuardedArm.posture_violation + the motion guard). Here Link2 no longer binds: body clearance is 43.1 mm (B) / 38.1 mm (A), which is the joint-INDEPENDENT floor set by the shoulder sphere Link1 (r 0.05 m, fixed at the mount) against torso_belly -- no posture of either arm can do better against this collision model -- and the +/-0.1 rad band is 100 % kit-clean on both arms. The straight joint-space move HOME -> HOME_CLEAR is guard-clean at 1 deg samples; the tool point moves 10 mm (z +3 mm) and the tool frame tilts 10 deg about the J2 axis. OPT-IN, not HOME: datasets recorded from HOME (frame 0 = HOME), gesture CSVs that pin HOME as first/last keyframe, and trained RL checkpoints all carry HOME, so a consumer selects this pose by name (manipulation_kit.arms.d1.arm.kinematics.load_named_pose('home_clear')). Test: tests/arms/test_home_clear_pose.py. Same conventions as home_pose.json: 14 arm joint angles in DEGREES, order ArmSide::A then ArmSide::B (A = physical left, B = physical right), mirror-symmetric between arms.",
+  "units": "degrees",
+  "joint_order": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "B5",
+    "B6",
+    "B7"
+  ],
+  "home_pose": [
+    -52.26,
+    77.38,
+    88.3,
+    -114.32,
+    86.67,
+    -1.1,
+    13.05,
+    52.26,
+    77.38,
+    -88.3,
+    -114.32,
+    -86.67,
+    -1.1,
+    -13.05
+  ]
+}

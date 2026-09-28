@@ -122,6 +122,55 @@ probe link positions, the 200-restart READY seed and `solve_ee` over a full
 trajectory. Worst observed difference on `d1.urdf` is ~5e-16 m / ~1.4e-15 rad /
 ~3e-15 on the Jacobian: double-precision noise, not a different model.
 
+## Named poses: `home`, `home_clear`, `stow`
+
+The arm poses the kit ships live in `config/` as one file each, in
+`home_pose.json`'s format (14 degrees, A1..A7 then B1..B7, mirror-symmetric),
+and are read by name through
+`manipulation_kit.arms.d1.arm.kinematics.load_named_pose(name)`
+(`NAMED_POSES`). Nobody copies the numbers.
+
+| name | file | what it is |
+|---|---|---|
+| `home` | `home_pose.json` | THE HOME: the measured wrist-forward rest pose. `D1ArmKinematics` starts here, `go_home` ramps here, gestures pin it as their first and last keyframe |
+| `home_clear` | `home_clear_pose.json` | HOME with both shoulders' J2 10 deg lower (87.38 -> 77.38). Opt-in |
+| `stow` | `stow_pose.json` | the compact tuck for driving (an endpoint, not a rest) |
+
+### Why `home_clear`, and why it is not HOME
+
+Measured with the kit's own verdict (`GuardedArm.posture_violation` + the
+motion guard; `tests/arms/test_home_clear_pose.py`):
+
+| pose | body clearance right / left [mm] | binding link | +/-0.1 rad band kit-clean, right / left |
+|---|---|---|---|
+| `home` | 36.3 / 30.3 | `Link2` (upper arm) vs `torso_belly` | 75.7 % / 48.7 % |
+| `home_clear` | 43.1 / 38.1 | `Link1` (shoulder, fixed at the mount) vs `torso_belly` | 100 % / 100 % |
+
+The guard's body margin is 30 mm, so HOME's left arm has 0.3 mm of slack and a
++J2 step of 0.062 rad from HOME already commands a refused posture. At
+`home_clear` the binding capsule is the shoulder sphere, which does not move
+with the joints: 43.1 / 38.1 mm is the best any posture of these arms reaches
+against this collision model (the left arm is 6 mm closer because the belly box
+is 6 mm off-centre). The straight joint move HOME -> `home_clear` is
+guard-clean at 1 deg samples; the tool point moves 10 mm and the tool frame
+tilts 10 deg about the J2 axis.
+
+It is opt-in because HOME is embedded downstream. A consumer that switches to
+it must handle its own row:
+
+| consumer | embeds HOME how | what switching needs |
+|---|---|---|
+| recorded datasets (e.g. 0824: frame-0 median == HOME) and the ACT / pi policies trained on them | the initial-state distribution | nothing; those policies start at their dataset's frame 0 (`d1-inference run_act --start-pose checkpoint`, the default), never at `home_clear` |
+| d1-inference `tools/run_act.py`, `tools/go_home.py` | reads the kit HOME live | to park at `home_clear`, load it by name for the HOME move; the policy preflight still walks to the checkpoint start pose |
+| d1-inference `policy/preflight.py` `EPISODE_START_STATE` | frozen radians == HOME | nothing (it is the 0824 checkpoint's start) |
+| d1-isaaclab RL skills (`home_q` from `default_joint_pos`, `kit_home_rad()`) | reset pose, reward target and the `arm_q - home_q` observation | opt in with `load_named_pose("home_clear")` and retrain; existing checkpoints stay on HOME |
+| d1-isaaclab ACT eval (`DATASET_HOME_RAD`) | frozen dataset HOME | nothing |
+| gesture CSVs (`mkit-teach`, omakaseos `d1_gesture_gen.py`) | first and last keyframe == HOME, fingerprinted | nothing unless the gesture set moves; then regenerate and re-fit every CSV |
+| d1-sdk `devices/omakase_arm/config/home_pose.json` (read by omakaseos, dx-vr-teleop, d1-vr-teleop) | a second copy of `home_pose.json` | nothing; if HOME itself ever changes, both files change together |
+| dx-teleop-server `devices/arms/home.py`, `executor/arm_model.py` | reads the kit HOME live | pass the named pose to use it as the park/ramp target |
+| d1-firmware (`assets/home_pose.json`, guard test vectors) | vendored snapshot of the kit file | nothing (the daemon has no arm HOME endpoint) |
+| `perception.camera.provisional_table_z` | HOME tool z (0.201 m) | nothing (`home_clear` tool z is 0.204 m; the value is provisional by contract) |
+
 ## Phase 1 of 2: the copy in `dx-vr-teleop` is still live
 
 This package was migrated from `dx-vr-teleop` `master` @ `de8d781` (i.e. PR #41

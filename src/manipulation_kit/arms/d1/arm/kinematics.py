@@ -62,7 +62,50 @@ def default_home_pose_json() -> Path:
     rotated 90 deg about Y, facing forward) REPLACED the daran pose so gestures
     rest wrist-up.
     """
-    return _KIT / "config" / "home_pose.json"
+    return named_pose_json("home")
+
+
+#: The arm poses this package ships by name, each a file in ``config/`` in
+#: ``home_pose.json``'s format (14 degrees, A1..A7, B1..B7, mirror-symmetric).
+#:
+#: ``home`` is THE HOME: what :class:`D1ArmKinematics` starts at and what
+#: ``go_home`` ramps to. ``home_clear`` is HOME with both shoulders' J2 10 deg
+#: lower, clear of the torso_belly margin (see its ``_comment`` and
+#: ``tests/arms/test_home_clear_pose.py``); it is OPT-IN because datasets,
+#: gesture CSVs and trained policies carry HOME. ``stow`` is the compact tuck
+#: for driving. A consumer that wants a pose other than HOME asks for it here
+#: by name — ``build_kinematics(home=load_named_pose("home_clear"))`` makes it
+#: that model's HOME — and never copies the numbers.
+NAMED_POSES: Dict[str, str] = {
+    "home": "home_pose.json",
+    "home_clear": "home_clear_pose.json",
+    "stow": "stow_pose.json",
+}
+
+
+def named_pose_json(name: str) -> Path:
+    """The bundled file of the named pose ``name`` (one of :data:`NAMED_POSES`)."""
+    try:
+        return _KIT / "config" / NAMED_POSES[name]
+    except KeyError:
+        raise ValueError(f"unknown named pose {name!r}; "
+                         f"known: {sorted(NAMED_POSES)}") from None
+
+
+def _read_pose(path: Path) -> Dict[str, np.ndarray]:
+    deg = json.loads(Path(path).read_text())["home_pose"]
+    n = sides.JOINTS_PER_ARM
+    return {"left": np.deg2rad(deg[:n]), "right": np.deg2rad(deg[n:2 * n])}
+
+
+def load_named_pose(name: str) -> Dict[str, np.ndarray]:
+    """Per-logical-side 7-joint pose [rad] of the named pose ``name``.
+
+    Strict: an unknown name or an unreadable file raises. Unlike
+    :func:`load_home` there is no T-pose fallback — a consumer that asked for
+    a specific pose must not be handed a different one.
+    """
+    return _read_pose(named_pose_json(name))
 
 
 def load_home(path: Optional[Path] = None, *, quiet: bool = False
@@ -74,9 +117,7 @@ def load_home(path: Optional[Path] = None, *, quiet: bool = False
     """
     p = path if path is not None else default_home_pose_json()
     try:
-        deg = json.loads(Path(p).read_text())["home_pose"]
-        n = sides.JOINTS_PER_ARM
-        return {"left": np.deg2rad(deg[:n]), "right": np.deg2rad(deg[n:2 * n])}
+        return _read_pose(p)
     except Exception as exc:  # noqa: BLE001
         if not quiet:
             print(f"[manipulation_kit.arms] WARNING: home_pose.json unavailable ({exc}); "

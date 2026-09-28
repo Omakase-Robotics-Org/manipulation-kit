@@ -7,6 +7,25 @@ in particular what it **breaks** — the repository's rule is a clean break with
 loud reason, not a legacy path kept alive beside the new one.
 
 
+## 0.17.1 — unreleased
+
+### Named arm poses, and `home_clear` (HOME clear of the belly margin)
+
+- New `manipulation_kit.arms.d1.arm.kinematics.NAMED_POSES`,
+  `named_pose_json(name)` and `load_named_pose(name)`: the poses shipped in
+  `config/` (`home`, `home_clear`, `stow`) read by name, strictly (an unknown
+  name or unreadable file raises; `load_home` keeps its T-pose fallback).
+  `default_home_pose_json()` is `named_pose_json("home")`.
+- New `config/home_clear_pose.json`: HOME with both J2 10 deg lower. At HOME
+  the upper arm is 36.3 mm (right) / 30.3 mm (left) from `torso_belly`
+  against the 30 mm body margin and only 75.7 % / 48.7 % of the +/-0.1 rad
+  band is kit-clean; at `home_clear` it is 43.1 / 38.1 mm — the fixed
+  shoulder sphere's floor, the best any posture reaches — and 100 % / 100 %.
+- HOME itself is unchanged: datasets, gesture CSVs and trained policies
+  carry it. `home_clear` is opt-in; `docs/arms-README.md` lists every
+  downstream consumer and what switching needs. Test:
+  `tests/arms/test_home_clear_pose.py`.
+
 ## 0.17.0 — unreleased
 
 Three measurements the harness made wrongly for small objects in open trays,
