@@ -7,11 +7,12 @@ they reach the hardware**:
 1. **per-joint limit clamp** — limits parsed from the full-body URDF
    (`description/d1/d1.urdf`);
 2. **torso / head keep-out** — every arm capsule vs the measured body
-   boxes (FK + capsule-vs-AABB distance, configurable margin), plus a
+   boxes (FK + exact capsule-vs-AABB distance, configurable margin, default
+   0.005 m of real air), plus a
    per-arm **upper-chest keep-out** that closes the shoulder-band notch
    left by the exempt CAD shoulder shell;
 3. **arm–arm distance** — the two arms' capsules must stay
-   ≥ `arm_arm_margin_m` apart (default 0.06 m = `safety_zones.json`);
+   ≥ `arm_arm_margin_m` apart (default 0.045 m);
 4. **same-arm self collision** — non-adjacent capsule pairs with the
    "bridged by a short link" skip rule of `collision_model.h`.
 
@@ -56,8 +57,8 @@ robot.set_joint_cmd_pose('A', jointsA)      # returns 2 + prints if blocked
 to enable; with the variable unset the behavior is byte-identical to
 before (covered by a test).
 
-Useful knobs (see `guard.py` docstrings): `body_margin_m` (default 0.03),
-`arm_arm_margin_m` (0.06), `clamp_limits`, `check_body/check_self/
+Useful knobs (see `guard.py` docstrings): `body_margin_m` (default 0.005),
+`arm_arm_margin_m` (0.045), `clamp_limits`, `check_body/check_self/
 check_arm_arm`, `disabled_body_boxes` (chassis boxes are disabled by
 default because their position depends on the lift extension),
 `chest_keepout` (per-arm upper-chest keep-out boxes; `None` disables it),
