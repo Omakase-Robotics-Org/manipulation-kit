@@ -125,7 +125,10 @@ COUPLED_REFUSED = {
     72: "joint_limit", 76: "joint_limit",          # d1-2 cube, grasp from the side
     139: "joint_limit", 140: "joint_limit",        # side_shelf, right arm travelling left
     141: "joint_limit", 142: "joint_limit",        # side_shelf, auto (= right) travelling left
-    143: "guard_reject", 144: "guard_reject",      # side_shelf, left arm travelling right
+    # side_shelf, left arm travelling right: refused by the body guard on the
+    # 30 mm capsule model; on the measured arm model (0.18.0, 5 mm margin of
+    # real air) the guard passes and the coupled limit is what refuses
+    143: "joint_limit", 144: "joint_limit",
 }
 
 

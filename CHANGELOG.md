@@ -9,7 +9,7 @@ loud reason, not a legacy path kept alive beside the new one.
 ## 0.18.0 — unreleased
 
 **The guard's model is the real robot's shape, and its margins are real air.**
-Breaking: the guard refuses and accepts different poses than 0.14.x.
+Breaking: the guard refuses and accepts different poses than 0.17.x.
 
 The 2026-06 model had one hand-picked capsule per arm link, a torso box taken
 from the CAD shell that is 20 mm wider than the built robot and 8 mm short at
@@ -63,6 +63,33 @@ At margin 0: HOME clears the body by 45.4 mm (Link4 vs `torso_belly`), the arm
 hanging at the side by 33.2 mm, elbow at the side with the forearm forward by
 35.6 mm; arms crossed at the chest are refused (-14.6 mm). Pinned by
 `tests/guard/test_guard_postures.py`.
+
+### Rebased onto 0.17.0: what the new model moved in the later suites
+
+Measured with the kit's own verdict (`posture_violation` + the guard):
+
+| | capsule model, 30 mm | this model, 5 mm |
+|---|---|---|
+| HOME body clearance, right / left | 36.3 / 30.3 mm | 45.4 / 45.4 mm |
+| HOME +/-0.1 rad band kit-clean, right / left (4096 samples) | 75.7 % / 48.7 % | 100 % / 100 % |
+| first refused +J2 step from HOME, right / left | 0.063 / 0.006 rad | 0.157 / 0.157 rad |
+
+* `tests/data/golden_plans/plans.json` regenerated (47 of 171 cases). No case
+  that planned is refused now. The nudges from HOME in every scene (19, 21,
+  25, 50, 52, 56, 80, 82, 86, 125, 127, 131) and the tall-cup forward grasp
+  (161) were `guard_reject` and now plan; 143/144 (side_shelf, left arm
+  travelling right) are refused by the coupled wrist-roll limit instead of
+  the guard (`COUPLED_REFUSED`); the others keep their verdict and move their
+  joint path or residual.
+* `tests/data/teach/wave_motion.csv`: only the header's `min_clearance` line
+  (body 30.3 -> 45.2 mm, self 163.5 -> 47.5 mm: the housings are closer to
+  each other than the old capsules were).
+* `tests/primitives/test_plans.py` `AGAINST_THE_BODY` moved from z 0.20 to
+  0.15 m: at 0.20 the standoff is now out of reach (`ik_fail`) before the
+  guard refuses it.
+* `tests/primitives/test_clearance.py`: a link can carry two capsules and
+  the forearm is split between Link4 and Link5, so the table tests take the
+  lowest forearm capsule; the guard-package hashes are the new files'.
 
 ## 0.17.0 — unreleased
 
