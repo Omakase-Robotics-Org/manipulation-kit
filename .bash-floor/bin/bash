@@ -1,0 +1,28 @@
+#!/bin/sh
+# .bash-floor/bin/bash -- the only file on the directory that .bash-floor/floor.mk
+# (and a re-exec'ing script prologue) puts FIRST on PATH, so a recipe's `bash -c`
+# and a child `#!/usr/bin/env bash` script run under the resolved WS_BASH.
+# bash-floor v1 (reports/deploy-scripts-bash32-silent-exit/).
+#
+# A shim rather than WS_BASH's own directory: on macOS that directory is
+# Homebrew's bin, and putting it first would also swap openssl, rsync and every
+# other tool Homebrew installs for the system's under every recipe. This
+# directory holds bash alone.
+#
+# WS_BASH is resolved once (floor.mk exports it); when it is not set yet, the
+# one rule in ../resolve.sh resolves it. Either way exactly one bash is run.
+if [ -z "${WS_BASH:-}" ]; then
+  WS_BASH="$(/bin/sh "$(dirname "$0")/../resolve.sh")" || exit 1
+  export WS_BASH
+fi
+case "$WS_BASH" in
+  */.bash-floor/bin/bash)
+    echo "bash-floor: refused: WS_BASH='$WS_BASH' names this PATH shim, not a bash" >&2
+    exit 1
+    ;;
+esac
+if [ ! -f "$WS_BASH" ] || [ ! -x "$WS_BASH" ]; then
+  echo "bash-floor: refused: WS_BASH='$WS_BASH' is not an executable file. Declare WS_BASH=<absolute path of a bash >= 4.4> (macOS: brew install bash)" >&2
+  exit 1
+fi
+exec "$WS_BASH" "$@"
