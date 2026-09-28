@@ -164,6 +164,18 @@ def test_a_transit_over_a_wagon_rises_above_it(d1_arm, monkeypatch):
     assert min(p[2] for p in old_over) < height - planning.PATH_TOL_M
 
 
+#: The forearm's links. On the measured arm model the forearm tube is split
+#: between Link4 (a short tube after the J4 housing) and Link5, and a link can
+#: carry more than one capsule (``<link>_<side>_capsule_<part>``).
+FOREARM = ("Link4_L", "Link5_L")
+
+
+def _lowest(capsules, links=FOREARM):
+    """The capsule of ``links`` that reaches lowest."""
+    return min((c for c in capsules if c[0] in links),
+               key=lambda c: min(c[1][2], c[2][2]) - c[3])
+
+
 def test_a_forearm_through_the_table_is_refused_with_the_obstacle_named(d1_arm):
     """The gate's own verdict, on a posture whose forearm is in a table.
 
@@ -176,8 +188,7 @@ def test_a_forearm_through_the_table_is_refused_with_the_obstacle_named(d1_arm):
     world = _d1_2(d1_arm)
     gate0 = SceneGate.of(world, d1_arm)
     q_home = d1_arm.home("right")
-    forearm = [c for c in gate0.capsules("right", q_home) if c[0] == "Link4_L"]
-    (link, a, b, r), = forearm
+    link, a, b, r = _lowest(gate0.capsules("right", q_home))
     low = min(a[2], b[2]) - r
     x, y = (a[:2] + b[:2]) / 2.0
     top = low + 0.020
@@ -398,8 +409,7 @@ def test_an_arm_already_inside_an_envelope_may_leave_it(d1_arm):
     world = _d1_2(d1_arm)
     gate0 = SceneGate.of(world, d1_arm)
     q_home = np.asarray(d1_arm.home("right"), dtype=float)
-    (link, a, b, r), = [c for c in gate0.capsules("right", q_home)
-                        if c[0] == "Link4_L"]
+    link, a, b, r = _lowest(gate0.capsules("right", q_home))
     x, y = (a[:2] + b[:2]) / 2.0
     top = min(a[2], b[2]) - r + 0.005              # 5 mm into the forearm
     wagon = SurfaceView("wagon_top", p=(x, y, top - 0.01), size=(0.5, 0.5, 0.02))
@@ -476,14 +486,15 @@ def test_no_env_var_feeds_the_support_clearance():
     assert "os.environ" not in source and "\nimport os\n" not in source
 
 
-#: sha256 of every file of ``manipulation_kit.guard`` as it is on
-#: ``origin/main`` (and on ``feat/perceive-head`` @ 1b5829c). The guard is
+#: sha256 of every file of ``manipulation_kit.guard`` as of 0.18.0 (the
+#: measured arm model: exact segment-box distance, Link1 body-exempt, 5 mm /
+#: 45 mm margins). The guard is
 #: stdlib-only and shared with firmware-side hosts; the scene gate re-uses it
 #: and must not change it.
 GUARD_SHA256 = {
     "__init__.py": "8603dd5a7ccd069f486433927be106819b8f2fc1019ca6d556dd0d9364100385",
-    "geometry.py": "10c7fc71bdc2db53124ba91a78ff9f511baacabeedc49e65d46885225dc2f64e",
-    "guard.py": "a99f2c1ab15ce2088b23c00c05c9f07eb6dd30346f75a87f671dc95342aadbd9",
+    "geometry.py": "a09c5c06adb038ec63de4f13aa7d3aa03e6651d02823d26db602e16d7ce050a1",
+    "guard.py": "d9aae8e35367f80647774e4bd9b20a0b31206b1e85c1d0c719336cb3565370d4",
     "urdf_model.py": "a0b9f5b46e88a4bae993ce4a07b80add66cb41a385f005490c3ebd0c807d05a3",
 }
 

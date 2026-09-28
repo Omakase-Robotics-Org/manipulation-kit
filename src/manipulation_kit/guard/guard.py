@@ -9,8 +9,12 @@ collision_model.h} and config/safety_zones.json:
   * angles in DEGREES, SDK order J1..J7;
   * SDK ArmSide 'A' = "_R" link tree = physical LEFT arm (+y);
     SDK ArmSide 'B' = "_L" link tree = physical RIGHT arm (-y);
-  * torso keep-out margin default 0.03 m, arm-arm min distance 0.06 m
-    (safety_zones.json), self margin 0.0 (collision_model.h defaults).
+  * torso keep-out margin default 0.005 m, arm-arm min distance 0.045 m,
+    self margin 0.0. The model is the real arm (tubes at the links' real
+    radii, the 97 mm J2/J4 housings) against the measured torso box, so a
+    margin is real shell-to-shell air -- except at the housing cover-plate
+    rims and tube ends, which stick out of the capsules by up to ~24 mm
+    (recorded in description/d1/arm_capsule_fit.json).
 
 The guard is OPT-IN: nothing in the SDK behaves differently unless a
 caller constructs a MotionGuard / wraps its robot in GuardedRobot (see
@@ -59,7 +63,7 @@ JOINTS_PER_ARM = 7
 
 # Links that sit at/inside the shoulder mount by construction — never
 # checked against the body (mirrors collision_model.h first_link_to_check).
-DEFAULT_BODY_EXEMPT_LINKS = ("Base_R", "Base_L")
+DEFAULT_BODY_EXEMPT_LINKS = ("Base_R", "Base_L", "Link1_R", "Link1_L")
 
 # --- end-effector / tool exclusion (collision policy, see module docstring) --
 # Everything DISTAL of the tool mounting flange (JointTCP: Link7 -> TCP_Link).
@@ -107,8 +111,8 @@ DEFAULT_DISABLED_BODY_BOXES = (
 # keep its +y shoulder space, so its box covers y in [-0.13, +0.06].  Arm
 # 'B' = physical RIGHT (-y): mirror, y in [-0.06, +0.13].
 DEFAULT_CHEST_KEEPOUT = {
-    "A": ((-0.1245, -0.13, 0.45), (0.1245, 0.06, 0.60)),
-    "B": ((-0.1245, -0.06, 0.45), (0.1245, 0.13, 0.60)),
+    "A": ((-0.1245, -0.13, 0.44), (0.1245, 0.06, 0.60)),
+    "B": ((-0.1245, -0.06, 0.44), (0.1245, 0.13, 0.60)),
 }
 # Shoulder-mount links whose barrels live inside the chest band at HOME and
 # so are exempt from the chest keep-out (Base is already globally body-exempt;
@@ -162,10 +166,10 @@ class MotionGuard:
         Full-body primitives URDF (default: description/d1/d1.urdf).
     body_margin_m : float
         Required clearance between any arm capsule and the torso/head
-        keep-out boxes (default 0.03 = safety_zones.json min_body_clearance).
+        keep-out boxes (default 0.005: real air, the model being the shell).
     arm_arm_margin_m : float
-        Minimum distance between the two arms' capsules (default 0.06 =
-        safety_zones.json min_arm_arm_distance_m).
+        Minimum distance between the two arms' capsules (default 0.045:
+        keeps two grippers side by side passing from ~140 mm apart).
     self_margin_m : float
         Extra margin for same-arm non-adjacent pairs (default 0.0, as in
         collision_model.h).
@@ -198,8 +202,8 @@ class MotionGuard:
     """
 
     def __init__(self, urdf_path: str = DEFAULT_URDF, *,
-                 body_margin_m: float = 0.03,
-                 arm_arm_margin_m: float = 0.06,
+                 body_margin_m: float = 0.005,
+                 arm_arm_margin_m: float = 0.045,
                  self_margin_m: float = 0.0,
                  clamp_limits: bool = True,
                  check_body: bool = True,

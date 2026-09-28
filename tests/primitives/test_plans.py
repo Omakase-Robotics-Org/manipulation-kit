@@ -28,8 +28,11 @@ REACHABLE = (0.38, 0.25, 0.05)
 #: Out at the edge of the envelope and high: the IK runs out of arm.
 UNREACHABLE = (0.52, 0.25, 0.45)
 #: Close in front of the sternum: reachable in the abstract, refused by the
-#: torso keep-out, which is the interesting refusal.
-AGAINST_THE_BODY = (0.20, 0.05, 0.20)
+#: torso keep-out, which is the interesting refusal. 50 mm lower than the
+#: 0.20 m this was on the capsule model: on the measured arm model (5 mm of
+#: real air) the standoff over a 0.20 m block is past the arm's reach before
+#: the guard refuses it, and the refusal becomes ``ik_fail``.
+AGAINST_THE_BODY = (0.20, 0.05, 0.15)
 
 
 def test_a_grasp_of_a_reachable_block_plans_a_continuous_joint_path(d1_arm, observe):
