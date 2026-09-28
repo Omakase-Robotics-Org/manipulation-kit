@@ -57,8 +57,8 @@ layer 3 at a finer spacing, so an uploaded plan is swept by the daemon itself.
 
 Layer 3 exists because layer 2 is not enough. Two postures can each pass while
 the line between them dips into a margin: `tests/arms/test_swept_path.py` pins
-a right-arm pair 31.5 / 31.7 mm from `torso_belly` whose midpoint is 27.6 mm
-from it. Without the local check the kit would send that command and learn
+a right-arm pair 19.7 / 26.0 mm from `torso_belly` whose line brings `Link5`
+within 2 mm of it (margin 5 mm). Without the local check the kit would send that command and learn
 from the daemon's HTTP 409 that it was refused. With it, the command is
 refused before it is sent (`GuardRefused`), naming the sample, the moving
 joints and the pair under its margin, in the daemon's wording.

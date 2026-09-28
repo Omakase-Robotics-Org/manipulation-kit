@@ -419,12 +419,12 @@ def test_a_step_whose_line_crosses_a_margin_is_refused_before_it_is_sent(
     (``tests/arms/test_swept_path.py`` pins the pair)."""
     from manipulation_kit.executors.firmware import GuardRefused
     left = np.degrees(d1_arm.home("left"))
-    start = [40.0, 76.0, -106.0, -103.0, -56.0, 14.0, -40.0]
-    target = [30.0, 83.0, -96.0, -115.0, -60.0, 4.0, -44.0]
+    start = [12.0, 71.0, -108.0, -124.0, -83.0, 23.0, 36.0]
+    target = [-1.0, 84.0, -122.0, -113.0, -75.0, 26.0, 23.0]
     executor.kin = d1_arm
     with executor as robot:
         robot.send_joints(_wire(left, start), t=0.0)
-        with pytest.raises(GuardRefused, match=r"path at sample 2/12 .*torso_belly"):
+        with pytest.raises(GuardRefused, match=r"path at sample 3/14 .*torso_belly"):
             robot.send_joints(_wire(left, target), t=0.02)
     posts = executor.client.posts("/v1/arm/move_joints_both")
     assert len(posts) == 1, "the refused command must not reach the daemon"
@@ -437,12 +437,12 @@ def test_the_first_streamed_command_is_swept_from_measured_feedback(
     the daemon's does."""
     from manipulation_kit.executors.firmware import GuardRefused
     left = np.degrees(d1_arm.home("left"))
-    start = [40.0, 76.0, -106.0, -103.0, -56.0, 14.0, -40.0]
-    target = [30.0, 83.0, -96.0, -115.0, -60.0, 4.0, -44.0]
+    start = [12.0, 71.0, -108.0, -124.0, -83.0, 23.0, 36.0]
+    target = [-1.0, 84.0, -122.0, -113.0, -75.0, 26.0, 23.0]
     executor.client._apply({"a": list(left), "b": start})
     executor.kin = d1_arm
     with executor as robot:
-        with pytest.raises(GuardRefused, match="path at sample 2/12"):
+        with pytest.raises(GuardRefused, match="path at sample 3/14"):
             robot.send_joints(_wire(left, target), t=0.0)
     assert executor.client.posts("/v1/arm/move_joints_both") == []
 
