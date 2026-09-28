@@ -6,6 +6,29 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.19.0 — unreleased
+
+### The swept-path guard: the daemon's single-shot joint-move check, in the kit
+
+- New `GuardedArm.swept_path_violation(q_from, q_to, *, step_deg=1.0)` /
+  `swept_path_ok(...)`. Both take both logical sides [rad]. They sample the
+  straight joint-space line at `safety.SWEPT_PATH_STEP_DEG` (1 deg) per joint,
+  target included, and apply `posture_violation` and the motion guard at every
+  sample, with the daemon's escape rule for a line that starts inside a margin.
+  This matches d1-firmwared's `move_joints_both` path guard; the reasons use
+  the daemon's wording ("path at sample k/n (arm B J1=...): [...]").
+- New pure helpers `manipulation_kit.arms.kinematics.swept_sample_count` and
+  `swept_path_samples`, and `CLEARANCE_STAGES`, for a batched mirror (the sim)
+  to reproduce the check sample for sample.
+- `FirmwareExecutor.send_joints` (the `stream` transport) runs the check
+  before every `move_joints_both`. A command whose line crosses a margin raises
+  the new `GuardRefused` and is not sent. `FirmwareExecutor(kin=...)` names the
+  model it checks against (default: the kit's own).
+- `docs/guard-README.md`: the three guard layers (planner knots, per-send
+  endpoint, swept path) and which one the sim mirrors.
+- Tests: `tests/arms/test_swept_path.py`, and two new stream tests in
+  `tests/executors/test_firmware.py`.
+
 ## 0.18.1 — unreleased
 
 Comments and docs only: every rule the kit states now carries its technical

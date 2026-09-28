@@ -132,6 +132,24 @@ WORKSPACE: Dict[str, Tuple[float, float]] = {
 #: rejected, so a lower value costs tracking speed instead of freezing.
 MAX_JOINT_STEP_RAD = 0.25
 
+#: Largest per-joint step [deg] between two checked samples on the straight
+#: joint-space line of a single-shot joint move. d1-firmwared checks
+#: ``move_joint`` / ``move_joints`` / ``move_joints_both`` this way before it
+#: writes anything (``d1fw-core`` ``arm_joint_move.rs``,
+#: ``MAX_SAMPLE_STEP_DEG``; the ``arm_move_joints_both`` operation's own
+#: description: "the straight joint-space path from both arms' current
+#: feedback pose to the two targets, sampled at 1 degree per joint").
+#: :meth:`~manipulation_kit.arms.kinematics.GuardedArm.swept_path_violation`
+#: samples the same line at the same spacing, so the kit refuses a command
+#: locally for the reason the daemon would.
+SWEPT_PATH_STEP_DEG = 1.0
+
+#: How much closer [m] than at the start a clearance stage may read before a
+#: path that STARTS inside a margin counts as moving deeper. The daemon's
+#: ``DEEPER_TOLERANCE_M``: float noise in the distance computation, not
+#: feedback jitter.
+SWEPT_PATH_DEEPER_TOL_M = 1e-4
+
 # --------------------------------------------------------------------------- #
 # IK solver
 # --------------------------------------------------------------------------- #

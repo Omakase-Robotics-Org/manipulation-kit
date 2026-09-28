@@ -55,6 +55,21 @@ class RateRefused(FirmwareUnavailable):
     """
 
 
+class GuardRefused(FirmwareUnavailable):
+    """A streamed joint command the daemon's path guard would refuse, refused
+    HERE, before it was sent.
+
+    ``POST /v1/arm/move_joints_both`` checks the straight joint-space line
+    from the arms' pose to the targets at 1 degree per joint and refuses the
+    command when any sample is inside a guard margin. The kit runs the same
+    check (:meth:`~manipulation_kit.arms.kinematics.GuardedArm.swept_path_violation`)
+    first, so the refusal names the sample, the moving joints and the pair
+    under its margin instead of arriving as the daemon's HTTP 409, and nothing
+    is written. It is a planning problem (two knots whose endpoints are clean
+    but whose line is not), never a reason to retry the same command.
+    """
+
+
 class TrajectoryInvalid(FirmwareUnavailable):
     """A trajectory the kit built breaks the document's own ``Waypoint``
     contract ("seconds, starting at zero, strictly increasing"; finite

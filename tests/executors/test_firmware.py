@@ -402,6 +402,51 @@ def test_a_lunge_is_refused_rather_than_clipped(executor):
     assert MAX_COMMAND_STEP_DEG == pytest.approx(np.degrees(0.25))
 
 
+def _wire(left_deg, right_deg) -> np.ndarray:
+    """A 16-dim wire vector [rad] from each logical side's 7 degrees."""
+    from manipulation_kit.executor import JOINT_SLICE
+    q = np.zeros(16)
+    q[JOINT_SLICE["left"]] = np.radians(left_deg)
+    q[JOINT_SLICE["right"]] = np.radians(right_deg)
+    return q
+
+
+def test_a_step_whose_line_crosses_a_margin_is_refused_before_it_is_sent(
+        executor, d1_arm):
+    """The daemon's ``move_joints_both`` checks the straight line at 1 deg per
+    joint and refuses before writing; the kit now refuses the same command
+    first, naming the sample. Both endpoints here pass the endpoint verdict
+    (``tests/arms/test_swept_path.py`` pins the pair)."""
+    from manipulation_kit.executors.firmware import GuardRefused
+    left = np.degrees(d1_arm.home("left"))
+    start = [12.0, 71.0, -108.0, -124.0, -83.0, 23.0, 36.0]
+    target = [-1.0, 84.0, -122.0, -113.0, -75.0, 26.0, 23.0]
+    executor.kin = d1_arm
+    with executor as robot:
+        robot.send_joints(_wire(left, start), t=0.0)
+        with pytest.raises(GuardRefused, match=r"path at sample 3/14 .*torso_belly"):
+            robot.send_joints(_wire(left, target), t=0.02)
+    posts = executor.client.posts("/v1/arm/move_joints_both")
+    assert len(posts) == 1, "the refused command must not reach the daemon"
+    assert posts[0]["b"] == pytest.approx(start)
+
+
+def test_the_first_streamed_command_is_swept_from_measured_feedback(
+        executor, d1_arm):
+    """Nothing sent yet: the line starts where the arms REPORT they are, as
+    the daemon's does."""
+    from manipulation_kit.executors.firmware import GuardRefused
+    left = np.degrees(d1_arm.home("left"))
+    start = [12.0, 71.0, -108.0, -124.0, -83.0, 23.0, 36.0]
+    target = [-1.0, 84.0, -122.0, -113.0, -75.0, 26.0, 23.0]
+    executor.client._apply({"a": list(left), "b": start})
+    executor.kin = d1_arm
+    with executor as robot:
+        with pytest.raises(GuardRefused, match="path at sample 3/14"):
+            robot.send_joints(_wire(left, target), t=0.0)
+    assert executor.client.posts("/v1/arm/move_joints_both") == []
+
+
 def test_a_streamed_plan_reaches_its_exact_endpoint(executor, d1_arm, observe):
     """R4, the measured half. A real Grasp streamed with the old clamp ended
     6.5283 deg from its final target at the worst joint while the report said
