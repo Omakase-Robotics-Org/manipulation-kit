@@ -8,7 +8,7 @@ argument: ``probe(direction=down)`` measures a table, ``probe(direction=forward)
 a wall, ``press(target="button", direction=forward)`` a button. ``touch_down``
 does not exist and must not.
 
-POSITION MODE ONLY (Shu, 2026-09-22). The contact leg is a position-commanded
+POSITION MODE ONLY. The contact leg is a position-commanded
 straight line watched for a torque rise; no compliant or torque arm mode is
 set, and nothing here is a commanded force. ``contact_nm`` / ``force_nm`` are
 MEASURED thresholds (:class:`~.types.ContactCriterion`).

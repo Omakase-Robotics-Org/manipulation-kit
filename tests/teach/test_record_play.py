@@ -288,7 +288,7 @@ def test_a_guard_only_finding_warns_before_playing_and_is_not_a_refusal(
 
 
 def test_play_has_no_guard_relaxation(daemon, robot_factory):
-    """Shu 2026-09-23 21:14Z: the clearance guard is always on. Neither play
+    """The clearance guard is always on. Neither play
     nor play_waypoints takes a guard, and no upload carries one."""
     import inspect
 

@@ -192,7 +192,7 @@ def test_a_non_grasping_hand_shape_is_the_descriptions_closedness():
 # --------------------------------------------------------------------------- #
 
 def test_the_standoff_clears_a_110mm_cup_rim(d1_arm):
-    """C.4, Shu's "too close for a 5 cm object". The old standoff was 80 mm
+    """C.4: the old standoff was too close for a 5 cm object. It was 80 mm
     from the GRASP POINT, which a descent lifts only to 32 mm over the table,
     and the tips reach 29 mm past the tool point: 51 mm up, under a 110 mm
     rim. The standoff is now the gap between the tips and the object's

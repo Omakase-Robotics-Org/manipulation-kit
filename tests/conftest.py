@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-#: the agent examples live OUTSIDE the wheel (Shu, 2026-09-19), so the suite
+#: the agent examples live OUTSIDE the wheel, so the suite
 #: that tests them puts that directory on the path rather than importing a
 #: package that deliberately does not exist
 EXAMPLES = REPO / "examples" / "agent"

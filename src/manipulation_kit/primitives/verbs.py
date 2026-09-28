@@ -1615,7 +1615,7 @@ class Nudge(Primitive):
     """A bounded correction: "a little to the right", and nothing more.
 
     This is the escape hatch that makes the primitive vocabulary usable for a
-    vision-driven model — Shu's own reason for wanting 6-DoF. Translation
+    vision-driven model — the reason the vocabulary offers 6-DoF. Translation
     survives because it is well conditioned and its feedback is legible.
     Rotation does not: the only turn on offer is ``dyaw``, clamped to +-15 deg
     ABOUT THE APPROACH AXIS, the one rotation with an obvious visual meaning —
@@ -1902,7 +1902,7 @@ class GoHome(Primitive):
 class Pour(LearnedPrimitive):
     """Tip the held source over the target. THE BODY IS A LEARNED POLICY.
 
-    Shu, 2026-09-19: 「Pour は ACT」. The kit owns the parts a policy does not:
+    Pouring is an ACT policy, not a planned motion. The kit owns the parts a policy does not:
     the preconditions (is the source actually held, is the target there, is the
     frame fresh) and the MEASURED verifier. :meth:`plan` refuses with
     ``learned_policy_required`` — that is not a stub, it is the contract: a

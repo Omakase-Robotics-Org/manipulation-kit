@@ -183,4 +183,3 @@ the code that actually runs on the robot. A consumer's differing number is a
 divergence to be corrected, not an alternative to be reconciled; omakase-core's
 `0.05` joint-step clamp against master's `0.25` was the first instance, and it
 was simply wrong. If the gate fails because *master* moved, follow master.
-(Ruling by Shu, 2026-07-29.)

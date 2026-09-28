@@ -1,7 +1,7 @@
 """examples.agent — the part that knows a MODEL exists. Nothing else.
 
-OUTSIDE THE WHEEL, on purpose. Shu, 2026-09-19: 「agent 的なのは examples フォルダ
-に切り離す」 — the agent-shaped code is split out into examples.
+OUTSIDE THE WHEEL, on purpose: the agent-shaped code is one way of using the
+kit, so it lives in examples rather than in the wheel.
 
 What moved INTO the wheel on 2026-09-19, after the review: the offer gate and
 its result types, the canonical argument metadata and the JSON Schema export,

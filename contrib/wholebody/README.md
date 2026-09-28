@@ -2,7 +2,7 @@
 
 Sunday-Robotics-style "everything flows" coordination for D1: the policy/
 teleop commands an EE pose, and a whole-body controller decides how much
-arm / lift / base to use. Phases (Shu, 2026-07-17):
+arm / lift / base to use. Phases:
 
 - **P0** — lift (0.30 m prismatic) in the IK chain → `bench_p0.py`
 - **P1** — differential-drive base in the chain (nonholonomic) → `demo_p1.py`

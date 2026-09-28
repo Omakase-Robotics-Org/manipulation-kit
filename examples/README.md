@@ -18,8 +18,8 @@ checkout and from an installed wheel alike.
 
 ## `agent/` — a model driving the kit
 
-Outside the wheel on purpose (Shu, 2026-09-19: 「agent 的なのは examples フォルダ
-に切り離す」). Everything a customer has to TRUST — the gate, the schema, the
+Outside the wheel on purpose: agent-shaped code is an example of using the
+kit, not part of it. Everything a customer has to TRUST — the gate, the schema, the
 task planner, the loop, the operator policy, the robot, the trace — is in the
 wheel (`manipulation_kit.primitives.{offer,schema,reach}`,
 `manipulation_kit.agent`); these files are the part that knows a model exists.

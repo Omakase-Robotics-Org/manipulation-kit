@@ -173,8 +173,8 @@ code 2 on a collision-triggered stop.
   pulls feedback out of `Arm::info()`.
 - **Config**: `config/collision_thresholds.json` — per-joint `torque_threshold_nm`,
   `tracking_error_threshold_deg`, `trigger_cycles`, `baseline_warmup_cycles`.
-  Conservative defaults: per Shu, a false-trigger-stop beats missing a real
-  collision. Flags: `--collision-threshold-scale N` (>1 less sensitive, <1 more),
+  Conservative defaults: they are set to stop on a false trigger rather
+  than miss a real collision. Flags: `--collision-threshold-scale N` (>1 less sensitive, <1 more),
   `--no-collision-guard`, `--collision-config PATH`.
 - **Calibration (REAL ROBOT ONLY — cannot be tuned without hardware):**
   1. Play a few normal safe gestures with the guard effectively off (e.g.

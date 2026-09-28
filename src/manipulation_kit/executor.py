@@ -3,8 +3,7 @@
 The protocol lives here, in the wheel, because a plan is meaningless without a
 statement of what running one means. The implementations that touch hardware do
 not — with one deliberate exception, :mod:`manipulation_kit.executors.firmware`,
-which is behind an optional extra and documented as the exception (Shu,
-2026-09-19). Everything in THIS module is pure: two test doubles and a walker.
+which is behind an optional extra and documented as the exception. Everything in THIS module is pure: two test doubles and a walker.
 
 Why a protocol and not a base class: on the robot the implementation is the
 d1-firmwared REST client holding an arm lease; in sim it is the Isaac env
@@ -1065,7 +1064,7 @@ class Executor(Protocol):
         a contact leg is never played blind.
 
     MODES: position only. This kit commands position control and nothing
-    else (Shu, 2026-09-22); ``JointState.mode`` is READ so a latched
+    else; ``JointState.mode`` is READ so a latched
     controller stops the run (:data:`CONTROLLER_FAULT`), never set.
     """
 

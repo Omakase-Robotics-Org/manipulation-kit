@@ -121,8 +121,8 @@ chassis mast boot and was extended 29 mm downward to stay over it — height
 116 → 145 mm, torso-local Z 50…195 mm, lower lip back at world Z 563 mm with
 11.7 mm of clearance over the boot; no collision or inertial geometry involved.
 A longer, full-stroke variant (Z −275…195 mm, 470 mm) that kept the lip
-permanently inside the AMR shell was tried on 2026-09-16 and rejected by Shu
-the next day as a visual regression — it hides the telescoping motion — so do
+permanently inside the AMR shell was tried on 2026-09-16 and rejected as a
+visual regression — it hides the telescoping motion — so do
 not lengthen the sleeve again. See `docs/ROBOT_BACK_VISUALS.md`.
 
 **Measured** by Shu with a tape on d1-3, 2026-09-16, at `lift = 0`,

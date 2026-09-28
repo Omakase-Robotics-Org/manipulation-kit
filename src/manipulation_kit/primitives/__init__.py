@@ -1,9 +1,8 @@
 """manipulation_kit.primitives — the verbs, and the contract every verb keeps.
 
-Shu, 2026-09-19: 「approach とか少し高次のスキルも manip kit に実装するわけで、
-それは agent の中ではなくて、普通に primitive の中に入れる」 — approach and the
-other higher-level skills belong in the kit as ordinary primitives, not inside
-an agent package. So they are here, usable with no model anywhere near them:
+Approach and the other higher-level skills belong in the kit as ordinary
+primitives, not inside an agent package: they are robot capabilities, and a
+model is only one of the things that drives them. So they are here, usable with no model anywhere near them:
 
     from manipulation_kit.arms import get_arm_kinematics
     from manipulation_kit.primitives import Grasp

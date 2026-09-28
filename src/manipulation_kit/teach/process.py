@@ -17,7 +17,7 @@ Order: trim the release sag -> lock wrist -> smooth -> reduce -> build (real
 elapsed time per keyframe) -> HOME in / HOME out -> [trim idle] -> limit
 dynamics (gesture_record's, plus the two HOME rules below).
 
-HOME RULES (Shu, 2026-09-23), for a hand-guided take:
+HOME RULES, for a hand-guided take:
 
 * **The start sag is not motion.** When the brakes open at HOME the arm drops
   for a moment before the operator carries it. :func:`settle_index` finds the
@@ -128,7 +128,7 @@ class SpeedPolicy:
     trajectory at 350 deg/s per step and the omakaseos player validates no
     speed at all.
 
-    Default: 150 deg/s, 600 deg/s^2 (Shu 2026-09-23 21:09Z, "option c"): a
+    Default: 150 deg/s, 600 deg/s^2: a
     taught motion plays back at the speed it was recorded at, and only what
     is faster than that is stretched. d1-2 take2 is the reason: its J1 swing
     peaked ~130 deg/s after smoothing, and gesture_record's legacy caps
@@ -192,7 +192,7 @@ class SpeedPolicy:
         return cls(**values)
 
 
-#: the default ceiling (Shu 2026-09-23: taught speed plays as taught)
+#: the default ceiling (taught speed plays as taught)
 DEFAULT_SPEED = SpeedPolicy()
 #: gesture_record's ``limitJointDynamics`` caps, the library's repaired speed
 LEGACY_SPEED = SpeedPolicy(25.0, 120.0)

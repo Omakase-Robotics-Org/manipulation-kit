@@ -816,8 +816,8 @@ BACK_FISHEYE_XYZ = (-0.1093, 0.0015, 0.4822)
 # Starting torso_core at the lip therefore removes no keep-out at q_lift = 0,
 # and at most the top 3 mm of the band at full 0.30 m extension (band world z
 # 0.813 .. 0.892 against the pole top at 0.889); in a simulator the old box
-# collided with the AMR cover on every episode, which is how it was found.
-# Shu approved shrinking the keep-out on 2026-09-20 (d1-isaaclab #55 review).
+# collided with the AMR cover on every episode, which is how it was found
+# (d1-isaaclab #55).
 TORSO_SLEEVE_LIP_M = 0.079
 
 BODY_BOXES = [

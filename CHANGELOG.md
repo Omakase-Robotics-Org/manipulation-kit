@@ -6,6 +6,12 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.18.1 — unreleased
+
+Comments and docs only: every rule the kit states now carries its technical
+reason instead of naming who asked for it. Nothing a consumer imports behaves
+differently; the bump exists because `src/` docstrings changed.
+
 ## 0.18.0 — unreleased
 
 **The guard's model is the real robot's shape, and its margins are real air.**
@@ -229,7 +235,7 @@ accessor set, removed in 0.17.
 
 ### Teach: hand-taught omakaseos gestures over d1-firmwared (`mkit-teach`)
 
-Shu, 2026-09-23: the teaching tool that produced the omakaseos gesture CSVs
+The teaching tool that produced the omakaseos gesture CSVs
 (d1-sdk `gesture_record`, driven by omakase-core's `/d1_teach` panel) stopped
 working at the firmwared migration: playback was ported to daemon
 trajectories, teach was not, and `gesture_record` cannot reach the arm while
@@ -657,7 +663,7 @@ The model believed it, let go, and spent its remaining turns.
 
 #### BREAKING: the kit owns the calibration schema and reader; the robot holds the values
 
-Decision (Shu, 2026-09-23): no per-robot number ships in this wheel. Until now
+No per-robot number ships in this wheel. Until now
 d1-2's measured profile was committed as `description/profiles/d1-2.json` and
 installed as package data; every robot would have needed a kit release to
 change its own camera. It now lives ON THE ROBOT, in one file in the new
@@ -1335,7 +1341,7 @@ and **not yet validated on hardware**: `docs/probe-hardware-trial.md` is the
 d1-2 gate (zero controller errors; table z within +-3 mm of the tape over 10
 probes) and it has not been run.
 
-- **Position mode only** (Shu, decision 3). A contact leg is a position-
+- **Position mode only.** A contact leg is a position-
   commanded straight line WATCHED for a joint-torque rise; no arm mode is
   set, no torque or force is ever commanded.
 - **`primitives.types.ContactCriterion`** (measured thresholds:
@@ -1396,8 +1402,7 @@ probes) and it has not been run.
   interval). A hit is the existing **`guard_reject`** refusal with the
   obstacle and link NAMED in `detail`, `attempted=("obstacle:<name>",
   "link:<link>")`, `stage="scene"`, and **`residual_m` = how far the link is
-  inside the clearance that obstacle requires** (Shu decision 4: refuse, with
-  the number). A dead end whose straight line died on the body guard while
+  inside the clearance that obstacle requires** (refuse, and say by how much). A dead end whose straight line died on the body guard while
   the routes around it died on the scene says so too. An arm that STARTS
   inside an envelope may move out of it, never deeper.
 - **Margins are per obstacle** (`ClearancePolicy`): a probed surface
@@ -1666,8 +1671,7 @@ probes) and it has not been run.
 
 **A head frame is now an observation, and NO PER-SCENE CALIBRATION GOES INTO
 IT.** The first cut of this work took the table's width and the x of its far
-edge as inputs. Shu's answer on reading it was
-「中途半端にこっちでシーンごとの calib をするのは消したい」, and he is right:
+edge as inputs, and that was wrong:
 those are measurements of the furniture, they are stale the moment the wagon is
 nudged, and a pipeline that needs them has moved the tape measure rather than
 put it away.
@@ -2034,7 +2038,7 @@ world z 0.389 .. 0.889), which encloses `torso_core`'s X ±45 / Y ±55 footprint
   0.30 m extension the top 3 mm of the removed band (world 0.889 .. 0.892)
   are no longer covered by any box. Every simulator that loaded the old box
   saw it collide with the AMR cover on every episode (d1-isaaclab carried a
-  local carve for exactly this, now retired). Approved by Shu 2026-09-20.
+  local carve for exactly this, now retired).
 * `dist/d1-collision` and `dist/d1-wholebody-gripper` re-exported.
 
 ### Downstream
@@ -2112,8 +2116,8 @@ camera plate (0.1053 kg) and wrist camera (0.03 kg) are hardware on top of the
 **The `[firmware]` extra no longer depends on an unpublished package.** It used
 to name `d1fw-client`, which lives in a repository nobody outside the org can
 `pip install` by name, so the README carried an interim "install this git URL
-first" step and CI could not test the extra at all. Shu's decision on
-2026-09-19: do what `d1-inference` does — ship a generated client, and check it
+first" step and CI could not test the extra at all. The fix is what
+`d1-inference` does — ship a generated client, and check it
 against the daemon's live OpenAPI document at connect time, regenerating on the
 spot when they differ.
 

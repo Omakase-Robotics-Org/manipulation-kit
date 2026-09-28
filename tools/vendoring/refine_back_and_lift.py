@@ -230,7 +230,7 @@ for host in hosts:
         # DO NOT lengthen this to span the whole stroke.  A (0.010,0.0016,-.040),
         # (0.122,0.162,.470) variant — lower lip buried in the AMR shell at every
         # lift value, which is what a real telescoping tube does — was authored
-        # and REJECTED by Shu on 2026-09-17: the long cover reads as a solid slab
+        # and REJECTED as a visual regression: the long cover reads as a solid slab
         # and the visible telescoping gap disappears as the lift rises.  The
         # 11 mm gap over the boot at lift 0 is wanted.
         box('Moving lift sleeve',(0.010,0.0016,.1225),(0.122,0.162,.145),.003)

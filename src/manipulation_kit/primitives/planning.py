@@ -467,7 +467,7 @@ def _scene_check(kin: Kin, side: str, q_from, q_to, wp: Waypoint, *,
     caller that already routes around a guard rejection (the via search) and
     every model that already reads one keeps working — with the obstacle
     NAMED and ``residual_m`` = how far the link is inside the clearance that
-    obstacle requires (Shu decision 4: refuse, and say by how much).
+    obstacle requires (refuse, and say by how much).
     """
     report = kin.scene.swept_ok(kin, side, q_from, q_to)
     if report.ok:

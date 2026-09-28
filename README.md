@@ -633,7 +633,7 @@ if the transport has one and otherwise builds the kit's own guarded `d1/arm`.
 
 `manipulation_kit.executors.firmware` is **the one module in this repository
 that opens a socket** — a deliberate exception to the promise at the top of
-this file, decided by Shu on 2026-09-19, so that lease handling, mode entry and
+this file, so that lease handling, mode entry and
 the rate clamp exist once instead of in every consumer. It is behind the
 optional `[firmware]` extra — whose dependencies are the runtime deps of a
 **generated** client this package ships and re-checks against the daemon's own

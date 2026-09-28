@@ -313,7 +313,7 @@ class SettleStep:
 class ContactCriterion:
     """When to call it contact. MEASURED, never commanded.
 
-    Position mode only (Shu, 2026-09-22): a contact leg is a position-
+    Position mode only: a contact leg is a position-
     commanded motion WATCHED for resistance, not a compliant or torque-mode
     motion. So every number here is a threshold on what the transport
     MEASURES, and none of them is ever sent to a controller.

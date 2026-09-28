@@ -27,7 +27,7 @@ are announced, through ``announce``, before anything moves.
 
 The daemon does NOT follow that rule: it checks every sample of the upload
 against its own always-on guard (its realistic geometry and margins,
-d1-firmware PR #106; Shu 2026-09-23 21:14Z) and refuses the upload on the
+d1-firmware PR #106) and refuses the upload on the
 same violations ``check`` warns about. No ``guard`` field is sent.
 """
 from __future__ import annotations

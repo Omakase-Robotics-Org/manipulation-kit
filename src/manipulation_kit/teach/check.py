@@ -38,7 +38,7 @@ a failure): the :class:`~manipulation_kit.guard.MotionGuard` clearances —
 body keep-out, chest keep-out, arm-arm and same-arm self-collision. A taught
 gesture is poses an operator guided the arm through BY HAND, so the guard's
 capsule model is not the arbiter of whether those poses are reachable without
-contact (Shu, 2026-09-23). Each finding names the closest distance, the
+contact. Each finding names the closest distance, the
 frames and when it happened.
 
 What that does NOT change: d1-firmwared runs its own guard (the same model

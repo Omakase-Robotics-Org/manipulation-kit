@@ -3,8 +3,8 @@
 :mod:`~manipulation_kit.executors.firmware.ensure` produces a *generated* client
 — the whole daemon surface, one typed operation per route, a model for every
 schema — from the daemon's own OpenAPI document. **Everything this package
-reads from d1-firmwared comes through that client** (Shu's firmware access
-principle, 2026-09-22): the request is built by the generated operation, the
+reads from d1-firmwared comes through that client**, so the daemon's document
+is the only description of its surface: the request is built by the generated operation, the
 answer is decoded by the generated model, and a field the document does not
 carry is ``None`` here — never a key read by hand, never a kit constant
 standing in for a number the daemon publishes.

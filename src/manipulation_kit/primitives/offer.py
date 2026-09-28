@@ -1,7 +1,7 @@
 """The gate: an unreachable candidate never becomes a word the model reads.
 
-**Why this is in the wheel.** Shu's rule is "primitives are kit capabilities,
-not agent internals" (design note 7.1), and *what can this robot do right now*
+**Why this is in the wheel.** Primitives are kit capabilities, not agent
+internals (design note 7.1), and *what can this robot do right now*
 is a capability question, not a model question. A script, a teleop assist, a
 collection macro and a learned pipeline all want it, and none of them wants a
 JSON tool schema. The bit that IS model-specific — ranking, menu capping,

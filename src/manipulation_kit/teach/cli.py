@@ -70,7 +70,8 @@ def next_steps(step: str, *, ok: bool = True, take: Optional[Path] = None,
                dry_run: bool = False, arms: Optional[str] = None) -> List[str]:
     """The command(s) an operator should run after ``step``, absolute paths
     filled in — the fix when ``ok`` is False. Every subcommand ends by
-    printing these (Shu 2026-09-23: "tell me the next command in the log")."""
+    printing these, so the operator reads the next step off the log instead of
+    working it out."""
     name_arg = name or "<name>"
     lines: List[str] = []
     if unrecovered:
