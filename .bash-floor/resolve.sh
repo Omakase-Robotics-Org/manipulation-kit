@@ -4,8 +4,8 @@
 #
 # macOS ships /bin/bash 3.2.57, and 3.2 ends every fatal shell error of a
 # `set -u` script that has an EXIT trap with status 0: a smoke that crashed half
-# way read as green. The suite therefore requires bash >= 4.4 (operator ruling
-# 2026-09-27). This file is the rule, and it yields exactly one candidate, which
+# way read as green. The suite therefore requires bash >= 4.4. This file is the
+# rule, and it yields exactly one candidate, which
 # is then accepted or refused -- it never searches several bashes by version:
 #
 #   1. WS_BASH declared   -> that path. It must be absolute, executable and a
