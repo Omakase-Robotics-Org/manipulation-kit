@@ -49,7 +49,7 @@ kit installs only what a consumer imports:
 * ``examples/`` — runnable scripts: gesture generation and preview,
   click-to-move IK, and ``examples/agent/``: the offer gate, the schema
   exports, the decision trace and two runnable model loops. Agent-shaped code
-  is deliberately NOT in the wheel (Shu, 2026-09-19) — the primitives are a
+  is deliberately NOT in the wheel — the primitives are a
   robot capability, and driving them with a model is one way of using it.
 * ``tools/vendoring/`` — re-import CAD from a vendor drop. Needs the private
   assets repository; see its README.

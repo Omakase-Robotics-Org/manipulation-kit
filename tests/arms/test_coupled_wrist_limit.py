@@ -1,6 +1,6 @@
 """The D1 wrist roll J7 reaches less far the more the wrist is pitched (J6).
 
-Measured by hand on d1-2, 2026-09-22 23:37-23:44Z (Shu): the hand, camera
+Measured by hand on d1-2, 2026-09-22 23:37-23:44Z: the hand, camera
 plate and cables catch on the J6 link, so |J7| stops at 65 deg with J6 = 30
 deg and at 39 deg with J6 = 55 deg, the same for either sign. The box in
 ``home_pose.json`` (J6 +/-60, J7 +/-90) let the live Approach of 22:42Z solve

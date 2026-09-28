@@ -16,8 +16,9 @@ driven on hardware.
 THE REFERENCE IMPLEMENTATION IS ``dx-vr-teleop`` ``master``. Where this library
 and another consumer disagree about a value or a behaviour, master wins — it is
 the code that runs on the robot. A consumer's differing number is a divergence to
-be corrected, not an alternative to be reconciled. (Ruling by Shu, 2026-07-29, on
-``MAX_JOINT_STEP_RAD``; stated generally because it settles the next one too.)
+be corrected, not an alternative to be reconciled. (``MAX_JOINT_STEP_RAD`` was
+the first case; the rule is stated generally because it settles the next one
+too.)
 """
 
 from __future__ import annotations
@@ -118,7 +119,7 @@ WORKSPACE: Dict[str, Tuple[float, float]] = {
 #: hundredths of a rad per joint per tick; an IK branch flip is >= 0.5, so this
 #: is the guard against a discontinuous re-configuration reaching the arm.
 #:
-#: RESOLVED 2026-07-29 (Shu): 0.25 is correct. dx-vr-teleop ran 0.25
+#: RESOLVED 2026-07-29: 0.25 is correct. dx-vr-teleop ran 0.25
 #: (``backends.MAX_JOINT_STEP``, hardware-driven) while omakase-core #94's
 #: ``safety.py`` independently chose 0.05 — a 5x difference in a safety clamp,
 #: arrived at because the value was copied rather than shared. That 0.05 was a

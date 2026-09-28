@@ -80,7 +80,7 @@ SOURCE_SHA256 = "3d2ba4b71da48057b21ed86cf8cee6574ce8aa4a8d979ee7aaaf36ac00caea6
 # --------------------------------------------------------------------------
 CAM_TILT_RAD = math.radians(15.0)
 CAM_MOUNT_XYZ_M = (0.0, 0.079236, 0.014543)
-PLATE_THICKNESS_M = 0.002          # MEASURED (d1-3, Shu, callipers, 2026-09-16)
+PLATE_THICKNESS_M = 0.002          # MEASURED (d1-3, callipers, 2026-09-16)
 CAD_PLATE_THICKNESS_M = 0.008      # what the V2.0 mesh models; the arm rises to z = 18.6 mm
 
 #: The gripper-end plate (夹爪端) that fills the REMAINING 8.5 mm of the
@@ -203,7 +203,7 @@ HEADER_NOTE = """
        edit, re-run the script. Provenance: descriptions/README.md.
 
        The plate (arm-end connection plate V2.0) is the first 2 mm of the
-       flange stack: Shu measured it at 2 mm with callipers on d1-3
+       flange stack: it measures 2 mm with callipers on d1-3
        (2026-09-16), against the 8 mm of the CAD drop. Behind it sits a 7 mm
        spacer block, also measured, which is why the gripper body starts
        at 9 mm. The plate MESH here still models the CAD's 8 mm disc; only a

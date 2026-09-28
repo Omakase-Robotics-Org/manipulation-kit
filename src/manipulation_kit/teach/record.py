@@ -16,7 +16,7 @@ client (:class:`~manipulation_kit.executors.firmware.FirmwareClient`) and the
 kit's :class:`~manipulation_kit.executors.firmware.FirmwareExecutor` (lease,
 position mode, trajectories, arrival barrier).
 
-The capture, step by step (Shu's operator flow, 2026-09-23; order fixed after
+The capture, step by step (the operator flow; order fixed after
 the first live run on d1-2, see docs/teach.md "Order of operations"):
 
 0. **Entry** (the executor, ``recover_on_entry`` — teach's explicit choice,
@@ -48,8 +48,8 @@ the first live run on d1-2, see docs/teach.md "Order of operations"):
        process — is what closes them if this process dies. **The arm drops
        under gravity unless someone holds it**; the CLI prints the contract
        and takes ONE typed ``HOLDING`` per session, for all taught arms.
-       Shu, 2026-09-23: moving the arm in compliance was hard; brakes-off is
-       the teaching default.
+       Brakes-off is the teaching default: moving the arm in compliance is
+       hard.
    ``compliance`` (``--compliance``, gesture_record's own)
        ``POST /v1/arm/{side}/mode`` ``force_compliance`` with
        ``ForceComplianceConfig::xAxisCompliance(2.0)``: force direction

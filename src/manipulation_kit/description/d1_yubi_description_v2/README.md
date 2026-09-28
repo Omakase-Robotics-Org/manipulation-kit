@@ -1,6 +1,6 @@
 # d1_yubi_description_v2
 
-Visual (mesh) URDF of the **D1 dual-arm + YUBI hands**, v2 — vendored from Shu's
+Visual (mesh) URDF of the **D1 dual-arm + YUBI hands**, v2 — vendored from the
 2026-07 "D1 arm M6-S with yubi" v2 zip. A `dual_base` → `torso_column` (CAD-measured
 primitives) with two mirror-mounted **D1 arm M6-S 7-DoF arms** (`Base_{L,R}` →
 `Link1..7_{L,R}` → `TCP_Link_{L,R}`, STL meshes) and a **YUBI** parallel-jaw hand on

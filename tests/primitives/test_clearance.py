@@ -494,7 +494,7 @@ def test_no_env_var_feeds_the_support_clearance():
 GUARD_SHA256 = {
     "__init__.py": "8603dd5a7ccd069f486433927be106819b8f2fc1019ca6d556dd0d9364100385",
     "geometry.py": "a09c5c06adb038ec63de4f13aa7d3aa03e6651d02823d26db602e16d7ce050a1",
-    "guard.py": "d9aae8e35367f80647774e4bd9b20a0b31206b1e85c1d0c719336cb3565370d4",
+    "guard.py": "91a433c5929a974ec1663936eb0274052b6c0a690822e2598c57d7911813aa86",
     "urdf_model.py": "a0b9f5b46e88a4bae993ce4a07b80add66cb41a385f005490c3ebd0c807d05a3",
 }
 

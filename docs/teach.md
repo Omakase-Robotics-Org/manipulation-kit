@@ -150,8 +150,8 @@ stretched …` の行も出る。`[saved]` と check の時間はどちらも**�
 350 deg/s を見るだけ、omakaseos のプレーヤーは何も見ない）。`process.SpeedPolicy`
 の 1 か所で、export（延ばす）・check（判定）・play（事前チェック）が同じものを使う。
 
-* 既定 **150 deg/s・600 deg/s²**（Shu 2026-09-23「案 c」: 教えた速さで再生し、
-  それより速い部分だけ延ばす）。旧 gesture_record の 25 deg/s・120 deg/s² は
+* 既定 **150 deg/s・600 deg/s²**（教えた速さで再生し、それより速い部分だけ
+  延ばす）。旧 gesture_record の 25 deg/s・120 deg/s² は
   `process.LEGACY_SPEED`。
 * 使った上限は CSV に `# mkit-teach: max_joint_vel=… max_joint_acc=…`（延ばした
   場合は `speed_stretch=…` も）として残り、**check と play はその CSV 自身の上限で
@@ -179,7 +179,7 @@ mkit-teach check ~/teach/wave_motion.csv --ascii
   export し直せば直る）。
 * **警告だけ（exit 0）**: MotionGuard の胴体・胸・両腕間・自己干渉。最も近づいた
   距離・フレーム名・時刻を出す。教示は手で実際に通った姿勢なので、キットの
-  カプセルモデルは裁かない（Shu 2026-09-23）。ただし**デーモンは同じ違反で再生を
+  カプセルモデルは裁かない。ただし**デーモンは同じ違反で再生を
   拒否する**（下記「ガード」）。
 
 `--ascii` は関節ごとの帯グラフ。動画は `python examples/preview_gesture.py
@@ -229,7 +229,7 @@ CSV は入れない。キットは omakaseos の場所を知らないので、`g
 
 ### ガード: デーモンの干渉検査は常に有効
 
-Shu 2026-09-23 21:14Z: 干渉ガードはどこでも常に有効。`play` は
+干渉ガードはどこでも常に有効。`play` は
 `POST /v1/arm/trajectory/start` に `guard` フィールドを**送らない**。再生だけ
 干渉検査を緩める経路は無い（d1-firmware PR #106 でデーモン API からも削除）。
 
@@ -366,7 +366,7 @@ because the player changed:
    with peaks of exactly 25.0 deg/s and ≤ 120 deg/s² (gesture_record's caps,
    `process.LEGACY_SPEED`), and `limit_joint_dynamics` at those caps is a
    no-op on all 30 (they were repaired to them). The teach default ceiling
-   is 150 deg/s, 600 deg/s² since 2026-09-23 (Shu), so those files pass it
+   is 150 deg/s, 600 deg/s² since 2026-09-23, so those files pass it
    with room to spare.
 
 Also: timestamps are real (the daemon read is not perfectly periodic), the raw

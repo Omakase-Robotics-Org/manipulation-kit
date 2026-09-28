@@ -16,8 +16,8 @@ registered here verbatim, with lengths converted m -> mm for this schema.
 
 What this supersedes, and what is still open
 --------------------------------------------
-The previous registration was TCP 210 mm / COM z 120 mm 【measured — Shu
-2026-07-18】 and mass 0.380 kg 【weighed at the robot — Shu 2026-07-29,
+The previous registration was TCP 210 mm / COM z 120 mm 【measured
+2026-07-18】 and mass 0.380 kg 【weighed at the robot 2026-07-29,
 registered 2026-07-31; the weighing story is preserved below】. Three
 things about the change are NOT yet documented and should be settled with
 the engineer before anyone treats these numbers as measurements:
@@ -39,7 +39,7 @@ the engineer before anyone treats these numbers as measurements:
 Mass history (kept because the method matters)
 ----------------------------------------------
 0.359 kg came from the hand's own spec/CAD. Weighing the assembly actually
-hanging off the flange gave **~380 g** (Shu 2026-07-29): +21 g, ~6 %,
+hanging off the flange gave **~380 g** (2026-07-29): +21 g, ~6 %,
 which is mounting screws, the adapter face and a connector pigtail.
 Gravity compensation has to hold up the assembly, not the catalogue part.
 That 6 % gap is what mounting hardware looks like; see
@@ -55,7 +55,7 @@ from ...toolconfig import ToolConfig
 #: supplied by the arm engineer 2026-08-08.
 REGISTERED_MASS_KG = 0.4
 
-#: Mass of the hand as weighed at the robot, 2026-07-29 (Shu): ~380 g.
+#: Mass of the hand as weighed at the robot, 2026-07-29: ~380 g.
 #: Kept as the measurement RECORD (the scale beats the spec sheet); the
 #: 2026-08-08 registration rounds it up by 20 g for reasons not yet
 #: documented — see the module docstring.
@@ -66,7 +66,7 @@ _PROVENANCE = (
     "supplied by the arm engineer 2026-08-08 (compliance-mode fix on "
     "d1-1): TCP 100 mm, mass 0.4 kg, COM z 40 mm, inertia "
     "0.0006/0.0008/0.0002. Supersedes the measured set of 2026-07 "
-    "(TCP 210 mm / COM z 120 mm, Shu 2026-07-18; 0.380 kg weighed, Shu "
+    "(TCP 210 mm / COM z 120 mm, 2026-07-18; 0.380 kg weighed, "
     "2026-07-29) — the reference-point change behind the TCP/COM shift "
     "is not yet documented. Inertia is a cylinder-order ESTIMATE pending "
     "load identification."

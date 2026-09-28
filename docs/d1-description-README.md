@@ -121,11 +121,11 @@ chassis mast boot and was extended 29 mm downward to stay over it — height
 116 → 145 mm, torso-local Z 50…195 mm, lower lip back at world Z 563 mm with
 11.7 mm of clearance over the boot; no collision or inertial geometry involved.
 A longer, full-stroke variant (Z −275…195 mm, 470 mm) that kept the lip
-permanently inside the AMR shell was tried on 2026-09-16 and rejected by Shu
-the next day as a visual regression — it hides the telescoping motion — so do
+permanently inside the AMR shell was tried on 2026-09-16 and rejected as a
+visual regression — it hides the telescoping motion — so do
 not lengthen the sleeve again. See `docs/ROBOT_BACK_VISUALS.md`.
 
-**Measured** by Shu with a tape on d1-3, 2026-09-16, at `lift = 0`,
+**Measured** with a tape on d1-3, 2026-09-16, at `lift = 0`,
 floor-referenced, ±2 mm. `132.2 cm` where the spec says `129.3 cm`, and the
 3 cm appears at the top of the AMR:
 
@@ -163,7 +163,7 @@ reads.
 | YUBI finger boxes | bounding boxes of the `yubi_description` finger collision STLs |
 | Torso / chassis boxes | **measured 2026-07-01 from the D1 CAD STEP** "omakase D1 assy PKG 260607" (`~/Downloads/cad/omakase_D1_assy_PKG_260607.stp`, byte-identical to `d1-face/d1_face.step`): subtree extraction + OCP/XCAF located bounding boxes + z-band slicing of the body shell |
 | Floor height, lift travel, neck PTU, head box | **vendor body URDF `urdf2026072302`** (SolidWorks export 2026-07-23; Drive `D1/URDF/urdf2026072302.zip`) |
-| Lift zero (`dual_base` 0.513 m above the floor) | vendor chain **plus a measured +29 mm** — the built robot's AMR cover is taller than the CAD. Tape on d1-3, Shu 2026-09-16, ±2 mm; see **The AMR cover offset** |
+| Lift zero (`dual_base` 0.513 m above the floor) | vendor chain **plus a measured +29 mm** — the built robot's AMR cover is taller than the CAD. Tape on d1-3, 2026-09-16, ±2 mm; see **The AMR cover offset** |
 | Gripper mount, jaw joints, boxes, masses | **vendor CAD** in dx-manipulator `hands/d1/parallel_gripper/descriptions/gripper.urdf` (received 2026-07-29) — see the GRIPPER block in the generator |
 
 ### The 16.5 mm void at the flange — half real now, half still to ask for
@@ -189,7 +189,7 @@ which shows up as a visible gap between the arm and the gripper in any render.
 The frames are **not** wrong. `gripper_<S>_base_link`'s origin sits at 0.00 mm
 from the flange frame on both arms, and the 16.5 mm is real hardware:
 
-**MEASURED, 2026-09-16** (Shu, d1-3, callipers), along the tool axis outward
+**MEASURED, 2026-09-16** (d1-3, callipers), along the tool axis outward
 from the Marvin arm flange face — this supersedes every CAD figure below:
 
 | band | measured |
@@ -273,7 +273,7 @@ Not modelled, and it matters if you use this file as a keep-out volume:
   registering the extra ~108 g is a controller-facing decision not taken here.
 - **gripper-end plate still missing.** The camera plate covers z = 0 … 8 mm of
   the CAD's 16.5 mm clearance; the rest is the assumed box above.
-- No internal components. Shu weighed the gripper at **1.5 kg** (2026-07-29),
+- No internal components. The gripper weighs **1.5 kg** (scale, 2026-07-29),
   confirming `ToolConfig::defaultGripper()`; the vendor CAD claimed 0.3279 kg
   because it is a shell-only export. The URDF carries the measured 1.5 kg, with
   the missing 1.1721 kg of motor / gearbox / leadscrew / PCB on `base_link` as
@@ -329,12 +329,12 @@ no rotation is needed anywhere downstream.
   come from that mesh — an axis-aligned bar's AABB carries no rotation — so it
   is the **design value from the head-part CAD section**: the D435 mounting
   face is 15° below horizontal, aiming the field of view down at the
-  workspace (Shu, 2026-09-17). That supersedes the 17.25° previously read off
+  workspace (2026-09-17). That supersedes the 17.25° previously read off
   the D435 slab normal (0.955, 0.005, −0.297) in the 2026-08-23 full-robot
   CAD. **It is a property of the head PART, not of the D1**, so it is a named
   hardware revision rather than a literal — `rev1` (15°) is what d1-1, d1-2
   and d1-3 wear and what the committed URDFs describe; `rev2` (20°) is the
-  part the next units are built with (Shu, 2026-09-20). See
+  part the next units are built with (2026-09-20). See
   `manipulation_kit.description.HEAD_CAMERA_TILT_DEG` and
   `mkit-urdf build --hardware-revision`.
 - *Wrists (YUBI).* The YUBI camera housing is a 35 × 32 × 42 mm box centred at

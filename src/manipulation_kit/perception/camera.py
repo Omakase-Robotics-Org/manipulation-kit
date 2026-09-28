@@ -1,8 +1,6 @@
 """A pinhole camera as a model: pixels <-> base-frame points, and nothing else.
 
-THE ONLY CALIBRATION IN THIS PACKAGE IS ROBOT-SPECIFIC. That is the rule
-Shu set on 2026-09-22 after reading the first version of this work
-(「中途半端にこっちでシーンごとの calib をするのは消したい」): a number that
+THE ONLY CALIBRATION IN THIS PACKAGE IS ROBOT-SPECIFIC. The rule: a number that
 belongs to *this robot* — a camera's intrinsics, its neck joints, its lift,
 the head part's mount tilt, the wrist plate — is a calibration and may live
 here. A number that belongs to *the scene in front of it* — how wide that

@@ -121,7 +121,7 @@ def test_stepped_keyframes_get_home_around_them():
     assert rows[1][1] == pytest.approx(pose[1]) and rows[2][1] == pytest.approx(pose[1])
 
 
-# -- HOME rules for a hand-guided take (Shu, 2026-09-23) --------------------- #
+# -- HOME rules for a hand-guided take ------------------------------------- #
 from manipulation_kit.teach import check_gesture  # noqa: E402
 from manipulation_kit.teach.gesture_csv import sample_path  # noqa: E402
 from manipulation_kit.teach.process import (HOME_SPEED_DEG_S,  # noqa: E402

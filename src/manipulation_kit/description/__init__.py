@@ -45,10 +45,10 @@ WHOLEBODY_GRIPPER_URDF = ROOT / "d1" / "d1_wholebody_gripper.urdf"
 #: robot that will exist.
 #:
 #: * ``"rev1"`` — 15 deg. The head part on d1-1, d1-2 and d1-3, read off the
-#:   head-part CAD section Shu supplied 2026-09-17 and confirmed by Shu
-#:   2026-09-20 as by design rather than as a build tolerance.
+#:   head-part CAD section (2026-09-17); 15 deg is the design value, not a
+#:   build tolerance.
 #: * ``"rev2"`` — 20 deg. The head part the NEXT units are built with
-#:   (Shu, 2026-09-20). No robot wears it yet, so no URDF is committed for it;
+#:   (2026-09-20). No robot wears it yet, so no URDF is committed for it;
 #:   generate one with ``mkit-urdf build --hardware-revision rev2``.
 #:
 #: NOMINAL, AND NOT A SUBSTITUTE FOR CALIBRATION. What a simulator or a

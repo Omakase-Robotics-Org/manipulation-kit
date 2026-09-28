@@ -1,7 +1,7 @@
 """``--executor firmware | isaac | kinematic``: one loop, the executor a flag.
 
-Shu, 2026-09-22 18:02Z: 「これは実機で動かす前提だけど、まず sim で動かしたい、
-というケースはフラグで isaac を指定できるようにはしておきたい」. The kit does
+The loop is written for the real robot, and the same loop runs in sim by
+selecting ``isaac`` with a flag — nothing else changes. The kit does
 not import d1-isaaclab; d1-isaaclab registers itself (an entry point in the
 ``manipulation_kit.executors`` group). Here a FAKE registered executor stands in
 for it, in-tree, by all three routes: in-process registration, an entry point,

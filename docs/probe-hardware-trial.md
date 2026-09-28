@@ -4,7 +4,8 @@ The contact verbs (`Probe`, `Press`, `manipulation_kit.primitives.contact`) and
 the executor capability under them (`move_until`) were built and tested
 against kinematic mirrors and fake transports only. **Nothing in the kit has
 touched a real surface yet.** This page is the procedure that decides whether
-they may: Shu's hardware gate (decision 2, 2026-09-22).
+they may: the contact verbs run on a real robot only after this hardware gate
+passes.
 
 | gate | acceptance |
 |---|---|

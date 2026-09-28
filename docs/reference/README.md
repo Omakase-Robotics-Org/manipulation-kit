@@ -13,8 +13,8 @@ What deliberately did **not** come with it: the C++ wrapper, the examples,
 guard are `exp--d1-firmware`'s job now.
 
 **Redaction.** The arm vendor's name and model designation were removed from
-this copy on 2026-09-10, along with every other occurrence in the repository
-(Shu, CTO: the public kit does not name the arm vendor). Only comment prose
+this copy on 2026-09-10, along with every other occurrence in the repository,
+because the public kit does not name the arm vendor. Only comment prose
 changed — every number, type and function here is still the header's, which is
 what `test_safety_zones_export.py` reads.
 

@@ -6,8 +6,8 @@ and the scene file. This file decodes the image, parses flags, and picks a
 detector — that is all, and ``tests/perception`` is where the numerics are
 pinned.
 
-The rule it obeys (Shu, 2026-09-22 — 「中途半端にこっちでシーンごとの calib を
-するのは消したい」): ROBOT-specific calibration is allowed — the head camera's
+The rule it obeys (a scene number is stale the moment the furniture moves):
+ROBOT-specific calibration is allowed — the head camera's
 intrinsics, the neck joints, the lift. SCENE-specific numbers are not inputs:
 no table width, no far-edge x, no table height. ``--table-width`` (a known
 length, solves the height) and ``--table-z`` (declares it) are optional; with

@@ -1,6 +1,6 @@
 """The example is a prompt and a call; everything it must TRUST is in the wheel.
 
-``examples/agent`` is outside the wheel (Shu, 2026-09-19) and customers read
+``examples/agent`` is outside the wheel and customers read
 it. Until 0.16.0 its anti-drift test asserted only that three files did not
 EXIST, and it passed through every patch of 2026-09-22: eight environment
 variables of operator policy, five gates, two candidate sweeps. These are the

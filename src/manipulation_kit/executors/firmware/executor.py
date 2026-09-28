@@ -963,7 +963,7 @@ class FirmwareExecutor:
                    **_ignored) -> ContactReport:
         """Play a contact leg on the daemon, watch the torque, cancel on contact.
 
-        POSITION MODE ONLY (Shu, 2026-09-22): nothing here sets a mode or a
+        POSITION MODE ONLY: nothing here sets a mode or a
         torque. The leg is uploaded as an ordinary guarded trajectory
         (``arm.arm_trajectory_start``: the daemon re-checks every sample
         against its own motion guard), the MOVING arm's generated
@@ -1450,8 +1450,8 @@ class FirmwareExecutor:
         the job is polled to completion, and any way out that is not
         ``completed`` cancels it. The daemon still refuses a first knot more
         than 3 degrees from feedback and re-guards every sample — clearance
-        included, always (Shu 2026-09-23: the guard is on everywhere; no
-        ``guard`` field is sent).
+        included, always (the guard is on everywhere; no ``guard`` field is
+        sent, so there is no request that could relax it).
 
         Transport completion is not arrival — follow with :meth:`wait_arrived`.
         """

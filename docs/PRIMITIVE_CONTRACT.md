@@ -164,8 +164,8 @@ not a stub: a consumer holding an executor that can run the policy handles that
 reason by running it, and one that cannot reports it as the reason the verb is
 unavailable.
 
-`Pour` is the first, and the reason the split exists (Shu, 2026-09-19:
-「Pour は ACT」). Its executor lives in `d1-inference`, with the checkpoint: it
+`Pour` is the first, and the reason the split exists: its body is an ACT
+policy. Its executor lives in `d1-inference`, with the checkpoint: it
 cannot live in the kit, which has no model runtime, and it cannot live in
 `omakase-core`, which must not depend on `d1-inference`.
 

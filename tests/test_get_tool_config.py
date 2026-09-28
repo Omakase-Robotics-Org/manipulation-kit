@@ -41,7 +41,7 @@ def test_dh116s_tool_config_values():
 
 def test_parallel_gripper_registers_the_measured_tcp():
     # TCP 129 mm is the flange-to-pad-TIP distance MEASURED on d1-3
-    # 2026-09-16 (Shu, callipers). It supersedes the 136 mm that d1-sdk
+    # 2026-09-16 (callipers). It supersedes the 136 mm that d1-sdk
     # ToolConfig::defaultGripper() hardcoded and that was only ever checked
     # against the vendor CAD's own 143.5 mm jaw tips.
     # Mass/COM are unchanged and stay that way: the 1.5 kg was confirmed on a

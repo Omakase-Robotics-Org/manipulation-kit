@@ -147,17 +147,15 @@ changes, and the guard is unaffected. The authoring constant is the
 shipped OBJ carries the same edit in `manipulation-kit-assets` PR #5, restored
 by PR #6.
 
-### Rejected: full-stroke insertion (2026-09-17)
+### Rejected: full-stroke insertion
 
 A longer sleeve was tried and **rejected — do not retry it.** The variant put
 the bottom cap at torso-local Z **−275 mm** (470 mm tall,
 `box('Moving lift sleeve',(0.010,0.0016,-.040),(0.122,0.162,.470),.003)`), so
 the lower lip stayed buried in the opaque AMR shell at every lift value: world
 Z 238 mm at lift 0, still 13.3 mm below the boot top at lift 300. That is what
-a real telescoping outer tube does, and it looks worse. Shu, 2026-09-17:
-
-> これは劣化してる。隙間があるままの方がまし
-> ("this is a regression; leaving the gap is better")
+a real telescoping outer tube does, and it looks worse — a visual regression,
+not an improvement.
 
 The long cover reads as a solid slab rather than a telescoping one, and the
 visible gap that shows the lift moving disappears. The 11 mm clearance over the

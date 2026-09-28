@@ -9,7 +9,7 @@ C++ (``ToolConfig::defaultGripper``), so mounting a DH116S raised
 controller errors (unmodeled mass/lever → ARM_ERR_RequestSensorMode) or
 silently mis-compensated gravity.
 
-Per Shu's abstraction rule the per-model physical data lives HERE, next to
+The per-model physical data lives HERE, next to
 the hand it describes (``hands/<maker>/<model>/toolconfig.py`` exposing
 ``tool_config() -> ToolConfig``), and robot stacks resolve it through
 :func:`manipulation_kit.hands.get_tool_config` — the same seam as ``get_hand`` /

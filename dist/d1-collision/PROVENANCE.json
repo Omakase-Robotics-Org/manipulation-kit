@@ -2,13 +2,13 @@
   "absent_external": [],
   "absent_optional": [],
   "assets_repo": null,
-  "exported": "2026-09-23",
+  "exported": "2026-09-28",
   "files": {
-    "d1.urdf": "5d80adf0d1d0f715029b3425aab6d42c4dbf2a57b5066cb718ded6caf848cb0e"
+    "d1.urdf": "5306444d6274748953060dadeac66f338bc09b6aba4979e4ea329a3af21a868f"
   },
   "flavour": "d1_collision",
   "mesh_prefix": "",
-  "source_commit": "17a98d94e8d600e4f44c6c15ec4f991c0a87b1e9",
+  "source_commit": "86f3fe97184801aee9247c155c821ba137e95228",
   "source_dirty": false,
   "source_path": "src/manipulation_kit/description/",
   "source_repo": "Omakase-Robotics-Org/manipulation-kit",

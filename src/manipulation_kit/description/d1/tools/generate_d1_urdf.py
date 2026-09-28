@@ -88,7 +88,7 @@ PROVENANCE OF NUMBERS
   how it was derived.
 * AMR cover height offset (+29 mm at the lift joint origin, i.e. the only
   height in this file that is NOT from CAD): MEASURED with a tape on the
-  physical d1-3 (Shu, 2026-09-16, lift at 0, ±2 mm) — the built robot's AMR
+  physical d1-3 (2026-09-16, lift at 0, ±2 mm) — the built robot's AMR
   cover is taller than the CAD models it and lifts the whole upper body.
   See the AMR COVER HEIGHT OFFSET block for the four floor-referenced frames
   it was fitted to and their residuals.
@@ -221,7 +221,8 @@ CAP_RADII = {"TCP_Link": 0.03}
 # mesh's ends. The housing cover-plate rims and the tube ends are NOT
 # covered: they stick out by up to ~24 mm (Link4), recorded per link in
 # arm_capsule_fit.json and pinned by tests/guard/test_arm_capsule_fit.py.
-# Shu accepted that on 2026-09-23 over ~200 extra capsules per arm; a true
+# That residual is accepted: covering it takes ~200 extra capsules per arm,
+# too many for the guard's call rate; a true
 # cylinder primitive may replace the housing capsules later.
 ARM_CAPSULES = {
     "Base": (
@@ -301,7 +302,7 @@ FINGER_BOX = {
 # is ZERO — no adapter thickness is modelled, and the flange stack (2 mm camera
 # plate + 7 mm spacer) lives inside the gap the CAD shell leaves.
 #
-# MEASURED TOOL GEOMETRY (d1-3, 2026-09-16, Shu, callipers).  Along the tool
+# MEASURED TOOL GEOMETRY (d1-3, 2026-09-16, callipers).  Along the tool
 # axis outward from the Marvin arm flange face:
 #
 #      0 …   2 mm   camera mounting plate       (CAD drop said 8 mm)
@@ -376,7 +377,7 @@ GRIPPER_JAW_VELOCITY = 0.05
 GRIPPER_BODY_BOXES = [
     ("gripper_spacer", (-0.0285, -0.0285, 0.002), (0.0285, 0.0285, 0.009),
      "MEASURED 7 mm spacer block between the camera plate and the gripper "
-     "body (d1-3, Shu, callipers, 2026-09-16); footprint is still the CAD's "
+     "body (d1-3, callipers, 2026-09-16); footprint is still the CAD's "
      "own mount-plate square, which bounds a round collar or a square plate"),
     ("gripper_body", (-0.0285, -0.0285, 0.009), (0.0285, 0.0285, 0.051),
      "MEASURED 42 mm actuator body: motor, gearbox, leadscrew, mount plate"),
@@ -420,7 +421,7 @@ GRIPPER_JAW_BOX = {
     "r": ((-0.029, -0.019, 0.032), (0.029, 0.019, 0.072)),
     "l": ((-0.029, -0.019, -0.072), (0.029, 0.019, -0.032)),
 }
-# MASS.  Shu weighed the gripper at the robot 2026-07-29: 1.5 kg per side,
+# MASS.  The gripper was weighed at the robot 2026-07-29: 1.5 kg per side,
 # confirming the value this SDK has always registered (defaultGripper()).  The
 # vendor CAD claimed 0.3279 kg — a shell-only export, light by 4.6x; its implied
 # densities (1709 kg/m3 body, 998 kg/m3 jaws) are default material values, not a
@@ -513,7 +514,7 @@ GRIPPER_PLATE_INERTIA = (1.6509e-04, -1.4487e-07, -3.0461e-09,
 GRIPPER_PLATE_BOXES = [
     ("camera_plate_disc", (-0.036, -0.036, 0.0), (0.036, 0.036, 0.002),
      "arm-end plate V2.0: MEASURED 2 mm flange disc, the first 2 mm of the "
-     "flange stack (d1-3, Shu, callipers, 2026-09-16). The CAD drop and the "
+     "flange stack (d1-3, callipers, 2026-09-16). The CAD drop and the "
      "committed camera_plate.STL both model an 8 mm disc; only the primitive "
      "follows the calliper, because replacing a mesh needs a CAD drop"),
     ("camera_plate_arm", (-0.021, 0.049, 0.0), (0.021, 0.0999, 0.033),
@@ -579,7 +580,7 @@ DUAL_BASE_IN_SLIDER = (-0.0016171, 0.0, -0.032)   # from the arm-mount match
 # above the cover — column, torso, both arms, neck, head — is simply carried
 # up by that difference.  Nothing inside the upper body changes shape.
 #
-# MEASUREMENT (Shu, 2026-09-16, tape on the physical d1-3, lift at 0,
+# MEASUREMENT (2026-09-16, tape on the physical d1-3, lift at 0,
 # floor-referenced, ±2 mm).  The robot stands 1322 mm to the top of its head
 # where the spec says 1293 mm, and the 29 mm appears at the top of the AMR:
 #
@@ -721,7 +722,7 @@ HEAD_TILT_BOX = ((-0.0861, -0.1269, -0.1235), (0.1147, 0.0581, 0.0665))
 # unit has no nameplate).
 CAMERA_OPTICAL_RPY = (0.0, math.pi / 2.0, 0.0)   # link +x -> optical +z
 #: Downward pitch of the head camera, radians.  DESIGN VALUE, read off the
-#: head-part CAD section Shu supplied on 2026-09-17: the D435 module is
+#: head-part CAD section (2026-09-17): the D435 module is
 #: bolted to a face 15 deg below horizontal, deliberately, so that the field
 #: of view is aimed down at the workspace rather than at the far wall.  This
 #: SUPERSEDES the 17.25 deg previously read off the D435 slab normal
@@ -743,7 +744,7 @@ CAMERA_OPTICAL_RPY = (0.0, math.pi / 2.0, 0.0)   # link +x -> optical +z
 #: Applied about head_link +z (the lateral axis; head_link +y points down).
 #:
 #: PER HARDWARE REVISION, not a bare literal.  d1-1..d1-3 wear the 15 deg head
-#: part; the next units are built at 20 deg (Shu, 2026-09-20).  The table lives
+#: part; the next units are built at 20 deg (2026-09-20).  The table lives
 #: in :mod:`manipulation_kit.description` so a consumer composing its own asset
 #: can ask for a revision by name; `--hardware-revision` selects one here and
 #: the committed URDFs are the default revision.
@@ -816,8 +817,8 @@ BACK_FISHEYE_XYZ = (-0.1093, 0.0015, 0.4822)
 # Starting torso_core at the lip therefore removes no keep-out at q_lift = 0,
 # and at most the top 3 mm of the band at full 0.30 m extension (band world z
 # 0.813 .. 0.892 against the pole top at 0.889); in a simulator the old box
-# collided with the AMR cover on every episode, which is how it was found.
-# Shu approved shrinking the keep-out on 2026-09-20 (d1-isaaclab #55 review).
+# collided with the AMR cover on every episode, which is how it was found
+# (d1-isaaclab #55).
 TORSO_SLEEVE_LIP_M = 0.079
 
 BODY_BOXES = [
@@ -832,7 +833,7 @@ BODY_BOXES = [
      "M260C smart speaker, front of chest - CAD bbox X+/-59.5 Y-100.3..-68 Z-64.5..54.5"),
     ("torso_belly",
      (-0.130, -0.110, 0.19), (0.135, 0.110, 0.44),
-     "_omakase body shell, belly band - MEASURED on the built robot (Shu, 2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45)"),
+     "_omakase body shell, belly band - MEASURED on the built robot (2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45)"),
     ("torso_shoulder_shell_exempt",
      (-0.126, -0.147, 0.44), (0.123, 0.153, 0.635),
      "body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out"),
@@ -1585,13 +1586,13 @@ def parallel_gripper(side, meshes=False, cameras=False):
     up = "+y up on both arms; _R takes the half turn" if side == "R" else "+y already up"
     s = (f"\n  <!-- D1 stock parallel gripper on arm {side} — vendor CAD via\n"
          f"       hands/d1/parallel_gripper, with the tool geometry MEASURED on\n"
-         f"       d1-3 2026-09-16 (Shu, callipers): pad root 71 mm, pad CENTRE\n"
+         f"       d1-3 2026-09-16 (callipers): pad root 71 mm, pad CENTRE\n"
          f"       100 mm (the jaw joints), pad TIP 129 mm (the registered TCP),\n"
          f"       58 mm pads, 64 mm maximum opening. The previous 108.5 mm\n"
          f"       centre and 136 mm TCP came from vendor CAD and a d1-sdk\n"
          f"       default carried over with it. base_link IS the tool flange, so\n"
          f"       the mount is TCP_Link with no translation ({up}).\n"
-         f"       Mass 1.5 kg MEASURED (Shu 2026-07-29); the CAD's own 0.3279 kg\n"
+         f"       Mass 1.5 kg MEASURED (2026-07-29); the CAD's own 0.3279 kg\n"
          f"       was a shell-only export. Per-link split is an estimate, the\n"
          f"       total and the assembly COM (68 mm) are not. -->\n")
     s += (f"  <joint name=\"{p}_flange\" type=\"fixed\">\n"

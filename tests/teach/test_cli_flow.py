@@ -231,8 +231,8 @@ def test_every_offline_subcommand_prints_next(tmp_path, no_tty, capsys):
 
 
 def test_export_prints_the_timing_breakdown_and_joint_ranges(tmp_path, no_tty, capsys):
-    """Shu 2026-09-23 21:51Z: "slower than I made it", "J7 was erased" —
-    both must be visible in export's own output."""
+    """A take that export slowed down, or a joint whose motion it flattened,
+    must both be visible in export's own output."""
     assert main(["export", str(_fast_take(tmp_path))]) == 0
     out = capsys.readouterr().out
     timing = next(l for l in out.splitlines() if l.startswith("timing: "))

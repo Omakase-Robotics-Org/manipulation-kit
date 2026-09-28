@@ -2,7 +2,7 @@
 
 Only the RIGHT-hand model (DH116S-R000-A1) ships from the vendor. A true
 left hand is its sagittal mirror image, NOT the right model reused/rotated
-(that reads as a right hand on the left arm — Shu 2026-07-16): reflection
+(that reads as a right hand on the left arm): reflection
 M = diag(-1, 1, 1) across the hand's local x = 0 plane produces
 opposite-chirality parts while preserving the command→flex convention
 (a reflection maps closing→closing). :func:`load_mjspec` therefore returns
