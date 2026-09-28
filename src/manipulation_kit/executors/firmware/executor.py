@@ -76,7 +76,8 @@ from ...executor import (ARRIVE_TIMEOUT_S, ARRIVE_TOL_RAD, BARRIER_FAILED,
                         MAX_TRAVEL, SIDES, TRANSPORT_ERROR, UNMEASURED,
                         ArrivalReport, ContactReport, ContactWatch, LiftState,
                         NeckState, RawState, RunReport, SettleReport,
-                        StrokeReport, ToolGate, WIRE_DIM, _final_arrival,
+                        StrokeReport, ToolGate, WIRE_DIM, _fallback_kinematics,
+                        _final_arrival,
                         arrive_labels, barrier_refusal, contact_kin,
                         contact_outcome, contact_report, controller_fault,
                         fault_refusal, hold_refusal, record_outcome,
@@ -89,7 +90,7 @@ from .client import (FAULT_KINDS, SETTLED_KINDS, UNFINISHED_KINDS, _word,
 from .client import lift_state as _lift_state
 from .client import neck_state as _neck_state
 from .errors import (ClientTimeout, FirmwareError,  # noqa: F401 - re-exported
-                     FirmwareUnavailable, LeasePreempted,
+                     FirmwareUnavailable, GuardRefused, LeasePreempted,
                      ModeUnconfirmed, OperationUnavailable, RecoverFailed,
                      RateRefused, TrajectoryInvalid)
 
@@ -306,6 +307,7 @@ class FirmwareExecutor:
                  client_policy: str = "auto",
                  client_cache_dir=None,
                  recover_on_entry: bool = False,
+                 kin=None,
                  announce: Callable[[str], None] = lambda line: None,
                  sleep=time.sleep, clock=time.monotonic):
         if transport not in ("trajectory", "stream"):
@@ -381,6 +383,11 @@ class FirmwareExecutor:
         #: command must stop and say so, not move it (``position_mode``).
         self.recover_on_entry = bool(recover_on_entry)
         self._announce = announce
+        #: the guarded arm model a streamed command's swept path is checked
+        #: against (:meth:`send_joints`). ``None`` = the kit's own, built on
+        #: the first streamed command; pass the model the plan was made with
+        #: when its guard is configured differently.
+        self.kin = kin
         #: what ``recover_on_entry`` did, one line per recovered arm
         self.entry_recoveries: List[str] = []
 
@@ -721,6 +728,7 @@ class FirmwareExecutor:
         self.renew()
         targets = {side: np.degrees(q[JOINT_SLICE[side]]) for side in SIDES}
         self._check_step(targets)
+        self._check_swept(targets)
         now = self._clock()
         if self._t0 is None:
             self._t0 = now
@@ -753,6 +761,36 @@ class FirmwareExecutor:
                     f"of the endpoint; re-plan with smaller knots, or upload "
                     f"the plan as a trajectory (the default transport), which "
                     f"stretches the TIME instead of shrinking the motion.")
+
+    def _check_swept(self, targets: Dict[str, np.ndarray]) -> None:
+        """Refuse locally what ``move_joints_both``'s path guard would refuse.
+
+        The daemon checks the straight line from the arms' FEEDBACK pose to
+        the targets at 1 degree per joint and refuses before writing; this is
+        the same line, the same spacing and the same verdict
+        (:meth:`~manipulation_kit.arms.kinematics.GuardedArm.swept_path_violation`),
+        so a refused command never reaches the wire and the reason names the
+        sample. The line starts at the LAST COMMAND this executor sent — in
+        position mode that is where the arm is heading, and reading feedback
+        would cost two state reads per 50 Hz tick — and at measured feedback
+        when nothing has been sent (first command, or after the lease was
+        lost). Where an arm lags its command the two starts differ; the
+        daemon's own check still stands behind this one.
+        """
+        if self._last_sent_deg:
+            start = {side: np.radians(self._last_sent_deg[side]) for side in SIDES}
+        else:
+            start = self.state().joints
+        kin = self.kin if self.kin is not None else _fallback_kinematics()
+        why = kin.swept_path_violation(
+            start, {side: np.radians(targets[side]) for side in SIDES})
+        if why is not None:
+            raise GuardRefused(
+                f"move_joints_both refused before sending: {why}. Both "
+                f"endpoints of a step can be clean while the straight line "
+                f"between them is not; re-plan with knots whose lines are "
+                f"clear, or upload the plan as a trajectory (the default "
+                f"transport), which the daemon re-checks at every sample.")
 
     def stream_schedule(self, plan: Plan) -> List[float]:
         """Plan time for every joint step, honouring the rate ceiling.

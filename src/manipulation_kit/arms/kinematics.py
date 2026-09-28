@@ -22,9 +22,10 @@ verified numerically against dx-vr-teleop, see
 from __future__ import annotations
 
 import threading
+import math
 from dataclasses import dataclass
-from typing import (Dict, Optional, Protocol, Sequence, Tuple,
-                    runtime_checkable)
+from typing import (Dict, List, Mapping, Optional, Protocol, Sequence,
+                    Tuple, runtime_checkable)
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -68,6 +69,66 @@ class IkResult:
 
     def __bool__(self) -> bool:      # so `if arm.solve_ee(...):` reads naturally
         return self.ok
+
+
+#: The guard's clearance stages, in the daemon's order (``CLEARANCE_STAGES``
+#: in ``d1fw-core``), each with the :class:`~manipulation_kit.guard.GuardReport`
+#: field that holds its minimum. The same-arm stage has its margin already
+#: subtracted in both implementations.
+CLEARANCE_STAGES: Tuple[Tuple[str, str], ...] = (
+    ("body", "min_body_clearance"),
+    ("chest keep-out", "min_chest_clearance"),
+    ("arm-arm", "min_arm_arm"),
+    ("self", "min_self_clearance"),
+)
+
+
+def swept_sample_count(q_from: Mapping[str, Sequence[float]],
+                       q_to: Mapping[str, Sequence[float]], *,
+                       step_deg: float = safety.SWEPT_PATH_STEP_DEG) -> int:
+    """How many samples the straight line ``q_from -> q_to`` is checked at.
+
+    ``max(1, ceil(largest joint delta / step_deg))`` over both arms, the target
+    included and the start not — d1-firmwared's ``sample_count``. Joints are
+    radians per logical side; the delta is taken in DEGREES, as the daemon
+    takes it, so both count the same samples for the same wire command.
+    """
+    if not (math.isfinite(step_deg) and step_deg > 0):
+        raise ValueError(f"step_deg must be finite and positive, got {step_deg!r}")
+    largest = max(float(np.max(np.abs(np.degrees(np.asarray(q_to[s], dtype=float))
+                                      - np.degrees(np.asarray(q_from[s], dtype=float)))))
+                  for s in sides.SIDES)
+    return max(1, int(math.ceil(largest / step_deg)))
+
+
+def swept_path_samples(q_from: Mapping[str, Sequence[float]],
+                       q_to: Mapping[str, Sequence[float]], *,
+                       step_deg: float = safety.SWEPT_PATH_STEP_DEG
+                       ) -> List[Dict[str, np.ndarray]]:
+    """The postures the swept-path check visits, in order: samples ``1..n`` of
+    the straight joint-space line, the target last and the start not.
+
+    Pure arithmetic, no guard: this is what a batched mirror (the sim's torch
+    guard) feeds its own verdict to reproduce
+    :meth:`GuardedArm.swept_path_violation` sample for sample.
+    """
+    n = swept_sample_count(q_from, q_to, step_deg=step_deg)
+    q0 = {s: np.asarray(q_from[s], dtype=float) for s in sides.SIDES}
+    q1 = {s: np.asarray(q_to[s], dtype=float) for s in sides.SIDES}
+    return [{s: q0[s] + (q1[s] - q0[s]) * (k / n) for s in sides.SIDES}
+            for k in range(1, n + 1)]
+
+
+def _moving_joints(q_from, q_to, q_at) -> str:
+    """``arm A J3=+42.0`` for every joint the move changes, at this sample —
+    the daemon's wording, in degrees and SDK arm names."""
+    out = []
+    for side in sides.SIDES:
+        for j in range(sides.JOINTS_PER_ARM):
+            if float(q_from[side][j]) != float(q_to[side][j]):
+                out.append(f"arm {sides.SDK_SIDE[side]} J{j + 1}="
+                           f"{math.degrees(float(q_at[side][j])):+.1f}")
+    return ", ".join(out)
 
 
 @runtime_checkable
@@ -217,6 +278,86 @@ class GuardedArm:
             qa = q if side == "left" else self.joints("left")
             qb = q if side == "right" else self.joints("right")
             return self._gate.ok(qa, qb)
+
+    def swept_path_violation(self, q_from: Mapping[str, Sequence[float]],
+                             q_to: Mapping[str, Sequence[float]], *,
+                             step_deg: float = safety.SWEPT_PATH_STEP_DEG
+                             ) -> Optional[str]:
+        """Why the straight joint move ``q_from -> q_to`` would be refused, or
+        ``None`` when every sample on it passes.
+
+        ``q_from`` / ``q_to`` hold BOTH logical sides [rad], because the guard
+        judges the two-arm posture and a two-arm move is checked as one line.
+        This is d1-firmwared's single-shot joint-move guard
+        (``move_joints_both``), applied with the kit's verdict:
+
+        * the target of every MOVING arm must pass :meth:`posture_violation`
+          (the joint box and the coupled limits; the daemon checks the box);
+        * the line is sampled at ``step_deg`` per joint
+          (:func:`swept_path_samples`), and each sample must pass
+          :meth:`posture_violation` for the moving arms and the collision
+          guard on the two-arm posture;
+        * the ESCAPE RULE: a line whose START already violates a guard margin
+          (an arm left there by hand guiding, a gesture, feedback noise on the
+          margin) is not refused for that alone — refusing it would leave the
+          arm unable to move out. Its samples pass while no clearance stage
+          (:data:`CLEARANCE_STAGES`) reads closer than at the start, within
+          :data:`~manipulation_kit.arms.safety.SWEPT_PATH_DEEPER_TOL_M`.
+
+        The endpoint verdict (:meth:`posture_violation` + :meth:`guard_ok`) is
+        this with one sample and no escape. The reason names the sample, the
+        moving joints there and the guard's violations, in the daemon's words.
+        """
+        q0 = {s: np.asarray(q_from[s], dtype=float).reshape(sides.JOINTS_PER_ARM)
+              for s in sides.SIDES}
+        q1 = {s: np.asarray(q_to[s], dtype=float).reshape(sides.JOINTS_PER_ARM)
+              for s in sides.SIDES}
+        moving = [s for s in sides.SIDES if not np.array_equal(q0[s], q1[s])]
+        for side in moving:
+            why = self.posture_violation(side, q1[side])
+            if why is not None:
+                return (f"target outside joint limits: arm "
+                        f"{sides.SDK_SIDE[side]} {why}")
+        samples = swept_path_samples(q0, q1, step_deg=step_deg)
+        n = len(samples)
+        start = None
+        for k, q in enumerate(samples, start=1):
+            for side in moving:
+                why = self.posture_violation(side, q[side])
+                if why is not None:
+                    return (f"path at sample {k}/{n} "
+                            f"({_moving_joints(q0, q1, q)}): arm "
+                            f"{sides.SDK_SIDE[side]} {why}")
+            if not self._gate.installed:
+                continue
+            rep = self._gate.report(q["left"], q["right"])
+            if rep.ok:
+                continue
+            if start is None:
+                start = self._gate.report(q0["left"], q0["right"])
+            inside = not start.ok
+            deeper = next((name for name, field in CLEARANCE_STAGES
+                           if getattr(rep, field) < getattr(start, field)
+                           - safety.SWEPT_PATH_DEEPER_TOL_M), None)
+            if inside and deeper is None:
+                continue
+            at = _moving_joints(q0, q1, q)
+            if inside:
+                field = dict(CLEARANCE_STAGES)[deeper]
+                return (f"path at sample {k}/{n} ({at}): the arm starts inside "
+                        f"the guard's margins ({list(start.violations)}) and "
+                        f"this moves the {deeper} clearance closer, "
+                        f"{max(getattr(start, field), 0.0):.3f} m -> "
+                        f"{max(getattr(rep, field), 0.0):.3f} m: "
+                        f"{list(rep.violations)}")
+            return f"path at sample {k}/{n} ({at}): {list(rep.violations)}"
+        return None
+
+    def swept_path_ok(self, q_from: Mapping[str, Sequence[float]],
+                      q_to: Mapping[str, Sequence[float]], *,
+                      step_deg: float = safety.SWEPT_PATH_STEP_DEG) -> bool:
+        """``True`` iff :meth:`swept_path_violation` finds nothing."""
+        return self.swept_path_violation(q_from, q_to, step_deg=step_deg) is None
 
     @staticmethod
     def _reaches(chain: KinematicChain, q, p, r: R, tuning: IkTuning) -> bool:
