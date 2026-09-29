@@ -110,9 +110,15 @@ def test_default_urdf_is_the_repo_description(model):
 
 
 def test_body_boxes_are_static_and_axis_aligned(model):
+    """Body geometry is axis-aligned boxes and VERTICAL cylinders (the
+    rounded belly edges) only: the two shapes the guard has distances for."""
     from manipulation_kit.guard.urdf_model import prim_to_world
     tfs = model.link_transforms({})
     for link in ("torso_column", "head_link", "chassis_link"):
         for prim in model.collisions[link]:
+            if prim.kind == "cylinder":
+                w = tfs[link].mul(prim.origin)
+                assert abs(abs(w.R[2][2]) - 1.0) < 1e-9, prim.name
+                continue
             kind, shape = prim_to_world(prim, link, tfs[link])
             assert kind == "aabb"

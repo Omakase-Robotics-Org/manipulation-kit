@@ -18,12 +18,12 @@ from manipulation_kit.arms.kinematics import (swept_path_samples,
                                               swept_sample_count)
 from manipulation_kit.arms.d1.arm import kinematics as mk
 
-#: Right-arm (arm B) endpoints [deg], both kit-clean (19.7 / 26.0 mm from
-#: torso_belly against the 5 mm margin), whose straight line brings Link5_L
-#: within 2 mm of torso_belly from its third sample. Found by random search
-#: around HOME; integer degrees so the fixture is exact.
-CROSSING_FROM_DEG = [12.0, 71.0, -108.0, -124.0, -83.0, 23.0, 36.0]
-CROSSING_TO_DEG = [-1.0, 84.0, -122.0, -113.0, -75.0, 26.0, 23.0]
+#: Right-arm (arm B) endpoints [deg], both kit-clean (18.2 / 43.2 mm from
+#: torso_belly against the 5 mm margin), whose straight line brings the hand
+#: envelope (the gripper) within 2 mm of torso_belly from its third sample.
+#: Found by random search around HOME; integer degrees so the fixture is exact.
+CROSSING_FROM_DEG = [31.0, 63.0, -100.0, -105.0, -63.0, -22.0, -20.0]
+CROSSING_TO_DEG = [44.0, 75.0, -95.0, -118.0, -53.0, -15.0, -10.0]
 
 
 @pytest.fixture(scope="module")
@@ -108,9 +108,9 @@ def test_clean_endpoints_whose_line_crosses_the_belly_margin_are_refused(kin):
     # ... and the swept path does not, in either direction
     why = kin.swept_path_violation(a, b)
     assert why is not None
-    assert why.startswith("path at sample 3/14 (")
-    assert "arm B J1=+9.2" in why and "arm A" not in why   # only moving joints
-    assert "Link5_L" in why and "torso_belly" in why
+    assert why.startswith("path at sample 3/13 (")
+    assert "arm B J1=+34.0" in why and "arm A" not in why   # only moving joints
+    assert "hand_envelope_L" in why and "torso_belly" in why
     assert not kin.swept_path_ok(a, b)
     assert not kin.swept_path_ok(b, a)
 
@@ -126,9 +126,9 @@ def test_a_clean_line_passes(kin):
 
 def test_an_unclean_target_is_refused_at_the_sample_it_enters(kin):
     home = _pose(kin)
-    deeper = dict(home, right=home["right"] + np.radians([0, 10, 0, 0, 0, 0, 0]))
+    deeper = dict(home, right=home["right"] + np.radians([0, 14, 0, 0, 0, 0, 0]))
     why = kin.swept_path_violation(home, deeper)
-    assert why.startswith("path at sample 9/10 (arm B J2=+96.4)"), why
+    assert why.startswith("path at sample 12/15 (arm B J2=+98.6)"), why
     assert "Link4_L" in why and "torso_belly" in why
 
 
@@ -142,15 +142,15 @@ def test_a_target_outside_the_joint_box_is_refused_before_sampling(kin):
 
 def test_the_escape_rule_lets_an_arm_inside_a_margin_move_out_but_not_deeper(kin):
     home = _pose(kin)
-    inside = dict(home, right=home["right"] + np.radians([0, 9, 0, 0, 0, 0, 0]))
+    inside = dict(home, right=home["right"] + np.radians([0, 12, 0, 0, 0, 0, 0]))
     assert not _endpoint_clean(kin, inside)
     # out, towards HOME: every sample is still inside at first, but no
     # clearance gets smaller than at the start
     assert kin.swept_path_violation(inside, home) is None
     # deeper: refused, and the reason says why the escape did not apply
-    deeper = dict(inside, right=inside["right"] + np.radians([0, 1, 0, 0, 0, 0, 0]))
+    deeper = dict(inside, right=inside["right"] + np.radians([0, 0.9, 0, 0, 0, 0, 0]))
     why = kin.swept_path_violation(inside, deeper)
-    assert why.startswith("path at sample 1/1 (arm B J2=+97.4): the arm starts "
+    assert why.startswith("path at sample 1/1 (arm B J2=+100.3): the arm starts "
                           "inside the guard's margins"), why
     assert "moves the body clearance closer" in why
 

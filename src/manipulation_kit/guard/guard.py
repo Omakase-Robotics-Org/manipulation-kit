@@ -11,7 +11,8 @@ collision_model.h} and config/safety_zones.json:
     SDK ArmSide 'B' = "_L" link tree = physical RIGHT arm (-y);
   * torso keep-out margin default 0.005 m, arm-arm min distance 0.045 m,
     self margin 0.0. The model is the real arm (tubes at the links' real
-    radii, the 97 mm J2/J4 housings) against the measured torso box, so a
+    radii, the 97 mm J2/J4 housings, the hand envelope) against the measured
+    torso (a box with rounded vertical edges: boxes + vertical cylinders), so a
     margin is real shell-to-shell air -- except at the housing cover-plate
     rims and tube ends, which stick out of the capsules by up to ~24 mm
     (recorded in description/d1/arm_capsule_fit.json).
@@ -22,8 +23,10 @@ sdk/TJ.py: OMAKASE_ARM_GUARD=1).
 
 Checks performed by MotionGuard.check():
   1. per-joint limits (from the URDF), clamped or rejected;
-  2. every arm capsule vs the torso/head/chassis keep-out boxes;
-  3. arm-arm minimum capsule distance;
+  2. every arm capsule (hand envelope included) vs the torso/head/chassis
+     keep-out shapes;
+  3. arm-arm minimum capsule distance (a hand envelope against the other
+     arm's structure at the body margin; hand against hand not checked);
   4. same-arm self collision (non-adjacent capsule pairs, with the
      "bridged by a short link" skip rule of collision_model.h).
 
@@ -41,6 +44,13 @@ TCP_Link) in d1.urdf: Link7 and everything proximal is arm structure and
 stays checked; TCP_Link plus the whole YUBI hand (palm / camera /
 fingers) is the tool side and is excluded.  See EE_LINK_PREFIXES /
 is_ee_body().
+
+The one exception is the HAND ENVELOPE (hand_envelope_<R|L>, on the flange):
+capsules standing for the tool the robots wear (the parallel gripper, its
+jaws over their whole travel, the wrist-camera plate). It is checked against
+the body shapes, the chest keep-out and the other arm's STRUCTURE, never
+against its own arm or the other hand — so the tool cannot be driven into
+the torso while bimanual contact stays allowed.  See is_hand_envelope().
 
 (Why: bimanual contact is intended — the hands are the working surfaces
 and must not be blocked from touching objects or each other; VR-teleop
@@ -72,6 +82,30 @@ DEFAULT_BODY_EXEMPT_LINKS = ("Base_R", "Base_L", "Link1_R", "Link1_L")
 # check so bimanual tasks (hands touching the world and each other) are not
 # blocked.  Link7 and everything proximal is arm STRUCTURE and stays checked.
 EE_LINK_PREFIXES = ("TCP_Link", "yubi")
+
+
+#: The guard model's HAND ENVELOPE links (``hand_envelope_<R|L>``, on the
+#: flange; see HAND_ENVELOPE in generate_d1_urdf.py): the tool's protrusion as
+#: capsules. Unlike the excluded EE bodies they ARE checked against the body
+#: boxes, the chest keep-out and the other arm's structure, so a jaw tip or
+#: the wrist-camera plate cannot be driven into the torso. They are never
+#: checked against the same arm (the hand is where its wrist is) or against
+#: the other hand (bimanual contact is intended).
+HAND_ENVELOPE_PREFIX = "hand_envelope"
+
+
+def is_hand_envelope(link: str) -> bool:
+    """True if ``link`` is a hand-envelope link (body / other-arm checks only)."""
+    return link.startswith(HAND_ENVELOPE_PREFIX)
+
+
+def body_name(part: str) -> str:
+    """The logical body a collision part belongs to: the text before ``__``.
+
+    A body the URDF cannot give as one primitive is a union of parts named
+    ``<body>``, ``<body>__<part>`` (the rounded belly band is three boxes and
+    four vertical cylinders); every reason names the body, not the part."""
+    return part.split("__", 1)[0]
 
 
 def is_ee_body(link: str) -> bool:
@@ -130,11 +164,55 @@ class GuardViolation(Exception):
         super().__init__(str(report))
 
 
+def _vertical_cylinder(prim, link, tf):
+    """``(name, cx, cy, r, z0, z1)`` of a body cylinder whose axis is vertical
+    in the root frame; anything else is refused (the guard has no general
+    cylinder distance)."""
+    w = tf.mul(prim.origin)
+    axis = (w.R[0][2], w.R[1][2], w.R[2][2])
+    if abs(abs(axis[2]) - 1.0) > 1e-6:
+        raise ValueError(f"body link {link} cylinder {prim.name} is not "
+                         f"vertical (axis {axis}); only vertical body "
+                         "cylinders are supported")
+    r, length = prim.size
+    return (prim.name, w.t[0], w.t[1], r,
+            w.t[2] - length / 2.0, w.t[2] + length / 2.0)
+
+
+def _exposed_bbox(cyl, boxes):
+    """The boxes that make up the part of cylinder ``cyl``'s bounding box
+    that none of ``boxes`` (its own body's) covers: box subtraction, one box
+    at a time. Everything of the cylinder outside those boxes lies inside
+    them."""
+    _, cx, cy, r, z0, z1 = cyl
+    pieces = [((cx - r, cy - r, z0), (cx + r, cy + r, z1))]
+    for blo, bhi in boxes:
+        nxt = []
+        for lo, hi in pieces:
+            if any(bhi[k] <= lo[k] or blo[k] >= hi[k] for k in range(3)):
+                nxt.append((lo, hi))
+                continue
+            lo, hi = list(lo), list(hi)
+            for k in range(3):
+                if lo[k] < blo[k]:
+                    cut = list(hi); cut[k] = blo[k]
+                    nxt.append((tuple(lo), tuple(cut)))
+                    lo[k] = blo[k]
+                if hi[k] > bhi[k]:
+                    cut = list(lo); cut[k] = bhi[k]
+                    nxt.append((tuple(cut), tuple(hi)))
+                    hi[k] = bhi[k]
+        pieces = [(lo, hi) for lo, hi in nxt
+                  if all(hi[k] - lo[k] > 1e-12 for k in range(3))]
+    return pieces or [((cx, cy, z0), (cx, cy, z0))]
+
+
 class GuardReport:
     """Outcome of a check.  ok == True means safe to send."""
 
     __slots__ = ("ok", "violations", "clamped", "min_body_clearance",
-                 "min_arm_arm", "min_self_clearance", "min_chest_clearance")
+                 "min_arm_arm", "min_self_clearance", "min_chest_clearance",
+                 "min_hand_arm")
 
     def __init__(self):
         self.ok = True
@@ -144,6 +222,8 @@ class GuardReport:
         self.min_arm_arm = 1e9
         self.min_self_clearance = 1e9
         self.min_chest_clearance = 1e9
+        #: a hand envelope against the OTHER arm's structure (body margin)
+        self.min_hand_arm = 1e9
 
     def add(self, msg):
         self.ok = False
@@ -169,8 +249,11 @@ class MotionGuard:
         Required clearance between any arm capsule and the torso/head
         keep-out boxes (default 0.005: real air, the model being the shell).
     arm_arm_margin_m : float
-        Minimum distance between the two arms' capsules (default 0.045:
-        keeps two grippers side by side passing from ~140 mm apart).
+        Minimum distance between the two arms' STRUCTURE capsules (default
+        0.045: keeps two grippers side by side passing from ~140 mm apart).
+        A hand envelope against the other arm's structure is held to
+        ``body_margin_m`` instead (real air, like a hand against the body),
+        and two hand envelopes are not checked against each other.
     self_margin_m : float
         Extra margin for same-arm non-adjacent pairs (default 0.0, as in
         collision_model.h).
@@ -250,22 +333,34 @@ class MotionGuard:
 
         # Static body AABBs (root frame; computed once).
         tf0 = m.link_transforms({})
+        #: ``[(part_name, lo, hi)]`` axis-aligned body boxes and
+        #: ``[(part_name, cx, cy, r, z0, z1)]`` vertical body cylinders, in
+        #: the root frame; a part belongs to the body ``body_name(part)``.
         self.body_aabbs = []
+        self.body_cylinders = []
         for link in m.links:
             if link in arm_link_all:
                 continue
             for prim in m.collisions[link]:
+                if prim.name.endswith("_exempt"):
+                    continue
+                if prim.kind == "cylinder":
+                    self.body_cylinders.append(
+                        _vertical_cylinder(prim, link, tf0[link]))
+                    continue
                 kind, shape = prim_to_world(prim, link, tf0[link],
                                             prefer_aabb=True)
                 if kind != "aabb":
                     raise ValueError(
                         f"body link {link} collision {prim.name} is not an "
-                        "axis-aligned box; the guard expects static body "
-                        "geometry as AABBs")
-                name, lo, hi = shape
-                if name.endswith("_exempt"):
-                    continue
-                self.body_aabbs.append((name, lo, hi))
+                        "axis-aligned box or a vertical cylinder; the guard "
+                        "expects static body geometry as those")
+                self.body_aabbs.append(shape)
+
+        self._cylinder_exposed = [
+            _exposed_bbox(cyl, [(lo, hi) for n, lo, hi in self.body_aabbs
+                                if body_name(n) == body_name(cyl[0])])
+            for cyl in self.body_cylinders]
 
         # Per-box size correction (box_pad_m).  Applied AFTER the URDF boxes
         # are built, because the pad is keyed by the primitive name the URDF
@@ -283,6 +378,37 @@ class MotionGuard:
                  tuple(v - self.box_pad_m.get(name, 0.0) for v in lo),
                  tuple(v + self.box_pad_m.get(name, 0.0) for v in hi))
                 for name, lo, hi in self.body_aabbs]
+
+    # ------------------------------------------------------------------ #
+    def _body_distances(self, c):
+        """``{body: clearance}`` of capsule ``c`` against every enabled body,
+        a body's clearance being its nearest part's (exact; the cylinders'
+        search is skipped when their bounding box is already no nearer)."""
+        out = {}
+        for name, lo, hi in self.body_aabbs:
+            key = body_name(name)
+            if key in self.disabled_body_boxes or name in self.disabled_body_boxes:
+                continue
+            d = g.seg_aabb_distance(c.a, c.b, lo, hi) - c.r
+            if d < out.get(key, math.inf):
+                out[key] = d
+        for (name, cx, cy, r, z0, z1), exposed in zip(self.body_cylinders,
+                                                      self._cylinder_exposed):
+            key = body_name(name)
+            if key in self.disabled_body_boxes or name in self.disabled_body_boxes:
+                continue
+            best = out.get(key, math.inf)
+            # Only the part of the cylinder its body's boxes leave uncovered
+            # can be nearer than they are, and it lies inside the ``exposed``
+            # boxes: a lower bound that skips the search for most capsules.
+            lower = min(g.seg_aabb_distance(c.a, c.b, elo, ehi)
+                        for elo, ehi in exposed) - c.r
+            if lower >= best:
+                continue
+            d = g.seg_vcyl_distance(c.a, c.b, cx, cy, r, z0, z1) - c.r
+            if d < best:
+                out[key] = d
+        return out
 
     # ------------------------------------------------------------------ #
     def clamp(self, side: str, joints_deg):
@@ -397,10 +523,7 @@ class MotionGuard:
                 for c in caps[side]:
                     if c.link in self.body_exempt_links:
                         continue
-                    for name, lo, hi in self.body_aabbs:
-                        if name in self.disabled_body_boxes:
-                            continue
-                        d = g.seg_aabb_distance(c.a, c.b, lo, hi) - c.r
+                    for name, d in self._body_distances(c).items():
                         rep.min_body_clearance = min(rep.min_body_clearance, d)
                         if d < self.body_margin_m:
                             rep.add(f"arm {side} link {c.link} within "
@@ -428,16 +551,26 @@ class MotionGuard:
                 for cb in caps["B"]:
                     if cb.link in self.body_exempt_links:
                         continue
+                    hand = is_hand_envelope(ca.link) or is_hand_envelope(cb.link)
+                    if is_hand_envelope(ca.link) and is_hand_envelope(cb.link):
+                        continue          # hand-hand contact is intended
                     d = g.seg_seg_distance(ca.a, ca.b, cb.a, cb.b) - ca.r - cb.r
-                    rep.min_arm_arm = min(rep.min_arm_arm, d)
-                    if d < self.arm_arm_margin_m:
+                    # A hand against the other arm's structure is real
+                    # shell-to-shell air, like a hand against the body; the
+                    # wider arm-arm margin stands in for arm links only.
+                    margin = self.body_margin_m if hand else self.arm_arm_margin_m
+                    if hand:
+                        rep.min_hand_arm = min(rep.min_hand_arm, d)
+                    else:
+                        rep.min_arm_arm = min(rep.min_arm_arm, d)
+                    if d < margin:
                         rep.add(f"arm A {ca.link} vs arm B {cb.link}: "
-                                f"{max(d, 0):.3f} m < "
-                                f"{self.arm_arm_margin_m:.3f}")
+                                f"{max(d, 0):.3f} m < {margin:.3f}")
         if self.check_self:
             for side in arms:
                 cs = [c for c in caps[side]
-                      if c.link not in self.body_exempt_links]
+                      if c.link not in self.body_exempt_links
+                      and not is_hand_envelope(c.link)]
                 for i in range(len(cs)):
                     for j in range(i + 1, len(cs)):
                         ci, cj = cs[i], cs[j]

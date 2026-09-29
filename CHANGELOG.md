@@ -6,6 +6,100 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.20.0 — unreleased
+
+**The belly band follows the shell's rounded corners, and the tool is in the
+body check.** Breaking: the guard model (`d1.urdf`) and the guard's verdicts
+change. On teleop with 0.19, two problems showed up. At the front obliques
+of the torso the guard stopped the arm with a visible gap of about 5 cm. At
+the same time, the gripper's jaw tips could touch the belly, because every
+body distal of the flange was excluded from the checks.
+
+### BREAKING: `torso_belly` is a box with rounded vertical edges
+
+- The belly band keeps its measured faces (x −0.130 / +0.135, y ±0.110,
+  z 0.19 .. 0.44). Its vertical edges are now rounded: 80 mm at the front
+  and 40 mm at the back (`BELLY_*` in `generate_d1_urdf.py`).
+- In the URDF it is the exact union of three boxes and four vertical
+  cylinders: `torso_belly`, `torso_belly__front`, `torso_belly__back` and
+  `torso_belly__{front,back}_{left,right}`.
+- `description/d1/tools/fit_torso_belly.py` measures the shapes against the
+  CAD shell, sliced every 10 mm with the CAD outline moved onto the
+  measured faces:
+
+  | | shell outside the shape | air, front corners | air, back corners |
+  |---|---|---|---|
+  | square box | 0.0 mm | 39.8 mm | 33.8 mm |
+  | rounded band | 3.4 mm | 7.6 mm | 21.6 mm |
+
+- The guard accepts VERTICAL body cylinders. Its distance to them is a
+  golden-section search on a convex function (40 steps, parameter to
+  < 5e-9). The search is skipped when the part of the cylinder that the
+  body's boxes leave uncovered is no nearer than those boxes.
+- Parts group into a body by the text before `__` (`body_name()`), so every
+  reason names `torso_belly` and `disabled_body_boxes` takes the body name.
+  New: `MotionGuard.body_cylinders`.
+
+### BREAKING: the hand envelope
+
+- `d1.urdf` gains `hand_envelope_<R|L>` on each flange: six capsules for
+  the parallel gripper (`HAND_ENVELOPE` in the generator).
+  - The jaws are covered over their whole 0–32 mm travel, plus the rails,
+    body, camera plate, camera riser and wrist-camera housing.
+  - They cover every collision box of the gripper description to within
+    0.74 mm.
+  - The tip capsule ends 11.5 mm past the 129 mm pad tip.
+- The envelope is checked against:
+  - the body shapes and the chest keep-out, at the body margin;
+  - the other arm's structure, also at the body margin (it is real air;
+    the new `GuardReport.min_hand_arm` reports it).
+- The envelope is not checked against its own arm, the other hand, or scene
+  obstacles (`SceneGate` still stops at the flange).
+- New: `HAND_ENVELOPE_PREFIX`, `is_hand_envelope()`, `body_name()`.
+- `arms.kinematics.CLEARANCE_STAGES` gains `hand-arm`, so the swept-path
+  escape rule covers it.
+
+### Numbers (kit verdict, 0.19 → 0.20)
+
+| | 0.19 | 0.20 |
+|---|---|---|
+| HOME body clearance, structure, right / left | 45.4 / 45.4 mm | 46.4 / 46.4 mm |
+| HOME body clearance, hand envelope, right / left | not modelled | 92.3 / 92.3 mm |
+| HOME ±0.1 rad band kit-clean, right / left | 100 % / 100 % | 100 % / 100 % |
+| first refused +J2 step from HOME | 0.157 rad | 0.196 rad |
+| jaw tip 0 mm from the belly, arm links 24 mm clear | accepted | refused (`hand_envelope_L` / `torso_belly`) |
+| dual-arm check, CPython | 0.5 ms | 1.4 ms |
+
+### Tests re-pinned
+
+- Swept path: the crossing pair is now `[31,63,-100,-105,-63,-22,-20]` →
+  `[44,75,-95,-118,-53,-15,-10]` (ends 18.2 / 43.2 mm). The gripper is
+  refused at sample 3/13.
+- HOME + J2 14° is refused at 12/15. The escape rule now starts at J2 + 12°.
+- The arms crossed at the chest are still refused, but by the arms against
+  each other and no longer at the belly's square front corner.
+- The folded-hand pose is refused by the envelope inside the torso frame,
+  and still not by the self check.
+- `NO_VIA_REACHES` is now refused by the coupled wrist limit instead of the
+  guard.
+- The guard-package hashes, the teach golden take's `min_clearance` header
+  (body 45.2 → 46.4 mm), `dist/d1-collision` and `dist/d1-wholebody-gripper`
+  are updated.
+- New: `tests/guard/test_body_shell_and_hand_envelope.py`.
+
+### Consumers
+
+- d1-firmware's Rust guard vendors `d1.urdf` and must implement vertical
+  body cylinders, the `__` part grouping and the hand-envelope rules before
+  its `KIT_COMMIT` moves to this release. Its golden vectors will change.
+  The current Rust guard rejects a body cylinder when it builds ("not an
+  axis-aligned box"), so vendoring this `d1.urdf` without implementing it
+  fails loudly rather than silently dropping the rounded edges.
+- teleop pins the kit through the daemon. The d1-isaaclab RL guard port
+  (`BatchedGuard`) reads `body_aabbs` only. It must add `body_cylinders`
+  and the hand-envelope pair rules, and its parity tests against
+  `kit_verdict` will fail until it does.
+
 ## 0.19.0 — unreleased
 
 ### The swept-path guard: the daemon's single-shot joint-move check, in the kit

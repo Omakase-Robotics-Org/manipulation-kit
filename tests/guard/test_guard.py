@@ -100,14 +100,16 @@ def test_elbow_into_torso_rejected(guard):
     assert rep.min_body_clearance < 0.03
 
 
-def test_ee_folded_onto_own_arm_passes(guard):
-    """The YUBI hand folded back until it overlaps its own proximal arm is
-    ALLOWED (the EE is a working surface, excluded from the self check).
-    The full guard passes and the reported structural self clearance stays
-    positive because the EE capsules are not part of it."""
+def test_ee_folded_onto_own_arm_is_not_a_self_collision(guard):
+    """The hand folded back until it overlaps its own proximal arm is not a
+    SELF collision: the EE bodies and the hand envelope are excluded from the
+    same-arm check, and the structural self clearance stays positive. (In
+    this pose the folded hand is inside the torso frame and the chest
+    keep-out, which the hand envelope's body check does refuse.)"""
     rep = guard.check(POSE_EE_ONTO_OWN_ARM, None)
-    assert rep.ok, str(rep)
     assert rep.min_self_clearance > 0.0
+    assert not any(" self: " in v for v in rep.violations), rep.violations
+    assert rep.violations and all("hand_envelope" in v for v in rep.violations)
 
 
 def test_self_check_runs_and_is_positive_at_home(guard, home):

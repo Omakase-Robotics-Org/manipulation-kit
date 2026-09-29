@@ -339,6 +339,57 @@ GRIPPER_FLANGE = {
     "L": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
 }
 
+# HAND ENVELOPE (guard model only).  The guard model wears the YUBI hand for
+# its frames, and every body distal of the flange is excluded from its checks
+# so the hands can touch objects and each other.  That exclusion also let the
+# tool the fleet actually wears reach INTO the torso: the parallel gripper's
+# jaws and its wrist-camera plate stand up to 129 mm off the flange, where no
+# arm capsule is, and touched the belly in teleop while the guard reported
+# clearance.  The envelope is the protrusion as capsules, in the gripper's
+# base_link frame (= the flange, +z the approach axis, jaw travel along x, the
+# camera riser along +y), covering every collision box of the gripper
+# description (GRIPPER block; jaws over their whole 0 .. 32 mm travel) with at
+# most 0.74 mm of any box outside it (tests/guard/test_body_shell_and_hand_envelope.py):
+#   jaws   two capsules along the travel axis at z 85.5 / 114.5 mm, x +/-60 mm,
+#          r 26 mm: the 58 mm pads (root 71, tip 129 mm), 38 mm wide, open or
+#          closed; the tip capsule ends 11.5 mm beyond the pad tip;
+#   rails  the 160 mm guide rail bar at z 61 mm, x +/-68 mm, r 32.5 mm;
+#   body   the 57 mm actuator body + 7 mm spacer, z 8 .. 40 mm, r 43 mm;
+#   plate  the 72 mm camera-plate disc at the flange face, r 40 mm;
+#   camera the camera riser and the wrist-camera housing, along +y 58 .. 86 mm
+#          at z 17 mm, r 30 mm.
+# The guard checks these against the body boxes, the chest keep-out and the
+# OTHER arm's structure, never against the same arm (a hand is where its wrist
+# is) and never against the other hand: bimanual contact stays allowed.
+HAND_ENVELOPE = [
+    # part    a (m)                     b (m)                     r (m)
+    ("jaws_root", (-0.060, 0.0, 0.0855), (0.060, 0.0, 0.0855), 0.026),
+    ("jaws_tip",  (-0.060, 0.0, 0.1145), (0.060, 0.0, 0.1145), 0.026),
+    ("rails",     (-0.068, 0.0, 0.061),  (0.068, 0.0, 0.061),  0.0325),
+    ("body",      (0.0, 0.0, 0.008),     (0.0, 0.0, 0.040),    0.043),
+    ("plate",     (-0.022, 0.0, 0.004),  (0.022, 0.0, 0.004),  0.040),
+    ("camera",    (0.0, 0.058, 0.017),   (0.0, 0.086, 0.017),  0.030),
+]
+
+
+def hand_envelope(side, indent="  "):
+    """The guard model's hand envelope on arm ``side`` (see HAND_ENVELOPE)."""
+    (fx, fr) = GRIPPER_FLANGE[side]
+    name = f"hand_envelope_{side}"
+    s = (f"\n{indent}<!-- Hand envelope on arm {side}: the parallel gripper and its\n"
+         f"{indent}     wrist-camera plate as capsules, for the guard's body, chest and\n"
+         f"{indent}     other-arm checks (HAND_ENVELOPE in the generator). -->\n")
+    s += (f"{indent}<joint name=\"{name}_mount\" type=\"fixed\">\n"
+          f"{indent}  <origin xyz=\"{_xyz(fx)}\" rpy=\"{_xyz(fr)}\"/>\n"
+          f"{indent}  <parent link=\"TCP_Link_{side}\"/>\n"
+          f"{indent}  <child link=\"{name}\"/>\n"
+          f"{indent}</joint>\n")
+    link = frame_link(name, indent)
+    caps = "".join(capsule_collision(f"{name}_capsule_{part}", a, b, r, indent + "  ")
+                   for part, a, b, r in HAND_ENVELOPE)
+    return s + link.replace(f"{indent}</link>\n", caps + f"{indent}</link>\n")
+
+
 # Jaw joints.  Both jaws hang off the same origin with the same axis and travel
 # inward as |q| grows: q = 0 is the MEASURED 64 mm OPEN gap, |q| = 0.032 is
 # CLOSED.  That is the OPPOSITE polarity to the CAN 2.0 wire command, where 0.0
@@ -831,13 +882,74 @@ BODY_BOXES = [
     ("torso_speaker",
      (0.068, -0.0565, 0.4355), (0.1003, 0.0625, 0.5545),
      "M260C smart speaker, front of chest - CAD bbox X+/-59.5 Y-100.3..-68 Z-64.5..54.5"),
-    ("torso_belly",
-     (-0.130, -0.110, 0.19), (0.135, 0.110, 0.44),
-     "_omakase body shell, belly band - MEASURED on the built robot (2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45)"),
     ("torso_shoulder_shell_exempt",
      (-0.126, -0.147, 0.44), (0.123, 0.153, 0.635),
      "body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out"),
 ]
+# The belly band: the measured torso box with its vertical edges ROUNDED.
+#
+# The box faces are the built robot's, MEASURED at HOME (2026-09-23): 220 mm
+# wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of
+# the base axis); the top z 0.44 is where the shell stops being torso and
+# widens into the shoulder sleeve (237 -> 261 mm between z 0.43 and 0.45).
+# The CAD shell (260607) is 7-13 mm wider per side than the built robot, so it
+# does not give the faces.
+#
+# It does give the CORNERS. Sliced every 10 mm over z 0.195 .. 0.435, the shell
+# is a rounded rectangle: at 45 deg from the front axis its outline sits
+# 40 mm inside the box corner, which is the stand-off the arm stopped at near
+# the front obliques in teleop. The corner radius is fitted to the CAD outline
+# with each quadrant moved onto the measured faces (the built robot is the CAD
+# shape, narrower): front edges 80 mm, back edges 40 mm. Against that outline,
+# over every slice and azimuth, the rounded box leaves the shell outside it by
+# at most 3.4 mm (and never more than 5), and covers air at the front corners
+# by at most 7.6 mm (the plain box: 39.8 mm); at the back corners by at most
+# 21.6 mm (plain box 33.8 mm), which a single radius cannot fit tighter
+# without under-covering. The numbers are regenerated by
+# description/d1/tools/fit_torso_belly.py.
+#
+# URDF has no rounded box, so the band is the exact union of three boxes and
+# four vertical cylinders. The guard names every part by the text before
+# "__", so a refusal still says ``torso_belly``.
+BELLY_LO = (-0.130, -0.110, 0.19)
+BELLY_HI = (0.135, 0.110, 0.44)
+BELLY_FRONT_EDGE_R = 0.080
+BELLY_BACK_EDGE_R = 0.040
+
+
+def belly_parts():
+    """``[(name, kind, data, comment)]``: kind ``box`` -> (lo, hi); kind
+    ``vcyl`` -> (cx, cy, r, z0, z1). Their union is the rounded belly box."""
+    (x0, y0, z0), (x1, y1, z1) = BELLY_LO, BELLY_HI
+    rf, rb = BELLY_FRONT_EDGE_R, BELLY_BACK_EDGE_R
+    return [
+        ("torso_belly", "box", ((x0 + rb, y0, z0), (x1 - rf, y1, z1)),
+         "belly band core: the measured torso box between the rounded edges "
+         "(see BELLY_* in the generator)"),
+        ("torso_belly__front", "box", ((x1 - rf, y0 + rf, z0), (x1, y1 - rf, z1)),
+         "belly band, front face between the front rounded edges"),
+        ("torso_belly__back", "box", ((x0, y0 + rb, z0), (x0 + rb, y1 - rb, z1)),
+         "belly band, back face between the back rounded edges"),
+        ("torso_belly__front_left", "vcyl", (x1 - rf, y1 - rf, rf, z0, z1),
+         "belly band, front-left rounded edge"),
+        ("torso_belly__front_right", "vcyl", (x1 - rf, y0 + rf, rf, z0, z1),
+         "belly band, front-right rounded edge"),
+        ("torso_belly__back_left", "vcyl", (x0 + rb, y1 - rb, rb, z0, z1),
+         "belly band, back-left rounded edge"),
+        ("torso_belly__back_right", "vcyl", (x0 + rb, y0 + rb, rb, z0, z1),
+         "belly band, back-right rounded edge"),
+    ]
+
+
+def vcyl_elem(name, cx, cy, r, z0, z1, comment, indent="    "):
+    """A solid VERTICAL cylinder (flat ends, no sphere caps): a body part."""
+    return (f"{indent}<!-- {comment} -->\n"
+            f"{indent}<collision name=\"{name}\">\n"
+            f"{indent}  <origin xyz=\"{_xyz((cx, cy, (z0 + z1) / 2.0))}\" rpy=\"0 0 0\"/>\n"
+            f"{indent}  <geometry><cylinder radius=\"{_fmt(r)}\" length=\"{_fmt(z1 - z0)}\"/></geometry>\n"
+            f"{indent}</collision>\n")
+
+
 # Static head keep-out for d1.urdf, at the PARKED neck pose (pan = tilt = 0):
 # the union of the vendor dhead / uphead / headcamera meshes.  Like-for-like
 # with the 2026-07-01 CAD box it replaces — x and y agree within 13 mm — but
@@ -1430,7 +1542,7 @@ def arm_mesh_visual(link, side, meshes):
                             _mat(), ARM_GREY, "d1_arm_shell")
 
 
-def arm(side, end_effector, meshes=False, cameras=False):
+def arm(side, end_effector, meshes=False, cameras=False, envelope=False):
     s = f"\n  <!-- ===== Arm {side} "
     s += ("(SDK ArmSide::A, physical LEFT, +y)" if side == "R"
           else "(SDK ArmSide::B, physical RIGHT, -y)")
@@ -1466,7 +1578,8 @@ def arm(side, end_effector, meshes=False, cameras=False):
           f"    <parent link=\"Link7_{side}\"/>\n"
           f"    <child link=\"TCP_Link_{side}\"/>\n"
           f"  </joint>\n")
-    return s + END_EFFECTORS[end_effector](side, meshes, cameras)
+    s += END_EFFECTORS[end_effector](side, meshes, cameras)
+    return s + (hand_envelope(side) if envelope else "")
 
 
 def yubi(side, meshes=False, cameras=False):
@@ -1895,6 +2008,9 @@ def main(filename="d1.urdf", out_dir=None, revision=None):
         t += body_mesh_visuals("torso_column", _mat())
     for name, lo, hi, comment in BODY_BOXES:
         t += box_elem(name, lo, hi, comment)
+    for name, kind, data, comment in belly_parts():
+        t += (box_elem(name, *data, comment) if kind == "box"
+              else vcyl_elem(name, *data, comment))
     t += "  </link>"
     u.append(t)
     u.append('  <joint name="torso_mount" type="fixed">\n'
@@ -1927,8 +2043,10 @@ def main(filename="d1.urdf", out_dir=None, revision=None):
 
     # Camera frames ride the whole-body variants only — the guard model is a
     # keep-out model and a camera frame is not a volume (see CAMERAS).
-    u.append(arm("R", end_effector, meshes, cameras=wholebody))
-    u.append(arm("L", end_effector, meshes, cameras=wholebody))
+    # The hand envelope rides the guard model only: the whole-body variants
+    # carry the real hand's own collision geometry.
+    u.append(arm("R", end_effector, meshes, cameras=wholebody, envelope=not wholebody))
+    u.append(arm("L", end_effector, meshes, cameras=wholebody, envelope=not wholebody))
     u.append("</robot>")
     text = "\n".join(u) + "\n"
 
