@@ -5,8 +5,8 @@
 #
 # Why: macOS /bin/bash 3.2.57 ends every fatal shell error of a `set -u` script
 # that has an EXIT trap with status 0, so a recipe that only reads exit
-# statuses read a crashed smoke as green. Operator ruling 2026-09-27: the suite
-# requires bash >= 4.4.
+# statuses read a crashed smoke as green. The suite therefore requires
+# bash >= 4.4.
 #
 # Use: in a Makefile, before any rule, any other include, any `$(shell ...)`
 # (or `!=`, or backtick) and any SHELL assignment -- nothing may run a shell
