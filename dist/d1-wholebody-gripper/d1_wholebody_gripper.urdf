@@ -108,14 +108,44 @@
       <geometry><box size="0.0323 0.119 0.119" /></geometry>
     </collision>
     
-    <collision name="torso_belly">
-      <origin xyz="0.0025 0 0.315" rpy="0 0 0" />
-      <geometry><box size="0.265 0.22 0.25" /></geometry>
-    </collision>
-    
     <collision name="torso_shoulder_shell_exempt">
       <origin xyz="-0.0015 0.003 0.5375" rpy="0 0 0" />
       <geometry><box size="0.249 0.3 0.195" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly">
+      <origin xyz="-0.0175 0 0.315" rpy="0 0 0" />
+      <geometry><box size="0.145 0.22 0.25" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly__front">
+      <origin xyz="0.095 0 0.315" rpy="0 0 0" />
+      <geometry><box size="0.08 0.06 0.25" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly__back">
+      <origin xyz="-0.11 0 0.315" rpy="0 0 0" />
+      <geometry><box size="0.04 0.14 0.25" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly__front_left">
+      <origin xyz="0.055 0.03 0.315" rpy="0 0 0" />
+      <geometry><cylinder radius="0.08" length="0.25" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly__front_right">
+      <origin xyz="0.055 -0.03 0.315" rpy="0 0 0" />
+      <geometry><cylinder radius="0.08" length="0.25" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly__back_left">
+      <origin xyz="-0.09 0.07 0.315" rpy="0 0 0" />
+      <geometry><cylinder radius="0.04" length="0.25" /></geometry>
+    </collision>
+    
+    <collision name="torso_belly__back_right">
+      <origin xyz="-0.09 -0.07 0.315" rpy="0 0 0" />
+      <geometry><cylinder radius="0.04" length="0.25" /></geometry>
     </collision>
   </link>
   <joint name="torso_mount" type="fixed">
