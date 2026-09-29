@@ -7,8 +7,9 @@ they reach the hardware**:
 1. **per-joint limit clamp** — limits parsed from the full-body URDF
    (`description/d1/d1.urdf`);
 2. **torso / head keep-out** — every arm capsule vs the measured body
-   boxes (FK + exact capsule-vs-AABB distance, configurable margin, default
-   0.005 m of real air), plus a
+   shapes (FK + exact capsule-vs-AABB distance, capsule-vs-vertical-cylinder
+   by a convex search, configurable margin, default 0.005 m of real air),
+   plus a
    per-arm **upper-chest keep-out** that closes the shoulder-band notch
    left by the exempt CAD shoulder shell;
 3. **arm–arm distance** — the two arms' capsules must stay
@@ -24,13 +25,50 @@ conventions as `safety_zones.h` / `gesture_csv.h`.
 
 The guard protects the **arm structure** (shoulder → upper arm → elbow →
 forearm → wrist) from the torso and from the other arm. The
-**end-effectors are excluded from every check**: every body **distal of the
-tool mounting flange** (`JointTCP`: `Link7 → TCP_Link`) — the `TCP_Link`
-and the whole YUBI hand — is dropped from the body, arm–arm and self
-checks. The hands are the working surfaces and must be free to contact the
-world and each other (bimanual manipulation / hand-offs). `Link7` and
-everything proximal is arm structure and stays checked. See
-`EE_LINK_PREFIXES` / `is_ee_body()` in `guard.py`.
+**end-effector bodies are excluded**: every body **distal of the tool
+mounting flange** (`JointTCP`: `Link7 → TCP_Link`) — the `TCP_Link` and the
+whole YUBI hand the guard model carries for its frames — is dropped from the
+body, arm–arm and self checks. `Link7` and everything proximal is arm
+structure and stays checked. See `EE_LINK_PREFIXES` / `is_ee_body()`.
+
+**The hand envelope** (`hand_envelope_<R|L>`, on the flange; `HAND_ENVELOPE`
+in `generate_d1_urdf.py`) is the tool the robots wear — the parallel gripper,
+its jaws over their whole travel, the wrist-camera plate and housing — as six
+capsules covering every collision box of its description to within 0.74 mm.
+It is checked
+
+| against | checked? | margin |
+|---|---|---|
+| body shapes, chest keep-out | yes | `body_margin_m` |
+| the other arm's structure | yes | `body_margin_m` (real air, as against the body) |
+| the other hand's envelope | no — bimanual contact and hand-offs are intended | — |
+| its own arm | no — the hand is where its wrist is | — |
+| scene obstacles (`primitives.clearance.SceneGate`) | no — the hand is what touches the scene | — |
+
+so a jaw tip or the camera plate can no longer be driven into the torso while
+the arm links report clearance. `GuardReport.min_hand_arm` is the
+hand-against-other-arm minimum.
+
+### Body shapes: boxes and vertical cylinders
+
+Static body geometry is axis-aligned boxes and **vertical cylinders**. A body
+the URDF cannot give as one primitive is a union of parts named `<body>`,
+`<body>__<part>`; the guard reports the body (`body_name()`), never the part.
+The belly band `torso_belly` is the measured torso box with its vertical edges
+rounded (front 80 mm, back 40 mm) — three boxes and four cylinders — because
+the shell curves inward at the corners and a square box stopped the arm ~40 mm
+short of it there. `description/d1/tools/fit_torso_belly.py` measures the
+shape against the CAD shell:
+
+| shape | shell outside it (max) | air covered, front corners | air covered, back corners |
+|---|---|---|---|
+| square box (0.19) | 0.0 mm | 39.8 mm | 33.8 mm |
+| rounded band (0.20) | 3.4 mm | 7.6 mm | 21.6 mm |
+
+(against the CAD outline moved onto the measured faces; the CAD itself is
+7-13 mm wider per side than the built robot, see the script). A full dual-arm
+check costs ~1.4 ms in CPython on a laptop CPU (0.5 ms before the hand
+envelope and the cylinders).
 
 Compared to the C++ `collision_model.h` (used inside the numeric IK), this
 model checks against the **measured** torso, head and chassis boxes from
@@ -57,8 +95,8 @@ layer 3 at a finer spacing, so an uploaded plan is swept by the daemon itself.
 
 Layer 3 exists because layer 2 is not enough. Two postures can each pass while
 the line between them dips into a margin: `tests/arms/test_swept_path.py` pins
-a right-arm pair 19.7 / 26.0 mm from `torso_belly` whose line brings `Link5`
-within 2 mm of it (margin 5 mm). Without the local check the kit would send that command and learn
+a right-arm pair 18.2 / 43.2 mm from `torso_belly` whose line brings the hand
+envelope within 2 mm of it (margin 5 mm). Without the local check the kit would send that command and learn
 from the daemon's HTTP 409 that it was refused. With it, the command is
 refused before it is sent (`GuardRefused`), naming the sample, the moving
 joints and the pair under its margin, in the daemon's wording.
@@ -107,7 +145,7 @@ default because their position depends on the lift extension),
 `chest_keepout` (per-arm upper-chest keep-out boxes; `None` disables it),
 `on_reject="block"|"raise"`.
 
-A full dual-arm check costs ~2–3 ms on a laptop CPU — fine for teleop-rate
+A full dual-arm check costs ~1.4 ms on a laptop CPU — fine for teleop-rate
 command streams.
 
 ## Tests

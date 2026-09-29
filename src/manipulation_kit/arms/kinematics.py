@@ -72,7 +72,7 @@ class IkResult:
 
 
 #: The guard's clearance stages, in the daemon's order (``CLEARANCE_STAGES``
-#: in ``d1fw-core``), each with the :class:`~manipulation_kit.guard.GuardReport`
+#: in ``d1fw-core``, plus the kit's hand-against-other-arm stage), each with the :class:`~manipulation_kit.guard.GuardReport`
 #: field that holds its minimum. The same-arm stage has its margin already
 #: subtracted in both implementations.
 CLEARANCE_STAGES: Tuple[Tuple[str, str], ...] = (
@@ -80,6 +80,7 @@ CLEARANCE_STAGES: Tuple[Tuple[str, str], ...] = (
     ("chest keep-out", "min_chest_clearance"),
     ("arm-arm", "min_arm_arm"),
     ("self", "min_self_clearance"),
+    ("hand-arm", "min_hand_arm"),
 )
 
 

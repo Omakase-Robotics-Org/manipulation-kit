@@ -28,7 +28,7 @@ from manipulation_kit.primitives import Approach, Carry, Grasp
 from manipulation_kit.primitives import planning
 from manipulation_kit.primitives.orientation import tool_from_link7
 from manipulation_kit.primitives.planning import Kin, solve_path
-from manipulation_kit.primitives.types import GUARD_REJECT, Waypoint
+from manipulation_kit.primitives.types import GUARD_REJECT, JOINT_LIMIT, Waypoint
 from manipulation_kit.world import (ArmView, ContainerView, GripperView,
                                     ObjectView, SurfaceView, WorldView)
 
@@ -163,17 +163,17 @@ def test_a_target_no_via_reaches_is_still_refused_and_says_where(d1_arm):
     world = _scene(d1_arm, {"block_far": NO_VIA_REACHES})
     error = Grasp(object="block_far").plan(world, d1_arm)
     assert not error.ok
-    assert error.reason == GUARD_REJECT
+    # Since the belly band has rounded front edges the arm gets past the torso
+    # on the way to the standoff, and what stops it there is the coupled
+    # wrist-roll limit (J7 past its J6-dependent stop) rather than the guard;
+    # either way it is the straight line's own refusal, named and finite.
+    assert error.reason == JOINT_LIMIT
     assert error.waypoint_index >= 0 and error.waypoint_label in ("standoff",
                                                                  "grasp")
     assert np.isfinite(error.residual_m)
-    assert "motion guard" in error.detail
-    # Before the coupled wrist-roll limit (arms.coupled_limits) the standoff
-    # alone was routable; with the wrist roll inside what the d1-2 hardware
-    # has, no posture reaches even the standoff, and the Approach says so the
-    # same way — the guard, at the standoff, with a finite residual.
+    assert "coupled" in error.detail
     approach = Approach(object="block_far").plan(world, d1_arm)
-    assert not approach.ok and approach.reason == GUARD_REJECT
+    assert not approach.ok and approach.reason == JOINT_LIMIT
     assert approach.waypoint_label == "standoff"
     assert np.isfinite(approach.residual_m)
 

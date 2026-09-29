@@ -30,15 +30,45 @@
       <origin xyz="0.08415 0.003 0.495" rpy="0 0 0"/>
       <geometry><box size="0.0323 0.119 0.119"/></geometry>
     </collision>
-    <!-- _omakase body shell, belly band - MEASURED on the built robot (2026-09-23, at HOME): 220 mm wide at the flanks (y +/-110) and 265 mm deep (130 behind / 135 in front of the base axis). The CAD shell (260607 z-slices) is 240 wide and 257 deep, i.e. 7-13 mm too wide per side and 8 mm short at the front. Top z 0.44 = where the CAD shell stops being torso and widens into the shoulder sleeve (width 237 -> 261 mm between z 0.43 and 0.45) -->
-    <collision name="torso_belly">
-      <origin xyz="0.0025 0 0.315" rpy="0 0 0"/>
-      <geometry><box size="0.265 0.22 0.25"/></geometry>
-    </collision>
     <!-- body-shell shoulder band (z -50..135, X up to +/-150): the arm Base barrels pass through this cover, so it is EXEMPT from the guard keep-out -->
     <collision name="torso_shoulder_shell_exempt">
       <origin xyz="-0.0015 0.003 0.5375" rpy="0 0 0"/>
       <geometry><box size="0.249 0.3 0.195"/></geometry>
+    </collision>
+    <!-- belly band core: the measured torso box between the rounded edges (see BELLY_* in the generator) -->
+    <collision name="torso_belly">
+      <origin xyz="-0.0175 0 0.315" rpy="0 0 0"/>
+      <geometry><box size="0.145 0.22 0.25"/></geometry>
+    </collision>
+    <!-- belly band, front face between the front rounded edges -->
+    <collision name="torso_belly__front">
+      <origin xyz="0.095 0 0.315" rpy="0 0 0"/>
+      <geometry><box size="0.08 0.06 0.25"/></geometry>
+    </collision>
+    <!-- belly band, back face between the back rounded edges -->
+    <collision name="torso_belly__back">
+      <origin xyz="-0.11 0 0.315" rpy="0 0 0"/>
+      <geometry><box size="0.04 0.14 0.25"/></geometry>
+    </collision>
+    <!-- belly band, front-left rounded edge -->
+    <collision name="torso_belly__front_left">
+      <origin xyz="0.055 0.03 0.315" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.25"/></geometry>
+    </collision>
+    <!-- belly band, front-right rounded edge -->
+    <collision name="torso_belly__front_right">
+      <origin xyz="0.055 -0.03 0.315" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.25"/></geometry>
+    </collision>
+    <!-- belly band, back-left rounded edge -->
+    <collision name="torso_belly__back_left">
+      <origin xyz="-0.09 0.07 0.315" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.25"/></geometry>
+    </collision>
+    <!-- belly band, back-right rounded edge -->
+    <collision name="torso_belly__back_right">
+      <origin xyz="-0.09 -0.07 0.315" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.25"/></geometry>
     </collision>
   </link>
   <joint name="torso_mount" type="fixed">
@@ -429,6 +459,96 @@
     </collision>
   </link>
 
+  <!-- Hand envelope on arm R: the parallel gripper and its
+       wrist-camera plate as capsules, for the guard's body, chest and
+       other-arm checks (HAND_ENVELOPE in the generator). -->
+  <joint name="hand_envelope_R_mount" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 3.14159"/>
+    <parent link="TCP_Link_R"/>
+    <child link="hand_envelope_R"/>
+  </joint>
+  <link name="hand_envelope_R">
+    <!-- a frame, not a body: 1e-6 kg exists only so a
+         physics importer does not substitute a default -->
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-06"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <collision name="hand_envelope_R_capsule_jaws_root">
+      <origin xyz="0 0 0.0855" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.026" length="0.12"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_jaws_root_cap_a">
+      <origin xyz="-0.06 0 0.0855" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_jaws_root_cap_b">
+      <origin xyz="0.06 0 0.0855" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_jaws_tip">
+      <origin xyz="0 0 0.1145" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.026" length="0.12"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_jaws_tip_cap_a">
+      <origin xyz="-0.06 0 0.1145" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_jaws_tip_cap_b">
+      <origin xyz="0.06 0 0.1145" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_rails">
+      <origin xyz="0 0 0.061" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.0325" length="0.136"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_rails_cap_a">
+      <origin xyz="-0.068 0 0.061" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0325"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_rails_cap_b">
+      <origin xyz="0.068 0 0.061" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0325"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_body">
+      <origin xyz="0 0 0.024" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.043" length="0.032"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_body_cap_a">
+      <origin xyz="0 0 0.008" rpy="0 0 0"/>
+      <geometry><sphere radius="0.043"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_body_cap_b">
+      <origin xyz="0 0 0.04" rpy="0 0 0"/>
+      <geometry><sphere radius="0.043"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_plate">
+      <origin xyz="0 0 0.004" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.04" length="0.044"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_plate_cap_a">
+      <origin xyz="-0.022 0 0.004" rpy="0 0 0"/>
+      <geometry><sphere radius="0.04"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_plate_cap_b">
+      <origin xyz="0.022 0 0.004" rpy="0 0 0"/>
+      <geometry><sphere radius="0.04"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_camera">
+      <origin xyz="0 0.072 0.017" rpy="-1.5708 0 0"/>
+      <geometry><cylinder radius="0.03" length="0.028"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_camera_cap_a">
+      <origin xyz="0 0.058 0.017" rpy="0 0 0"/>
+      <geometry><sphere radius="0.03"/></geometry>
+    </collision>
+    <collision name="hand_envelope_R_capsule_camera_cap_b">
+      <origin xyz="0 0.086 0.017" rpy="0 0 0"/>
+      <geometry><sphere radius="0.03"/></geometry>
+    </collision>
+  </link>
+
 
   <!-- ===== Arm L (SDK ArmSide::B, physical RIGHT, -y) — D1 arm chain ===== -->
   <joint name="mount_L" type="fixed">
@@ -759,6 +879,96 @@
     <collision name="yubi_L_left_finger">
       <origin xyz="0.0453 0.00545 0.00105" rpy="0 0 0"/>
       <geometry><box size="0.1164 0.0441 0.0229"/></geometry>
+    </collision>
+  </link>
+
+  <!-- Hand envelope on arm L: the parallel gripper and its
+       wrist-camera plate as capsules, for the guard's body, chest and
+       other-arm checks (HAND_ENVELOPE in the generator). -->
+  <joint name="hand_envelope_L_mount" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="TCP_Link_L"/>
+    <child link="hand_envelope_L"/>
+  </joint>
+  <link name="hand_envelope_L">
+    <!-- a frame, not a body: 1e-6 kg exists only so a
+         physics importer does not substitute a default -->
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-06"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <collision name="hand_envelope_L_capsule_jaws_root">
+      <origin xyz="0 0 0.0855" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.026" length="0.12"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_jaws_root_cap_a">
+      <origin xyz="-0.06 0 0.0855" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_jaws_root_cap_b">
+      <origin xyz="0.06 0 0.0855" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_jaws_tip">
+      <origin xyz="0 0 0.1145" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.026" length="0.12"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_jaws_tip_cap_a">
+      <origin xyz="-0.06 0 0.1145" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_jaws_tip_cap_b">
+      <origin xyz="0.06 0 0.1145" rpy="0 0 0"/>
+      <geometry><sphere radius="0.026"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_rails">
+      <origin xyz="0 0 0.061" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.0325" length="0.136"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_rails_cap_a">
+      <origin xyz="-0.068 0 0.061" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0325"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_rails_cap_b">
+      <origin xyz="0.068 0 0.061" rpy="0 0 0"/>
+      <geometry><sphere radius="0.0325"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_body">
+      <origin xyz="0 0 0.024" rpy="-0 0 0"/>
+      <geometry><cylinder radius="0.043" length="0.032"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_body_cap_a">
+      <origin xyz="0 0 0.008" rpy="0 0 0"/>
+      <geometry><sphere radius="0.043"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_body_cap_b">
+      <origin xyz="0 0 0.04" rpy="0 0 0"/>
+      <geometry><sphere radius="0.043"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_plate">
+      <origin xyz="0 0 0.004" rpy="-0 1.5708 0"/>
+      <geometry><cylinder radius="0.04" length="0.044"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_plate_cap_a">
+      <origin xyz="-0.022 0 0.004" rpy="0 0 0"/>
+      <geometry><sphere radius="0.04"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_plate_cap_b">
+      <origin xyz="0.022 0 0.004" rpy="0 0 0"/>
+      <geometry><sphere radius="0.04"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_camera">
+      <origin xyz="0 0.072 0.017" rpy="-1.5708 0 0"/>
+      <geometry><cylinder radius="0.03" length="0.028"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_camera_cap_a">
+      <origin xyz="0 0.058 0.017" rpy="0 0 0"/>
+      <geometry><sphere radius="0.03"/></geometry>
+    </collision>
+    <collision name="hand_envelope_L_capsule_camera_cap_b">
+      <origin xyz="0 0.086 0.017" rpy="0 0 0"/>
+      <geometry><sphere radius="0.03"/></geometry>
     </collision>
   </link>
 

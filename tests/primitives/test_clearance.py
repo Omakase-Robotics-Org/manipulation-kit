@@ -384,9 +384,12 @@ def test_the_scene_gate_states_its_sampling_and_margin(d1_arm):
 
 def test_the_capsules_are_the_guards_capsules(d1_arm):
     """The scene sees the arm the body guard sees: same links, same radii,
-    same endpoints to 1e-9 over random postures, both arms."""
+    same endpoints to 1e-9 over random postures, both arms. The guard's hand
+    envelope is not part of it: the hand is what touches the scene (a grasp
+    closes on an object on a table), so the scene gate stops at the flange
+    exactly as it did before the envelope existed."""
     from manipulation_kit.arms import sides
-    from manipulation_kit.guard.guard import MotionGuard
+    from manipulation_kit.guard.guard import MotionGuard, is_hand_envelope
     guard = MotionGuard()
     gate = SceneGate((), ClearancePolicy(), (), guard.model)
     rng = np.random.default_rng(11)
@@ -395,6 +398,7 @@ def test_the_capsules_are_the_guards_capsules(d1_arm):
             q = rng.uniform(-1.2, 1.2, 7)
             theirs, _ = guard._arm_capsules(sides.SDK_SIDE[side],
                                             list(np.degrees(q)))
+            theirs = [c for c in theirs if not is_hand_envelope(c.link)]
             mine = gate.capsules(side, q)
             assert [c.link for c in theirs] == [m[0] for m in mine]
             for c, (link, a, b, r) in zip(theirs, mine):
@@ -486,15 +490,15 @@ def test_no_env_var_feeds_the_support_clearance():
     assert "os.environ" not in source and "\nimport os\n" not in source
 
 
-#: sha256 of every file of ``manipulation_kit.guard`` as of 0.18.0 (the
-#: measured arm model: exact segment-box distance, Link1 body-exempt, 5 mm /
-#: 45 mm margins). The guard is
+#: sha256 of every file of ``manipulation_kit.guard`` as of 0.20.0 (the
+#: measured arm model, the rounded belly band as boxes + vertical cylinders,
+#: the hand envelope). The guard is
 #: stdlib-only and shared with firmware-side hosts; the scene gate re-uses it
 #: and must not change it.
 GUARD_SHA256 = {
-    "__init__.py": "8603dd5a7ccd069f486433927be106819b8f2fc1019ca6d556dd0d9364100385",
-    "geometry.py": "a09c5c06adb038ec63de4f13aa7d3aa03e6651d02823d26db602e16d7ce050a1",
-    "guard.py": "91a433c5929a974ec1663936eb0274052b6c0a690822e2598c57d7911813aa86",
+    "__init__.py": "cab4554200980323498910e07595cfac4d2c119a230b65b83f2374124f5f6779",
+    "geometry.py": "8354dbb6a5a5ab9552395a4365c7b91e943792d9e63c378c11815a19cbb1f55f",
+    "guard.py": "5b26a9cc74373873725e91dbbb00a5f133d264575841d6bff1627be56c9f9fa5",
     "urdf_model.py": "a0b9f5b46e88a4bae993ce4a07b80add66cb41a385f005490c3ebd0c807d05a3",
 }
 

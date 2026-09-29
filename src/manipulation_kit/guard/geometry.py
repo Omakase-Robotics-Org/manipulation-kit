@@ -176,3 +176,58 @@ def seg_aabb_distance(a, b, lo, hi) -> float:
         s = s0 if den == 0.0 else min(max(-num / den, s0), s1)
         best = min(best, sq(s), sq(s1))
     return math.sqrt(best)
+
+
+def point_vcyl_distance(p, cx, cy, r, z0, z1) -> float:
+    """Distance from point ``p`` to a solid VERTICAL cylinder: axis along z
+    through (cx, cy), radius ``r``, flat ends at z0 < z1 (0 inside)."""
+    dr = max(math.hypot(p[0] - cx, p[1] - cy) - r, 0.0)
+    dz = max(z0 - p[2], 0.0, p[2] - z1)
+    return math.hypot(dr, dz)
+
+
+#: golden-section iterations of :func:`seg_vcyl_distance`: the bracket shrinks
+#: by 0.618 per step, so 40 steps leave < 5e-9 of the segment parameter (on a
+#: 0.3 m link, 1.5e-9 m of position; the distance moves by no more).
+_GOLDEN_STEPS = 40
+_INV_PHI = (math.sqrt(5.0) - 1.0) / 2.0
+
+
+def seg_vcyl_distance(a, b, cx, cy, r, z0, z1) -> float:
+    """Minimum distance from segment [a,b] to a solid vertical cylinder.
+
+    The distance from a point to a convex set is a convex function of the
+    point, hence of the segment parameter s, so a golden-section search over
+    s in [0, 1] converges to the global minimum (40 steps: the parameter to
+    < 5e-9, far below any margin). The endpoints are evaluated too. A caller
+    with several parts can skip this search when :func:`seg_aabb_distance`
+    to the part of the cylinder its other parts leave uncovered (a lower
+    bound) is already no better than a nearer part.
+    """
+    ax, ay, az = a[0] - cx, a[1] - cy, a[2]
+    dx, dy, dz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+    hypot = math.hypot
+
+    def f(s):
+        z = az + s * dz
+        dr = hypot(ax + s * dx, ay + s * dy) - r
+        if dr < 0.0:
+            dr = 0.0
+        e = z0 - z if z < z0 else (z - z1 if z > z1 else 0.0)
+        return hypot(dr, e)
+
+    best = min(f(0.0), f(1.0))
+    s0, s1 = 0.0, 1.0
+    c = s1 - _INV_PHI
+    d = _INV_PHI
+    fc, fd = f(c), f(d)
+    for _ in range(_GOLDEN_STEPS):
+        if fc <= fd:
+            s1, d, fd = d, c, fc
+            c = s1 - _INV_PHI * (s1 - s0)
+            fc = f(c)
+        else:
+            s0, c, fc = c, d, fd
+            d = s0 + _INV_PHI * (s1 - s0)
+            fd = f(d)
+    return min(best, fc, fd)

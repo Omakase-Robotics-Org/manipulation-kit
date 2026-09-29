@@ -48,6 +48,9 @@ def test_arm_at_the_side_passes(name):
 
 
 def test_arms_crossed_at_the_chest_are_refused():
+    """Refused by the arms against each other. (On the square belly box it
+    was also refused by the forearm at the box's front corner, which the
+    real, rounded shell does not have.)"""
     report = MotionGuard(clamp_limits=False).check(*P2)
     assert not report.ok
-    assert any("torso_belly" in v for v in report.violations), report
+    assert any(" vs arm B " in v for v in report.violations), report

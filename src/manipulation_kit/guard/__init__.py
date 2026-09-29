@@ -20,11 +20,13 @@ Usage (opt-in; nothing changes for existing code):
 See guard.py for the model/frames and configuration knobs.
 """
 from .guard import (GuardReport, GuardViolation, GuardedRobot, MotionGuard,
-                    ARM_SIDES, JOINTS_PER_ARM, EE_LINK_PREFIXES, is_ee_body)
+                    ARM_SIDES, JOINTS_PER_ARM, EE_LINK_PREFIXES, is_ee_body,
+                    HAND_ENVELOPE_PREFIX, is_hand_envelope, body_name)
 from .urdf_model import DEFAULT_URDF, UrdfModel
 
 __all__ = [
     "MotionGuard", "GuardedRobot", "GuardReport", "GuardViolation",
     "UrdfModel", "DEFAULT_URDF", "ARM_SIDES", "JOINTS_PER_ARM",
     "EE_LINK_PREFIXES", "is_ee_body",
+    "HAND_ENVELOPE_PREFIX", "is_hand_envelope", "body_name",
 ]
