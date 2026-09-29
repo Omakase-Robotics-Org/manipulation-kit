@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 
@@ -29,8 +30,9 @@ from manipulation_kit.guard.urdf_model import UrdfModel
 #: description/d1 (the generator lives in its tools/)
 D1 = os.path.dirname(os.path.dirname(gen.__file__))
 
-HOME_A = [-52.26, 87.38, 88.3, -114.32, 86.67, -1.1, 13.05]
-HOME_B = [52.26, 87.38, -88.3, -114.32, -86.67, -1.1, -13.05]
+with open(os.path.join(os.path.dirname(os.path.dirname(D1)), "config", "home_pose.json")) as _f:
+    _HOME = json.load(_f)["home_pose"]
+HOME_A, HOME_B = _HOME[:7], _HOME[7:]
 #: Right arm (SDK B) with a jaw-tip corner of the gripper ON the belly shell
 #: (0 mm from the rounded band) while every arm link is >= 24 mm clear of the
 #: body. Found by minimising the jaw-tip distance from random postures near
