@@ -20,11 +20,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Pushes to main only. A merge whose tree is exactly a pull request head that
+  # already passed this workflow has nothing new to prove, so every job below
+  # is skipped. Tree equality is the whole claim (the same files were tested);
+  # a merge that brought in a moved base finds no match, and any lookup
+  # failure runs everything as before. Uses only this run's GITHUB_TOKEN.
+  already-verified:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      verified: ${{ steps.lookup.outputs.verified }}
+    steps:
+      - name: Look for a green pull-request run on the same tree
+        id: lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          url=""
+          tree="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" --jq '.commit.tree.sha')" || tree=""
+          heads="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '.[] | select(.merged_at != null) | .head.sha')" || heads=""
+          for head in ${heads}; do
+            head_tree="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head}" --jq '.commit.tree.sha')" || continue
+            [ -n "${tree}" ] && [ "${head_tree}" = "${tree}" ] || continue
+            url="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${head}&event=pull_request&status=success&per_page=1" \
+              --jq '.workflow_runs[0].html_url // ""')" || url=""
+            [ -n "${url}" ] && break
+          done
+          if [ -n "${url}" ]; then
+            echo "::notice::${GITHUB_SHA}'s tree already passed this workflow: ${url}"
+            echo "verified=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no green pull-request run on ${GITHUB_SHA}'s tree; running every job"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # The advertised install: `pip install -e .` and nothing else. Inverse
   # kinematics runs on the numpy substrate, so this job is not a reduced
   # smoke test — it is the configuration most consumers actually have, and it
   # must stay green on its own.
   test-no-mujoco:
+    needs: already-verified
+    if: ${{ !cancelled() && needs.already-verified.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     # Serial runs measured 13-31 minutes on this runner; in parallel they are
     # a third of that. A ceiling against a hung run, not a target.
@@ -40,6 +83,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install without the mujoco extra
         # [firmware] is in here on purpose: its dependencies are three
         # PUBLISHED packages (httpx, attrs, typing_extensions), so a public
@@ -83,6 +128,8 @@ jobs:
           "
 
   test-mujoco:
+    needs: already-verified
+    if: ${{ !cancelled() && needs.already-verified.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -94,6 +141,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install with the mujoco extra
         # [mujoco] adds the alternative IK substrate: without it the checks
         # that compare the two substrates against each other skip, and the
@@ -126,6 +175,8 @@ jobs:
     # What a consumer installs is only the package. Research demos, runnable
     # examples and the CAD vendoring tools are top-level on purpose; if one of
     # them slips back under src/ this is what notices.
+    needs: already-verified
+    if: ${{ !cancelled() && needs.already-verified.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -133,6 +184,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Build the wheel
         run: |
           python -m pip install --upgrade pip build
@@ -175,6 +228,8 @@ jobs:
     # packages and carries the generated client INSIDE the wheel, so a clean
     # venv with no network beyond PyPI must be able to import the executor —
     # and that is checked below, offline.
+    needs: already-verified
+    if: ${{ !cancelled() && needs.already-verified.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -182,6 +237,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Build the wheel
         run: |
           python -m pip install --upgrade pip build
@@ -260,6 +317,8 @@ jobs:
     # by VERSION. A change that moves what consumers import while leaving
     # project.version unchanged therefore installs "successfully" on a robot
     # and changes nothing — see docs/HISTORY.md for the day that happened.
+    needs: already-verified
+    if: ${{ !cancelled() && needs.already-verified.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
