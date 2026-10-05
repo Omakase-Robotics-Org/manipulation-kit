@@ -7,7 +7,7 @@ glove→hand :mod:`retarget` map. Axis vocabulary lives in :mod:`axes`, lifted
 out of the retired driver so the retarget map keeps its names.
 """
 
-from .axes import ACTIVE_ROM_DEG, AXIS_NAMES, NUM_AXES, POS_MAX  # noqa: F401
+from .axes import ACTIVE_ROM_DEG, AXIS_NAMES, JOINTS, NUM_AXES, POS_MAX  # noqa: F401
 
 
 def description_path(name: str = "DH116S-R000-A1.xml"):

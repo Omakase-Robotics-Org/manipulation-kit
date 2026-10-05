@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.20.0"
+version = "0.21.0"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]
@@ -87,7 +87,14 @@ perception = ["pillow"]
 # five real frames of the d1-2 wagon against the numbers that came off them on
 # the night they were taken, and a suite that SKIPS that because it cannot
 # open a JPEG is a suite that stopped checking the thing it exists to check.
-dev = ["pytest", "yourdfpy", "pillow"]
+#
+# `tomli` is the TOML reader for Python < 3.11 (3.11+ has `tomllib`), so the
+# binding-file tests run on the 3.9 floor as well; see the `binding` extra.
+dev = ["pytest", "yourdfpy", "pillow", "tomli>=1.1; python_version < '3.11'"]
+# Reading an omakase.binding.v1 FILE (manipulation_kit.binding.load_binding)
+# on Python < 3.11, which has no tomllib. Nothing else needs it:
+# parse_binding() validates an already-parsed document with the stdlib alone.
+binding = ["tomli>=1.1; python_version < '3.11'"]
 
 [project.scripts]
 mkit-urdf = "manipulation_kit.description.cli:main"
@@ -144,6 +151,8 @@ where = ["src"]
     "descriptions/*.xml", "descriptions/README.md", "descriptions/meshes/*.STL",
 ]
 "manipulation_kit.hands.linkerbot.o30" = ["README.md"]
+"manipulation_kit.hands.robotera.xhand1" = ["README.md"]
+"manipulation_kit.hands.robotera.xhand1_lite" = ["README.md"]
 # The bundled d1-firmwared client is generated CODE (found by packages.find on
 # its own __init__.py files), but the two non-Python files beside it have to be
 # named: the OpenAPI document it was generated from and the snapshot metadata.

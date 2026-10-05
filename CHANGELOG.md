@@ -6,6 +6,95 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.21.0 — unreleased
+
+**Gloves drive hands through three layers, so N gloves and M hands cost
+N + M maps.** A glove driver publishes anatomical channels in radians; a
+per-operator calibration turns them into flexion in [0, 1]; a per-hand
+retarget map turns flexion into that hand's joint targets in
+`d1-firmwared`'s end-effector descriptor order and units. Nothing breaks:
+the version-1 retarget call (`get_retarget(model)(flex)`) returns exactly
+what it did.
+
+### New: `manipulation_kit.gloves`
+
+- `channels`: the anatomical vocabulary, mirroring the glove stream
+  encoder's channel table (28 channels) plus the LitchiBot extension
+  `thumb_cm_swing`. `tests/gloves/test_channels.py` parses that Rust table
+  and compares it entry by entry when `$MKIT_GLOVE_REFERENCE_DIR/channels.rs`
+  exists (skipped otherwise: it is not part of this repository).
+- `v1`: `PoseStreamDecoder` decodes `teleop_gloves.pose_stream.v1`
+  (`channel_declaration` + `pose_frames`) into per-hand
+  `HandAngles` (channel -> radians or `None`), in both the device-wide
+  dialect (one declaration for the whole device) and the LitchiBot dialect (per-hand
+  declarations, `v1_field`, node-level `derived_from`). A missing,
+  non-finite or UNCALIBRATED channel is `None`, never 0.0. `Declaration`
+  carries the encoder's drive-source refusal rule (`check_drive_sources`).
+- `calibration`: `ChannelRange` / `ChannelCalibration` with the encoder's
+  semantics (lo -> 0, hi -> 1, linear, clamped, optional invert; refuses
+  lo == hi), `None` in -> `None` out, and a JSON file format
+  (`manipulation_kit.glove_calibration.v1`, overrides only) with
+  `load_ranges` / `save_ranges`.
+- `pose`: `HandAngles` and the canonical `HandPose`.
+
+### New: retarget contract version 2 (`manipulation_kit.hands.joints`)
+
+- Every v2 hand map exposes `JOINTS` (the descriptor's joints: name,
+  `rad`/`fraction`, min, max), `required_channels()` and
+  `joint_targets(pose) -> [float | None]`; `None` = hold that joint.
+  Helpers: `check_descriptor` (refuse a live descriptor that differs from
+  the kit's table) and `fill_held`.
+- `leadshine/dh116s`: v2 beside the unchanged v1 call (`fraction` 0..1 =
+  v1's value / 10000). New `RetargetConfig.thumb_swing_blend_channel`
+  (default `thumb_cm_roll`, the name it always read; set `thumb_cm_swing`
+  for a LitchiBot glove's abduction). New `axes.JOINTS`.
+- New `robotera/xhand1`: the twelve joints as `d1-firmwared` publishes them (`thumb_bend thumb_rota1 ...
+  pinky_j2`, `rad`, the manual's degree limits converted exactly) and a
+  retarget map
+  (per-joint weighted channels -> rad interval, invert, limits). Thumb
+  mapping and index spread direction are not verified on a hand. No
+  `toolconfig`: the manual gives a mass only.
+- New `robotera/xhand1_lite`: the six-joint XHAND1 Lite (`rad`, a
+  provisional tested range, as `d1-firmwared`'s `robotera/xhand1_lite`
+  declares it) and its retarget map:
+  each finger joint from the finger's MP + PIP flexion, the thumb from
+  `thumb_cm_yaw` (bend) and `thumb_cm_pitch` + `thumb_mp_pitch` (rota),
+  provisional. Lower limit -0.05 rad on every Lite joint (a resting margin;
+  the map's open end stays at 0 rad).
+  `tests/hands/test_xhand_descriptor_drift.py` compares both XHAND tables
+  with the hand driver's descriptor source when
+  `$MKIT_HAND_DESCRIPTOR_DIR/descriptor.rs` exists. The XHAND1 `RetargetConfig`/`Retargeter` now take their joint
+  table from the class, so the Lite reuses them; behaviour is unchanged.
+
+### New: `manipulation_kit.binding` (`omakase.binding.v1`)
+
+- `load_binding(path, available_outputs=None)` / `parse_binding(doc, ...)`:
+  `[[source]]`, whole-hand `[[bind]]` (`to = "hand/right"`,
+  `from = "<device>"`, optional `retarget` and `calibration`) and 1:1 binds
+  with `range` or `map`. Refuses at startup, all problems at once: two binds
+  to one output (`hand/right` vs `hand/right/<axis>` included), an unknown
+  source device, `lo == hi`, an output the caller says the robot lacks, and
+  malformed paths or unknown keys.
+- New extra `[binding]`: `tomli` on Python < 3.11 (also in `[dev]`).
+- Gesture maps for `teleop_controls.event_stream.v1` sources: `map` keys may
+  be the gestures `press`, `release`, `tap`, `hold` (one press = press, then
+  tap or hold, then release; hold fires when `hold_s` elapses). `hold_s` is
+  per bind, default `DEFAULT_HOLD_S` = 0.5 s. Integer-keyed maps are
+  unchanged; a map is all gestures or all integers.
+- New output kind `action/<name>` for actions the teleoperation server
+  performs itself, not robot devices: `action/recording` with verbs `start`,
+  `stop`, `toggle`, `abort` (`ACTIONS`). Checked against `ACTIONS`, not
+  against `available_outputs`.
+- A whole-hand bind may carry `[bind.retarget_config]`: overrides of the
+  resolved hand map's `RetargetConfig` fields (scalars, same-length arrays,
+  and for the XHAND1 / Lite per-joint `joints.<name>` tables with
+  `sources = { channel = weight }`, `lo`, `hi`, `invert`). Checked at load
+  against the dataclass (unknown field, wrong type or length, unknown joint
+  or channel, the config's own limit checks); `Bind.retarget_config` holds
+  the built config and `Bind.build_retarget()` returns
+  `get_retarget(model, config=...)`. New `build_retarget_config(model,
+  overrides)`.
+
 ## 0.20.0 — unreleased
 
 **The belly band follows the shell's rounded corners, and the tool is in the

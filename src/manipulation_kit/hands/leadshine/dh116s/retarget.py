@@ -30,8 +30,36 @@ Mapping:
   tumble as the CM rotates); the blend weight NEEDS ON-HAND TUNING and is
   deliberately a parameter (default: yaw only).
 
-Everything returns stroke fractions 0..10000 (the DH116S wire unit,
-:data:`POS_MAX` — what ``Dh116sDriver.set_positions`` takes).
+Two outputs, one map
+--------------------
+* ``mapper(flex)`` — retarget contract version 1, unchanged: a
+  ``flex(channel) -> float`` callable in, six stroke fractions 0..10000 (the
+  DH116S wire unit, :data:`POS_MAX`) out.
+* ``mapper.joint_targets(pose)`` — version 2
+  (:mod:`manipulation_kit.hands.joints`): a
+  :class:`~manipulation_kit.gloves.HandPose` in, six ``float | None`` out in
+  ``d1-firmwared``'s end-effector descriptor order and unit (:data:`JOINTS`:
+  ``fraction`` 0.0 .. 1.0, i.e. version 1's value / 10000). An axis is
+  ``None`` when any channel it reads with a non-zero weight has no reading;
+  the consumer holds that axis. :meth:`Retargeter.required_channels` lists
+  those channels for the current config.
+
+Both paths apply the same weights, EMA, ``invert`` and ``out_lo``/``out_hi``
+clamps, and agree to within version 1's integer rounding when every channel
+has a reading.
+
+The thumb's second lateral channel
+----------------------------------
+:attr:`RetargetConfig.thumb_swing_blend_channel` names the channel the swing
+blends against the yaw. It defaults to ``thumb_cm_roll``, the name this map
+always read. Under the glove vocabulary
+(:mod:`manipulation_kit.gloves.channels`) that name is an AXIAL ROLL, which
+the UDCAP glove measures; the LitchiBot glove's thumb ABDUCTION, which older
+glove adapters used to answer under ``thumb_cm_roll``, is now declared as
+``thumb_cm_swing``. With the default blend of 0.0 neither is read. A blend
+tuned on one glove is a different quantity on the other: set the channel
+explicitly when tuning it.
+
 All weights live in :class:`RetargetConfig`; per-axis ``invert`` and
 output ``lo/hi`` clamps allow flipping/limiting axes during hardware
 bring-up without code changes.
@@ -39,10 +67,11 @@ bring-up without code changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 import numpy as np
 
-from .axes import AXIS_NAMES, POS_MAX  # noqa: F401  (re-exported)
+from .axes import AXIS_NAMES, JOINTS, POS_MAX  # noqa: F401  (re-exported)
 
 _FINGERS = ("index", "middle", "ring", "pinky")
 
@@ -66,6 +95,8 @@ class RetargetConfig:
     # thumb swing = (1-roll_blend)*CM_yaw + roll_blend*CM_roll
     # TUNE ON HARDWARE: 2 active thumb DoA vs 4 glove thumb angles.
     thumb_swing_roll_blend: float = 0.0
+    # the channel the blend reads (see "The thumb's second lateral channel")
+    thumb_swing_blend_channel: str = "thumb_cm_roll"
     # exponential smoothing on the 6 outputs (0 = off, 0.3 ≈ light smoothing
     # at 50 Hz). The One-Euro treatment lives on the wrist path; hand channels
     # are already vendor-filtered, keep this gentle.
@@ -85,6 +116,9 @@ class Retargeter:
     def __init__(self, config: RetargetConfig | None = None):
         self.cfg = config if config is not None else RetargetConfig()
         self._ema: np.ndarray | None = None
+        # the version-2 path keeps its own smoothing state: it may hold an
+        # axis (NaN = not seeded yet), which the version-1 arithmetic cannot
+        self._ema_v2: np.ndarray | None = None
 
     # ------------------------------------------------------------------ #
     def fractions(self, flex) -> np.ndarray:
@@ -93,7 +127,8 @@ class Retargeter:
 
         # thumb swing: yaw (+ optional roll blend)
         b = float(np.clip(cfg.thumb_swing_roll_blend, 0.0, 1.0))
-        swing = (1.0 - b) * flex("thumb_cm_yaw") + b * flex("thumb_cm_roll")
+        swing = ((1.0 - b) * flex("thumb_cm_yaw")
+                 + b * flex(cfg.thumb_swing_blend_channel))
 
         # thumb flexion: CM + MP pitch
         tw = cfg.thumb_w_cm_pitch + cfg.thumb_w_mp_pitch
@@ -132,6 +167,84 @@ class Retargeter:
 
     def reset(self) -> None:
         self._ema = None
+        self._ema_v2 = None
+
+    # ------------------------------------------- retarget contract v2 -- #
+    #: The joints :meth:`joint_targets` answers, in descriptor order.
+    JOINTS = JOINTS
+
+    def _terms(self) -> List[Tuple[Tuple[float, str], ...]]:
+        """Per axis, the ``(weight, channel)`` terms of its weighted mean —
+        the same arithmetic :meth:`fractions` does, written as data so the
+        version-2 path can tell which channels an axis depends on."""
+        cfg = self.cfg
+        b = float(np.clip(cfg.thumb_swing_roll_blend, 0.0, 1.0))
+        terms = [((1.0 - b, "thumb_cm_yaw"), (b, cfg.thumb_swing_blend_channel)),
+                 ((cfg.thumb_w_cm_pitch, "thumb_cm_pitch"),
+                  (cfg.thumb_w_mp_pitch, "thumb_mp_pitch"))]
+        for f in _FINGERS:
+            terms.append(((cfg.w_mp, f + "_mp_pitch"), (cfg.w_pip, f + "_pip_pitch"),
+                          (cfg.w_dip, f + "_dip_pitch")))
+        return terms
+
+    def required_channels(self) -> Tuple[str, ...]:
+        """Every channel read with a non-zero weight under the current config,
+        in axis order, each once. Check them against the glove's declaration
+        at bind time."""
+        out: List[str] = []
+        for axis in self._terms():
+            for w, ch in axis:
+                if w != 0.0 and ch not in out:
+                    out.append(ch)
+        return tuple(out)
+
+    def joint_targets(self, pose) -> List[Optional[float]]:
+        """One canonical hand pose → six ``fraction`` targets or ``None``.
+
+        ``pose`` is a :class:`~manipulation_kit.gloves.HandPose` (anything with
+        ``get(channel) -> float | None``). An axis with a missing input is
+        ``None`` and leaves its EMA state untouched, so a sensor that drops
+        out and returns does not drag the axis through a stale average."""
+        cfg = self.cfg
+        raw: List[Optional[float]] = []
+        for axis in self._terms():
+            total = sum(w for w, _ in axis)
+            value = 0.0
+            for w, ch in axis:
+                if w == 0.0:
+                    continue
+                v = pose.get(ch)
+                if v is None:
+                    value = None
+                    break
+                value += w * v
+            raw.append(None if value is None else (value / total if total > 0 else 0.0))
+
+        if cfg.ema_alpha > 0.0:
+            if self._ema_v2 is None:
+                # a held axis has nothing to seed with yet: NaN until it does
+                self._ema_v2 = np.array([np.nan if v is None else v for v in raw])
+            else:
+                a = cfg.ema_alpha
+                for i, v in enumerate(raw):
+                    if v is None:
+                        continue
+                    prev = self._ema_v2[i]
+                    self._ema_v2[i] = v if np.isnan(prev) else (1.0 - a) * v + a * prev
+            raw = [None if v is None else float(self._ema_v2[i])
+                   for i, v in enumerate(raw)]
+
+        out: List[Optional[float]] = []
+        for i, v in enumerate(raw):
+            if v is None:
+                out.append(None)
+                continue
+            v = float(np.clip(v, 0.0, 1.0))
+            if cfg.invert[i]:
+                v = 1.0 - v
+            v = float(np.clip(v, cfg.out_lo[i] / POS_MAX, cfg.out_hi[i] / POS_MAX))
+            out.append(JOINTS[i].clamp(v))
+        return out
 
 
 def build_retarget(config: RetargetConfig | None = None) -> Retargeter:
