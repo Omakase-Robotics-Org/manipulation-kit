@@ -30,6 +30,21 @@ The seam covers retargeting: :func:`get_retarget` resolves the model's
 that hand's wire-unit axis commands). Teleop stacks own the GLOVE side
 (transport, per-user calibration) and hand it a ``flex(channel) -> [0, 1]``
 callable; which channels drive which axis is hand knowledge and lives here.
+Retarget contract version 2 (:mod:`.joints`) sits beside that call on the
+same mapper object, so ``get_retarget`` serves both: ``mapper.JOINTS`` (the
+hand's joints as ``d1-firmwared``'s end-effector descriptor lists them —
+name, ``rad``/``fraction``, min, max), ``mapper.required_channels()`` (the
+glove channels the current config reads, checked once against the glove's
+declaration) and ``mapper.joint_targets(pose)`` (a
+:class:`manipulation_kit.gloves.HandPose` in, one target or ``None`` per
+joint out, in descriptor order and units — ``None`` meaning "an input is
+missing, hold this joint"). That is the path for a glove of any make driving
+a hand of any make through ``POST /v1/end_effectors/{side}/joints``; the
+version-1 ``mapper(flex)`` call is unchanged for the consumers that use it.
+``leadshine/dh116s``, ``robotera/xhand1`` and ``robotera/xhand1_lite``
+implement both;
+``linkerbot/o30`` still has no map.
+
 Likewise a model may ship a ``description`` submodule for its geometry —
 ``load_mjspec`` (MJCF, ``leadshine/dh116s``) or ``load_urdf`` (URDF,
 ``d1/parallel_gripper``), both resolved off the model's

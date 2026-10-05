@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Tuple
 
+from ...joints import UNIT_FRACTION, JointSpec
+
 #: Number of independently commanded axes.
 NUM_AXES = 6
 
@@ -29,3 +31,12 @@ AXIS_NAMES: Tuple[str, ...] = (
 
 #: Active-joint ROM in degrees, from the DH116S user manual (axis order above).
 ACTIVE_ROM_DEG: Tuple[float, ...] = (91.0, 59.0, 72.0, 72.0, 72.0, 74.0)
+
+#: The joints as ``d1-firmwared``'s end-effector descriptor publishes them
+#: (``GET /v1/end_effectors/{side}``, driver ``leadshine-dh116s``): the axes
+#: above in the same order, each a ``fraction`` 0.0 .. 1.0 of its wire range
+#: (wire = fraction x :data:`POS_MAX`). 0.0 is the open preset on every axis;
+#: 1.0 is full stroke (a flexion axis fully closed; the thumb swing at the
+#: far end of its 0-91 degree travel).
+JOINTS: Tuple[JointSpec, ...] = tuple(
+    JointSpec(name, UNIT_FRACTION, 0.0, 1.0) for name in AXIS_NAMES)
