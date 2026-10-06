@@ -190,10 +190,12 @@ def test_the_remote_judge_batches_every_question_of_a_view(agent_examples,
                                                            tmp_path, server):
     from jev_judge import RemoteJudge
     url, fake = server
-    judge = RemoteJudge(url, formulation="score", views=("upright", "rot180"))
+    views = ("upright", "rot180")
+    judge = RemoteJudge(url, formulation="score", views=views)
     dist = judge(_look(tmp_path))
     assert judge.batch is True
-    assert len(fake.calls) == 2 * 3            # 3 questions x 2 views
+    # one batched call per (view, score question)
+    assert len(fake.calls) == len(views) * len(questions("tape", "score"))
     assert set(dist) == set(CHOICES)
     answers = judge.last["answers"]
     # option 0 is "yes" / "far left" / "far above" in the photo as shown:

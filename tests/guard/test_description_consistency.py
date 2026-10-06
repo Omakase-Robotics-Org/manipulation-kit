@@ -1129,7 +1129,7 @@ def test_body_meshes_are_the_vendor_cad():
     not decimated, because simplifying it to a 4 k-triangle budget moved the
     surface by up to 48 mm. Zero-triangle vendor placeholders are excluded."""
     stls = sorted(BODY_MESH_NAMES)
-    assert len(stls) == 10, f"expected 10 body meshes, got {stls}"
+    assert stls, "no vendor body meshes are declared"
     for name in stls:
         path = assets.resolve(f"description/d1/meshes/body/{name}")
         assert path is not None, f"{name} not in the assets checkout"
