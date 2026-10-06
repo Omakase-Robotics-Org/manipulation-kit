@@ -35,7 +35,7 @@ SCHEMA_VERSION = 1
 #: The iceoryx2 release every participant must be built against.
 ICEORYX2_VERSION = "0.9.3"
 #: SHA-256 of ``end_effector.shm.1.layout.json`` (frozen with version 1).
-LAYOUT_SHA256 = "e66b7890142f92fe2429d48847a906e313e0836b3558fc4806a7b3eb0c527a49"
+LAYOUT_SHA256 = "4ac9bb203ff24927fc08cabebf96b69b2ce52d18a1506af9e1ed109928849bf4"
 #: The vendored layout's file name, beside this module.
 LAYOUT_FILE = "end_effector.shm.1.layout.json"
 
@@ -167,7 +167,7 @@ class ExtraKey(ctypes.Structure):
 @_named("omakase_ee_v1_Descriptor")
 class Descriptor(ctypes.Structure):
     _fields_ = [("header", Header), ("generation", u64), ("driver", u8 * NAME_LEN),
-                ("family", u8 * NAME_LEN), ("model", u8 * NAME_LEN), ("node_id", i32),
+                ("detail_schema", u8 * NAME_LEN), ("model", u8 * NAME_LEN), ("node_id", i32),
                 ("joint_count", u32), ("joints", Joint * MAX_JOINTS), ("capabilities", u32),
                 ("grip_presets", u32), ("force_sensing", u32), ("max_command_hz", u32),
                 ("set_timeout_ms", u32), ("set_extra_count", u32),
@@ -402,25 +402,43 @@ class Capabilities:
     max_command_hz: Optional[int] = None
 
 
+def valid_schema_id(schema: str) -> bool:
+    """Whether ``schema`` is a schema id: ``"<id>/<major>"``, where ``id`` is
+    non-empty and holds no ``/`` or NUL, and ``major`` is a decimal integer
+    from 1 without leading zeros (``acme.report/1``)."""
+    id_, slash, major = schema.partition("/")
+    return (bool(slash) and bool(id_) and "\0" not in id_ and major.isascii()
+            and major.isdigit() and not major.startswith("0"))
+
+
 @dataclass
 class DescriptorSpec:
-    """What a provider drives."""
+    """What a provider drives.
+
+    ``detail_schema`` is the schema id (``"<id>/<major>"``, the provider's
+    own) the state's ``detail`` follows, or ``None`` for a provider that
+    publishes no detail. There is no class label: clients tell devices apart
+    by their capabilities and joint count."""
 
     driver: str
-    family: str
     model: str
     joints: List[JointSpec]
     capabilities: Capabilities
+    detail_schema: Optional[str] = None
     node_id: Optional[int] = None
     set_timeout_ms: Optional[int] = None
 
     def validate(self) -> None:
         """Refuse a declaration the daemon would refuse."""
-        for what, value in (("driver", self.driver), ("family", self.family),
-                            ("model", self.model)):
+        for what, value in (("driver", self.driver), ("model", self.model)):
             if not value or len(value.encode()) > NAME_LEN or "\0" in value:
                 raise ContractError(f"descriptor {what} {value!r} must be 1 to {NAME_LEN} "
                                     "bytes without NUL")
+        if self.detail_schema is not None and (
+                len(self.detail_schema.encode()) > NAME_LEN
+                or not valid_schema_id(self.detail_schema)):
+            raise ContractError(f"descriptor detail_schema {self.detail_schema!r} must be "
+                                f'"<id>/<major>" in at most {NAME_LEN} bytes')
         if len(self.joints) > MAX_JOINTS:
             raise ContractError(f"{len(self.joints)} joints; the contract holds {MAX_JOINTS}")
         names = set()
@@ -466,7 +484,7 @@ class DescriptorSpec:
         out.header = value_header
         out.generation = generation
         put_str(out.driver, self.driver, "driver")
-        put_str(out.family, self.family, "family")
+        put_str(out.detail_schema, self.detail_schema or "", "detail_schema")
         put_str(out.model, self.model, "model")
         out.node_id = -1 if self.node_id is None else self.node_id
         out.joint_count = len(self.joints)
@@ -515,7 +533,8 @@ class StateSample:
     cap_reached: Optional[bool] = None
     torque_nm: Optional[float] = None
     fault: Optional[str] = None
-    #: ``{"family", "schema_version", "data"}`` or ``None``
+    #: ``{"schema", "data"}`` or ``None``; ``schema`` is the descriptor's
+    #: ``detail_schema``
     detail: Optional[Dict[str, Any]] = None
 
     def to_wire(self, generation: int, value_header: Header) -> State:

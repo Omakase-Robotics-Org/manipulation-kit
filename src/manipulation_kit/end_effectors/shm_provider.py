@@ -24,8 +24,8 @@ end effectors that show it end to end:
   heartbeat, the descriptor republish and the state read run on their
   periods. Provider methods that may block run on worker threads, so a long
   stroke never delays a heartbeat or a stop.
-* :class:`SimulatedGripper` (family ``parallel_gripper``) and
-  :class:`SimulatedHand` (family ``dexterous_hand``) — simulated devices, and
+* :class:`SimulatedGripper` (detail ``sim.gripper/1``) and
+  :class:`SimulatedHand` (detail ``hand.state/1``) — simulated devices, and
   :func:`main`, the ``mkit-ee-provider`` command that serves one.
 
 The bindings are the optional ``[shm]`` extra; nothing here imports them
@@ -649,15 +649,17 @@ class _Motion:
 
 
 class SimulatedGripper(Provider):
-    """A simulated two-finger parallel gripper (family ``parallel_gripper``).
+    """A simulated two-finger parallel gripper (detail ``sim.gripper/1``).
 
     One joint, ``jaw``, as a fraction of the stroke (``1.0`` open). ``set``
     moves at ``speed`` strokes per second and, with ``wait``, returns when the
     jaw arrives or stops on the simulated object (``object_at``, a jaw
-    fraction, or ``None``). Its detail carries the family's keys (``model``,
-    ``kind``, ``torque_cap_nm``, ``stroke_interrupted``).
+    fraction, or ``None``). Its detail, schema ``sim.gripper/1``, carries
+    ``model``, ``kind``, ``torque_cap_nm`` and ``stroke_interrupted``.
     """
 
+    #: The schema id of this provider's detail, its own.
+    DETAIL_SCHEMA = "sim.gripper/1"
     CAPS_NM = {"soft": 0.35, "firm": 1.0, "strong": 1.5}
 
     def __init__(self, model: str = "sim/two-finger", speed: float = 2.0,
@@ -673,7 +675,8 @@ class SimulatedGripper(Provider):
 
     def descriptor(self) -> c.DescriptorSpec:
         return c.DescriptorSpec(
-            driver="sim-gripper", family="parallel_gripper", model=self.model, node_id=None,
+            driver="sim-gripper", detail_schema=self.DETAIL_SCHEMA, model=self.model,
+            node_id=None,
             joints=[c.JointSpec("jaw", "fraction", 0.0, 1.0)],
             capabilities=c.Capabilities(
                 openness=True, joints=True, stroke_completion=True,
@@ -720,7 +723,7 @@ class SimulatedGripper(Provider):
             tracking=False, holding=holding, contact=holding,
             cap_reached=holding if self.cap_nm is not None else None,
             torque_nm=self.cap_nm if holding else 0.0, fault=self.fault,
-            detail={"family": "parallel_gripper", "schema_version": 1, "data": {
+            detail={"schema": self.DETAIL_SCHEMA, "data": {
                 "model": self.model, "kind": self.kind, "torque_cap_nm": self.cap_nm,
                 "stroke_interrupted": self.interrupted, "jaw_fraction": position}})
 
@@ -751,11 +754,16 @@ class SimulatedGripper(Provider):
 
 
 class SimulatedHand(Provider):
-    """A simulated six-axis hand (family ``dexterous_hand``).
+    """A simulated six-axis hand (detail ``hand.state/1``).
 
     Six axes as fractions of their range (``0.0`` extended); the openness is
-    one minus the mean flexion. Its detail is the family's ``HandState``.
+    one minus the mean flexion. Its detail is a ``HandState``, the schema
+    d1-firmware publishes for its own hands as ``hand.state/1``; a client
+    that reads that schema reads this hand the same way.
     """
+
+    #: The schema id of this provider's detail.
+    DETAIL_SCHEMA = "hand.state/1"
 
     AXES = ("thumb_swing", "thumb", "index", "middle", "ring", "little")
 
@@ -767,7 +775,7 @@ class SimulatedHand(Provider):
 
     def descriptor(self) -> c.DescriptorSpec:
         return c.DescriptorSpec(
-            driver="sim-hand", family="dexterous_hand", model=self.model,
+            driver="sim-hand", detail_schema=self.DETAIL_SCHEMA, model=self.model,
             joints=[c.JointSpec(name, "fraction", 0.0, 1.0) for name in self.AXES],
             capabilities=c.Capabilities(openness=True, joints=True, max_command_hz=100))
 
@@ -788,7 +796,7 @@ class SimulatedHand(Provider):
         openness = 1.0 - sum(positions[1:]) / (len(positions) - 1)
         return c.StateSample(
             openness=max(0.0, min(1.0, openness)), joints=positions, live=True,
-            detail={"family": "dexterous_hand", "schema_version": 1, "data": {
+            detail={"schema": self.DETAIL_SCHEMA, "data": {
                 "model": self.model, "side": self.side, "positions": positions,
                 "positions_wire": [round(p * 10_000) for p in positions],
                 "enabled": [self.enabled] * len(positions), "all_enabled": self.enabled,

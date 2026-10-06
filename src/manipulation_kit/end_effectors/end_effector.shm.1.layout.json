@@ -182,7 +182,7 @@
           "type": "u8[64]"
         },
         {
-          "name": "family",
+          "name": "detail_schema",
           "offset": 104,
           "size": 64,
           "type": "u8[64]"

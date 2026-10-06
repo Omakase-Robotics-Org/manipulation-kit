@@ -26,8 +26,10 @@ imports it, and the base install is unchanged.
   before a provider method runs (stale or late `set` answered `stale_target`
   and not executed, undeclared parameters refused, old joint targets
   dropped and the newest delivered one at a time, a rise of the daemon's
-  stop generation calls `stop`). `SimulatedGripper` (`parallel_gripper`) and
-  `SimulatedHand` (`dexterous_hand`) serve a simulated device; the
+  stop generation calls `stop`). A provider declares the schema id of its
+  own detail (`detail_schema`, `<id>/<major>`) rather than a class of end
+  effector. `SimulatedGripper` (`sim.gripper/1`) and `SimulatedHand`
+  (`hand.state/1`) serve a simulated device; the
   `mkit-ee-provider` command serves either.
 - New extra `[shm]` = `iceoryx2==0.9.3`, the exact release the daemon is
   built against; CI installs it so the shared-memory tests run there.

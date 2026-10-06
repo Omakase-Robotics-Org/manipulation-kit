@@ -33,7 +33,7 @@ Subclass `manipulation_kit.end_effectors.shm_provider.Provider`:
 
 | method | called from | what it does |
 | --- | --- | --- |
-| `descriptor()` | once, at start | your driver name, `family`, model, joints (name, `rad` or `fraction`, limits) and capabilities |
+| `descriptor()` | once, at start | your driver name, model, joints (name, `rad` or `fraction`, limits), capabilities, and the schema id of your detail (`detail_schema`) |
 | `set(command)` | a worker thread | drive to `command.openness` (`1.0` open, `0.0` closed); with `wait` and `stroke_completion`, return when the stroke concludes |
 | `joints(targets, timestamp_us)` | a worker thread | drive every joint; never wait for motion |
 | `read()` | the port thread, every state period | the current `StateSample`; must return at once |
@@ -63,23 +63,31 @@ dropped and only the newest is delivered; a rise of the daemon's stop
 generation calls `stop()` even if the stop request itself was lost. A
 `set` that blocks for a long stroke never delays a heartbeat or a stop.
 
-## The family and its detail
+## Capabilities, joints and the detail schema
 
-`family` names the class of your end effector and the schema of the `detail`
-your state carries (`{"family", "schema_version", "data"}`, at most 8 KiB of
-JSON). Clients read `detail.data` only for a family and version they know.
-Two families exist:
+There is no class label. A client decides what your device is from its
+capabilities (`openness` for a one-number open/close command, `joints` and
+the joint count for per-joint control, `stroke_completion` for a `set` that
+concludes) and reads your `detail` by its schema id.
 
-- `parallel_gripper` (schema 1): `data` carries at least `model`, `kind`
-  (the newest stroke's outcome: `grasp`, `contact`, `empty`, `open`,
-  `timeout`, `fault`, `overload`, `halted`, `blind`, `lost`),
-  `torque_cap_nm` and `stroke_interrupted`; the robot's telemetry reads these.
-- `dexterous_hand` (schema 1): `data` is a `HandState` (`model`, `side`,
-  `positions`, `positions_wire`, `enabled`, `all_enabled`, `error_code`,
-  `faults`, `live`, `features`).
+`detail_schema` is that id, `"<id>/<major>"` (an id without `/`, then a
+major from 1 without leading zeros, at most 64 bytes): yours to choose, for
+example `acme.report/1`, with the major raised only when the data changes
+incompatibly. Your state's `detail` is `{"schema", "data"}` (at most 8 KiB
+of JSON) with `schema` equal to `detail_schema`; the daemon publishes no
+detail under any other id, and none when you declare no `detail_schema`.
+Clients read `detail.data` only under a schema id they know and treat
+anything else as opaque.
 
-A device that is neither declares a family of its own; clients then treat its
-detail as opaque.
+`SimulatedGripper` declares `sim.gripper/1`, whose `data` carries `model`,
+`kind` (the newest stroke's outcome: `grasp`, `contact`, `empty`, `open`,
+`timeout`, `fault`, `overload`, `halted`, `blind`, `lost`), `torque_cap_nm`
+and `stroke_interrupted`. `SimulatedHand` declares `hand.state/1`, the schema
+d1-firmware publishes for its own hands: `data` is a `HandState` (`model`,
+`side`, `positions`, `positions_wire`, `enabled`, `all_enabled`,
+`error_code`, `faults`, `live`, `features`). The robot's gripper metrics are
+the Damiao report's (`damiao.report/1`), so a provider's gripper is served
+through the API and reports no gripper series.
 
 ## Deploying on a robot
 
@@ -153,7 +161,7 @@ A provider in another language implements the same thirteen messages. Check
 your definitions against `end_effector.shm.1.layout.json` in a test — every
 message's iceoryx2 type name, size, alignment and every field's offset, size
 and type, and the SHA-256 of the file itself
-(`e66b7890142f92fe2429d48847a906e313e0836b3558fc4806a7b3eb0c527a49`; version 1
+(`4ac9bb203ff24927fc08cabebf96b69b2ce52d18a1506af9e1ed109928849bf4`; version 1
 is frozen, so a changed file is a new contract version). That is what
 `tests/end_effectors/test_shm_contract.py` does for the ctypes structures
 here.

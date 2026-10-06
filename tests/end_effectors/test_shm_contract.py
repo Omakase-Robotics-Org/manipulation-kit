@@ -89,7 +89,7 @@ def test_every_constant_is_the_contracts():
 
 def _gripper() -> c.DescriptorSpec:
     return c.DescriptorSpec(
-        driver="acme-gripper", family="parallel_gripper", model="acme/g2", node_id=3,
+        driver="acme-gripper", detail_schema="acme.report/1", model="acme/g2", node_id=3,
         joints=[c.JointSpec("jaw", "rad", 0.0, 0.08)],
         capabilities=c.Capabilities(openness=True, joints=True, grip_presets=["soft", "firm"],
                                     set_extra=["speed"], force_sensing="estimated",
@@ -101,6 +101,7 @@ def test_a_declaration_encodes_as_the_contract_spells_it():
     message = _gripper().to_wire(1, c.header(7, 1))
     assert message.header.schema_version == 1
     assert c.get_str(message.model, "model") == "acme/g2"
+    assert c.get_str(message.detail_schema, "detail_schema") == "acme.report/1"
     assert message.node_id == 3
     assert message.joint_count == 1
     assert c.get_str(message.joints[0].name, "joint") == "jaw"
@@ -118,6 +119,8 @@ def test_a_declaration_encodes_as_the_contract_spells_it():
     lambda d: setattr(d.joints[0], "unit", "deg"),
     lambda d: setattr(d.capabilities, "max_command_hz", 0),
     lambda d: setattr(d.capabilities, "grip_presets", ["hard"]),
+    lambda d: setattr(d, "detail_schema", "acme.report"),
+    lambda d: setattr(d, "detail_schema", "acme/01"),
 ])
 def test_a_declaration_the_daemon_refuses_does_not_encode(change):
     descriptor = _gripper()
@@ -129,8 +132,7 @@ def test_a_declaration_the_daemon_refuses_does_not_encode(change):
 def test_a_state_carries_its_tristates_and_drops_an_oversize_detail():
     sample = c.StateSample(openness=0.25, joints=[0.02], live=True, holding=True,
                            contact=False, fault="hot",
-                           detail={"family": "parallel_gripper", "schema_version": 1,
-                                   "data": {"kind": "grasp"}})
+                           detail={"schema": "acme.report/1", "data": {"kind": "grasp"}})
     message = sample.to_wire(1, c.header(7, 2))
     assert message.flags == (c.STATE_LIVE | c.STATE_HOLDING_KNOWN | c.STATE_HOLDING
                              | c.STATE_CONTACT_KNOWN)
@@ -189,3 +191,19 @@ def test_responses_carry_status_and_body():
     assert oversize.status == c.STATUS_DEVICE
     refused = c.command_response(c.STATUS_REFUSED, "no", c.header(7, 3))
     assert c.get_str(refused.message, "message") == "no"
+
+
+@pytest.mark.parametrize("schema,valid", [
+    ("acme.report/1", True), ("hand.state/12", True), ("x/1", True),
+    ("", False), ("acme.report", False), ("/1", False), ("acme/", False),
+    ("acme/0", False), ("acme/01", False), ("acme/1.2", False), ("acme/1/2", False),
+])
+def test_a_schema_id_is_an_id_and_a_major_from_one(schema, valid):
+    assert c.valid_schema_id(schema) is valid
+
+
+def test_a_provider_without_a_detail_declares_an_empty_schema():
+    descriptor = _gripper()
+    descriptor.detail_schema = None
+    message = descriptor.to_wire(1, c.header(7, 1))
+    assert c.get_str(message.detail_schema, "detail_schema") == ""
