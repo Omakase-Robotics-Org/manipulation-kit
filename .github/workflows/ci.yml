@@ -45,10 +45,12 @@ jobs:
         # PUBLISHED packages (httpx, attrs, typing_extensions), so a public
         # runner can install it — which is the whole point of the change that
         # replaced the unpublished d1fw-client. It is what lets the firmware
-        # client checks actually run rather than skip.
+        # client checks actually run rather than skip. [shm] is the iceoryx2
+        # 0.9.3 bindings, a published wheel: with it the end-effector
+        # provider's shared-memory tests run instead of skipping.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,firmware]' pytest-xdist
+          pip install -e '.[dev,firmware,shm]' pytest-xdist
       - name: mujoco really is absent
         # Otherwise a transitive dependency could quietly install it and this
         # job would stop testing the thing it exists to test.
