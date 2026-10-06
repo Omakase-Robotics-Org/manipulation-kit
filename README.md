@@ -329,6 +329,9 @@ mkit-urdf fetch-visuals --from-d1-sdk ~/d1-sdk        # optional visual layer
 
 mkit-toolconfig list
 mkit-toolconfig export d1/parallel_gripper out.json
+
+mkit-ee-provider --model gripper --service omakase/ee/b   # needs [shm]: a simulated
+                                                         # end effector for d1-firmwared
 ```
 
 | variant | what it is |
@@ -409,6 +412,11 @@ src/manipulation_kit/     the installed package — this, and only this, is the 
                  self-collision over the primitives-only whole-body URDF
   hands/         "<maker>/<model>" identity: tool configs, CAD descriptions,
                  glove->hand retarget maps
+  end_effectors/ end_effector.shm/1: an end effector served to d1-firmwared by
+                 a process of its own — the contract's messages (ctypes,
+                 checked against the vendored layout) and a reference
+                 provider over the iceoryx2 bindings, behind [shm]. See
+                 docs/end-effector-providers.md
   description/   the D1 URDF family, its generator, the exporter, the assets
   config/        the exported JSON a controller consumes
 contrib/         research, not installed (whole-body IK: base + lift + neck)
