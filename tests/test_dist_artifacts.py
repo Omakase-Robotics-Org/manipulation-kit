@@ -10,6 +10,7 @@ committed copies, on every push.
 """
 import json
 import os
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -65,9 +66,14 @@ def test_the_prebuilt_wholebody_is_mesh_free_and_says_so():
                                         "d1_wholebody_gripper.urdf"]
     with open(os.path.join(dest, "PROVENANCE.json")) as f:
         manifest = json.load(f)
-    assert len(manifest["absent_external"]) == 22, (
-        "18 arm meshes + 4 gripper meshes are withheld; the manifest must "
-        "name every one of them")
+    refs = {m.get("filename") for m in ET.parse(
+        os.path.join(dest, "d1_wholebody_gripper.urdf")).getroot().iter("mesh")}
+    withheld = sorted(r for r in refs
+                      if r.startswith(("d1_arm/", "meshes/gripper/")))
+    assert withheld, "the shipped URDF references no arm or gripper mesh"
+    assert sorted(manifest["absent_external"]) == withheld, (
+        "the arm and gripper meshes are withheld; the manifest must name "
+        "every one of them")
     assert manifest["assets_repo"], "say where the withheld CAD can be got"
 
 
