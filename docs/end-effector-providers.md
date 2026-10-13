@@ -102,27 +102,29 @@ through the API and reports no gripper series.
 
 2. Install `manipulation-kit[shm]` (iceoryx2 is pinned to exactly 0.9.3,
    the daemon's version) and run your provider **as the account the daemon
-   runs as** (`doraemon` on a provisioned D1): iceoryx2 0.9.3 creates its
-   shared memory readable by its owner only. A systemd unit:
+   runs as** (`doraemon` on a provisioned D1). iceoryx2 0.9.3 creates every
+   segment, socket and lock file owner-only from a compile-time constant and
+   offers no setting to widen it, so a provider under any other account
+   cannot open the daemon's services; a shared group does not help either.
+   Your program may still live in your own home: the daemon's package
+   ships the template unit `d1-firmwared-ee-provider@.service`, which runs
+   one provider per side as `doraemon`:
 
-   ```ini
-   [Unit]
-   Description=ACME gripper provider (end_effector.shm/1)
-   After=d1-firmwared.service
-
-   [Service]
-   User=doraemon
-   ExecStart=/usr/bin/python3 -m acme_gripper.provider --service omakase/ee/b
-   Restart=on-failure
-   RestartSec=1s
-
-   [Install]
-   WantedBy=multi-user.target
+   ```sh
+   # let the daemon's account reach your program (homes are usually 0750)
+   sudo setfacl -m u:doraemon:x /home/$USER
+   sudo setfacl -R -m u:doraemon:rX /home/$USER/acme
+   # name the command for side b, then start it
+   sudo mkdir -p /etc/d1-firmwared/ee-provider
+   echo 'EE_PROVIDER_COMMAND=/home/'$USER'/acme/venv/bin/python -m acme_gripper.provider --service omakase/ee/b' \
+     | sudo tee /etc/d1-firmwared/ee-provider/b.env
+   sudo systemctl enable --now d1-firmwared-ee-provider@b
    ```
 
-   Do not give the unit `DynamicUser=`, `PrivateIPC=`, `PrivateDevices=` or
-   `PrivateUsers=`; with `ProtectSystem=strict`, add
-   `ReadWritePaths=/run/d1-firmwared/iceoryx2`.
+   While developing, `sudo -u doraemon <your command>` reaches the same
+   account by hand. A unit of your own must not set `DynamicUser=`,
+   `PrivateIPC=`, `PrivateDevices=` or `PrivateUsers=`, and with
+   `ProtectSystem=strict` needs `ReadWritePaths=/run/d1-firmwared`.
 
 3. `GET /v1/end_effectors/b` answers `available: true` and your descriptor.
    While your provider is down it answers `available: false` with the reason
