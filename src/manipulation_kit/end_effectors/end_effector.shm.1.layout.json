@@ -5,6 +5,8 @@
     "CAP_CONTACT_SENSING": 16,
     "CAP_GRIP_TORQUE": 8,
     "CAP_JOINTS": 2,
+    "CAP_JOINT_EFFORT": 512,
+    "CAP_JOINT_VELOCITY": 256,
     "CAP_OPENNESS": 1,
     "CAP_REGISTERS": 64,
     "CAP_STROKE_COMPLETION": 4,
@@ -164,6 +166,44 @@
       "align": 8,
       "fields": [
         {
+          "name": "mass_kg",
+          "offset": 0,
+          "size": 8,
+          "type": "f64"
+        },
+        {
+          "name": "com_mm",
+          "offset": 8,
+          "size": 24,
+          "type": "f64[3]"
+        },
+        {
+          "name": "inertia",
+          "offset": 32,
+          "size": 48,
+          "type": "f64[6]"
+        },
+        {
+          "name": "tcp_xyz_mm",
+          "offset": 80,
+          "size": 24,
+          "type": "f64[3]"
+        },
+        {
+          "name": "tcp_rpy_deg",
+          "offset": 104,
+          "size": 24,
+          "type": "f64[3]"
+        }
+      ],
+      "name": "Tool",
+      "size": 128,
+      "type_name": "omakase_ee_v1_Tool"
+    },
+    {
+      "align": 8,
+      "fields": [
+        {
           "name": "header",
           "offset": 0,
           "size": 32,
@@ -252,10 +292,34 @@
           "offset": 2056,
           "size": 256,
           "type": "ExtraKey[8]"
+        },
+        {
+          "name": "tool_declared",
+          "offset": 2312,
+          "size": 4,
+          "type": "u32"
+        },
+        {
+          "name": "reserved",
+          "offset": 2316,
+          "size": 4,
+          "type": "u32"
+        },
+        {
+          "name": "tool",
+          "offset": 2320,
+          "size": 128,
+          "type": "Tool"
+        },
+        {
+          "name": "guard_model",
+          "offset": 2448,
+          "size": 64,
+          "type": "u8[64]"
         }
       ],
       "name": "Descriptor",
-      "size": 2312,
+      "size": 2512,
       "type_name": "omakase_ee_v1_Descriptor"
     },
     {
@@ -336,32 +400,44 @@
           "type": "f64[32]"
         },
         {
-          "name": "fault",
+          "name": "velocity",
           "offset": 320,
+          "size": 256,
+          "type": "f64[32]"
+        },
+        {
+          "name": "effort",
+          "offset": 576,
+          "size": 256,
+          "type": "f64[32]"
+        },
+        {
+          "name": "fault",
+          "offset": 832,
           "size": 128,
           "type": "u8[128]"
         },
         {
           "name": "detail_len",
-          "offset": 448,
+          "offset": 960,
           "size": 4,
           "type": "u32"
         },
         {
           "name": "reserved",
-          "offset": 452,
+          "offset": 964,
           "size": 4,
           "type": "u32"
         },
         {
           "name": "detail",
-          "offset": 456,
+          "offset": 968,
           "size": 8192,
           "type": "u8[8192]"
         }
       ],
       "name": "State",
-      "size": 8648,
+      "size": 9160,
       "type_name": "omakase_ee_v1_State"
     },
     {

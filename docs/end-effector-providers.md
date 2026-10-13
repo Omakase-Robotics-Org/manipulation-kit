@@ -33,7 +33,7 @@ Subclass `manipulation_kit.end_effectors.shm_provider.Provider`:
 
 | method | called from | what it does |
 | --- | --- | --- |
-| `descriptor()` | once, at start | your driver name, model, joints (name, `rad` or `fraction`, limits), capabilities, and the schema id of your detail (`detail_schema`) |
+| `descriptor()` | once, at start | your driver name, model, joints (name, `rad` or `fraction`, limits), capabilities, the schema id of your detail (`detail_schema`), the tool the arm must compensate for (`tool`) and the arm-guard envelope to check you with (`guard_model`) |
 | `set(command)` | a worker thread | drive to `command.openness` (`1.0` open, `0.0` closed); with `wait` and `stroke_completion`, return when the stroke concludes |
 | `joints(targets, timestamp_us)` | a worker thread | drive every joint; never wait for motion |
 | `read()` | the port thread, every state period | the current `StateSample`; must return at once |
@@ -128,9 +128,30 @@ through the API and reports no gripper series.
    While your provider is down it answers `available: false` with the reason
    in `error`, and commands answer 502.
 
-A provider declares no arm tool. Register your device's mass, centre of mass,
-inertia and TCP with `POST /v1/arm/{side}/tool` after every daemon start, or
-the arm compensates gravity for the wrong load.
+Declare your device's tool (`DescriptorSpec.tool`, a `ToolSpec`: mass in
+kg, centre of mass in mm, inertia in kg·m² as `Ixx, Ixy, Ixz, Iyy, Iyz,
+Izz`, TCP in mm and degrees, in the flange frame — the values
+`POST /v1/arm/{side}/tool` takes; `ToolSpec.from_kinematics_dynamics`
+converts a kit tool config). The daemon registers it on the side's arm when
+it accepts your declaration and again after every arm recover, so the arm
+compensates gravity for what is on the flange. A tool a client registers
+with `POST /v1/arm/{side}/tool` outranks yours until the daemon restarts.
+Without a declared tool, nothing is registered: register it yourself after
+every daemon start, or the arm compensates gravity for the wrong load.
+
+`guard_model` names the envelope the daemon's arm guard should check your
+end effector with. The guard carries the envelopes compiled into the daemon
+and knows `d1/parallel_gripper` (the D1's stock gripper) only; any other id
+leaves your side on that default envelope, and
+`GET /v1/end_effectors/{side}` says so (`descriptor.guard_model_applied`).
+A new envelope is a change to the daemon, not something a provider ships.
+
+Declare `joint_velocity` and `joint_effort` when your `read()` fills
+`StateSample.velocity` (each joint's unit per second) and
+`StateSample.effort` (N·m for a rotary actuator, N for a linear one): one
+entry per joint, `None` where unknown. They reach clients as the state's
+`joint_velocities` and `joint_efforts`; an array you do not declare is sent
+as NaN.
 
 Your declaration is fixed for the daemon's lifetime: the daemon keeps the
 first valid one it receives, takes back a restarted provider that declares
@@ -157,11 +178,11 @@ daemon's `an_external_provider_command` test against both simulated models.
 
 ## Checking your own implementation
 
-A provider in another language implements the same thirteen messages. Check
+A provider in another language implements the same fourteen messages. Check
 your definitions against `end_effector.shm.1.layout.json` in a test — every
 message's iceoryx2 type name, size, alignment and every field's offset, size
 and type, and the SHA-256 of the file itself
-(`4ac9bb203ff24927fc08cabebf96b69b2ce52d18a1506af9e1ed109928849bf4`; version 1
+(`30414fd5c321b72ee171a14edb56fca3ac2fa19b25881454383fc9a160f5dfee`; version 1
 is frozen, so a changed file is a new contract version). That is what
 `tests/end_effectors/test_shm_contract.py` does for the ctypes structures
 here.

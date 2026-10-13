@@ -416,6 +416,13 @@ class ShmProvider:
             sample = c.StateSample(fault=f"state read failed: {error.message}")
         except Exception as error:  # noqa: BLE001 - published, not fatal
             sample = c.StateSample(fault=f"state read raised: {error}")
+        # An array the descriptor does not declare is sent as NaN throughout,
+        # as the contract requires of a provider.
+        caps = self.descriptor.capabilities
+        if not caps.joint_velocity:
+            sample.velocity = []
+        if not caps.joint_effort:
+            sample.effort = []
         try:
             message = sample.to_wire(self.generation, self._header("state"))
         except c.ContractError as error:
@@ -610,6 +617,14 @@ def serve(provider: Provider, options: ServeOptions,
 # --------------------------------------------------------------------------
 
 
+def _kit_tool(model: str) -> c.ToolSpec:
+    """The registration of the kit tool config ``model`` as a declared tool."""
+    from manipulation_kit.hands import get_tool_config
+
+    config = get_tool_config(model)
+    return c.ToolSpec.from_kinematics_dynamics(config.kinematics(), config.dynamics())
+
+
 class _Motion:
     """A position that moves toward a target at a fixed speed, in a
     background thread, with an optional object that stops a closing
@@ -618,6 +633,8 @@ class _Motion:
     def __init__(self, count: int, speed: float, start: float = 1.0) -> None:
         self.positions = [start] * count
         self.targets = [start] * count
+        #: Each joint's velocity over the last step, fraction per second.
+        self.velocities = [0.0] * count
         self.speed = speed
         self.block_at: Optional[float] = None
         self.lock = threading.Lock()
@@ -636,6 +653,7 @@ class _Motion:
                         target = self.block_at
                     position = self.positions[index]
                     delta = max(-self.speed * step_s, min(self.speed * step_s, target - position))
+                    self.velocities[index] = delta / step_s
                     if delta:
                         self.positions[index] = position + delta
                         moved = True
@@ -661,6 +679,11 @@ class SimulatedGripper(Provider):
     #: The schema id of this provider's detail, its own.
     DETAIL_SCHEMA = "sim.gripper/1"
     CAPS_NM = {"soft": 0.35, "firm": 1.0, "strong": 1.5}
+    #: The arm-guard envelope it is checked with: the D1's stock parallel
+    #: gripper, whose shape it simulates and which the daemon's guard knows.
+    GUARD_MODEL = "d1/parallel_gripper"
+    #: The kit tool config whose registration it declares.
+    TOOL_MODEL = "d1/parallel_gripper"
 
     def __init__(self, model: str = "sim/two-finger", speed: float = 2.0,
                  object_at: Optional[float] = None) -> None:
@@ -682,8 +705,9 @@ class SimulatedGripper(Provider):
                 openness=True, joints=True, stroke_completion=True,
                 grip_presets=["soft", "firm", "strong"], force_sensing="estimated",
                 contact_sensing=True, clear_fault=True, registers=True, ticks=True,
-                max_command_hz=100),
-            set_timeout_ms=3000)
+                joint_velocity=True, max_command_hz=100),
+            set_timeout_ms=3000, tool=_kit_tool(self.TOOL_MODEL),
+            guard_model=self.GUARD_MODEL)
 
     def set(self, command: c.SetCommand) -> None:
         if self.fault:
@@ -717,9 +741,11 @@ class SimulatedGripper(Provider):
     def read(self) -> c.StateSample:
         with self.motion.lock:
             position = self.motion.positions[0]
+            velocity = self.motion.velocities[0]
         holding = self.kind == "grasp"
         return c.StateSample(
-            openness=max(0.0, min(1.0, position)), joints=[position], live=True,
+            openness=max(0.0, min(1.0, position)), joints=[position], velocity=[velocity],
+            live=True,
             tracking=False, holding=holding, contact=holding,
             cap_reached=holding if self.cap_nm is not None else None,
             torque_nm=self.cap_nm if holding else 0.0, fault=self.fault,
@@ -764,6 +790,11 @@ class SimulatedHand(Provider):
 
     #: The schema id of this provider's detail.
     DETAIL_SCHEMA = "hand.state/1"
+    #: Its own envelope id; the daemon's guard has no envelope of it and
+    #: checks the side with its default, which the descriptor reports.
+    GUARD_MODEL = "sim/six-axis"
+    #: The kit tool config whose registration it declares (a six-axis hand).
+    TOOL_MODEL = "leadshine/dh116s"
 
     AXES = ("thumb_swing", "thumb", "index", "middle", "ring", "little")
 
@@ -777,7 +808,9 @@ class SimulatedHand(Provider):
         return c.DescriptorSpec(
             driver="sim-hand", detail_schema=self.DETAIL_SCHEMA, model=self.model,
             joints=[c.JointSpec(name, "fraction", 0.0, 1.0) for name in self.AXES],
-            capabilities=c.Capabilities(openness=True, joints=True, max_command_hz=100))
+            capabilities=c.Capabilities(openness=True, joints=True, joint_velocity=True,
+                                        max_command_hz=100),
+            tool=_kit_tool(self.TOOL_MODEL), guard_model=self.GUARD_MODEL)
 
     def set(self, command: c.SetCommand) -> None:
         flexion = 1.0 - command.openness
@@ -793,9 +826,11 @@ class SimulatedHand(Provider):
     def read(self) -> c.StateSample:
         with self.motion.lock:
             positions = list(self.motion.positions)
+            velocities = list(self.motion.velocities)
         openness = 1.0 - sum(positions[1:]) / (len(positions) - 1)
         return c.StateSample(
-            openness=max(0.0, min(1.0, openness)), joints=positions, live=True,
+            openness=max(0.0, min(1.0, openness)), joints=positions, velocity=velocities,
+            live=True,
             detail={"schema": self.DETAIL_SCHEMA, "data": {
                 "model": self.model, "side": self.side, "positions": positions,
                 "positions_wire": [round(p * 10_000) for p in positions],

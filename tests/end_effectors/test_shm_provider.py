@@ -6,6 +6,7 @@ d1-firmware checkout — the daemon's own Rust driver against this provider.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -49,6 +50,21 @@ def test_a_set_runs_only_for_this_instance_generation_and_deadline():
     stop = _envelope(target_instance_id=1, descriptor_generation=9, start_by_mono_ns=0,
                      command=None)
     assert triage_command(stop, 7, 1, GRIPPER, now) is None, "a stop always runs"
+
+
+def test_the_simulated_providers_declare_their_kit_tool_and_guard_model():
+    from manipulation_kit.hands import get_tool_config
+
+    for provider, model in ((SimulatedGripper(), "d1/parallel_gripper"),
+                            (SimulatedHand(), "leadshine/dh116s")):
+        declared = provider.descriptor()
+        config = get_tool_config(model)
+        assert declared.tool == c.ToolSpec.from_kinematics_dynamics(config.kinematics(),
+                                                                    config.dynamics())
+        assert declared.capabilities.joint_velocity
+        declared.validate()
+    assert GRIPPER.guard_model == "d1/parallel_gripper"
+    assert SimulatedHand().descriptor().guard_model == "sim/six-axis"
 
 
 def test_undeclared_set_parameters_are_refused():
@@ -273,6 +289,40 @@ def test_the_provider_serves_a_raw_client_of_the_contract(root):
         serving.close()
 
 
+def test_the_wire_carries_the_tool_and_only_declared_arrays(root):
+    provider = SimulatedGripper(speed=20.0)
+    declared = provider.descriptor()
+    declared.capabilities.joint_velocity = False
+    provider.descriptor = lambda: declared  # the simulator reports velocity regardless
+    serving = _Serving(provider, root)
+    daemon = _RawDaemon(root, "omakase/ee/b")
+    try:
+        daemon.target()
+        deadline = time.monotonic() + 5
+        descriptor = state = None
+        while (descriptor is None or state is None) and time.monotonic() < deadline:
+            for port, kind in ((daemon.descriptor, c.Descriptor), (daemon.state, c.State)):
+                sample = port.receive()
+                if sample is not None:
+                    value = kind.from_buffer_copy(sample.payload().contents)
+                    sample.delete()
+                    if kind is c.Descriptor:
+                        descriptor = value
+                    else:
+                        state = value
+            time.sleep(0.01)
+        assert descriptor is not None and state is not None
+        assert descriptor.tool_declared == 1
+        assert descriptor.tool.mass_kg == declared.tool.mass_kg
+        assert c.get_str(descriptor.guard_model, "guard_model") == "d1/parallel_gripper"
+        assert not descriptor.capabilities & c.CAP_JOINT_VELOCITY
+        assert state.joint_count == 1
+        assert all(math.isnan(value) for value in state.velocity), "undeclared: NaN"
+    finally:
+        daemon.close()
+        serving.close()
+
+
 def test_a_second_provider_cannot_bind_a_side_that_has_one(root):
     serving = _Serving(SimulatedGripper(), root)
     try:
@@ -329,9 +379,18 @@ def test_the_daemons_driver_drives_this_provider(model):
     command = f"{sys.executable} -m manipulation_kit.end_effectors.shm_provider --model {model}"
     result = subprocess.run(
         ["cargo", "test", "--locked", "-p", "d1fw-ee-shm", "--test", "shm_driver",
-         "an_external_provider_command", "--", "--ignored", "--exact"],
+         "an_external_provider_command", "--", "--ignored", "--exact", "--nocapture"],
         cwd=Path(os.environ["D1_FIRMWARE_DIR"]),
         env={**os.environ, "D1FW_EE_SHM_PROVIDER_CMD": command},
         capture_output=True, text=True, timeout=900)
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]
     assert "1 passed" in result.stdout, result.stdout[-2000:]
+    # The daemon's driver read the declared tool, guard envelope and velocities.
+    conformance = [line for line in result.stderr.splitlines()
+                   if line.startswith("conformance:")]
+    assert len(conformance) == 1, result.stderr[-4000:]
+    assert "tool=Some(ToolConfig" in conformance[0], conformance[0]
+    assert "joint_velocity=true" in conformance[0], conformance[0]
+    applied = "d1/parallel_gripper"
+    declared = SimulatedGripper.GUARD_MODEL if model == "gripper" else SimulatedHand.GUARD_MODEL
+    assert f'guard_model=Some("{declared}") guard_model_applied={applied}' in conformance[0]

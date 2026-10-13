@@ -207,3 +207,70 @@ def test_a_provider_without_a_detail_declares_an_empty_schema():
     descriptor.detail_schema = None
     message = descriptor.to_wire(1, c.header(7, 1))
     assert c.get_str(message.detail_schema, "detail_schema") == ""
+
+
+TOOL = c.ToolSpec(mass_kg=0.45, com_mm=(0.0, 1.0, 40.0),
+                  inertia=(0.0004, 0.0, 0.0, 0.0005, 0.0, 0.0002),
+                  tcp_xyz_mm=(0.0, 0.0, 110.0), tcp_rpy_deg=(0.0, 0.0, 90.0))
+
+
+def test_a_declared_tool_and_guard_model_encode_in_their_fields():
+    descriptor = _gripper()
+    descriptor.tool = TOOL
+    descriptor.guard_model = "acme/g2-envelope"
+    message = descriptor.to_wire(1, c.header(7, 1))
+    assert message.tool_declared == 1
+    assert message.tool.mass_kg == 0.45
+    assert list(message.tool.com_mm) == [0.0, 1.0, 40.0]
+    assert list(message.tool.inertia) == [0.0004, 0.0, 0.0, 0.0005, 0.0, 0.0002]
+    assert list(message.tool.tcp_xyz_mm) == [0.0, 0.0, 110.0]
+    assert list(message.tool.tcp_rpy_deg) == [0.0, 0.0, 90.0]
+    assert c.get_str(message.guard_model, "guard_model") == "acme/g2-envelope"
+    bare = _gripper().to_wire(1, c.header(7, 2))
+    assert bare.tool_declared == 0
+    assert bare.tool.mass_kg == 0.0
+    assert c.get_str(bare.guard_model, "guard_model") == ""
+
+
+def test_a_tool_config_converts_to_the_declared_tool():
+    tool = c.ToolSpec.from_kinematics_dynamics(
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [0.5, 7.0, 8.0, 9.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    assert tool == c.ToolSpec(mass_kg=0.5, com_mm=(7.0, 8.0, 9.0),
+                              inertia=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6),
+                              tcp_xyz_mm=(1.0, 2.0, 3.0), tcp_rpy_deg=(4.0, 5.0, 6.0))
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: setattr(d, "tool", c.ToolSpec(**{**TOOL.__dict__, "mass_kg": -0.1})),
+    lambda d: setattr(d, "tool", c.ToolSpec(**{**TOOL.__dict__, "com_mm": (0.0, math.nan, 0.0)})),
+    lambda d: setattr(d, "tool", c.ToolSpec(**{**TOOL.__dict__, "inertia": (0.0,) * 5})),
+    lambda d: setattr(d, "guard_model", ""),
+    lambda d: setattr(d, "guard_model", "g" * 65),
+])
+def test_a_malformed_tool_or_guard_model_does_not_encode(change):
+    descriptor = _gripper()
+    change(descriptor)
+    with pytest.raises(c.ContractError):
+        descriptor.to_wire(1, c.header(7, 1))
+
+
+def test_velocity_and_effort_are_per_joint_with_nan_for_unknown():
+    sample = c.StateSample(joints=[0.1, 0.2], velocity=[0.5, None], effort=[])
+    message = sample.to_wire(1, c.header(7, 1))
+    assert message.velocity[0] == 0.5
+    assert math.isnan(message.velocity[1])
+    assert all(math.isnan(value) for value in message.velocity[2:])
+    assert all(math.isnan(value) for value in message.effort)
+    for bad in (c.StateSample(joints=[0.1, 0.2], velocity=[0.5]),
+                c.StateSample(joints=[0.1], effort=[math.inf])):
+        with pytest.raises(c.ContractError):
+            bad.to_wire(1, c.header(7, 2))
+
+
+def test_the_new_capabilities_set_their_bits():
+    descriptor = _gripper()
+    descriptor.capabilities.joint_velocity = True
+    descriptor.capabilities.joint_effort = True
+    message = descriptor.to_wire(1, c.header(7, 1))
+    assert message.capabilities & c.CAP_JOINT_VELOCITY
+    assert message.capabilities & c.CAP_JOINT_EFFORT

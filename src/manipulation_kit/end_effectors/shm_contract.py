@@ -35,7 +35,7 @@ SCHEMA_VERSION = 1
 #: The iceoryx2 release every participant must be built against.
 ICEORYX2_VERSION = "0.9.3"
 #: SHA-256 of ``end_effector.shm.1.layout.json`` (frozen with version 1).
-LAYOUT_SHA256 = "4ac9bb203ff24927fc08cabebf96b69b2ce52d18a1506af9e1ed109928849bf4"
+LAYOUT_SHA256 = "30414fd5c321b72ee171a14edb56fca3ac2fa19b25881454383fc9a160f5dfee"
 #: The vendored layout's file name, beside this module.
 LAYOUT_FILE = "end_effector.shm.1.layout.json"
 
@@ -76,6 +76,8 @@ CAP_CONTACT_SENSING = 1 << 4
 CAP_CLEAR_FAULT = 1 << 5
 CAP_REGISTERS = 1 << 6
 CAP_TICKS = 1 << 7
+CAP_JOINT_VELOCITY = 1 << 8
+CAP_JOINT_EFFORT = 1 << 9
 
 GRIP_SOFT = 1 << 0
 GRIP_FIRM = 1 << 1
@@ -164,6 +166,12 @@ class ExtraKey(ctypes.Structure):
     _fields_ = [("name", u8 * KEY_LEN)]
 
 
+@_named("omakase_ee_v1_Tool")
+class Tool(ctypes.Structure):
+    _fields_ = [("mass_kg", f64), ("com_mm", f64 * 3), ("inertia", f64 * 6),
+                ("tcp_xyz_mm", f64 * 3), ("tcp_rpy_deg", f64 * 3)]
+
+
 @_named("omakase_ee_v1_Descriptor")
 class Descriptor(ctypes.Structure):
     _fields_ = [("header", Header), ("generation", u64), ("driver", u8 * NAME_LEN),
@@ -171,7 +179,8 @@ class Descriptor(ctypes.Structure):
                 ("joint_count", u32), ("joints", Joint * MAX_JOINTS), ("capabilities", u32),
                 ("grip_presets", u32), ("force_sensing", u32), ("max_command_hz", u32),
                 ("set_timeout_ms", u32), ("set_extra_count", u32),
-                ("set_extra", ExtraKey * MAX_SET_EXTRA)]
+                ("set_extra", ExtraKey * MAX_SET_EXTRA), ("tool_declared", u32),
+                ("reserved", u32), ("tool", Tool), ("guard_model", u8 * NAME_LEN)]
 
 
 @_named("omakase_ee_v1_Heartbeat")
@@ -184,7 +193,8 @@ class Heartbeat(ctypes.Structure):
 class State(ctypes.Structure):
     _fields_ = [("header", Header), ("descriptor_generation", u64), ("openness", f64),
                 ("torque_nm", f64), ("flags", u32), ("joint_count", u32),
-                ("joints", f64 * MAX_JOINTS), ("fault", u8 * FAULT_LEN), ("detail_len", u32),
+                ("joints", f64 * MAX_JOINTS), ("velocity", f64 * MAX_JOINTS),
+                ("effort", f64 * MAX_JOINTS), ("fault", u8 * FAULT_LEN), ("detail_len", u32),
                 ("reserved", u32), ("detail", u8 * DETAIL_LEN)]
 
 
@@ -237,7 +247,7 @@ class FaultResponse(ctypes.Structure):
 
 
 #: Every message, in the order the contract lists them.
-MESSAGES = (Header, Joint, ExtraKey, Descriptor, Heartbeat, State, Tick, JointsCommand,
+MESSAGES = (Header, Joint, ExtraKey, Tool, Descriptor, Heartbeat, State, Tick, JointsCommand,
             Control, CommandRequest, CommandResponse, FaultRequest, FaultResponse)
 
 
@@ -399,6 +409,10 @@ class Capabilities:
     clear_fault: bool = False
     registers: bool = False
     ticks: bool = False
+    #: The state carries per-joint velocities (``StateSample.velocity``).
+    joint_velocity: bool = False
+    #: The state carries per-joint efforts (``StateSample.effort``).
+    joint_effort: bool = False
     max_command_hz: Optional[int] = None
 
 
@@ -412,13 +426,73 @@ def valid_schema_id(schema: str) -> bool:
 
 
 @dataclass
+class ToolSpec:
+    """The tool the daemon registers on the side's arm, in the flange frame:
+    the values and units ``POST /v1/arm/{side}/tool`` takes."""
+
+    #: Kilograms, finite and not negative.
+    mass_kg: float
+    #: Centre of mass, millimetres, XYZ.
+    com_mm: Tuple[float, float, float]
+    #: Inertia about the centre of mass, kg*m^2: Ixx, Ixy, Ixz, Iyy, Iyz, Izz.
+    inertia: Tuple[float, float, float, float, float, float]
+    #: Tool centre point, millimetres, XYZ.
+    tcp_xyz_mm: Tuple[float, float, float]
+    #: Tool centre point rotation, degrees, roll/pitch/yaw (XYZ order).
+    tcp_rpy_deg: Tuple[float, float, float]
+
+    @classmethod
+    def from_kinematics_dynamics(cls, kinematics: List[float],
+                                 dynamics: List[float]) -> "ToolSpec":
+        """From a tool config's ``kinematics()`` (``[x, y, z, r, p, y]``) and
+        ``dynamics()`` (``[mass, com x, com y, com z, Ixx, Ixy, Ixz, Iyy, Iyz,
+        Izz]``)."""
+        if len(kinematics) != 6 or len(dynamics) != 10:
+            raise ContractError("a tool needs 6 kinematic and 10 dynamic values")
+        return cls(mass_kg=dynamics[0], com_mm=tuple(dynamics[1:4]),
+                   inertia=tuple(dynamics[4:10]), tcp_xyz_mm=tuple(kinematics[0:3]),
+                   tcp_rpy_deg=tuple(kinematics[3:6]))
+
+    def validate(self) -> None:
+        """Refuse a tool the daemon would refuse."""
+        for what, values, count in (("mass_kg", [self.mass_kg], 1),
+                                    ("com_mm", list(self.com_mm), 3),
+                                    ("inertia", list(self.inertia), 6),
+                                    ("tcp_xyz_mm", list(self.tcp_xyz_mm), 3),
+                                    ("tcp_rpy_deg", list(self.tcp_rpy_deg), 3)):
+            if len(values) != count:
+                raise ContractError(f"tool {what} needs {count} values")
+            _finite(values, f"tool {what}")
+        if self.mass_kg < 0:
+            raise ContractError(f"tool mass_kg {self.mass_kg} must not be negative")
+
+    def to_wire(self) -> Tool:
+        """The wire form."""
+        out = Tool()
+        out.mass_kg = self.mass_kg
+        for array, values in ((out.com_mm, self.com_mm), (out.inertia, self.inertia),
+                              (out.tcp_xyz_mm, self.tcp_xyz_mm),
+                              (out.tcp_rpy_deg, self.tcp_rpy_deg)):
+            for index, value in enumerate(values):
+                array[index] = value
+        return out
+
+
+@dataclass
 class DescriptorSpec:
     """What a provider drives.
 
     ``detail_schema`` is the schema id (``"<id>/<major>"``, the provider's
     own) the state's ``detail`` follows, or ``None`` for a provider that
     publishes no detail. There is no class label: clients tell devices apart
-    by their capabilities and joint count."""
+    by their capabilities and joint count.
+
+    ``tool`` is what the daemon registers on the side's arm when it accepts
+    the declaration (``None``: nothing; the integrator registers it), and
+    ``guard_model`` the id of the arm-guard envelope to check the end
+    effector with (``None``: none declared). A guard that does not know the
+    id checks the side with its default envelope, ``d1/parallel_gripper``,
+    and the daemon's descriptor says so (``guard_model_applied``)."""
 
     driver: str
     model: str
@@ -427,6 +501,8 @@ class DescriptorSpec:
     detail_schema: Optional[str] = None
     node_id: Optional[int] = None
     set_timeout_ms: Optional[int] = None
+    tool: Optional[ToolSpec] = None
+    guard_model: Optional[str] = None
 
     def validate(self) -> None:
         """Refuse a declaration the daemon would refuse."""
@@ -476,6 +552,13 @@ class DescriptorSpec:
             raise ContractError(f"set_timeout_ms must be 1 to {MAX_SET_TIMEOUT_MS}")
         if self.node_id is not None and not 0 <= self.node_id <= 0xFFFF:
             raise ContractError("node_id must be 0 to 65535")
+        if self.tool is not None:
+            self.tool.validate()
+        if self.guard_model is not None and (
+                not self.guard_model or len(self.guard_model.encode()) > NAME_LEN
+                or "\0" in self.guard_model):
+            raise ContractError(f"descriptor guard_model {self.guard_model!r} must be 1 to "
+                                f"{NAME_LEN} bytes without NUL")
 
     def to_wire(self, generation: int, value_header: Header) -> Descriptor:
         """The wire form, as generation ``generation``."""
@@ -500,7 +583,9 @@ class DescriptorSpec:
                           (caps.grip_torque, CAP_GRIP_TORQUE),
                           (caps.contact_sensing, CAP_CONTACT_SENSING),
                           (caps.clear_fault, CAP_CLEAR_FAULT), (caps.registers, CAP_REGISTERS),
-                          (caps.ticks, CAP_TICKS)):
+                          (caps.ticks, CAP_TICKS),
+                          (caps.joint_velocity, CAP_JOINT_VELOCITY),
+                          (caps.joint_effort, CAP_JOINT_EFFORT)):
             if flag:
                 bits |= bit
         out.capabilities = bits
@@ -512,6 +597,10 @@ class DescriptorSpec:
         out.set_extra_count = len(caps.set_extra)
         for slot, key in zip(out.set_extra, caps.set_extra):
             put_str(slot.name, key, "set_extra key")
+        if self.tool is not None:
+            out.tool_declared = 1
+            out.tool = self.tool.to_wire()
+        put_str(out.guard_model, self.guard_model or "", "guard_model")
         return out
 
 
@@ -526,6 +615,14 @@ class StateSample:
 
     openness: Optional[float] = None
     joints: List[float] = field(default_factory=list)
+    #: Per-joint velocities in each joint's unit per second, ``None`` where
+    #: unknown; empty, or one per entry of ``joints``. Sent with the
+    #: ``joint_velocity`` capability.
+    velocity: List[Optional[float]] = field(default_factory=list)
+    #: Per-joint actuator efforts (N*m rotary, N linear), ``None`` where
+    #: unknown; empty, or one per entry of ``joints``. Sent with the
+    #: ``joint_effort`` capability.
+    effort: List[Optional[float]] = field(default_factory=list)
     live: bool = False
     tracking: bool = False
     holding: Optional[bool] = None
@@ -552,6 +649,18 @@ class StateSample:
         out.joint_count = len(self.joints)
         for index, value in enumerate(self.joints):
             out.joints[index] = value
+        for values, array, what in ((self.velocity, out.velocity, "state velocity"),
+                                    (self.effort, out.effort, "state effort")):
+            if values and len(values) != len(self.joints):
+                raise ContractError(f"{what} has {len(values)} values for "
+                                    f"{len(self.joints)} joints")
+            for index in range(MAX_JOINTS):
+                array[index] = math.nan
+            for index, value in enumerate(values):
+                if value is not None:
+                    if not math.isfinite(value):
+                        raise ContractError(f"{what} holds a non-finite value")
+                    array[index] = value
         put_text(out.fault, self.fault or "")
         flags = STATE_LIVE if self.live else 0
         flags |= STATE_TRACKING if self.tracking else 0
