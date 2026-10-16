@@ -65,6 +65,30 @@ what it did.
   with the hand driver's descriptor source when
   `$MKIT_HAND_DESCRIPTOR_DIR/descriptor.rs` exists. The XHAND1 `RetargetConfig`/`Retargeter` now take their joint
   table from the class, so the Lite reuses them; behaviour is unchanged.
+- New `wuji/wujihand2`: the Wuji Hand 2's twenty joints (`thumb_S1 ..
+  pinky_S4`, the vendor SDK's labels and index order, `rad`, the vendor
+  URDFs' limits, identical on both sides) and its retarget map: each finger
+  joint from one channel (`mp_pitch`, `mp_swing`, `pip_pitch`,
+  `dip_pitch`; spread over ±0.648 rad), the thumb held at 0 rad. New
+  `RetargetConfig.hold` / `hold_rad` (twenty entries each) hold a joint at a
+  fixed angle without reading a channel. It is the table that drove a right
+  hand from a LitchiBot glove, split into this map and an operator
+  calibration (`tests/data/gloves/litchibot_wujihand2.calibration.json`).
+  A glove that declares finger swing uncalibrated (the LitchiBot glove)
+  needs the four `S2` joints held. A glove that measures the index, ring and
+  pinky spreads and declares the middle one synthesized from the index and
+  ring is refused for `middle_mp_swing` alone; `wuji/wujihand2`'s
+  `config_for(declaration, config=None)` rewrites such a source into the
+  channels it was computed from (`middle_S2` follows the mean of the index
+  and ring spreads) and leaves every other refusal in place. The thumb
+  is held by default; for a glove that solves it on the wearer (the LitchiBot
+  driver: `thumb_cm_yaw`, `thumb_cm_swing`, `thumb_mp_pitch` derived,
+  `thumb_cm_pitch` uncalibrated, no `thumb_ip_pitch`) `config_for` drives
+  `thumb_S1` from `thumb_cm_swing` over ±0.436 rad (positive swing to
+  positive `S1`; sign provisional, `invert` flips it), `thumb_S2` from
+  `thumb_cm_yaw` and `thumb_S3` from `thumb_mp_pitch`, and keeps `thumb_S4`
+  held; with the default config it clears the thumb hold only when all of
+  `S1`..`S3` are drivable. An uncalibrated thumb keeps the default hold. No `toolconfig`.
 
 ### New: `manipulation_kit.binding` (`omakase.binding.v1`)
 
@@ -94,6 +118,49 @@ what it did.
   the built config and `Bind.build_retarget()` returns
   `get_retarget(model, config=...)`. New `build_retarget_config(model,
   overrides)`.
+
+**An end effector of your own, served to d1-firmwared over shared memory.**
+New: `manipulation_kit.end_effectors`, the Python side of the contract
+`end_effector.shm/1` by which a process of its own (a *provider*) drives an
+end effector that `d1-firmwared` serves through `/v1/end_effectors/{side}`
+(the daemon's side declares `driver = "shm"`). Nothing breaks: nothing else
+imports it, and the base install is unchanged.
+
+- `end_effectors.shm_contract` — the fourteen messages as ctypes
+  structures, their codecs and the contract's constants (layout SHA-256
+  `30414fd5c321b72ee171a14edb56fca3ac2fa19b25881454383fc9a160f5dfee`).
+  A declaration carries the tool the daemon registers on the side's arm
+  (`ToolSpec`: mass, centre of mass, inertia, TCP; `from_kinematics_dynamics`
+  converts a kit tool config) and the arm-guard envelope id
+  (`guard_model`); a state carries per-joint `velocity` and `effort`
+  (`None` where unknown, NaN on the wire) behind the capabilities
+  `joint_velocity` and `joint_effort`. The layout is
+  vendored verbatim from d1-firmware (`end_effector.shm.1.layout.json`) and
+  its SHA-256 is pinned (`LAYOUT_SHA256`, the same value the daemon's
+  contract crate pins: version 1 is frozen); the tests check every structure
+  field by field against it.
+- `end_effectors.shm_provider` — `Provider`, the class a provider implements,
+  and `serve`, which owns the iceoryx2 ports and applies the contract's rules
+  before a provider method runs (stale or late `set` answered `stale_target`
+  and not executed, undeclared parameters refused, old joint targets
+  dropped and the newest delivered one at a time, a rise of the daemon's
+  stop generation calls `stop`). A provider declares the schema id of its
+  own detail (`detail_schema`, `<id>/<major>`) rather than a class of end
+  effector. An array whose capability is not declared is sent as NaN.
+  `SimulatedGripper` (`sim.gripper/1`; tool `d1/parallel_gripper`, guard
+  envelope `d1/parallel_gripper`) and `SimulatedHand` (`hand.state/1`; tool
+  `leadshine/dh116s`, guard envelope id `sim/six-axis`, which the daemon's
+  guard does not know) serve a simulated device with joint velocities; the
+  `mkit-ee-provider` command serves either.
+- New extra `[shm]` = `iceoryx2==0.9.3`, the exact release the daemon is
+  built against; CI installs it so the shared-memory tests run there.
+- `docs/end-effector-providers.md` — for whoever writes a provider.
+
+Verified: against d1-firmware's driver (`D1_FIRMWARE_DIR` set), the daemon's
+`an_external_provider_command` test passes for both simulated models and
+reads each declared tool, guard envelope (the hand's falls back to
+`d1/parallel_gripper`) and joint velocities, and the vendored layout equals
+the daemon's byte for byte.
 
 ## 0.20.0 — unreleased
 
