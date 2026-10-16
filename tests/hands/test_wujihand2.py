@@ -258,3 +258,20 @@ def test_a_binding_file_holds_the_spread(tmp_path):
     assert r.cfg.hold == tuple(_hold_thumb_and_spread())
     assert r.cfg.joints["index_S2"].invert
     assert not any(c.endswith("_mp_swing") for c in r.required_channels())
+
+
+def test_a_held_joint_never_asks_the_pose_for_its_channels():
+    class Strict(dict):
+        def get(self, channel, default=None):
+            if channel.endswith("_swing"):
+                raise KeyError(f"no range for {channel}")
+            return super().get(channel, default)
+
+    hold = list(DEFAULT_HOLD)
+    for name in ("index_S2", "middle_S2", "ring_S2", "pinky_S2"):
+        hold[AXIS_NAMES.index(name)] = True
+    r = Retargeter(RetargetConfig(hold=tuple(hold)))
+    pose = Strict({ch: 0.5 for ch in r.required_channels()})
+    out = r.joint_targets(pose)
+    assert out[AXIS_NAMES.index("index_S2")] == 0.0
+    assert out[AXIS_NAMES.index("index_S1")] is not None

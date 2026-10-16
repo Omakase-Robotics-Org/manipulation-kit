@@ -131,6 +131,17 @@ class RetargetConfig(_XhandConfig):
                                  f"limits {spec.min}..{spec.max}")
 
 
+class _Only:
+    """``pose`` restricted to ``channels``: any other channel reads ``None``."""
+
+    def __init__(self, pose, channels) -> None:
+        self._pose = pose
+        self._channels = frozenset(channels)
+
+    def get(self, channel, default=None):
+        return self._pose.get(channel) if channel in self._channels else default
+
+
 class Retargeter(_XhandRetargeter):
     """Canonical hand pose → 20 Wuji Hand 2 joint targets in radians.
 
@@ -153,7 +164,11 @@ class Retargeter(_XhandRetargeter):
 
     def joint_targets(self, pose) -> List[Optional[float]]:
         """One canonical hand pose → twenty ``rad`` targets or ``None``."""
-        out = super().joint_targets(pose)
+        # A held joint reads nothing: its channels are never asked of the
+        # pose, so a calibration with no range for them (a glove that
+        # declares finger swing uncalibrated, with the spreads held) is not
+        # refused for a channel nothing drives.
+        out = super().joint_targets(_Only(pose, self.required_channels()))
         for i, held in enumerate(self.cfg.hold):
             if held:
                 out[i] = float(self.cfg.hold_rad[i])
