@@ -41,8 +41,8 @@ joint out, in descriptor order and units — ``None`` meaning "an input is
 missing, hold this joint"). That is the path for a glove of any make driving
 a hand of any make through ``POST /v1/end_effectors/{side}/joints``; the
 version-1 ``mapper(flex)`` call is unchanged for the consumers that use it.
-``leadshine/dh116s``, ``robotera/xhand1`` and ``robotera/xhand1_lite``
-implement both;
+``leadshine/dh116s``, ``robotera/xhand1``, ``robotera/xhand1_lite`` and
+``wuji/wujihand2`` implement both;
 ``linkerbot/o30`` still has no map.
 
 Likewise a model may ship a ``description`` submodule for its geometry —
