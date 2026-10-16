@@ -352,3 +352,77 @@ def test_config_for_does_not_loosen_what_cannot_be_driven():
     cfg = config_for(declaration, RetargetConfig(hold=hold))
     declaration.check_drive_sources(Retargeter(cfg).required_channels())
     assert cfg.joints == RetargetConfig(hold=hold).joints
+
+
+def _thumb_declaration(thumb="derived"):
+    """A device-wide declaration shaped like the LitchiBot glove's thumb: yaw,
+    swing and the last joint derived on the wearer, cm_pitch uncalibrated,
+    ip_pitch undeclared. Synthetic numbers. ``thumb="uncalibrated"`` makes
+    every thumb channel uncalibrated."""
+    chans = {}
+    for f in FINGERS:
+        for j in ("mp_pitch", "pip_pitch", "dip_pitch"):
+            chans[f"{f}_{j}"] = dict(kind="flex", provenance="measured",
+                                     default_range=[0.0, 1.5])
+        chans[f"{f}_mp_swing"] = dict(kind="swing", provenance="uncalibrated",
+                                      default_range=None)
+    rng = {"thumb_cm_yaw": [0.0, 1.0], "thumb_cm_swing": [-0.436, 0.436],
+           "thumb_mp_pitch": [0.0, 1.571]}
+    kinds = {"thumb_cm_yaw": "yaw", "thumb_cm_swing": "swing", "thumb_mp_pitch": "flex"}
+    for name, r in rng.items():
+        if thumb == "derived":
+            chans[name] = dict(kind=kinds[name], provenance="derived", default_range=r)
+        else:
+            chans[name] = dict(kind=kinds[name], provenance="uncalibrated", default_range=None)
+    chans["thumb_cm_pitch"] = dict(kind="flex", provenance="uncalibrated", default_range=None)
+    for c in chans.values():
+        c.setdefault("note", "synthetic")
+    return parse_declaration({"type": "channel_declaration", "device_model": "test/glove",
+                              "channels": chans})
+
+
+def test_a_glove_that_solves_the_thumb_drives_s1_to_s3_and_holds_s4():
+    declaration = _thumb_declaration()
+    cfg = config_for(declaration)
+    thumb = [AXIS_NAMES.index(f"thumb_S{i}") for i in range(1, 5)]
+    assert [cfg.hold[i] for i in thumb] == [False, False, False, True]
+    assert cfg.joints["thumb_S1"].sources == (("thumb_cm_swing", 1.0),)
+    assert cfg.joints["thumb_S2"] == default_joint_maps()["thumb_S2"]
+    # fingers keep their holds: the spreads here are uncalibrated and still refused
+    r = Retargeter(cfg)
+    assert {"thumb_cm_swing", "thumb_cm_yaw", "thumb_mp_pitch"} <= set(r.required_channels())
+    assert "thumb_cm_pitch" not in r.required_channels()
+    assert "thumb_ip_pitch" not in r.required_channels()
+
+    # a bind that holds the finger spreads and the thumb's S4 is accepted
+    hold = tuple(i in S2 or i == thumb[3] for i in range(20))
+    cfg = config_for(declaration, RetargetConfig(hold=hold))
+    r = Retargeter(cfg)
+    declaration.check_drive_sources(r.required_channels())
+
+    cal = declaration.calibration()
+    values = {f"{f}_{j}": 0.0 for f in FINGERS for j in ("mp_pitch", "pip_pitch", "dip_pitch")}
+    open_ = HandAngles("right", {**values, "thumb_cm_yaw": 0.0, "thumb_cm_swing": 0.0,
+                                 "thumb_mp_pitch": 0.0})
+    out = r.joint_targets(cal.normalize_hand(open_))
+    assert [out[i] for i in thumb[:3]] == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)
+    assert out[thumb[3]] == 0.0
+    opposed = HandAngles("right", {**values, "thumb_cm_yaw": 1.0, "thumb_cm_swing": 0.436,
+                                   "thumb_mp_pitch": 1.571})
+    out = r.joint_targets(cal.normalize_hand(opposed))
+    assert out[thumb[0]] == pytest.approx(0.436, abs=1e-3)
+    assert out[thumb[1]] == pytest.approx(JOINTS[thumb[1]].max, abs=1e-9)
+    assert out[thumb[2]] == pytest.approx(JOINTS[thumb[2]].max, abs=2e-3)
+    assert out[thumb[3]] == 0.0
+    swung = HandAngles("right", {**opposed.radians, "thumb_cm_swing": -0.436})
+    out = r.joint_targets(cal.normalize_hand(swung))
+    assert out[thumb[0]] == pytest.approx(-0.436, abs=1e-3)
+
+
+def test_an_uncalibrated_thumb_keeps_the_default_hold():
+    declaration = _thumb_declaration(thumb="uncalibrated")
+    cfg = config_for(declaration)
+    assert cfg.hold == DEFAULT_HOLD
+    assert cfg.joints == default_joint_maps()
+    r = Retargeter(cfg)
+    assert not any(c.startswith("thumb_") for c in r.required_channels())

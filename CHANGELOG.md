@@ -80,7 +80,15 @@ what it did.
   ring is refused for `middle_mp_swing` alone; `wuji/wujihand2`'s
   `config_for(declaration, config=None)` rewrites such a source into the
   channels it was computed from (`middle_S2` follows the mean of the index
-  and ring spreads) and leaves every other refusal in place. No `toolconfig`.
+  and ring spreads) and leaves every other refusal in place. The thumb
+  is held by default; for a glove that solves it on the wearer (the LitchiBot
+  driver: `thumb_cm_yaw`, `thumb_cm_swing`, `thumb_mp_pitch` derived,
+  `thumb_cm_pitch` uncalibrated, no `thumb_ip_pitch`) `config_for` drives
+  `thumb_S1` from `thumb_cm_swing` over ±0.436 rad (positive swing to
+  positive `S1`; sign provisional, `invert` flips it), `thumb_S2` from
+  `thumb_cm_yaw` and `thumb_S3` from `thumb_mp_pitch`, and keeps `thumb_S4`
+  held; with the default config it clears the thumb hold only when all of
+  `S1`..`S3` are drivable. An uncalibrated thumb keeps the default hold. No `toolconfig`.
 
 ### New: `manipulation_kit.binding` (`omakase.binding.v1`)
 
