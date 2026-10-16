@@ -74,8 +74,13 @@ what it did.
   fixed angle without reading a channel. It is the table that drove a right
   hand from a LitchiBot glove, split into this map and an operator
   calibration (`tests/data/gloves/litchibot_wujihand2.calibration.json`).
-  Both gloves declare finger swing uncalibrated today, so a bind must hold
-  the four `S2` joints. No `toolconfig`.
+  A glove that declares finger swing uncalibrated (the LitchiBot glove)
+  needs the four `S2` joints held. A glove that measures the index, ring and
+  pinky spreads and declares the middle one synthesized from the index and
+  ring is refused for `middle_mp_swing` alone; `wuji/wujihand2`'s
+  `config_for(declaration, config=None)` rewrites such a source into the
+  channels it was computed from (`middle_S2` follows the mean of the index
+  and ring spreads) and leaves every other refusal in place. No `toolconfig`.
 
 ### New: `manipulation_kit.binding` (`omakase.binding.v1`)
 

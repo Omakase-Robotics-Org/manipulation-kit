@@ -39,10 +39,18 @@ joint                      default source                   interval (rad)
   and positive when ring or pinky do. The table that ran
   doubled the glove's swing (``S2 = 2 x swing``, saturating at ±18.564
   degrees of swing); that gain is the calibration range of the swing channel
-  (±0.324 rad), not a number here. **Both gloves this package decodes declare
-  their finger swing UNCALIBRATED today**, so a bind that follows ``S2``
-  is refused at bind time (``Declaration.check_drive_sources``); hold the
-  four ``S2`` (``hold``) to bind with such a glove.
+  (±0.324 rad), not a number here. A glove that declares its finger swing
+  UNCALIBRATED (the LitchiBot glove) has no angle behind it, so a bind that
+  follows ``S2`` is refused at bind time
+  (``Declaration.check_drive_sources``); hold the four ``S2`` (``hold``) to
+  bind with such a glove. A glove that measures the index, ring and pinky
+  spreads but declares the middle one SYNTHESIZED from the index and ring
+  (the UDCAP glove, newer driver) is refused for ``middle_mp_swing`` alone
+  ("drive from those instead"); :func:`config_for` rewrites such a source
+  into the channels it was computed from, so ``middle_S2`` follows the mean
+  of the index and ring spreads (provisional: the middle finger stays
+  between them), and :func:`config_for` leaves every refusal that is not
+  of that kind for ``check_drive_sources`` to report.
 * **The thumb is held at 0 rad**, as on the hand: the LitchiBot glove's
   thumb was not usable (its fitter leaves the thumb uncalibrated, and the
   glove declares ``thumb_cm_pitch`` uncalibrated). The thumb's maps below are
@@ -69,9 +77,10 @@ code (per binding: ``[bind.retarget_config]``, with ``hold = [...]`` and
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import ClassVar, Dict, List, Optional, Tuple
 
+from ....gloves.v1 import Provenance
 from ...joints import JointSpec
 from ...robotera.xhand1.retarget import JointMap
 from ...robotera.xhand1.retarget import RetargetConfig as _XhandConfig
@@ -173,6 +182,42 @@ class Retargeter(_XhandRetargeter):
             if held:
                 out[i] = float(self.cfg.hold_rad[i])
         return out
+
+
+def config_for(declaration, config: "RetargetConfig | None" = None) -> RetargetConfig:
+    """``config`` (default: the defaults) adapted to what ``declaration`` says.
+
+    A channel the map reads that the device declares SYNTHESIZED from channels
+    it also reports as measured is refused as a drive source (reading the
+    sum would discard those measurements). Here such a source is replaced by
+    the channels it was computed from, sharing its weight equally; a joint
+    held by ``config`` is left alone. Nothing else is loosened: an
+    UNCALIBRATED channel, an undeclared one, or a synthesized one with a
+    missing input stays as it is, so ``declaration.check_drive_sources(
+    Retargeter(result).required_channels())`` still refuses it, with the
+    reason."""
+    cfg = config if config is not None else RetargetConfig()
+    joints = dict(cfg.joints)
+    for spec, held in zip(JOINTS, cfg.hold):
+        if held:
+            continue
+        sources: List[Tuple[str, float]] = []
+        changed = False
+        for ch, w in joints[spec.name].sources:
+            declared = declaration.channels.get(ch)
+            inputs = declared.derived_from if declared is not None else ()
+            if (w > 0 and declared is not None
+                    and declared.provenance is Provenance.SYNTHESIZED
+                    and declaration.refuse_as_drive_source(ch) is not None
+                    and inputs
+                    and all(declaration.refuse_as_drive_source(i) is None for i in inputs)):
+                sources.extend((i, w / len(inputs)) for i in inputs)
+                changed = True
+            else:
+                sources.append((ch, w))
+        if changed:
+            joints[spec.name] = replace(joints[spec.name], sources=tuple(sources))
+    return replace(cfg, joints=joints)
 
 
 def build_retarget(config: "RetargetConfig | None" = None) -> Retargeter:

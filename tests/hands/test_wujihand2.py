@@ -15,7 +15,7 @@ from manipulation_kit.gloves import HandPose
 from manipulation_kit.gloves.calibration import ChannelCalibration, load_ranges
 from manipulation_kit.gloves.channels import spec_of
 from manipulation_kit.gloves.pose import HandAngles
-from manipulation_kit.gloves.v1 import DeclarationError, PoseStreamDecoder
+from manipulation_kit.gloves.v1 import DeclarationError, PoseStreamDecoder, parse_declaration
 from manipulation_kit.hands.joints import check_descriptor, fill_held
 from manipulation_kit.hands.robotera.xhand1.retarget import RetargetConfig as XhConfig
 from manipulation_kit.hands.wuji.wujihand2 import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS
@@ -25,6 +25,7 @@ from manipulation_kit.hands.wuji.wujihand2.retarget import (
     JointMap,
     RetargetConfig,
     Retargeter,
+    config_for,
     default_joint_maps,
 )
 
@@ -275,3 +276,79 @@ def test_a_held_joint_never_asks_the_pose_for_its_channels():
     out = r.joint_targets(pose)
     assert out[AXIS_NAMES.index("index_S2")] == 0.0
     assert out[AXIS_NAMES.index("index_S1")] is not None
+
+
+def _spread_declaration(middle="synthesized", swing="measured"):
+    """A device-wide declaration shaped like a glove that measures every finger
+    joint and the index, ring and pinky spreads, and derives the middle spread
+    from the index and ring. Synthetic numbers."""
+    chans = {}
+    for f in FINGERS:
+        for j in ("mp_pitch", "pip_pitch", "dip_pitch"):
+            chans[f"{f}_{j}"] = dict(kind="flex", provenance="measured",
+                                     default_range=[0.0, 1.5])
+        chans[f"{f}_mp_swing"] = dict(kind="swing", provenance=swing,
+                                      default_range=None if swing == "uncalibrated"
+                                      else [-0.6, 0.6])
+    if middle == "synthesized":
+        chans["middle_mp_swing"].update(provenance="synthesized",
+                                        derived_from=["index_mp_swing", "ring_mp_swing"])
+    elif middle == "missing-input":
+        chans["middle_mp_swing"].update(provenance="synthesized",
+                                        derived_from=["index_mp_swing", "ring_mp_swing"])
+        chans["ring_mp_swing"].update(provenance="uncalibrated", default_range=None)
+    for name, c in chans.items():
+        c.setdefault("note", "synthetic")
+    return parse_declaration({"type": "channel_declaration", "device_model": "test/glove",
+                              "channels": chans})
+
+
+def test_a_glove_that_derives_the_middle_spread_binds_through_config_for():
+    declaration = _spread_declaration()
+    with pytest.raises(DeclarationError) as err:
+        declaration.check_drive_sources(Retargeter().required_channels())
+    refused = [line.split(" ")[0] for line in str(err.value).splitlines()]
+    assert refused == ["middle_mp_swing"]
+    assert "Drive from those instead" in str(err.value)
+
+    cfg = config_for(declaration)
+    r = Retargeter(cfg)
+    declaration.check_drive_sources(r.required_channels())
+    assert "middle_mp_swing" not in r.required_channels()
+    assert cfg.joints["middle_S2"].sources == (("index_mp_swing", 0.5), ("ring_mp_swing", 0.5))
+    # every other joint keeps its map
+    for name, m in default_joint_maps().items():
+        if name != "middle_S2":
+            assert cfg.joints[name] == m
+
+    cal = declaration.calibration()
+    mid = AXIS_NAMES.index("middle_S2")
+    values = {f"{f}_{j}": 0.0 for f in FINGERS for j in ("mp_pitch", "pip_pitch", "dip_pitch")}
+    angles = HandAngles("right", {**values, **{f"{f}_mp_swing": 0.0 for f in FINGERS}})
+    out = r.joint_targets(cal.normalize_hand(angles))
+    assert all(t is not None for t in out)
+    assert out[mid] == pytest.approx(0.0, abs=1e-9)
+    # index and ring spread apart (opposite signs): the middle finger stays put
+    spread = HandAngles("right", {**angles.radians, "index_mp_swing": -0.3, "ring_mp_swing": 0.3})
+    out = r.joint_targets(cal.normalize_hand(spread))
+    assert out[mid] == pytest.approx(0.0, abs=1e-9)
+    assert out[AXIS_NAMES.index("index_S2")] < 0 < out[AXIS_NAMES.index("ring_S2")]
+
+
+def test_config_for_does_not_loosen_what_cannot_be_driven():
+    # uncalibrated swing: nothing to rewrite, every spread still refused
+    declaration = _spread_declaration(middle="uncalibrated", swing="uncalibrated")
+    r = Retargeter(config_for(declaration))
+    with pytest.raises(DeclarationError, match="UNCALIBRATED"):
+        declaration.check_drive_sources(r.required_channels())
+    # a synthesized middle whose input is itself uncalibrated stays refused
+    declaration = _spread_declaration(middle="missing-input")
+    r = Retargeter(config_for(declaration))
+    with pytest.raises(DeclarationError) as err:
+        declaration.check_drive_sources(r.required_channels())
+    assert "ring_mp_swing" in str(err.value) and "UNCALIBRATED" in str(err.value)
+    # holding the spreads still binds, config_for leaves held joints alone
+    hold = tuple(_hold_thumb_and_spread())
+    cfg = config_for(declaration, RetargetConfig(hold=hold))
+    declaration.check_drive_sources(Retargeter(cfg).required_channels())
+    assert cfg.joints == RetargetConfig(hold=hold).joints
