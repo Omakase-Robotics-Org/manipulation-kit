@@ -95,6 +95,49 @@ what it did.
   `get_retarget(model, config=...)`. New `build_retarget_config(model,
   overrides)`.
 
+**An end effector of your own, served to d1-firmwared over shared memory.**
+New: `manipulation_kit.end_effectors`, the Python side of the contract
+`end_effector.shm/1` by which a process of its own (a *provider*) drives an
+end effector that `d1-firmwared` serves through `/v1/end_effectors/{side}`
+(the daemon's side declares `driver = "shm"`). Nothing breaks: nothing else
+imports it, and the base install is unchanged.
+
+- `end_effectors.shm_contract` — the fourteen messages as ctypes
+  structures, their codecs and the contract's constants (layout SHA-256
+  `30414fd5c321b72ee171a14edb56fca3ac2fa19b25881454383fc9a160f5dfee`).
+  A declaration carries the tool the daemon registers on the side's arm
+  (`ToolSpec`: mass, centre of mass, inertia, TCP; `from_kinematics_dynamics`
+  converts a kit tool config) and the arm-guard envelope id
+  (`guard_model`); a state carries per-joint `velocity` and `effort`
+  (`None` where unknown, NaN on the wire) behind the capabilities
+  `joint_velocity` and `joint_effort`. The layout is
+  vendored verbatim from d1-firmware (`end_effector.shm.1.layout.json`) and
+  its SHA-256 is pinned (`LAYOUT_SHA256`, the same value the daemon's
+  contract crate pins: version 1 is frozen); the tests check every structure
+  field by field against it.
+- `end_effectors.shm_provider` — `Provider`, the class a provider implements,
+  and `serve`, which owns the iceoryx2 ports and applies the contract's rules
+  before a provider method runs (stale or late `set` answered `stale_target`
+  and not executed, undeclared parameters refused, old joint targets
+  dropped and the newest delivered one at a time, a rise of the daemon's
+  stop generation calls `stop`). A provider declares the schema id of its
+  own detail (`detail_schema`, `<id>/<major>`) rather than a class of end
+  effector. An array whose capability is not declared is sent as NaN.
+  `SimulatedGripper` (`sim.gripper/1`; tool `d1/parallel_gripper`, guard
+  envelope `d1/parallel_gripper`) and `SimulatedHand` (`hand.state/1`; tool
+  `leadshine/dh116s`, guard envelope id `sim/six-axis`, which the daemon's
+  guard does not know) serve a simulated device with joint velocities; the
+  `mkit-ee-provider` command serves either.
+- New extra `[shm]` = `iceoryx2==0.9.3`, the exact release the daemon is
+  built against; CI installs it so the shared-memory tests run there.
+- `docs/end-effector-providers.md` — for whoever writes a provider.
+
+Verified: against d1-firmware's driver (`D1_FIRMWARE_DIR` set), the daemon's
+`an_external_provider_command` test passes for both simulated models and
+reads each declared tool, guard envelope (the hand's falls back to
+`d1/parallel_gripper`) and joint velocities, and the vendored layout equals
+the daemon's byte for byte.
+
 ## 0.20.0 — unreleased
 
 **The belly band follows the shell's rounded corners, and the tool is in the
