@@ -12,7 +12,7 @@ import pytest
 import manipulation_kit.hands as hands
 from manipulation_kit.binding import load_binding
 from manipulation_kit.gloves import HandPose
-from manipulation_kit.gloves.calibration import ChannelCalibration, load_ranges
+from manipulation_kit.gloves.calibration import ChannelCalibration, ChannelRange, load_ranges
 from manipulation_kit.gloves.channels import spec_of
 from manipulation_kit.gloves.pose import HandAngles
 from manipulation_kit.gloves.v1 import DeclarationError, PoseStreamDecoder, parse_declaration
@@ -21,6 +21,7 @@ from manipulation_kit.hands.robotera.xhand1.retarget import RetargetConfig as Xh
 from manipulation_kit.hands.wuji.wujihand2 import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS
 from manipulation_kit.hands.wuji.wujihand2.retarget import (
     DEFAULT_HOLD,
+    PINKY_SPREAD_RAD,
     SPREAD_RAD,
     JointMap,
     RetargetConfig,
@@ -129,16 +130,23 @@ def test_open_neutral_and_closed():
         if j.name.startswith("thumb_"):
             assert open_[i] == closed[i] == 0.0
         elif j.name.endswith("_S2"):
+            spread = PINKY_SPREAD_RAD if j.name == "pinky_S2" else SPREAD_RAD
             assert (open_[i], neutral[i], closed[i]) == pytest.approx(
-                (-SPREAD_RAD, 0.0, SPREAD_RAD))
-            assert j.min < -SPREAD_RAD and SPREAD_RAD < j.max
+                (-spread, 0.0, spread))
+            assert j.min < -spread and spread < j.max
         else:
             assert (open_[i], closed[i]) == pytest.approx((0.0, j.max))
 
 
 def test_the_calibration_and_the_map_reproduce_the_table_that_ran():
+    # The file holds the table's flexion; its spread rows (S2 = 2 x swing,
+    # saturating at +-18.564 degrees) are a +-0.324 rad swing range, given
+    # here the way a glove declares it.
     ranges = load_ranges(DATA / "litchibot_wujihand2.calibration.json")
-    calibration = ChannelCalibration({}, ranges, known=ranges)
+    assert not [c for c in ranges if c.endswith("_mp_swing")]
+    swing = {f"{f}_mp_swing": ChannelRange(-0.3240029223402273, 0.3240029223402273)
+             for f in FINGERS}
+    calibration = ChannelCalibration(swing, ranges, known={**swing, **ranges})
     r = Retargeter(RetargetConfig())
     rng = random.Random(20260925)
     for _ in range(2000):
@@ -148,7 +156,30 @@ def test_the_calibration_and_the_map_reproduce_the_table_that_ran():
                                 ("dip_pitch", (-0.3, 1.7)), ("mp_swing", (-0.6, 0.6))):
                 radians[f"{f}_{c}"] = rng.uniform(lo, hi)
         pose = calibration.normalize_hand(HandAngles("right", radians))
-        assert r.joint_targets(pose) == pytest.approx(_table(radians), abs=1e-9)
+        expected = _table(radians)
+        p = AXIS_NAMES.index("pinky_S2")
+        expected[p] *= PINKY_SPREAD_RAD / SPREAD_RAD   # the pinky's narrower interval
+        assert r.joint_targets(pose) == pytest.approx(expected, abs=1e-9)
+
+
+def test_the_declared_spread_is_scaled_once_and_reaches_the_pinky_interval():
+    # A glove that declares the wearer's spread (+-0.182 rad on the pinky)
+    # and an operator file without swing ranges: the wearer's full spread is
+    # the joint's full interval.
+    ranges = load_ranges(DATA / "litchibot_wujihand2.calibration.json")
+    declared = {f"{f}_mp_swing": ChannelRange(-0.182, 0.182) for f in FINGERS}
+    calibration = ChannelCalibration(declared, ranges, known={**declared, **ranges})
+    r = Retargeter(RetargetConfig())
+    radians = {f"{f}_{c}": 0.0 for f in FINGERS for c in ("mp_pitch", "pip_pitch", "dip_pitch")}
+    p = AXIS_NAMES.index("pinky_S2")
+    out = r.joint_targets(calibration.normalize_hand(
+        HandAngles("right", {**radians, **{c: 0.182 for c in declared}})))
+    assert out[p] == pytest.approx(PINKY_SPREAD_RAD)
+    assert out[AXIS_NAMES.index("ring_S2")] == pytest.approx(SPREAD_RAD)
+    out = r.joint_targets(calibration.normalize_hand(
+        HandAngles("right", {**radians, **{c: -0.3 for c in declared}})))
+    assert out[p] == pytest.approx(-PINKY_SPREAD_RAD)
+    assert JOINTS[p].min < -PINKY_SPREAD_RAD and PINKY_SPREAD_RAD < JOINTS[p].max
 
 
 def test_a_missing_input_holds_only_its_joint():

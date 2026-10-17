@@ -6,6 +6,15 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.21.2 — unreleased
+
+- `wuji/wujihand2`: `pinky_S2` spans ±0.45 rad (other spreads keep
+  ±0.648). `tests/data/gloves/litchibot_wujihand2.calibration.json` drops
+  its swing ranges: a glove that declares the wearer's spread as the swing
+  channel's `default_range` is scaled by that range alone (a wider file
+  range on top capped the pinky at 0.364 rad). An operator file that
+  still carries `*_mp_swing` ranges overrides the declared ones as before.
+
 ## 0.21.1 — unreleased
 
 - `wuji/wujihand2`: the thumb follows opposition with `thumb_S1` and

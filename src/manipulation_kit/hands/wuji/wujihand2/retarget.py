@@ -21,6 +21,7 @@ joint                      default source                   interval (rad)
 =========================  ===============================  =================
 ``<finger>_S1``            ``<finger>_mp_pitch``            0 .. 1.570
 ``<finger>_S2``            ``<finger>_mp_swing``            -0.648 .. 0.648
+``pinky_S2``               ``pinky_mp_swing``               -0.45 .. 0.45
 ``<finger>_S3``            ``<finger>_pip_pitch``           0 .. 2.094
 ``<finger>_S4``            ``<finger>_dip_pitch``           0 .. 1.570
 ``thumb_S1`` .. ``S4``     HELD at 0 rad                    (see below)
@@ -36,10 +37,14 @@ joint                      default source                   interval (rad)
   a 0.05 rad margin. The sign was checked on the vendor's model of the
   right hand and on the right glove: the glove's swing and the Wuji's
   ``S2`` are both negative when the index moves away from the middle finger
-  and positive when ring or pinky do. The table that ran
-  doubled the glove's swing (``S2 = 2 x swing``, saturating at ±18.564
-  degrees of swing); that gain is the calibration range of the swing channel
-  (±0.324 rad), not a number here. A glove that declares its finger swing
+  and positive when ring or pinky do. ``pinky_S2`` stops at ±0.45 rad, the
+  spread the little finger was seen to reach and hold on the hand. The
+  wearer's spread is scaled onto the interval ONCE, by the swing channel's
+  range: a glove that measures the wearer's own spread declares it as the
+  channel's ``default_range``, and an operator calibration file then carries
+  no swing range, because a second, wider range on top of the declared one
+  caps the joint short of its interval (a ±0.182 rad declared pinky read
+  through a ±0.324 rad file reaches 0.364 of 0.648 rad). A glove that declares its finger swing
   UNCALIBRATED (the LitchiBot glove) has no angle behind it, so a bind that
   follows ``S2`` is refused at bind time
   (``Declaration.check_drive_sources``); hold the four ``S2`` (``hold``) to
@@ -109,6 +114,9 @@ from .axes import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS, NUM_AXES  # noqa: F401
 #: The spread interval: the URDF's ±0.698 rad less a 0.05 rad margin.
 SPREAD_RAD = 0.648
 
+#: The little finger's spread interval (see the module docstring).
+PINKY_SPREAD_RAD = 0.45
+
 #: The thumb's maps (see the module docstring): joint -> (channel, interval max).
 THUMB_MAPS: Dict[str, Tuple[str, float]] = {
     "thumb_S1": ("thumb_cm_yaw", 0.8),
@@ -127,7 +135,8 @@ def default_joint_maps() -> Dict[str, JointMap]:
             for name, (channel, top) in THUMB_MAPS.items()}
     for f in _HAND_FINGERS:
         maps[f"{f}_S1"] = JointMap(((f"{f}_mp_pitch", 1.0),), 0.0, hi[f"{f}_S1"])
-        maps[f"{f}_S2"] = JointMap(((f"{f}_mp_swing", 1.0),), -SPREAD_RAD, SPREAD_RAD)
+        spread = PINKY_SPREAD_RAD if f == "pinky" else SPREAD_RAD
+        maps[f"{f}_S2"] = JointMap(((f"{f}_mp_swing", 1.0),), -spread, spread)
         maps[f"{f}_S3"] = JointMap(((f"{f}_pip_pitch", 1.0),), 0.0, hi[f"{f}_S3"])
         maps[f"{f}_S4"] = JointMap(((f"{f}_dip_pitch", 1.0),), 0.0, hi[f"{f}_S4"])
     return maps
