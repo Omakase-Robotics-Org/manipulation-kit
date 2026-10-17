@@ -230,7 +230,7 @@ def test_json_introduces_no_unbacked_safety_field():
     number appearing in the JSON with no header counterpart is drift in the
     other direction and must be caught here too."""
     allowed = {
-        "_comment", "_chain_comment", "_mounts_comment", "version", "units",
+        "_comment", "_chain_comment", "_mounts_comment", "_deprecated", "version", "units",
         "shoulder_half_width_m", "shoulder_z_m",
         "torso_keepout_box", "min_arm_arm_distance_m", "min_body_clearance_m",
         "capsule_radii_m", "joint_limits_deg", "arm_chain", "arm_mounts",
