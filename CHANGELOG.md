@@ -6,6 +6,31 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.3 — unreleased
+
+**One index over every hand: tables, tool configs, envelopes, model ids.**
+Nothing breaks.
+
+- New `manipulation_kit.hands.catalog`. Per model id (`d1/parallel_gripper`,
+  `leadshine/dh116s`, `linkerbot/o30`, `robotera/xhand1`,
+  `robotera/xhand1_lite`, `wuji/wujihand2`): kind (`gripper` / `hand`),
+  joint count, the committed retarget table, the exported tool config, and
+  the hand's envelope: capsules in the flange frame for an arm guard's body
+  and other-arm checks. An envelope id is `capsules-` + 16 hex digits of the
+  SHA-256 of its capsules, so it names one shape and no vendor. The
+  parallel gripper's envelope is the URDF generator's `HAND_ENVELOPE`
+  (`verified: true`); every five-finger hand carries `FIVE_FINGER_DEFAULT`,
+  a large bound measured on none of them (`verified: false`), which a
+  safety consumer should treat as an unknown hand.
+- `MODEL_ALIASES` / `canonical_model(id)`: `wuji/hand2` resolves to
+  `wuji/wujihand2`; an id that is neither is refused.
+- Committed as `hands/catalog.json` (schema
+  `manipulation_kit.hand_catalog.v1`), shipped in the wheel and read with
+  `load()` / `entry(model)`; `build()` computes it from a source checkout.
+  `mkit-toolconfig catalog [--write | --check]`; a test fails when the
+  committed file is stale or a tool config or hand package is missing
+  from it.
+
 ## 0.22.2 — unreleased
 
 **A hand's retarget map as data: held joints, tables and golden vectors.**

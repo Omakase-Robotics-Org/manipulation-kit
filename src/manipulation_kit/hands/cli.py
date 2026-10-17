@@ -3,6 +3,7 @@
     mkit-toolconfig export <maker>/<model> out.json
     mkit-toolconfig export leadshine/dh116s -        # stdout
     mkit-toolconfig list
+    mkit-toolconfig catalog [--write | --check | out.json]   # the hand catalog
 
 The written document is the schema an arm controller's set-tool call consumes:
 a ``kinematics`` array of 6 (TCP x,y,z mm + rx,ry,rz deg) and a ``dynamics``
@@ -46,6 +47,29 @@ def cmd_list(_args) -> int:
     return 0
 
 
+def cmd_catalog(args) -> int:
+    from .catalog import CATALOG_FILE, dumps  # noqa: PLC0415
+
+    text = dumps()
+    if args.check:
+        current = CATALOG_FILE.read_text(encoding="utf-8") if CATALOG_FILE.exists() else ""
+        if current != text:
+            print(f"stale: {CATALOG_FILE} (run mkit-toolconfig catalog --write)",
+                  file=sys.stderr)
+            return 1
+        return 0
+    if args.write:
+        CATALOG_FILE.write_text(text, encoding="utf-8")
+        print(f"wrote {CATALOG_FILE}", file=sys.stderr)
+        return 0
+    if args.out == "-":
+        sys.stdout.write(text)
+    else:
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(text)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="mkit-toolconfig",
                                  description=__doc__.split("\n")[0])
@@ -56,6 +80,12 @@ def main(argv=None) -> int:
     e.set_defaults(func=cmd_export)
     ls = sub.add_parser("list", help="list the hands with tool data")
     ls.set_defaults(func=cmd_list)
+    c = sub.add_parser("catalog", help="the hand catalog (hands/catalog.py)")
+    c.add_argument("out", nargs="?", default="-", help="output path, or '-' (default)")
+    g = c.add_mutually_exclusive_group()
+    g.add_argument("--write", action="store_true", help="rewrite the committed catalog")
+    g.add_argument("--check", action="store_true", help="exit 1 if it is stale")
+    c.set_defaults(func=cmd_catalog)
     args = ap.parse_args(argv)
     return args.func(args)
 
