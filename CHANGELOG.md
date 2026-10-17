@@ -6,6 +6,28 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.21.2 — unreleased
+
+**Guard profiles, one neck yaw, and `safety_zones.json` deprecated.**
+
+- The description bundle carries three guard profiles,
+  `guard/profile.{d1,d1-bench,sim}.json` (schema
+  `manipulation_kit.guard_profile/1`), each with the rule that selects it
+  (`selected_by`) and its margins under the daemon's configuration key names
+  (`daemon_keys`). `d1` is the guard's own defaults; `d1-bench` turns the body
+  checks off (the bench stand has no torso, head or chassis) and changes
+  nothing else; `sim` equals `d1`. New: `GUARD_PROFILES`, `guard_profile(name)`,
+  `motion_guard_kwargs(profile)`. The bundle's description_version moves to
+  `1.1.0`.
+- **Behaviour change (planners and 3D views):** the neck yaw (`neck_pan`)
+  limits of `d1_wholebody.urdf` and `d1_wholebody_gripper.urdf` are now
+  ±1.5 rad, the envelope every neck command is clamped to, instead of the
+  vendor stop ±1.57 rad. One value: `description.NECK_YAW_LIMITS_RAD`, held
+  equal to the generator and the URDFs by a test. `d1.urdf` (the guard's model)
+  has no neck joint and is unchanged.
+- `config/safety_zones.json` is deprecated (a `_deprecated` key in the file and
+  `docs/guard-README.md`). Its numbers are unchanged and it is not removed.
+
 ## 0.21.1 — unreleased
 
 **The D1 description bundle: one versioned, digested copy of the robot's

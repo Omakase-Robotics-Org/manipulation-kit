@@ -21,6 +21,29 @@ Angles are **degrees** in SDK order `J1..J7`; arm `'A'` = `_R` link tree =
 physical **left** (+y), `'B'` = `_L` = physical **right** (−y) — the same
 conventions as `safety_zones.h` / `gesture_csv.h`.
 
+### Guard profiles
+
+The policy a daemon applies is one of three named **guard profiles**, shipped
+as data in the description bundle (`guard/profile.<name>.json`,
+`manipulation_kit.description.bundle.guard_profile(name)`; build a kit guard
+under one with `MotionGuard(**motion_guard_kwargs(guard_profile(name)))`):
+
+| profile | selected by | differs from `d1` |
+| --- | --- | --- |
+| `d1` | the real backend (default) | — |
+| `d1-bench` | the real backend and a `d1-bench` record written by the bench host package | body checks off (the bench stand has no torso, head or chassis); arm–arm and same-arm checks and every margin unchanged |
+| `sim` | the simulated backend | nothing |
+
+Only `d1-bench` loosens anything; a test holds the other two to the guard's
+defaults.
+
+### `config/safety_zones.json` is deprecated
+
+It describes the frozen legacy C++ playback gate, not this guard (its
+capsules are thinner and its torso is one box). It stays, unchanged in its
+numbers, until its last readers move to the description bundle; do not start
+reading it. Its `_deprecated` key says the same to a reader of the file.
+
 ### Collision policy — what is and isn't protected
 
 The guard protects the **arm structure** (shoulder → upper arm → elbow →

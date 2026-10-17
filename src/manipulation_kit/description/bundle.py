@@ -22,8 +22,10 @@ path                                        what it is
 ``collision/collision.json``                ``d1.urdf`` as data: every joint
                                             and every collision primitive, so
                                             a consumer needs no URDF parser
-``guard/profile.d1.json``                   the motion guard's default policy
-                                            (margins, keep-outs, exemptions)
+``guard/profile.<name>.json``               a motion guard policy (checks,
+                                            margins, keep-outs, exemptions):
+                                            ``d1``, ``d1-bench``, ``sim``
+                                            (:data:`GUARD_PROFILES`)
 ``poses/home_pose.json``                    the HOME pose, verbatim
 ``end_effectors/tool_configs/<id>.json``    the tool configs, verbatim
 ``visual/visual.json``                      every mesh the bundled URDFs
@@ -157,22 +159,48 @@ def collision_model(urdf_path: Path) -> dict:
             "joints": joints, "links": links}
 
 
-def guard_profile(name: str = "d1") -> dict:
-    """The motion guard's default policy, read from the guard itself.
+#: The guard profiles a daemon selects between, and what selects each.
+#:
+#: Each is the guard's own defaults (``d1``) with the listed changes. Only
+#: ``d1-bench`` loosens anything, and only what a bench is physically
+#: missing: a bench carries the two arms on a stand with no torso, head or
+#: chassis, so the body checks (body boxes and chest keep-out) would judge a
+#: body that is not there. The arm-to-arm and same-arm checks, and every
+#: margin, stay as on the robot. ``sim`` reproduces the robot exactly; it
+#: differs from ``d1`` only in what selects it.
+#:
+#: ``selected_by`` states the rule the daemon is to apply: ``d1`` is the real
+#: backend's default; ``d1-bench`` only with the real backend AND a
+#: ``d1-bench`` record written by the bench host package (never by a
+#: configuration file); ``sim`` only with the simulated backend.
+GUARD_PROFILES = {
+    "d1": {"selected_by": {"backend": "real", "record": None},
+           "summary": "the D1 robot: every check on, reference margins",
+           "changes": {}},
+    "d1-bench": {"selected_by": {"backend": "real", "record": "d1-bench"},
+                 "summary": "two D1 arms on a bench stand with no torso, head "
+                            "or chassis: body checks off, arm checks as on "
+                            "the robot",
+                 "changes": {"check_body": False, "chest_keepout": None}},
+    "sim": {"selected_by": {"backend": "sim", "record": None},
+            "summary": "the simulated D1: identical to d1",
+            "changes": {}},
+}
 
-    Every value comes from :mod:`manipulation_kit.guard.guard` (its module
-    constants and :class:`~manipulation_kit.guard.guard.MotionGuard`'s
-    keyword defaults), so the profile cannot disagree with the guard this
-    package runs."""
+#: The profile file format.
+GUARD_PROFILE_SCHEMA = "manipulation_kit.guard_profile/1"
+
+
+def _guard_defaults() -> dict:
     from ..guard import guard as kg  # noqa: PLC0415
 
     sig = inspect.signature(kg.MotionGuard.__init__).parameters
     keepout = {side: {"lo": list(lo), "hi": list(hi)}
                for side, (lo, hi) in sorted(kg.DEFAULT_CHEST_KEEPOUT.items())}
     return {
-        "profile": name,
-        "units": {"length": "m"},
-        "arm_sides": dict(sorted(kg.ARM_SIDES.items())),
+        "check_body": sig["check_body"].default,
+        "check_arm_arm": sig["check_arm_arm"].default,
+        "check_self": sig["check_self"].default,
         "body_margin_m": sig["body_margin_m"].default,
         "arm_arm_margin_m": sig["arm_arm_margin_m"].default,
         "self_margin_m": sig["self_margin_m"].default,
@@ -180,8 +208,59 @@ def guard_profile(name: str = "d1") -> dict:
         "disabled_body_boxes": list(kg.DEFAULT_DISABLED_BODY_BOXES),
         "chest_keepout": keepout,
         "chest_exempt_links": list(kg.DEFAULT_CHEST_EXEMPT_LINKS),
+    }
+
+
+def guard_profile(name: str = "d1") -> dict:
+    """Guard profile ``name`` (a key of :data:`GUARD_PROFILES`).
+
+    The values start from :mod:`manipulation_kit.guard.guard` itself (its
+    module constants and :class:`~manipulation_kit.guard.guard.MotionGuard`'s
+    keyword defaults), so ``d1`` cannot disagree with the guard this package
+    runs, and the other profiles differ from it only by their listed
+    ``changes``. ``daemon_keys`` repeats the margins under the names of the
+    daemon's ``[arm]`` configuration keys."""
+    from ..guard import guard as kg  # noqa: PLC0415
+
+    try:
+        spec = GUARD_PROFILES[name]
+    except KeyError:
+        raise KeyError(f"unknown guard profile {name!r}; known: "
+                       + ", ".join(sorted(GUARD_PROFILES))) from None
+    policy = _guard_defaults()
+    policy.update(spec["changes"])
+    return {
+        "schema": GUARD_PROFILE_SCHEMA,
+        "profile": name,
+        "summary": spec["summary"],
+        "selected_by": dict(spec["selected_by"]),
+        "units": {"length": "m"},
+        "arm_sides": dict(sorted(kg.ARM_SIDES.items())),
+        **policy,
         "ee_link_prefixes": list(kg.EE_LINK_PREFIXES),
         "hand_envelope_prefix": kg.HAND_ENVELOPE_PREFIX,
+        "daemon_keys": {"arm.guard_body": policy["check_body"],
+                        "arm.guard_body_margin_m": policy["body_margin_m"],
+                        "arm.guard_arm_arm_margin_m": policy["arm_arm_margin_m"]},
+    }
+
+
+def motion_guard_kwargs(profile: Mapping) -> dict:
+    """``MotionGuard(**motion_guard_kwargs(guard_profile(name)))`` builds the
+    kit's guard under that profile."""
+    keepout = profile["chest_keepout"]
+    return {
+        "check_body": profile["check_body"],
+        "check_arm_arm": profile["check_arm_arm"],
+        "check_self": profile["check_self"],
+        "body_margin_m": profile["body_margin_m"],
+        "arm_arm_margin_m": profile["arm_arm_margin_m"],
+        "self_margin_m": profile["self_margin_m"],
+        "body_exempt_links": tuple(profile["body_exempt_links"]),
+        "disabled_body_boxes": tuple(profile["disabled_body_boxes"]),
+        "chest_keepout": None if keepout is None else {
+            side: (tuple(b["lo"]), tuple(b["hi"])) for side, b in keepout.items()},
+        "chest_exempt_links": tuple(profile["chest_exempt_links"]),
     }
 
 
@@ -226,12 +305,13 @@ def bundle_files() -> Dict[str, bytes]:
         "kinematics/d1.urdf": guard_urdf.read_bytes(),
         "kinematics/d1_wholebody_gripper.urdf": wholebody.read_bytes(),
         "collision/collision.json": _json_bytes(collision_model(guard_urdf)),
-        "guard/profile.d1.json": _json_bytes(guard_profile("d1")),
         "poses/home_pose.json": (_CONFIG / "home_pose.json").read_bytes(),
         "visual/visual.json": _json_bytes(visual_refs({
             "kinematics/d1.urdf": guard_urdf,
             "kinematics/d1_wholebody_gripper.urdf": wholebody})),
     }
+    for name in GUARD_PROFILES:
+        files[f"guard/profile.{name}.json"] = _json_bytes(guard_profile(name))
     for p in sorted((_CONFIG / "tool_configs").glob("*.json")):
         files[f"end_effectors/tool_configs/{p.name}"] = p.read_bytes()
     return dict(sorted(files.items()))

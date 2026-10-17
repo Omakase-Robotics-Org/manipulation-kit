@@ -690,8 +690,17 @@ LIFT_EFFORT, LIFT_VELOCITY = 80.0, 0.03
 # ENCODERS WHEREVER THEY BOOT, so a raw status read is meaningless until
 # the neck has been homed — map real neck state through omakaseos, not the
 # raw encoder.
+#
+# NECK YAW (pan) LIMITS: ONE value for the whole description, +-1.5 rad. The
+# vendor URDF's dheadjoint says +-1.57 (the mechanism's stop), but every
+# command reaching the neck is clamped to the logical envelope +-1.5 rad
+# before it is sent, so +-1.57 describes poses the robot will never be put
+# in, and a planner or a 3D view that used it would disagree with the robot.
+# The same number is description.NECK_YAW_LIMITS_RAD; a test holds this
+# constant, that one and every generated URDF together.
+NECK_YAW_LIMITS_RAD = (-1.5, 1.5)
 NECK_PAN = ((0.0016171, 0.0, 0.621), (0.0, 0.0, 0.0), (0.0, 0.0, -1.0),
-            (-1.57, 1.57))
+            NECK_YAW_LIMITS_RAD)
 NECK_TILT = ((0.0, 0.0285, 0.0555), (-1.5708, 0.0, 0.0), (0.0, 0.0, 1.0),
              (-0.35, 0.65))
 NECK_EFFORT, NECK_VELOCITY = 3.0, 3.14

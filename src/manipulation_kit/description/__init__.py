@@ -59,6 +59,13 @@ WHOLEBODY_GRIPPER_URDF = ROOT / "d1" / "d1_wholebody_gripper.urdf"
 #: folded back into this table or into a shared URDF.
 HEAD_CAMERA_TILT_DEG = {"rev1": 15.0, "rev2": 20.0}
 
+#: The neck's yaw (URDF ``neck_pan``) limits in radians: the envelope every
+#: neck command is clamped to before it is sent. The one value of the
+#: description; the generator's ``NECK_YAW_LIMITS_RAD`` and every generated
+#: URDF carry the same numbers (a test holds them together). The mechanism's
+#: own stop, +-1.57 rad in the vendor URDF, is never commanded.
+NECK_YAW_LIMITS_RAD = (-1.5, 1.5)
+
 #: The revision the COMMITTED URDFs in this package describe.
 DEFAULT_HARDWARE_REVISION = "rev1"
 
@@ -79,6 +86,6 @@ def head_camera_tilt_deg(revision: str = DEFAULT_HARDWARE_REVISION) -> float:
             + ", ".join(sorted(HEAD_CAMERA_TILT_DEG))) from None
 
 
-__all__ = ["ROOT", "GUARD_URDF", "WHOLEBODY_GRIPPER_URDF",
+__all__ = ["ROOT", "GUARD_URDF", "WHOLEBODY_GRIPPER_URDF", "NECK_YAW_LIMITS_RAD",
            "HEAD_CAMERA_TILT_DEG", "DEFAULT_HARDWARE_REVISION",
            "head_camera_tilt_deg"]
