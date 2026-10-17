@@ -43,7 +43,10 @@ a hand of any make through ``POST /v1/end_effectors/{side}/joints``; the
 version-1 ``mapper(flex)`` call is unchanged for the consumers that use it.
 ``leadshine/dh116s``, ``robotera/xhand1``, ``robotera/xhand1_lite`` and
 ``wuji/wujihand2`` implement both;
-``linkerbot/o30`` still has no map.
+``linkerbot/o30`` still has no map. The same maps are also data:
+:func:`manipulation_kit.hands.mapping.retarget_table` writes a map as a
+table (held joints included) that another program can run and check against
+the committed golden vectors (``mkit-retarget``).
 
 Likewise a model may ship a ``description`` submodule for its geometry —
 ``load_mjspec`` (MJCF, ``leadshine/dh116s``) or ``load_urdf`` (URDF,

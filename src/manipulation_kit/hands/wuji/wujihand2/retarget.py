@@ -208,6 +208,13 @@ class Retargeter(_XhandRetargeter):
         return out
 
 
+    def table_rows(self):
+        """As the XHAND1's, with each held joint written as held."""
+        rows = super().table_rows()
+        return tuple(replace(r, hold=float(v)) if held else r
+                     for r, held, v in zip(rows, self.cfg.hold, self.cfg.hold_rad))
+
+
 def config_for(declaration, config: "RetargetConfig | None" = None) -> RetargetConfig:
     """``config`` (default: the defaults) adapted to what ``declaration`` says.
 

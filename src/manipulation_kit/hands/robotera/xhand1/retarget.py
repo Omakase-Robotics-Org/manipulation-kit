@@ -211,6 +211,16 @@ class Retargeter:
             out.append(spec.clamp(m.lo + v * (m.hi - m.lo)))
         return self._smooth(out)
 
+    def table_rows(self):
+        """This map as :class:`manipulation_kit.hands.mapping.TableRow` data,
+        one per joint (see :func:`manipulation_kit.hands.mapping.retarget_table`)."""
+        from ...mapping import TableRow  # noqa: PLC0415
+
+        return tuple(
+            TableRow(spec, tuple((ch, float(w)) for ch, w in m.sources if w > 0),
+                     float(m.lo), float(m.hi), bool(m.invert))
+            for spec, m in ((s, self.cfg.joints[s.name]) for s in self.JOINTS))
+
     def _smooth(self, targets: List[Optional[float]]) -> List[Optional[float]]:
         a = self.cfg.ema_alpha
         if a <= 0.0:

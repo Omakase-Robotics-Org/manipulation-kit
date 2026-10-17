@@ -187,6 +187,20 @@ class Retargeter:
                           (cfg.w_dip, f + "_dip_pitch")))
         return terms
 
+    def table_rows(self):
+        """This map as :class:`manipulation_kit.hands.mapping.TableRow` data:
+        per axis the weighted mean of :meth:`_terms` onto 0 .. 1 of the
+        stroke, ``invert``, and ``out_lo``/``out_hi`` as the final clamp."""
+        from ...mapping import TableRow  # noqa: PLC0415
+
+        cfg = self.cfg
+        return tuple(
+            TableRow(spec, tuple((ch, float(w)) for w, ch in axis if w != 0.0),
+                     0.0, 1.0, bool(cfg.invert[i]),
+                     max(spec.min, cfg.out_lo[i] / POS_MAX),
+                     min(spec.max, cfg.out_hi[i] / POS_MAX))
+            for i, (spec, axis) in enumerate(zip(JOINTS, self._terms())))
+
     def required_channels(self) -> Tuple[str, ...]:
         """Every channel read with a non-zero weight under the current config,
         in axis order, each once. Check them against the glove's declaration

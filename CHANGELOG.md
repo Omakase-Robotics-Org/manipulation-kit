@@ -6,6 +6,35 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.2 — unreleased
+
+**A hand's retarget map as data: held joints, tables and golden vectors.**
+Nothing breaks: every map computes what it did.
+
+- New `manipulation_kit.hands.mapping`. `retarget_table(model, config=None)`
+  returns a `RetargetTable`: one `TableRow` per joint in descriptor order
+  (`sources` as `(channel, weight)`, `lo`, `hi`, `invert`, `clamp_lo`,
+  `clamp_hi`, or `hold` for a held joint) plus `ema_alpha`.
+  `RetargetTable.held()`, `channels()`, `channels_of(joint)`,
+  `lacking(unusable_channels)` (joint -> the unusable channels it reads;
+  held joints never listed), `holding({joint: value})` (a copy with more
+  joints held), `evaluate(flex)` (the map without smoothing),
+  `to_json()` / `from_json()` (schema `manipulation_kit.retarget_table.v1`),
+  `dumps()` and `digest()` (SHA-256 of the canonical text).
+  `drivability(table, declaration, ranges=None)` returns `Drivability`
+  (`armed`, `held`, `lacking`, `refusals`): what a glove's declaration lets
+  the map drive, decided once at bind time without probing the map.
+  `golden_vectors(model)` runs deterministic inputs (`golden_inputs`)
+  through the map's own `joint_targets` (schema
+  `manipulation_kit.retarget_golden.v1`, carrying the table's digest).
+- Every version-2 map gains `table_rows()` (`leadshine/dh116s`,
+  `robotera/xhand1`, `robotera/xhand1_lite`, `wuji/wujihand2`).
+- Committed per model: `hands/<maker>/<model>/retarget_table.json` and
+  `retarget_golden.json`, shipped in the wheel. New command
+  `mkit-retarget` (`list`, `table`, `golden`, `build`, `check`); a test
+  fails when a committed file differs from what the code emits, and checks
+  that both the map and the table reproduce every golden vector exactly.
+
 ## 0.22.1 — unreleased
 
 **The Wuji Hand 2 joint table and its glove retarget map.** Nothing

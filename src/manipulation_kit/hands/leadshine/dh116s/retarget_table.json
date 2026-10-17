@@ -1,0 +1,141 @@
+{
+  "ema_alpha": 0.0,
+  "joints": [
+    {
+      "clamp": [
+        0.0,
+        1.0
+      ],
+      "hi": 1.0,
+      "invert": false,
+      "joint": "thumb_swing",
+      "lo": 0.0,
+      "max": 1.0,
+      "min": 0.0,
+      "sources": [
+        [
+          "thumb_cm_yaw",
+          1.0
+        ]
+      ],
+      "unit": "fraction"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.0
+      ],
+      "hi": 1.0,
+      "invert": false,
+      "joint": "thumb_flex",
+      "lo": 0.0,
+      "max": 1.0,
+      "min": 0.0,
+      "sources": [
+        [
+          "thumb_cm_pitch",
+          0.5
+        ],
+        [
+          "thumb_mp_pitch",
+          0.5
+        ]
+      ],
+      "unit": "fraction"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.0
+      ],
+      "hi": 1.0,
+      "invert": false,
+      "joint": "index_flex",
+      "lo": 0.0,
+      "max": 1.0,
+      "min": 0.0,
+      "sources": [
+        [
+          "index_mp_pitch",
+          0.5
+        ],
+        [
+          "index_pip_pitch",
+          0.5
+        ]
+      ],
+      "unit": "fraction"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.0
+      ],
+      "hi": 1.0,
+      "invert": false,
+      "joint": "middle_flex",
+      "lo": 0.0,
+      "max": 1.0,
+      "min": 0.0,
+      "sources": [
+        [
+          "middle_mp_pitch",
+          0.5
+        ],
+        [
+          "middle_pip_pitch",
+          0.5
+        ]
+      ],
+      "unit": "fraction"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.0
+      ],
+      "hi": 1.0,
+      "invert": false,
+      "joint": "ring_flex",
+      "lo": 0.0,
+      "max": 1.0,
+      "min": 0.0,
+      "sources": [
+        [
+          "ring_mp_pitch",
+          0.5
+        ],
+        [
+          "ring_pip_pitch",
+          0.5
+        ]
+      ],
+      "unit": "fraction"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.0
+      ],
+      "hi": 1.0,
+      "invert": false,
+      "joint": "pinky_flex",
+      "lo": 0.0,
+      "max": 1.0,
+      "min": 0.0,
+      "sources": [
+        [
+          "pinky_mp_pitch",
+          0.5
+        ],
+        [
+          "pinky_pip_pitch",
+          0.5
+        ]
+      ],
+      "unit": "fraction"
+    }
+  ],
+  "model": "leadshine/dh116s",
+  "schema": "manipulation_kit.retarget_table.v1"
+}
