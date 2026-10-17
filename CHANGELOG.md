@@ -6,6 +6,12 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.21.1 — unreleased
+
+- `wuji/wujihand2`: the thumb follows opposition with `thumb_S1` and
+  `thumb_S2` together and flexion with `thumb_S3` and `thumb_S4` together
+  (see 0.21.0 below for the table).
+
 ## 0.21.0 — unreleased
 
 **Gloves drive hands through three layers, so N gloves and M hands cost
@@ -81,14 +87,13 @@ what it did.
   `config_for(declaration, config=None)` rewrites such a source into the
   channels it was computed from (`middle_S2` follows the mean of the index
   and ring spreads) and leaves every other refusal in place. The thumb
-  is held by default; for a glove that solves it on the wearer (the LitchiBot
-  driver: `thumb_cm_yaw`, `thumb_cm_swing`, `thumb_mp_pitch` derived,
-  `thumb_cm_pitch` uncalibrated, no `thumb_ip_pitch`) `config_for` drives
-  `thumb_S1` from `thumb_cm_swing` over ±0.436 rad (positive swing to
-  positive `S1`; sign provisional, `invert` flips it), `thumb_S2` from
-  `thumb_cm_yaw` and `thumb_S3` from `thumb_mp_pitch`, and keeps `thumb_S4`
-  held; with the default config it clears the thumb hold only when all of
-  `S1`..`S3` are drivable. An uncalibrated thumb keeps the default hold. No `toolconfig`.
+  is held by default; released, `thumb_S1` (0 .. 0.8 rad) and `thumb_S2`
+  (0 .. 0.6 rad) both follow opposition (`thumb_cm_yaw`), and `thumb_S3`
+  (0 .. 1.0 rad) and `thumb_S4` (0 .. 0.6 rad) both follow the thumb's
+  flexion (`thumb_mp_pitch`); `thumb_cm_swing`, `thumb_cm_pitch` and
+  `thumb_ip_pitch` drive nothing. With the default config `config_for`
+  clears the thumb hold when the glove can drive both channels (the
+  LitchiBot driver, which solves the thumb on the wearer). An uncalibrated thumb keeps the default hold. No `toolconfig`.
 
 ### New: `manipulation_kit.binding` (`omakase.binding.v1`)
 

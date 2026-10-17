@@ -51,43 +51,36 @@ joint                      default source                   interval (rad)
   of the index and ring spreads (provisional: the middle finger stays
   between them), and :func:`config_for` leaves every refusal that is not
   of that kind for ``check_drive_sources`` to report.
-* **The thumb is held at 0 rad** by default, as on the hand: the
-  LitchiBot glove's thumb used to be unusable (its fitter left the thumb
-  uncalibrated). The thumb's maps below are PROVISIONAL, reasoned from the
-  vendor's joint names and the URDF's kinematics, never watched on a hand,
-  and are read only once ``hold`` is cleared for that joint: ``S1`` (base
-  flexion; positive moves the tip towards the palm) from ``thumb_cm_pitch``,
-  ``S2`` (base abduction; positive moves the tip towards the index finger)
-  from ``thumb_cm_yaw`` over 0 .. 0.698, ``S3`` from ``thumb_mp_pitch``,
-  ``S4`` from ``thumb_ip_pitch``. Note that the LitchiBot glove's
-  ``thumb_mp_pitch`` slot carries the thumb's LAST joint.
-* **A glove that solves the thumb on the wearer** (the LitchiBot driver
-  now: ``thumb_cm_yaw``, ``thumb_cm_swing`` and ``thumb_mp_pitch`` DERIVED,
-  ``thumb_cm_pitch`` UNCALIBRATED, ``thumb_ip_pitch`` not declared) drives
-  the thumb through :func:`config_for`:
+* **The thumb is held at 0 rad** by default, as on the hand: a glove whose
+  thumb is uncalibrated has nothing to drive it from. Once the thumb is
+  released (``hold`` cleared, or :func:`config_for` with a glove that can
+  drive it), it follows two channels:
 
-  - ``S1`` reads ``thumb_cm_swing`` over -0.436 .. 0.436 rad (the swing
-    channel's ±25 degrees; bipolar, so a neutral thumb lands on 0 rad, well
-    inside S1's -1.187 .. 1.291). It replaces ``thumb_cm_pitch`` only when
-    the declaration refuses ``thumb_cm_pitch`` and accepts
-    ``thumb_cm_swing``; a glove that measures ``thumb_cm_pitch`` keeps it.
-    The sign is an assumption: positive swing is taken to drive positive
-    ``S1``. It was not watched on a hand; if the thumb swings the wrong way,
-    set ``invert`` on that ``thumb_S1`` map in the bind's
-    ``retarget_config``.
-  - ``S2`` reads ``thumb_cm_yaw`` (0 at open, 1 at the wearer's maximum
-    opposition) onto 0 .. 0.698, and ``S3`` reads ``thumb_mp_pitch`` onto
-    0 .. 1.570 (its channel range is 0 .. 1.571).
-  - ``S4`` stays held at 0 rad: the glove has no sensor for the thumb's
-    last-but-one joint, and the kit has no coupling that derives a joint
-    from another one.
-  - With ``config`` left at its default, :func:`config_for` also clears the
-    hold on ``S1`` .. ``S3``, but only when the declaration can drive all
-    three; ``S4`` is cleared too when it can drive ``thumb_ip_pitch``. A
-    thumb whose channels are UNCALIBRATED or undeclared keeps the default
-    hold. A config the caller passes keeps its own ``hold``, so a bind that
-    also holds the finger spreads clears ``S1`` .. ``S3`` itself (see
-    :func:`config_for`).
+  =================  ====================  =============
+  joint              source                interval (rad)
+  =================  ====================  =============
+  ``thumb_S1``       ``thumb_cm_yaw``      0 .. 0.8
+  ``thumb_S2``       ``thumb_cm_yaw``      0 .. 0.6
+  ``thumb_S3``       ``thumb_mp_pitch``    0 .. 1.0
+  ``thumb_S4``       ``thumb_mp_pitch``    0 .. 0.6
+  =================  ====================  =============
+
+  ``thumb_cm_yaw`` is opposition (0 at an open thumb, 1 at the wearer's
+  maximum opposition). On the vendor's right-hand URDF the joint that
+  carries the thumb tip across the palm is ``S1`` (``cmc_flex``; positive
+  moves the tip towards the palm), and positive ``S2`` (``cmc_abd``) moves
+  it towards the index finger; opposition needs both at once, so both read
+  the same channel and cannot be moved independently. The tip's two joints
+  bend together from the glove's thumb flexion (``thumb_mp_pitch``; on the
+  LitchiBot glove that slot carries the thumb's last joint); ``S4`` reads
+  the same channel over a shorter interval because the glove has no sensor
+  of its own for that joint.
+  Every interval lies inside the joint's limits. Forward kinematics of the
+  vendor's right-hand URDF puts the thumb tip of a fully opposed, fully
+  flexed thumb (all four at their interval's top) 27 mm from the base of
+  the little finger; with ``S1`` left at 0 rad the same thumb stops 56 mm
+  away, and an open thumb is 147 mm away.
+  The thumb's lateral swing (``thumb_cm_swing``) drives nothing.
 
 Sides: the vendor's left and right URDFs share limits and anatomical
 directions (:mod:`.axes`), so this one map serves both hands. Whether the
@@ -116,8 +109,13 @@ from .axes import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS, NUM_AXES  # noqa: F401
 #: The spread interval: the URDF's ±0.698 rad less a 0.05 rad margin.
 SPREAD_RAD = 0.648
 
-#: The thumb swing interval: the LitchiBot glove's ±25 degrees of wearer swing.
-THUMB_SWING_RAD = math.radians(25.0)
+#: The thumb's maps (see the module docstring): joint -> (channel, interval max).
+THUMB_MAPS: Dict[str, Tuple[str, float]] = {
+    "thumb_S1": ("thumb_cm_yaw", 0.8),
+    "thumb_S2": ("thumb_cm_yaw", 0.6),
+    "thumb_S3": ("thumb_mp_pitch", 1.0),
+    "thumb_S4": ("thumb_mp_pitch", 0.6),
+}
 
 _HAND_FINGERS = ("index", "middle", "ring", "pinky")
 
@@ -125,12 +123,8 @@ _HAND_FINGERS = ("index", "middle", "ring", "pinky")
 def default_joint_maps() -> Dict[str, JointMap]:
     """The defaults tabled in the module docstring, keyed by joint name."""
     hi = {j.name: j.max for j in JOINTS}
-    maps = {
-        "thumb_S1": JointMap((("thumb_cm_pitch", 1.0),), 0.0, hi["thumb_S1"]),
-        "thumb_S2": JointMap((("thumb_cm_yaw", 1.0),), 0.0, hi["thumb_S2"]),
-        "thumb_S3": JointMap((("thumb_mp_pitch", 1.0),), 0.0, hi["thumb_S3"]),
-        "thumb_S4": JointMap((("thumb_ip_pitch", 1.0),), 0.0, hi["thumb_S4"]),
-    }
+    maps = {name: JointMap(((channel, 1.0),), 0.0, top)
+            for name, (channel, top) in THUMB_MAPS.items()}
     for f in _HAND_FINGERS:
         maps[f"{f}_S1"] = JointMap(((f"{f}_mp_pitch", 1.0),), 0.0, hi[f"{f}_S1"])
         maps[f"{f}_S2"] = JointMap(((f"{f}_mp_swing", 1.0),), -SPREAD_RAD, SPREAD_RAD)
@@ -226,29 +220,19 @@ def config_for(declaration, config: "RetargetConfig | None" = None) -> RetargetC
     Retargeter(result).required_channels())`` still refuses it, with the
     reason.
 
-    The thumb: see the module docstring. ``thumb_S1`` is re-sourced to
-    ``thumb_cm_swing`` when the glove refuses ``thumb_cm_pitch`` and accepts
-    ``thumb_cm_swing`` (whatever the hold), and with the default ``config`` the
-    hold on the thumb is cleared as the docstring says."""
+    The thumb: with the default ``config``, the hold on all four thumb joints
+    is cleared when the declaration can drive every channel their maps read
+    (``thumb_cm_yaw`` and ``thumb_mp_pitch``); otherwise the thumb stays held.
+    A config the caller passes keeps its own ``hold``."""
     cfg = config if config is not None else RetargetConfig()
     joints = dict(cfg.joints)
-    # A thumb base flexion the glove does not measure, but whose abduction
-    # it does: drive S1 from the abduction (see the module docstring).
-    s1 = joints["thumb_S1"]
-    if (s1.sources == default_joint_maps()["thumb_S1"].sources
-            and declaration.refuse_as_drive_source("thumb_cm_pitch") is not None
-            and declaration.refuse_as_drive_source("thumb_cm_swing") is None):
-        joints["thumb_S1"] = JointMap((("thumb_cm_swing", 1.0),),
-                                      -THUMB_SWING_RAD, THUMB_SWING_RAD)
     if config is None:
         hold = list(cfg.hold)
         names = ("thumb_S1", "thumb_S2", "thumb_S3", "thumb_S4")
-        drivable = [all(declaration.refuse_as_drive_source(ch) is None
-                        for ch, w in joints[n].sources if w > 0) for n in names]
-        if all(drivable[:3]):
-            for n, ok in zip(names, drivable):
-                if ok:
-                    hold[AXIS_NAMES.index(n)] = False
+        if all(declaration.refuse_as_drive_source(ch) is None
+               for n in names for ch, w in joints[n].sources if w > 0):
+            for n in names:
+                hold[AXIS_NAMES.index(n)] = False
         cfg = replace(cfg, hold=tuple(hold))
     for spec, held in zip(JOINTS, cfg.hold):
         if held:

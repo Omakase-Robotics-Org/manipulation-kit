@@ -169,7 +169,7 @@ def test_held_joints_read_nothing_and_command_their_hold_angle():
     hold_rad[AXIS_NAMES.index("middle_S3")] = 0.4
     r = Retargeter(RetargetConfig(hold=tuple(hold), hold_rad=tuple(hold_rad)))
     assert "middle_pip_pitch" not in r.required_channels()
-    assert "thumb_cm_pitch" in r.required_channels()   # the thumb now follows
+    assert "thumb_cm_yaw" in r.required_channels()   # the thumb now follows
     out = r.joint_targets(_pose({}))
     assert out[AXIS_NAMES.index("middle_S3")] == 0.4
     held = [None] * 20
@@ -180,7 +180,20 @@ def test_the_thumb_follows_once_released():
     r = Retargeter(RetargetConfig(hold=(False,) * 20))
     values = {c: 1.0 for c in r.required_channels()}
     out = r.joint_targets(_pose(values))
-    assert out[:4] == pytest.approx([JOINTS[0].max, JOINTS[1].max, JOINTS[2].max, JOINTS[3].max])
+    assert out[:4] == pytest.approx([0.8, 0.6, 1.0, 0.6])
+    assert set(r.required_channels()) >= {"thumb_cm_yaw", "thumb_mp_pitch"}
+    assert not {"thumb_cm_pitch", "thumb_cm_swing", "thumb_ip_pitch"} & set(r.required_channels())
+
+
+def test_opposition_drives_s1_and_s2_together_inside_their_limits():
+    maps = default_joint_maps()
+    assert maps["thumb_S1"].sources == maps["thumb_S2"].sources == (("thumb_cm_yaw", 1.0),)
+    assert maps["thumb_S3"].sources == maps["thumb_S4"].sources == (("thumb_mp_pitch", 1.0),)
+    for i, name in enumerate(AXIS_NAMES[:4]):
+        assert JOINTS[i].min <= maps[name].lo < maps[name].hi <= JOINTS[i].max
+    r = Retargeter(RetargetConfig(hold=(False,) * 20))
+    half = r.joint_targets(_pose({"thumb_cm_yaw": 0.5, "thumb_mp_pitch": 0.0}))
+    assert half[:4] == pytest.approx([0.4, 0.3, 0.0, 0.0])
 
 
 def test_configs_are_refused_across_hands_and_outside_limits():
@@ -381,21 +394,20 @@ def _thumb_declaration(thumb="derived"):
                               "channels": chans})
 
 
-def test_a_glove_that_solves_the_thumb_drives_s1_to_s3_and_holds_s4():
+def test_a_glove_that_solves_the_thumb_releases_all_four_thumb_joints():
     declaration = _thumb_declaration()
     cfg = config_for(declaration)
     thumb = [AXIS_NAMES.index(f"thumb_S{i}") for i in range(1, 5)]
-    assert [cfg.hold[i] for i in thumb] == [False, False, False, True]
-    assert cfg.joints["thumb_S1"].sources == (("thumb_cm_swing", 1.0),)
-    assert cfg.joints["thumb_S2"] == default_joint_maps()["thumb_S2"]
+    assert [cfg.hold[i] for i in thumb] == [False, False, False, False]
+    assert {n: cfg.joints[n] for n in AXIS_NAMES[:4]} == {
+        n: default_joint_maps()[n] for n in AXIS_NAMES[:4]}
     # fingers keep their holds: the spreads here are uncalibrated and still refused
     r = Retargeter(cfg)
-    assert {"thumb_cm_swing", "thumb_cm_yaw", "thumb_mp_pitch"} <= set(r.required_channels())
-    assert "thumb_cm_pitch" not in r.required_channels()
-    assert "thumb_ip_pitch" not in r.required_channels()
+    assert {"thumb_cm_yaw", "thumb_mp_pitch"} <= set(r.required_channels())
+    assert not {"thumb_cm_pitch", "thumb_cm_swing", "thumb_ip_pitch"} & set(r.required_channels())
 
-    # a bind that holds the finger spreads and the thumb's S4 is accepted
-    hold = tuple(i in S2 or i == thumb[3] for i in range(20))
+    # a bind that holds the finger spreads is accepted, and its thumb follows
+    hold = tuple(i in S2 for i in range(20))
     cfg = config_for(declaration, RetargetConfig(hold=hold))
     r = Retargeter(cfg)
     declaration.check_drive_sources(r.required_channels())
@@ -405,18 +417,31 @@ def test_a_glove_that_solves_the_thumb_drives_s1_to_s3_and_holds_s4():
     open_ = HandAngles("right", {**values, "thumb_cm_yaw": 0.0, "thumb_cm_swing": 0.0,
                                  "thumb_mp_pitch": 0.0})
     out = r.joint_targets(cal.normalize_hand(open_))
-    assert [out[i] for i in thumb[:3]] == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)
-    assert out[thumb[3]] == 0.0
+    assert [out[i] for i in thumb] == pytest.approx([0.0, 0.0, 0.0, 0.0], abs=1e-9)
     opposed = HandAngles("right", {**values, "thumb_cm_yaw": 1.0, "thumb_cm_swing": 0.436,
                                    "thumb_mp_pitch": 1.571})
     out = r.joint_targets(cal.normalize_hand(opposed))
-    assert out[thumb[0]] == pytest.approx(0.436, abs=1e-3)
-    assert out[thumb[1]] == pytest.approx(JOINTS[thumb[1]].max, abs=1e-9)
-    assert out[thumb[2]] == pytest.approx(JOINTS[thumb[2]].max, abs=2e-3)
-    assert out[thumb[3]] == 0.0
+    assert [out[i] for i in thumb] == pytest.approx([0.8, 0.6, 1.0, 0.6], abs=1e-9)
+    # the thumb's lateral swing drives nothing
     swung = HandAngles("right", {**opposed.radians, "thumb_cm_swing": -0.436})
-    out = r.joint_targets(cal.normalize_hand(swung))
-    assert out[thumb[0]] == pytest.approx(-0.436, abs=1e-3)
+    assert r.joint_targets(cal.normalize_hand(swung)) == out
+
+
+def test_a_thumb_without_its_flexion_stays_held():
+    declaration = _thumb_declaration()
+    chans = {n: c for n, c in declaration.channels.items()}
+    assert "thumb_mp_pitch" in chans
+    raw = {"type": "channel_declaration", "device_model": "test/glove", "channels": {}}
+    for name, c in chans.items():
+        if name == "thumb_mp_pitch":
+            continue
+        raw["channels"][name] = dict(
+            kind=c.kind.value if hasattr(c.kind, "value") else c.kind,
+            provenance=c.provenance.value,
+            default_range=None if c.default_range is None else [c.default_range.lo, c.default_range.hi],
+            note="synthetic")
+    cfg = config_for(parse_declaration(raw))
+    assert cfg.hold[:4] == (True,) * 4
 
 
 def test_an_uncalibrated_thumb_keeps_the_default_hold():
