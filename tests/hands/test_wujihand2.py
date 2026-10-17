@@ -12,19 +12,21 @@ import pytest
 import manipulation_kit.hands as hands
 from manipulation_kit.binding import load_binding
 from manipulation_kit.gloves import HandPose
-from manipulation_kit.gloves.calibration import ChannelCalibration, load_ranges
+from manipulation_kit.gloves.calibration import ChannelCalibration, ChannelRange, load_ranges
 from manipulation_kit.gloves.channels import spec_of
 from manipulation_kit.gloves.pose import HandAngles
-from manipulation_kit.gloves.v1 import DeclarationError, PoseStreamDecoder
+from manipulation_kit.gloves.v1 import DeclarationError, PoseStreamDecoder, parse_declaration
 from manipulation_kit.hands.joints import check_descriptor, fill_held
 from manipulation_kit.hands.robotera.xhand1.retarget import RetargetConfig as XhConfig
 from manipulation_kit.hands.wuji.wujihand2 import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS
 from manipulation_kit.hands.wuji.wujihand2.retarget import (
     DEFAULT_HOLD,
+    PINKY_SPREAD_RAD,
     SPREAD_RAD,
     JointMap,
     RetargetConfig,
     Retargeter,
+    config_for,
     default_joint_maps,
 )
 
@@ -128,16 +130,23 @@ def test_open_neutral_and_closed():
         if j.name.startswith("thumb_"):
             assert open_[i] == closed[i] == 0.0
         elif j.name.endswith("_S2"):
+            spread = PINKY_SPREAD_RAD if j.name == "pinky_S2" else SPREAD_RAD
             assert (open_[i], neutral[i], closed[i]) == pytest.approx(
-                (-SPREAD_RAD, 0.0, SPREAD_RAD))
-            assert j.min < -SPREAD_RAD and SPREAD_RAD < j.max
+                (-spread, 0.0, spread))
+            assert j.min < -spread and spread < j.max
         else:
             assert (open_[i], closed[i]) == pytest.approx((0.0, j.max))
 
 
 def test_the_calibration_and_the_map_reproduce_the_table_that_ran():
+    # The file holds the table's flexion; its spread rows (S2 = 2 x swing,
+    # saturating at +-18.564 degrees) are a +-0.324 rad swing range, given
+    # here the way a glove declares it.
     ranges = load_ranges(DATA / "litchibot_wujihand2.calibration.json")
-    calibration = ChannelCalibration({}, ranges, known=ranges)
+    assert not [c for c in ranges if c.endswith("_mp_swing")]
+    swing = {f"{f}_mp_swing": ChannelRange(-0.3240029223402273, 0.3240029223402273)
+             for f in FINGERS}
+    calibration = ChannelCalibration(swing, ranges, known={**swing, **ranges})
     r = Retargeter(RetargetConfig())
     rng = random.Random(20260925)
     for _ in range(2000):
@@ -147,7 +156,30 @@ def test_the_calibration_and_the_map_reproduce_the_table_that_ran():
                                 ("dip_pitch", (-0.3, 1.7)), ("mp_swing", (-0.6, 0.6))):
                 radians[f"{f}_{c}"] = rng.uniform(lo, hi)
         pose = calibration.normalize_hand(HandAngles("right", radians))
-        assert r.joint_targets(pose) == pytest.approx(_table(radians), abs=1e-9)
+        expected = _table(radians)
+        p = AXIS_NAMES.index("pinky_S2")
+        expected[p] *= PINKY_SPREAD_RAD / SPREAD_RAD   # the pinky's narrower interval
+        assert r.joint_targets(pose) == pytest.approx(expected, abs=1e-9)
+
+
+def test_the_declared_spread_is_scaled_once_and_reaches_the_pinky_interval():
+    # A glove that declares the wearer's spread (+-0.182 rad on the pinky)
+    # and an operator file without swing ranges: the wearer's full spread is
+    # the joint's full interval.
+    ranges = load_ranges(DATA / "litchibot_wujihand2.calibration.json")
+    declared = {f"{f}_mp_swing": ChannelRange(-0.182, 0.182) for f in FINGERS}
+    calibration = ChannelCalibration(declared, ranges, known={**declared, **ranges})
+    r = Retargeter(RetargetConfig())
+    radians = {f"{f}_{c}": 0.0 for f in FINGERS for c in ("mp_pitch", "pip_pitch", "dip_pitch")}
+    p = AXIS_NAMES.index("pinky_S2")
+    out = r.joint_targets(calibration.normalize_hand(
+        HandAngles("right", {**radians, **{c: 0.182 for c in declared}})))
+    assert out[p] == pytest.approx(PINKY_SPREAD_RAD)
+    assert out[AXIS_NAMES.index("ring_S2")] == pytest.approx(SPREAD_RAD)
+    out = r.joint_targets(calibration.normalize_hand(
+        HandAngles("right", {**radians, **{c: -0.3 for c in declared}})))
+    assert out[p] == pytest.approx(-PINKY_SPREAD_RAD)
+    assert JOINTS[p].min < -PINKY_SPREAD_RAD and PINKY_SPREAD_RAD < JOINTS[p].max
 
 
 def test_a_missing_input_holds_only_its_joint():
@@ -168,7 +200,7 @@ def test_held_joints_read_nothing_and_command_their_hold_angle():
     hold_rad[AXIS_NAMES.index("middle_S3")] = 0.4
     r = Retargeter(RetargetConfig(hold=tuple(hold), hold_rad=tuple(hold_rad)))
     assert "middle_pip_pitch" not in r.required_channels()
-    assert "thumb_cm_pitch" in r.required_channels()   # the thumb now follows
+    assert "thumb_cm_yaw" in r.required_channels()   # the thumb now follows
     out = r.joint_targets(_pose({}))
     assert out[AXIS_NAMES.index("middle_S3")] == 0.4
     held = [None] * 20
@@ -179,7 +211,20 @@ def test_the_thumb_follows_once_released():
     r = Retargeter(RetargetConfig(hold=(False,) * 20))
     values = {c: 1.0 for c in r.required_channels()}
     out = r.joint_targets(_pose(values))
-    assert out[:4] == pytest.approx([JOINTS[0].max, JOINTS[1].max, JOINTS[2].max, JOINTS[3].max])
+    assert out[:4] == pytest.approx([0.8, 0.6, 1.0, 0.6])
+    assert set(r.required_channels()) >= {"thumb_cm_yaw", "thumb_mp_pitch"}
+    assert not {"thumb_cm_pitch", "thumb_cm_swing", "thumb_ip_pitch"} & set(r.required_channels())
+
+
+def test_opposition_drives_s1_and_s2_together_inside_their_limits():
+    maps = default_joint_maps()
+    assert maps["thumb_S1"].sources == maps["thumb_S2"].sources == (("thumb_cm_yaw", 1.0),)
+    assert maps["thumb_S3"].sources == maps["thumb_S4"].sources == (("thumb_mp_pitch", 1.0),)
+    for i, name in enumerate(AXIS_NAMES[:4]):
+        assert JOINTS[i].min <= maps[name].lo < maps[name].hi <= JOINTS[i].max
+    r = Retargeter(RetargetConfig(hold=(False,) * 20))
+    half = r.joint_targets(_pose({"thumb_cm_yaw": 0.5, "thumb_mp_pitch": 0.0}))
+    assert half[:4] == pytest.approx([0.4, 0.3, 0.0, 0.0])
 
 
 def test_configs_are_refused_across_hands_and_outside_limits():
@@ -275,3 +320,146 @@ def test_a_held_joint_never_asks_the_pose_for_its_channels():
     out = r.joint_targets(pose)
     assert out[AXIS_NAMES.index("index_S2")] == 0.0
     assert out[AXIS_NAMES.index("index_S1")] is not None
+
+
+def _spread_declaration(middle="synthesized", swing="measured"):
+    """A device-wide declaration shaped like a glove that measures every finger
+    joint and the index, ring and pinky spreads, and derives the middle spread
+    from the index and ring. Synthetic numbers."""
+    chans = {}
+    for f in FINGERS:
+        for j in ("mp_pitch", "pip_pitch", "dip_pitch"):
+            chans[f"{f}_{j}"] = dict(kind="flex", provenance="measured",
+                                     default_range=[0.0, 1.5])
+        chans[f"{f}_mp_swing"] = dict(kind="swing", provenance=swing,
+                                      default_range=None if swing == "uncalibrated"
+                                      else [-0.6, 0.6])
+    if middle == "synthesized":
+        chans["middle_mp_swing"].update(provenance="synthesized",
+                                        derived_from=["index_mp_swing", "ring_mp_swing"])
+    elif middle == "missing-input":
+        chans["middle_mp_swing"].update(provenance="synthesized",
+                                        derived_from=["index_mp_swing", "ring_mp_swing"])
+        chans["ring_mp_swing"].update(provenance="uncalibrated", default_range=None)
+    for name, c in chans.items():
+        c.setdefault("note", "synthetic")
+    return parse_declaration({"type": "channel_declaration", "device_model": "test/glove",
+                              "channels": chans})
+
+
+def test_a_glove_that_derives_the_middle_spread_binds_with_middle_s2_held():
+    declaration = _spread_declaration()
+    with pytest.raises(DeclarationError) as err:
+        declaration.check_drive_sources(Retargeter(config_for(declaration)).required_channels())
+    refused = [line.split(" ")[0] for line in str(err.value).splitlines()]
+    assert refused == ["middle_mp_swing"]
+    hold = list(DEFAULT_HOLD)
+    hold[AXIS_NAMES.index("middle_S2")] = True
+    r = Retargeter(config_for(declaration, RetargetConfig(hold=tuple(hold))))
+    declaration.check_drive_sources(r.required_channels())
+    assert "middle_mp_swing" not in r.required_channels()
+
+
+def test_config_for_does_not_loosen_what_cannot_be_driven():
+    # uncalibrated swing: every spread still refused
+    declaration = _spread_declaration(middle="uncalibrated", swing="uncalibrated")
+    r = Retargeter(config_for(declaration))
+    with pytest.raises(DeclarationError, match="UNCALIBRATED"):
+        declaration.check_drive_sources(r.required_channels())
+    # a synthesized middle whose input is itself uncalibrated stays refused
+    declaration = _spread_declaration(middle="missing-input")
+    r = Retargeter(config_for(declaration))
+    with pytest.raises(DeclarationError) as err:
+        declaration.check_drive_sources(r.required_channels())
+    assert "ring_mp_swing" in str(err.value) and "UNCALIBRATED" in str(err.value)
+    # holding the spreads still binds, config_for leaves held joints alone
+    hold = tuple(_hold_thumb_and_spread())
+    cfg = config_for(declaration, RetargetConfig(hold=hold))
+    declaration.check_drive_sources(Retargeter(cfg).required_channels())
+    assert cfg.joints == RetargetConfig(hold=hold).joints
+
+
+def _thumb_declaration(thumb="derived"):
+    """A device-wide declaration shaped like the LitchiBot glove's thumb: yaw,
+    swing and the last joint derived on the wearer, cm_pitch uncalibrated,
+    ip_pitch undeclared. Synthetic numbers. ``thumb="uncalibrated"`` makes
+    every thumb channel uncalibrated."""
+    chans = {}
+    for f in FINGERS:
+        for j in ("mp_pitch", "pip_pitch", "dip_pitch"):
+            chans[f"{f}_{j}"] = dict(kind="flex", provenance="measured",
+                                     default_range=[0.0, 1.5])
+        chans[f"{f}_mp_swing"] = dict(kind="swing", provenance="uncalibrated",
+                                      default_range=None)
+    rng = {"thumb_cm_yaw": [0.0, 1.0], "thumb_cm_swing": [-0.436, 0.436],
+           "thumb_mp_pitch": [0.0, 1.571]}
+    kinds = {"thumb_cm_yaw": "yaw", "thumb_cm_swing": "swing", "thumb_mp_pitch": "flex"}
+    for name, r in rng.items():
+        if thumb == "derived":
+            chans[name] = dict(kind=kinds[name], provenance="derived", default_range=r)
+        else:
+            chans[name] = dict(kind=kinds[name], provenance="uncalibrated", default_range=None)
+    chans["thumb_cm_pitch"] = dict(kind="flex", provenance="uncalibrated", default_range=None)
+    for c in chans.values():
+        c.setdefault("note", "synthetic")
+    return parse_declaration({"type": "channel_declaration", "device_model": "test/glove",
+                              "channels": chans})
+
+
+def test_a_glove_that_solves_the_thumb_releases_all_four_thumb_joints():
+    declaration = _thumb_declaration()
+    cfg = config_for(declaration)
+    thumb = [AXIS_NAMES.index(f"thumb_S{i}") for i in range(1, 5)]
+    assert [cfg.hold[i] for i in thumb] == [False, False, False, False]
+    assert {n: cfg.joints[n] for n in AXIS_NAMES[:4]} == {
+        n: default_joint_maps()[n] for n in AXIS_NAMES[:4]}
+    # fingers keep their holds: the spreads here are uncalibrated and still refused
+    r = Retargeter(cfg)
+    assert {"thumb_cm_yaw", "thumb_mp_pitch"} <= set(r.required_channels())
+    assert not {"thumb_cm_pitch", "thumb_cm_swing", "thumb_ip_pitch"} & set(r.required_channels())
+
+    # a bind that holds the finger spreads is accepted, and its thumb follows
+    hold = tuple(i in S2 for i in range(20))
+    cfg = config_for(declaration, RetargetConfig(hold=hold))
+    r = Retargeter(cfg)
+    declaration.check_drive_sources(r.required_channels())
+
+    cal = declaration.calibration()
+    values = {f"{f}_{j}": 0.0 for f in FINGERS for j in ("mp_pitch", "pip_pitch", "dip_pitch")}
+    open_ = HandAngles("right", {**values, "thumb_cm_yaw": 0.0, "thumb_cm_swing": 0.0,
+                                 "thumb_mp_pitch": 0.0})
+    out = r.joint_targets(cal.normalize_hand(open_))
+    assert [out[i] for i in thumb] == pytest.approx([0.0, 0.0, 0.0, 0.0], abs=1e-9)
+    opposed = HandAngles("right", {**values, "thumb_cm_yaw": 1.0, "thumb_cm_swing": 0.436,
+                                   "thumb_mp_pitch": 1.571})
+    out = r.joint_targets(cal.normalize_hand(opposed))
+    assert [out[i] for i in thumb] == pytest.approx([0.8, 0.6, 1.0, 0.6], abs=1e-9)
+    # the thumb's lateral swing drives nothing
+    swung = HandAngles("right", {**opposed.radians, "thumb_cm_swing": -0.436})
+    assert r.joint_targets(cal.normalize_hand(swung)) == out
+
+
+def test_a_thumb_without_its_flexion_stays_held():
+    declaration = _thumb_declaration()
+    chans = {n: c for n, c in declaration.channels.items()}
+    assert "thumb_mp_pitch" in chans
+    raw = {"type": "channel_declaration", "device_model": "test/glove", "channels": {}}
+    for name, c in chans.items():
+        if name == "thumb_mp_pitch":
+            continue
+        raw["channels"][name] = dict(
+            kind=c.kind.value if hasattr(c.kind, "value") else c.kind,
+            provenance=c.provenance.value,
+            default_range=None if c.default_range is None else [c.default_range.lo, c.default_range.hi],
+            note="synthetic")
+    cfg = config_for(parse_declaration(raw))
+    assert cfg.hold[:4] == (True,) * 4
+
+
+def test_an_uncalibrated_thumb_keeps_the_default_hold():
+    declaration = _thumb_declaration(thumb="uncalibrated")
+    cfg = config_for(declaration)
+    assert cfg.hold == DEFAULT_HOLD
+    assert cfg.joints == default_joint_maps()
+    r = Retargeter(cfg)
+    assert not any(c.startswith("thumb_") for c in r.required_channels())

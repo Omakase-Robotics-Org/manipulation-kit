@@ -10,7 +10,8 @@ it.
 
 **Status:** the retarget map is the table that drove a right Wuji Hand 2
 from a LitchiBot glove on hardware (2026-09-25), moved into this package's
-layers. The thumb mapping has never driven a hand and is held by default.
+layers. The thumb is held by default; its map (below) was checked on the
+vendor's URDF against recorded glove sessions, not yet on a hand.
 The left hand has not been driven.
 
 ## Sources
@@ -56,22 +57,39 @@ wuji.joint_targets(pose)     # 20 x (rad | None); None = hold that joint
 |---|---|---|
 | `<finger>_S1` | `<finger>_mp_pitch` | 0 .. 1.570 |
 | `<finger>_S2` | `<finger>_mp_swing` | -0.648 .. 0.648 |
+| `pinky_S2` | `pinky_mp_swing` | -0.45 .. 0.45 |
 | `<finger>_S3` | `<finger>_pip_pitch` | 0 .. 2.094 |
 | `<finger>_S4` | `<finger>_dip_pitch` | 0 .. 1.570 |
-| `thumb_S1 .. S4` | held at 0 rad | |
+| `thumb_S1 .. S4` | held at 0 rad by default | |
+| `thumb_S1` (released) | `thumb_cm_yaw` | 0 .. 0.8 |
+| `thumb_S2` (released) | `thumb_cm_yaw` | 0 .. 0.6 |
+| `thumb_S3` (released) | `thumb_mp_pitch` | 0 .. 1.0 |
+| `thumb_S4` (released) | `thumb_mp_pitch` | 0 .. 0.6 |
 
-- The spread's ±0.648 rad is the URDF's ±0.698 less a 0.05 rad margin.
-- The thumb is held, as it was on the hand. Its provisional maps
-  (`thumb_cm_pitch`, `thumb_cm_yaw` over 0 .. 0.698, `thumb_mp_pitch`,
-  `thumb_ip_pitch`) are read only when `hold` is cleared for that joint.
+- The spread's ±0.648 rad is the URDF's ±0.698 less a 0.05 rad margin;
+  the pinky stops at ±0.45 rad, the spread it has reached and held on the
+  hand.
+- The spread is scaled once, by the swing channel's range. A glove that
+  measures the wearer's own spread declares it as the channel's
+  `default_range`, and the operator calibration then carries no swing
+  range: a second, wider range on top caps the joint short of its interval.
+- The thumb: opposition (`thumb_cm_yaw`) moves `S1` and `S2` together,
+  because on the vendor URDF the tip crosses the palm through `S1`
+  (`cmc_flex`) and `S2` (`cmc_abd`) only adducts it towards the index
+  finger; flexion (`thumb_mp_pitch`) moves `S3` and `S4` together.
+  `config_for(declaration)` releases the thumb when the glove can drive
+  both channels. Forward kinematics of the right URDF with all four at
+  their interval's top: the thumb tip is 27 mm from the little finger's
+  base.
 - `hold` and `hold_rad` (twenty entries each, SDK order) are
   `RetargetConfig` fields, so a binding sets them:
   `[bind.retarget_config]` `hold = [true, true, true, true, false, ...]`.
-- **Spread and today's gloves.** The LitchiBot and UDCAP glove drivers both
-  declare their finger swing channels `uncalibrated`, so a bind that
-  follows `S2` is refused at bind time. To bind, hold the four `S2` joints
-  (`hold` true at indices 5, 9, 13, 17). The spread drove the hand through
-  a path that read the glove's swing without its declaration.
+- **Spread and the glove's declaration.** A glove that declares its finger
+  swing channels `uncalibrated` is refused at bind time for a bind that
+  follows `S2`; hold the four `S2` joints (`hold` true at indices 5, 9,
+  13, 17). A glove that declares the middle spread synthesized from the
+  index and ring is refused for `middle_mp_swing`; hold `middle_S2`
+  (index 9).
 - The left glove's swing sign has not been checked. If a left hand spreads
   the wrong way, set `invert = true` on the four `S2` maps in the left
   bind.
@@ -87,13 +105,13 @@ half is an operator calibration (`manipulation_kit.glove_calibration.v1`):
 | `middle/ring/pinky_mp_pitch` | 0 | 75 |
 | `<finger>_pip_pitch` | 0 | 95 |
 | `<finger>_dip_pitch` | 0 | 80 |
-| `<finger>_mp_swing` | -18.564 | 18.564 |
 
-The index knuckle's 50 degrees is the table's 1.5 gain on 0 .. 75 degrees;
-the swing's ±18.564 degrees (±0.324 rad) is its 2 x gain onto ±0.648 rad.
-`tests/data/gloves/litchibot_wujihand2.calibration.json` holds it in
-radians, and `tests/hands/test_wujihand2.py` checks that this calibration
-and the default map give the table's outputs.
+The index knuckle's 50 degrees is the table's 1.5 gain on 0 .. 75 degrees.
+The table's spread (±18.564 degrees of swing, ±0.324 rad, onto ±0.648 rad)
+is a swing range, which belongs to the glove's declaration rather than to
+this file. `tests/data/gloves/litchibot_wujihand2.calibration.json` holds
+the flexion in radians, and `tests/hands/test_wujihand2.py` checks that
+it, that swing range and the default map give the table's outputs.
 
 ## What is not here
 

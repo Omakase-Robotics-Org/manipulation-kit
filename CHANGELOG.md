@@ -6,6 +6,31 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.1 — unreleased
+
+**The Wuji Hand 2 joint table and its glove retarget map.** Nothing
+breaks: a new model id, `wuji/wujihand2`.
+
+- `hands.wuji.wujihand2.axes`: the twenty joints `thumb_S1 .. pinky_S4` in
+  the vendor SDK's label and index order, `rad`, with the vendor URDFs'
+  limits (identical on both sides). An end-effector provider builds its
+  descriptor from `JOINTS`.
+- `hands.wuji.wujihand2.retarget`: each finger joint from one channel
+  (`mp_pitch`, `mp_swing`, `pip_pitch`, `dip_pitch`); spread over ±0.648
+  rad, `pinky_S2` over ±0.45 rad. The thumb is held at 0 rad by default;
+  released, opposition (`thumb_cm_yaw`) drives `thumb_S1` (0 .. 0.8 rad)
+  and `thumb_S2` (0 .. 0.6 rad) together and flexion (`thumb_mp_pitch`)
+  drives `thumb_S3` (0 .. 1.0 rad) and `thumb_S4` (0 .. 0.6 rad) together.
+  `config_for(declaration, config=None)` releases the thumb when the
+  glove can drive both channels.
+- `RetargetConfig.hold` / `hold_rad` (twenty entries each) hold a joint at
+  a fixed angle; a held joint reads no channel, so a glove that declares
+  finger swing uncalibrated binds with the four `S2` joints held.
+- `tests/data/gloves/litchibot_wujihand2.calibration.json`: the flexion
+  half of the table that drove a right hand from a LitchiBot glove. It
+  carries no swing range: the spread is scaled by the range the glove
+  declares, once. No `toolconfig`.
+
 ## 0.22.0 — unreleased
 
 **Gloves drive hands through three layers, so N gloves and M hands cost
@@ -65,17 +90,6 @@ what it did.
   with the hand driver's descriptor source when
   `$MKIT_HAND_DESCRIPTOR_DIR/descriptor.rs` exists. The XHAND1 `RetargetConfig`/`Retargeter` now take their joint
   table from the class, so the Lite reuses them; behaviour is unchanged.
-- New `wuji/wujihand2`: the Wuji Hand 2's twenty joints (`thumb_S1 ..
-  pinky_S4`, the vendor SDK's labels and index order, `rad`, the vendor
-  URDFs' limits, identical on both sides) and its retarget map: each finger
-  joint from one channel (`mp_pitch`, `mp_swing`, `pip_pitch`,
-  `dip_pitch`; spread over ±0.648 rad), the thumb held at 0 rad. New
-  `RetargetConfig.hold` / `hold_rad` (twenty entries each) hold a joint at a
-  fixed angle without reading a channel. It is the table that drove a right
-  hand from a LitchiBot glove, split into this map and an operator
-  calibration (`tests/data/gloves/litchibot_wujihand2.calibration.json`).
-  Both gloves declare finger swing uncalibrated today, so a bind must hold
-  the four `S2` joints. No `toolconfig`.
 
 ### New: `manipulation_kit.binding` (`omakase.binding.v1`)
 

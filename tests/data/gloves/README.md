@@ -16,7 +16,7 @@ replaced with neutral values:
 | `device_wide.pose_stream.v1.jsonl` | golden vectors of the device-wide dialect: a hello, a UDCAP glove's channel declaration (one for the whole device) and one pose frame. Each line is `{"name", "family", "role", "wire", "expect"}`, and `wire` is the packet. |
 | `per_hand.session_head.jsonl` | the LitchiBot glove driver's per-hand dialect: a hello, the right hand's declaration and five pose frames. The frames were solved from a recorded IMU session. |
 | `per_hand.dropout.jsonl` | the same driver with the ring finger's distal sensor node silent, so `ring.pip_flex`, `ring.dip_flex` and `ring.total_flex` are absent from every frame. |
-| `litchibot_wujihand2.calibration.json` | a `manipulation_kit.glove_calibration.v1` file, not a recording: the glove half of the glove-to-Wuji Hand 2 table that drove a right hand on 2026-09-25 (`tests/hands/test_wujihand2.py` checks that it and the `wuji/wujihand2` map give that table's outputs). |
+| `litchibot_wujihand2.calibration.json` | a `manipulation_kit.glove_calibration.v1` file, not a recording: the flexion half of the glove-to-Wuji Hand 2 table that drove a right hand on 2026-09-25 (`tests/hands/test_wujihand2.py` checks that it and the `wuji/wujihand2` map give that table's flexion outputs). It holds no swing range: the spread is scaled by the range the glove declares. |
 
 `tests/gloves/test_v1.py::test_derived_fixtures_decode_like_the_originals`
 checks that each fixture decodes exactly like its reference recording. Node
