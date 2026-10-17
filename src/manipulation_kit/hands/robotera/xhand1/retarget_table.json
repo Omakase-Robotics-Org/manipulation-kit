@@ -1,0 +1,235 @@
+{
+  "ema_alpha": 0.0,
+  "joints": [
+    {
+      "clamp": [
+        0.0,
+        1.5707963267948966
+      ],
+      "hi": 1.5707963267948966,
+      "invert": false,
+      "joint": "thumb_bend",
+      "lo": 0.0,
+      "max": 1.5707963267948966,
+      "min": 0.0,
+      "sources": [
+        [
+          "thumb_cm_yaw",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.0471975511965976,
+        1.5707963267948966
+      ],
+      "hi": 1.5707963267948966,
+      "invert": false,
+      "joint": "thumb_rota1",
+      "lo": 0.0,
+      "max": 1.5707963267948966,
+      "min": -1.0471975511965976,
+      "sources": [
+        [
+          "thumb_cm_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.5707963267948966
+      ],
+      "hi": 1.5707963267948966,
+      "invert": false,
+      "joint": "thumb_rota2",
+      "lo": 0.0,
+      "max": 1.5707963267948966,
+      "min": 0.0,
+      "sources": [
+        [
+          "thumb_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -0.08726646259971647,
+        0.29670597283903605
+      ],
+      "hi": 0.08726646259971647,
+      "invert": false,
+      "joint": "index_bend",
+      "lo": -0.08726646259971647,
+      "max": 0.29670597283903605,
+      "min": -0.08726646259971647,
+      "sources": [
+        [
+          "index_mp_swing",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "index_j1",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "index_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "index_j2",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "index_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "mid_j1",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "middle_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "mid_j2",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "middle_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "ring_j1",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "ring_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "ring_j2",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "ring_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "pinky_j1",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "pinky_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        0.0,
+        1.9198621771937625
+      ],
+      "hi": 1.9198621771937625,
+      "invert": false,
+      "joint": "pinky_j2",
+      "lo": 0.0,
+      "max": 1.9198621771937625,
+      "min": 0.0,
+      "sources": [
+        [
+          "pinky_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    }
+  ],
+  "model": "robotera/xhand1",
+  "schema": "manipulation_kit.retarget_table.v1"
+}

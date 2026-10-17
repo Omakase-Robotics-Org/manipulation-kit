@@ -1,0 +1,339 @@
+{
+  "ema_alpha": 0.0,
+  "joints": [
+    {
+      "hold": 0.0,
+      "joint": "thumb_S1",
+      "max": 1.291,
+      "min": -1.187,
+      "unit": "rad"
+    },
+    {
+      "hold": 0.0,
+      "joint": "thumb_S2",
+      "max": 0.698,
+      "min": -1.484,
+      "unit": "rad"
+    },
+    {
+      "hold": 0.0,
+      "joint": "thumb_S3",
+      "max": 1.57,
+      "min": -1.047,
+      "unit": "rad"
+    },
+    {
+      "hold": 0.0,
+      "joint": "thumb_S4",
+      "max": 1.57,
+      "min": -1.047,
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "index_S1",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "index_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -0.698,
+        0.698
+      ],
+      "hi": 0.648,
+      "invert": false,
+      "joint": "index_S2",
+      "lo": -0.648,
+      "max": 0.698,
+      "min": -0.698,
+      "sources": [
+        [
+          "index_mp_swing",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        2.094
+      ],
+      "hi": 2.094,
+      "invert": false,
+      "joint": "index_S3",
+      "lo": 0.0,
+      "max": 2.094,
+      "min": -1.047,
+      "sources": [
+        [
+          "index_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "index_S4",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "index_dip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "middle_S1",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "middle_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -0.698,
+        0.698
+      ],
+      "hi": 0.648,
+      "invert": false,
+      "joint": "middle_S2",
+      "lo": -0.648,
+      "max": 0.698,
+      "min": -0.698,
+      "sources": [
+        [
+          "middle_mp_swing",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        2.094
+      ],
+      "hi": 2.094,
+      "invert": false,
+      "joint": "middle_S3",
+      "lo": 0.0,
+      "max": 2.094,
+      "min": -1.047,
+      "sources": [
+        [
+          "middle_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "middle_S4",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "middle_dip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "ring_S1",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "ring_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -0.698,
+        0.698
+      ],
+      "hi": 0.648,
+      "invert": false,
+      "joint": "ring_S2",
+      "lo": -0.648,
+      "max": 0.698,
+      "min": -0.698,
+      "sources": [
+        [
+          "ring_mp_swing",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        2.094
+      ],
+      "hi": 2.094,
+      "invert": false,
+      "joint": "ring_S3",
+      "lo": 0.0,
+      "max": 2.094,
+      "min": -1.047,
+      "sources": [
+        [
+          "ring_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "ring_S4",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "ring_dip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "pinky_S1",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "pinky_mp_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -0.698,
+        0.698
+      ],
+      "hi": 0.45,
+      "invert": false,
+      "joint": "pinky_S2",
+      "lo": -0.45,
+      "max": 0.698,
+      "min": -0.698,
+      "sources": [
+        [
+          "pinky_mp_swing",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        2.094
+      ],
+      "hi": 2.094,
+      "invert": false,
+      "joint": "pinky_S3",
+      "lo": 0.0,
+      "max": 2.094,
+      "min": -1.047,
+      "sources": [
+        [
+          "pinky_pip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    },
+    {
+      "clamp": [
+        -1.047,
+        1.57
+      ],
+      "hi": 1.57,
+      "invert": false,
+      "joint": "pinky_S4",
+      "lo": 0.0,
+      "max": 1.57,
+      "min": -1.047,
+      "sources": [
+        [
+          "pinky_dip_pitch",
+          1.0
+        ]
+      ],
+      "unit": "rad"
+    }
+  ],
+  "model": "wuji/wujihand2",
+  "schema": "manipulation_kit.retarget_table.v1"
+}

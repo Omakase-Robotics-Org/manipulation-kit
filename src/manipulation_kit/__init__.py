@@ -34,6 +34,12 @@ Subpackages
 ``hands``        End-effector identity by ``"<maker>/<model>"``: tool configs
                  (TCP / mass / COM / inertia), vendor CAD descriptions,
                  glove→hand retarget maps.
+``gloves``       The glove side of glove→hand teleoperation: the anatomical
+                 channel vocabulary, the ``teleop_gloves.pose_stream.v1``
+                 decoder, per-operator ChannelRange calibration and the
+                 canonical HandPose a hand retarget map consumes.
+``binding``      ``omakase.binding.v1``: which input device drives which robot
+                 output, loaded and refused-or-accepted at startup.
 ``description``  The D1 URDF family, its generator, and the provenance-tracked
                  exporter. ``mkit-urdf`` drives it.
 ``config``       The exported JSON a controller consumes (home/stow poses,
@@ -55,5 +61,5 @@ kit installs only what a consumer imports:
   assets repository; see its README.
 """
 
-__all__ = ["arms", "guard", "hands", "description", "world", "primitives",
-           "executor", "executors"]
+__all__ = ["arms", "guard", "hands", "gloves", "binding", "description", "world",
+           "primitives", "executor", "executors"]

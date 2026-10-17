@@ -1,0 +1,174 @@
+{
+  "aliases": {
+    "wuji/hand2": "wuji/wujihand2"
+  },
+  "envelopes": [
+    {
+      "capsules": [
+        {
+          "a": [
+            -0.06,
+            0.0,
+            0.0855
+          ],
+          "b": [
+            0.06,
+            0.0,
+            0.0855
+          ],
+          "part": "jaws_root",
+          "radius": 0.026
+        },
+        {
+          "a": [
+            -0.06,
+            0.0,
+            0.1145
+          ],
+          "b": [
+            0.06,
+            0.0,
+            0.1145
+          ],
+          "part": "jaws_tip",
+          "radius": 0.026
+        },
+        {
+          "a": [
+            -0.068,
+            0.0,
+            0.061
+          ],
+          "b": [
+            0.068,
+            0.0,
+            0.061
+          ],
+          "part": "rails",
+          "radius": 0.0325
+        },
+        {
+          "a": [
+            0.0,
+            0.0,
+            0.008
+          ],
+          "b": [
+            0.0,
+            0.0,
+            0.04
+          ],
+          "part": "body",
+          "radius": 0.043
+        },
+        {
+          "a": [
+            -0.022,
+            0.0,
+            0.004
+          ],
+          "b": [
+            0.022,
+            0.0,
+            0.004
+          ],
+          "part": "plate",
+          "radius": 0.04
+        },
+        {
+          "a": [
+            0.0,
+            0.058,
+            0.017
+          ],
+          "b": [
+            0.0,
+            0.086,
+            0.017
+          ],
+          "part": "camera",
+          "radius": 0.03
+        }
+      ],
+      "digest": "064b3848a8a3f4f9c54576f5347fb78a42185ba9fe925e425f08123273591b12",
+      "frame": "flange",
+      "id": "capsules-064b3848a8a3f4f9",
+      "source": "covers every collision box of the gripper description, jaws over their whole travel (HAND_ENVELOPE in the D1 URDF generator)",
+      "verified": true
+    },
+    {
+      "capsules": [
+        {
+          "a": [
+            0.0,
+            0.0,
+            0.04
+          ],
+          "b": [
+            0.0,
+            0.0,
+            0.2
+          ],
+          "part": "hand",
+          "radius": 0.07
+        }
+      ],
+      "digest": "24cce515c7295f4765f66797313efdb891ac6773d19f2014674d996576c78389",
+      "frame": "flange",
+      "id": "capsules-24cce515c7295f47",
+      "source": "a conservative bound, not measured on the hand: a palm up to 140 mm across, reaching 270 mm from the flange",
+      "verified": false
+    }
+  ],
+  "models": [
+    {
+      "envelope": "capsules-064b3848a8a3f4f9",
+      "joints": null,
+      "kind": "gripper",
+      "model": "d1/parallel_gripper",
+      "retarget_table": null,
+      "tool_config": "config/tool_configs/d1_parallel_gripper.json"
+    },
+    {
+      "envelope": "capsules-24cce515c7295f47",
+      "joints": 6,
+      "kind": "hand",
+      "model": "leadshine/dh116s",
+      "retarget_table": "hands/leadshine/dh116s/retarget_table.json",
+      "tool_config": "config/tool_configs/leadshine_dh116s.json"
+    },
+    {
+      "envelope": "capsules-24cce515c7295f47",
+      "joints": 20,
+      "kind": "hand",
+      "model": "linkerbot/o30",
+      "retarget_table": null,
+      "tool_config": "config/tool_configs/linkerbot_o30.json"
+    },
+    {
+      "envelope": "capsules-24cce515c7295f47",
+      "joints": 12,
+      "kind": "hand",
+      "model": "robotera/xhand1",
+      "retarget_table": "hands/robotera/xhand1/retarget_table.json",
+      "tool_config": null
+    },
+    {
+      "envelope": "capsules-24cce515c7295f47",
+      "joints": 6,
+      "kind": "hand",
+      "model": "robotera/xhand1_lite",
+      "retarget_table": "hands/robotera/xhand1_lite/retarget_table.json",
+      "tool_config": null
+    },
+    {
+      "envelope": "capsules-24cce515c7295f47",
+      "joints": 20,
+      "kind": "hand",
+      "model": "wuji/wujihand2",
+      "retarget_table": "hands/wuji/wujihand2/retarget_table.json",
+      "tool_config": null
+    }
+  ],
+  "schema": "manipulation_kit.hand_catalog.v1"
+}

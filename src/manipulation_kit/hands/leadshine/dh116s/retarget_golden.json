@@ -1,0 +1,1165 @@
+{
+  "joints": [
+    "thumb_swing",
+    "thumb_flex",
+    "index_flex",
+    "middle_flex",
+    "ring_flex",
+    "pinky_flex"
+  ],
+  "model": "leadshine/dh116s",
+  "schema": "manipulation_kit.retarget_golden.v1",
+  "table_digest": "497f48619b7df191f4e47dee042a0c2db0e7291c217732a499e56b2e7d275669",
+  "vectors": [
+    {
+      "flex": {
+        "index_mp_pitch": 0.0,
+        "index_pip_pitch": 0.0,
+        "middle_mp_pitch": 0.0,
+        "middle_pip_pitch": 0.0,
+        "pinky_mp_pitch": 0.0,
+        "pinky_pip_pitch": 0.0,
+        "ring_mp_pitch": 0.0,
+        "ring_pip_pitch": 0.0,
+        "thumb_cm_pitch": 0.0,
+        "thumb_cm_yaw": 0.0,
+        "thumb_mp_pitch": 0.0
+      },
+      "targets": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 1.0,
+        "index_pip_pitch": 1.0,
+        "middle_mp_pitch": 1.0,
+        "middle_pip_pitch": 1.0,
+        "pinky_mp_pitch": 1.0,
+        "pinky_pip_pitch": 1.0,
+        "ring_mp_pitch": 1.0,
+        "ring_pip_pitch": 1.0,
+        "thumb_cm_pitch": 1.0,
+        "thumb_cm_yaw": 1.0,
+        "thumb_mp_pitch": 1.0
+      },
+      "targets": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 1.0,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        1.0,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 1.0,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.75,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 1.0
+      },
+      "targets": [
+        0.5,
+        0.75,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 1.0,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.75,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 1.0,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.75,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 1.0,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.75,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 1.0,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.75,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 1.0,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.75,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 1.0,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.75,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 1.0,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.75
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 1.0,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.75
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": null,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        null,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": null,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        null,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": null
+      },
+      "targets": [
+        0.5,
+        null,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": null,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        null,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": null,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        null,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": null,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        null,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": null,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        null,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": null,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        null,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": null,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        null,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": null,
+        "pinky_pip_pitch": 0.5,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        null
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5,
+        "index_pip_pitch": 0.5,
+        "middle_mp_pitch": 0.5,
+        "middle_pip_pitch": 0.5,
+        "pinky_mp_pitch": 0.5,
+        "pinky_pip_pitch": null,
+        "ring_mp_pitch": 0.5,
+        "ring_pip_pitch": 0.5,
+        "thumb_cm_pitch": 0.5,
+        "thumb_cm_yaw": 0.5,
+        "thumb_mp_pitch": 0.5
+      },
+      "targets": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        null
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": -0.25,
+        "index_pip_pitch": 1.25,
+        "middle_mp_pitch": -0.25,
+        "middle_pip_pitch": 1.25,
+        "pinky_mp_pitch": -0.25,
+        "pinky_pip_pitch": 1.25,
+        "ring_mp_pitch": -0.25,
+        "ring_pip_pitch": 1.25,
+        "thumb_cm_pitch": -0.25,
+        "thumb_cm_yaw": 1.25,
+        "thumb_mp_pitch": 1.25
+      },
+      "targets": [
+        1.0,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.258917,
+        "index_pip_pitch": 0.511275,
+        "middle_mp_pitch": 0.404934,
+        "middle_pip_pitch": 0.783799,
+        "pinky_mp_pitch": 0.583382,
+        "pinky_pip_pitch": 0.908113,
+        "ring_mp_pitch": 0.303313,
+        "ring_pip_pitch": 0.476597,
+        "thumb_cm_pitch": 0.757954,
+        "thumb_cm_yaw": 0.844422,
+        "thumb_mp_pitch": 0.420572
+      },
+      "targets": [
+        0.844422,
+        0.589263,
+        0.385096,
+        0.5943665,
+        0.389955,
+        0.7457475
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.618369,
+        "index_pip_pitch": 0.250506,
+        "middle_mp_pitch": 0.909746,
+        "middle_pip_pitch": 0.982785,
+        "pinky_mp_pitch": 0.310148,
+        "pinky_pip_pitch": 0.729832,
+        "ring_mp_pitch": 0.810217,
+        "ring_pip_pitch": 0.902166,
+        "thumb_cm_pitch": 0.281838,
+        "thumb_cm_yaw": 0.504687,
+        "thumb_mp_pitch": 0.755804
+      },
+      "targets": [
+        0.504687,
+        0.518821,
+        0.4344375,
+        0.9462655,
+        0.8561915,
+        0.51999
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.100701,
+        "index_pip_pitch": 0.434172,
+        "middle_mp_pitch": 0.610887,
+        "middle_pip_pitch": 0.913011,
+        "pinky_mp_pitch": 0.86531,
+        "pinky_pip_pitch": 0.260492,
+        "ring_mp_pitch": 0.966606,
+        "ring_pip_pitch": 0.47701,
+        "thumb_cm_pitch": 0.683984,
+        "thumb_cm_yaw": 0.898838,
+        "thumb_mp_pitch": 0.472143
+      },
+      "targets": [
+        0.898838,
+        0.5780635000000001,
+        0.2674365,
+        0.761949,
+        0.721808,
+        0.562901
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.719705,
+        "index_pip_pitch": 0.398824,
+        "middle_mp_pitch": 0.824845,
+        "middle_pip_pitch": 0.668153,
+        "pinky_mp_pitch": 0.867603,
+        "pinky_pip_pitch": 0.243911,
+        "ring_mp_pitch": 0.001143,
+        "ring_pip_pitch": 0.493578,
+        "thumb_cm_pitch": 0.548699,
+        "thumb_cm_yaw": 0.805028,
+        "thumb_mp_pitch": 0.014042
+      },
+      "targets": [
+        0.805028,
+        0.2813705,
+        0.5592645,
+        0.746499,
+        0.2473605,
+        0.5557570000000001
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.567511,
+        "index_pip_pitch": 0.238616,
+        "middle_mp_pitch": 0.96754,
+        "middle_pip_pitch": 0.803179,
+        "pinky_mp_pitch": 0.320055,
+        "pinky_pip_pitch": 0.507941,
+        "ring_mp_pitch": 0.44797,
+        "ring_pip_pitch": 0.080446,
+        "thumb_cm_pitch": 0.870471,
+        "thumb_cm_yaw": 0.325204,
+        "thumb_mp_pitch": 0.191067
+      },
+      "targets": [
+        0.325204,
+        0.530769,
+        0.4030635,
+        0.8853595,
+        0.264208,
+        0.413998
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.706561,
+        "index_pip_pitch": 0.547441,
+        "middle_mp_pitch": 0.814467,
+        "middle_pip_pitch": 0.540284,
+        "pinky_mp_pitch": 0.587617,
+        "pinky_pip_pitch": 0.444989,
+        "ring_mp_pitch": 0.963839,
+        "ring_pip_pitch": 0.603186,
+        "thumb_cm_pitch": 0.109058,
+        "thumb_cm_yaw": 0.932834,
+        "thumb_mp_pitch": 0.551267
+      },
+      "targets": [
+        0.932834,
+        0.33016249999999997,
+        0.6270009999999999,
+        0.6773755,
+        0.7835125000000001,
+        0.516303
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.29033,
+        "index_pip_pitch": 0.189391,
+        "middle_mp_pitch": 0.18673,
+        "middle_pip_pitch": 0.612773,
+        "pinky_mp_pitch": 0.089824,
+        "pinky_pip_pitch": 0.757604,
+        "ring_mp_pitch": 0.656659,
+        "ring_pip_pitch": 0.476531,
+        "thumb_cm_pitch": 0.384901,
+        "thumb_cm_yaw": 0.596287,
+        "thumb_mp_pitch": 0.575651
+      },
+      "targets": [
+        0.596287,
+        0.48027600000000004,
+        0.23986049999999998,
+        0.39975150000000004,
+        0.566595,
+        0.42371400000000004
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.898173,
+        "index_pip_pitch": 0.923082,
+        "middle_mp_pitch": 0.5406,
+        "middle_pip_pitch": 0.391296,
+        "pinky_mp_pitch": 0.811629,
+        "pinky_pip_pitch": 0.849486,
+        "ring_mp_pitch": 0.705283,
+        "ring_pip_pitch": 0.275634,
+        "thumb_cm_pitch": 0.923381,
+        "thumb_cm_yaw": 0.87677,
+        "thumb_mp_pitch": 0.84246
+      },
+      "targets": [
+        0.87677,
+        0.8829205,
+        0.9106274999999999,
+        0.465948,
+        0.4904585,
+        0.8305575000000001
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.579695,
+        "index_pip_pitch": 0.450563,
+        "middle_mp_pitch": 0.660245,
+        "middle_pip_pitch": 0.996258,
+        "pinky_mp_pitch": 0.082373,
+        "pinky_pip_pitch": 0.612783,
+        "ring_mp_pitch": 0.916941,
+        "ring_pip_pitch": 0.793325,
+        "thumb_cm_pitch": 0.589801,
+        "thumb_cm_yaw": 0.895039,
+        "thumb_mp_pitch": 0.949765
+      },
+      "targets": [
+        0.895039,
+        0.769783,
+        0.515129,
+        0.8282514999999999,
+        0.8551329999999999,
+        0.347578
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.243036,
+        "index_pip_pitch": 0.731489,
+        "middle_mp_pitch": 0.117134,
+        "middle_pip_pitch": 0.220461,
+        "pinky_mp_pitch": 0.815913,
+        "pinky_pip_pitch": 0.100608,
+        "ring_mp_pitch": 0.794583,
+        "ring_pip_pitch": 0.332536,
+        "thumb_cm_pitch": 0.630147,
+        "thumb_cm_yaw": 0.486444,
+        "thumb_mp_pitch": 0.845078
+      },
+      "targets": [
+        0.486444,
+        0.7376125,
+        0.4872625,
+        0.1687975,
+        0.5635595,
+        0.4582605
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.573866,
+        "index_pip_pitch": 0.910016,
+        "middle_mp_pitch": 0.534198,
+        "middle_pip_pitch": 0.680589,
+        "pinky_mp_pitch": 0.606338,
+        "pinky_pip_pitch": 0.575953,
+        "ring_mp_pitch": 0.026697,
+        "ring_pip_pitch": 0.635,
+        "thumb_cm_pitch": 0.697671,
+        "thumb_cm_yaw": 0.146358,
+        "thumb_mp_pitch": 0.045234
+      },
+      "targets": [
+        0.146358,
+        0.3714525,
+        0.741941,
+        0.6073934999999999,
+        0.3308485,
+        0.5911455000000001
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.036392,
+        "index_pip_pitch": 0.021637,
+        "middle_mp_pitch": 0.961031,
+        "middle_pip_pitch": 0.184972,
+        "pinky_mp_pitch": 0.800747,
+        "pinky_pip_pitch": 0.936969,
+        "ring_mp_pitch": 0.123895,
+        "ring_pip_pitch": 0.210577,
+        "thumb_cm_pitch": 0.37014,
+        "thumb_cm_yaw": 0.391209,
+        "thumb_mp_pitch": 0.980517
+      },
+      "targets": [
+        0.391209,
+        0.6753285,
+        0.0290145,
+        0.5730014999999999,
+        0.167236,
+        0.868858
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.25992,
+        "index_pip_pitch": 0.220829,
+        "middle_mp_pitch": 0.646926,
+        "middle_pip_pitch": 0.350294,
+        "pinky_mp_pitch": 0.039379,
+        "pinky_pip_pitch": 0.100921,
+        "ring_mp_pitch": 0.180318,
+        "ring_pip_pitch": 0.503637,
+        "thumb_cm_pitch": 0.425619,
+        "thumb_cm_yaw": 0.022783,
+        "thumb_mp_pitch": 0.1015
+      },
+      "targets": [
+        0.022783,
+        0.2635595,
+        0.2403745,
+        0.49861,
+        0.3419775,
+        0.07014999999999999
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.731598,
+        "index_pip_pitch": 0.838327,
+        "middle_mp_pitch": 0.918482,
+        "middle_pip_pitch": 0.169425,
+        "pinky_mp_pitch": 0.058051,
+        "pinky_pip_pitch": 0.676202,
+        "ring_mp_pitch": 0.672641,
+        "ring_pip_pitch": 0.966549,
+        "thumb_cm_pitch": 0.199356,
+        "thumb_cm_yaw": 0.988235,
+        "thumb_mp_pitch": 0.358555
+      },
+      "targets": [
+        0.988235,
+        0.2789555,
+        0.7849625,
+        0.5439535,
+        0.8195950000000001,
+        0.36712649999999997
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.596791,
+        "index_pip_pitch": 0.442314,
+        "middle_mp_pitch": 0.174819,
+        "middle_pip_pitch": 0.471625,
+        "pinky_mp_pitch": 0.5086,
+        "pinky_pip_pitch": 0.311446,
+        "ring_mp_pitch": 0.409905,
+        "ring_pip_pitch": 0.569113,
+        "thumb_cm_pitch": 0.342313,
+        "thumb_cm_yaw": 0.845425,
+        "thumb_mp_pitch": 0.250687
+      },
+      "targets": [
+        0.845425,
+        0.2965,
+        0.5195525,
+        0.323222,
+        0.48950899999999997,
+        0.410023
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.5606,
+        "index_pip_pitch": 0.012436,
+        "middle_mp_pitch": 0.741574,
+        "middle_pip_pitch": 0.335917,
+        "pinky_mp_pitch": 0.24013,
+        "pinky_pip_pitch": 0.953129,
+        "ring_mp_pitch": 0.045696,
+        "ring_pip_pitch": 0.280883,
+        "thumb_cm_pitch": 0.837661,
+        "thumb_cm_yaw": 0.357152,
+        "thumb_mp_pitch": 0.250933
+      },
+      "targets": [
+        0.357152,
+        0.544297,
+        0.286518,
+        0.5387455,
+        0.1632895,
+        0.5966295
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.946906,
+        "index_pip_pitch": 0.633748,
+        "middle_mp_pitch": 0.621077,
+        "middle_pip_pitch": 0.715619,
+        "pinky_mp_pitch": 0.650833,
+        "pinky_pip_pitch": 0.001524,
+        "ring_mp_pitch": 0.388017,
+        "ring_pip_pitch": 0.414418,
+        "thumb_cm_pitch": 0.287878,
+        "thumb_cm_yaw": 0.352226,
+        "thumb_mp_pitch": 0.359201
+      },
+      "targets": [
+        0.352226,
+        0.3235395,
+        0.790327,
+        0.6683479999999999,
+        0.4012175,
+        0.3261785
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.637399,
+        "index_pip_pitch": 0.378648,
+        "middle_mp_pitch": 0.875423,
+        "middle_pip_pitch": 0.568151,
+        "pinky_mp_pitch": 0.70183,
+        "pinky_pip_pitch": 0.418227,
+        "ring_mp_pitch": 0.414406,
+        "ring_pip_pitch": 0.402267,
+        "thumb_cm_pitch": 0.334402,
+        "thumb_cm_yaw": 0.19231,
+        "thumb_mp_pitch": 0.239416
+      },
+      "targets": [
+        0.19231,
+        0.28690899999999997,
+        0.5080235,
+        0.721787,
+        0.4083365,
+        0.5600285
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.259227,
+        "index_pip_pitch": 0.157687,
+        "middle_mp_pitch": 0.527573,
+        "middle_pip_pitch": 0.487266,
+        "pinky_mp_pitch": 0.883875,
+        "pinky_pip_pitch": 0.494583,
+        "ring_mp_pitch": 0.561405,
+        "ring_pip_pitch": 0.755485,
+        "thumb_cm_pitch": 0.04678,
+        "thumb_cm_yaw": 0.662196,
+        "thumb_mp_pitch": 0.445352
+      },
+      "targets": [
+        0.662196,
+        0.246066,
+        0.208457,
+        0.5074194999999999,
+        0.658445,
+        0.689229
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.875016,
+        "index_pip_pitch": 0.812415,
+        "middle_mp_pitch": 0.188001,
+        "middle_pip_pitch": 0.99942,
+        "pinky_mp_pitch": 0.725554,
+        "pinky_pip_pitch": 0.986821,
+        "ring_mp_pitch": 0.633089,
+        "ring_pip_pitch": 0.083467,
+        "thumb_cm_pitch": 0.466892,
+        "thumb_cm_yaw": 0.312058,
+        "thumb_mp_pitch": 0.809046
+      },
+      "targets": [
+        0.312058,
+        0.637969,
+        0.8437155000000001,
+        0.5937105,
+        0.358278,
+        0.8561875
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.213525,
+        "index_pip_pitch": 0.717324,
+        "middle_mp_pitch": 0.002358,
+        "middle_pip_pitch": 0.822731,
+        "pinky_mp_pitch": 0.118904,
+        "pinky_pip_pitch": 0.649265,
+        "ring_mp_pitch": 0.528346,
+        "ring_pip_pitch": 0.097784,
+        "thumb_cm_pitch": 0.678515,
+        "thumb_cm_yaw": 0.401817,
+        "thumb_mp_pitch": 0.316177
+      },
+      "targets": [
+        0.401817,
+        0.49734599999999995,
+        0.46542449999999996,
+        0.4125445,
+        0.313065,
+        0.3840845
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.100181,
+        "index_pip_pitch": 0.853938,
+        "middle_mp_pitch": 0.396696,
+        "middle_pip_pitch": 0.081345,
+        "pinky_mp_pitch": 0.792342,
+        "pinky_pip_pitch": 0.86136,
+        "ring_mp_pitch": 0.274714,
+        "ring_pip_pitch": 0.452978,
+        "thumb_cm_pitch": 0.279983,
+        "thumb_cm_yaw": 0.873654,
+        "thumb_mp_pitch": 0.978515
+      },
+      "targets": [
+        0.873654,
+        0.629249,
+        0.47705949999999997,
+        0.2390205,
+        0.363846,
+        0.826851
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.347053,
+        "index_pip_pitch": 0.871864,
+        "middle_mp_pitch": 0.27841,
+        "middle_pip_pitch": 0.018574,
+        "pinky_mp_pitch": 0.558356,
+        "pinky_pip_pitch": 0.946503,
+        "ring_mp_pitch": 0.040663,
+        "ring_pip_pitch": 0.680997,
+        "thumb_cm_pitch": 0.520866,
+        "thumb_cm_yaw": 0.133421,
+        "thumb_mp_pitch": 0.650783
+      },
+      "targets": [
+        0.133421,
+        0.5858245,
+        0.6094585,
+        0.14849199999999999,
+        0.36083,
+        0.7524295
+      ]
+    },
+    {
+      "flex": {
+        "index_mp_pitch": 0.749135,
+        "index_pip_pitch": 0.701325,
+        "middle_mp_pitch": 0.655362,
+        "middle_pip_pitch": 0.712358,
+        "pinky_mp_pitch": 0.372449,
+        "pinky_pip_pitch": 0.537929,
+        "ring_mp_pitch": 0.90271,
+        "ring_pip_pitch": 0.640141,
+        "thumb_cm_pitch": 0.909851,
+        "thumb_cm_yaw": 0.938439,
+        "thumb_mp_pitch": 0.042005
+      },
+      "targets": [
+        0.938439,
+        0.47592799999999996,
+        0.72523,
+        0.68386,
+        0.7714255,
+        0.45518899999999995
+      ]
+    }
+  ]
+}

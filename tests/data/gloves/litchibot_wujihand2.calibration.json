@@ -1,0 +1,67 @@
+{
+  "schema": "manipulation_kit.glove_calibration.v1",
+  "device_model": "litchibot/glove",
+  "note": "The glove half of the glove-to-Wuji Hand 2 table that drove a right hand on 2026-09-25 (tests/hands/test_wujihand2.py), finger flexion only. Index knuckle 0..50 deg is that table's 1.5 gain on 0..75 deg. No swing range: the glove declares the wearer's own spread as each swing channel's default_range, and a range here would scale the spread a second time.",
+  "ranges": {
+    "index_dip_pitch": {
+      "lo": 0.0,
+      "hi": 1.3962634015954636,
+      "invert": false
+    },
+    "index_mp_pitch": {
+      "lo": 0.0,
+      "hi": 0.8726646259971648,
+      "invert": false
+    },
+    "index_pip_pitch": {
+      "lo": 0.0,
+      "hi": 1.6580627893946132,
+      "invert": false
+    },
+    "middle_dip_pitch": {
+      "lo": 0.0,
+      "hi": 1.3962634015954636,
+      "invert": false
+    },
+    "middle_mp_pitch": {
+      "lo": 0.0,
+      "hi": 1.3089969389957472,
+      "invert": false
+    },
+    "middle_pip_pitch": {
+      "lo": 0.0,
+      "hi": 1.6580627893946132,
+      "invert": false
+    },
+    "pinky_dip_pitch": {
+      "lo": 0.0,
+      "hi": 1.3962634015954636,
+      "invert": false
+    },
+    "pinky_mp_pitch": {
+      "lo": 0.0,
+      "hi": 1.3089969389957472,
+      "invert": false
+    },
+    "pinky_pip_pitch": {
+      "lo": 0.0,
+      "hi": 1.6580627893946132,
+      "invert": false
+    },
+    "ring_dip_pitch": {
+      "lo": 0.0,
+      "hi": 1.3962634015954636,
+      "invert": false
+    },
+    "ring_mp_pitch": {
+      "lo": 0.0,
+      "hi": 1.3089969389957472,
+      "invert": false
+    },
+    "ring_pip_pitch": {
+      "lo": 0.0,
+      "hi": 1.6580627893946132,
+      "invert": false
+    }
+  }
+}
