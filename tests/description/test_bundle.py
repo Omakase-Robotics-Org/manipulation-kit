@@ -159,3 +159,27 @@ def test_cli(tmp_path, capsys):
                     "--expect-digest", db.digest()]) == 0
     assert db.main(["verify", str(tmp_path / "b"),
                     "--expect-digest", "sha256:" + "0" * 64]) == 1
+
+
+def test_the_bundle_carries_the_hand_catalog_verbatim(tmp_path):
+    from manipulation_kit.hands import catalog
+
+    files = db.bundle_files()
+    assert files[db.HAND_CATALOG] == catalog.CATALOG_FILE.read_bytes()
+    db.write_bundle(tmp_path / "b")
+    b = db.load_bundle(tmp_path / "b")
+    doc = b.hand_catalog()
+    assert doc == catalog.load()
+    assert {m["model"] for m in doc["models"]} >= {"d1/parallel_gripper", "wuji/wujihand2"}
+
+
+def test_a_bundle_without_the_hand_catalog_is_refused(tmp_path):
+    root = tmp_path / "b"
+    db.write_bundle(root)
+    (root / db.HAND_CATALOG).unlink()
+    man = json.loads((root / db.MANIFEST_NAME).read_text())
+    man["files"] = [e for e in man["files"] if e["path"] != db.HAND_CATALOG]
+    man["digest"] = db.digest_of({e["path"]: e["sha256"] for e in man["files"]})
+    (root / db.MANIFEST_NAME).write_text(json.dumps(man))
+    problems = db.verify_bundle(root)
+    assert problems == [f"{db.HAND_CATALOG}: required but not in the manifest"]

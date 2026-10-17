@@ -28,6 +28,10 @@ path                                        what it is
                                             (:data:`GUARD_PROFILES`)
 ``poses/home_pose.json``                    the HOME pose, verbatim
 ``end_effectors/tool_configs/<id>.json``    the tool configs, verbatim
+``hands/catalog.json``                      the hand catalog (schema
+                                            ``manipulation_kit.hand_catalog.v1``:
+                                            models, aliases, envelopes),
+                                            verbatim
 ``visual/visual.json``                      every mesh the bundled URDFs
                                             reference, with its licence class
 ==========================================  ==================================
@@ -75,6 +79,12 @@ from . import ROOT
 
 #: The bundle format this module writes and reads.
 BUNDLE_SCHEMA = "manipulation_kit.description_bundle/1"
+#: The hand catalog's bundle path; a bundle without it is refused.
+HAND_CATALOG = "hands/catalog.json"
+#: Files every bundle must list (besides the per-profile and tool files).
+REQUIRED_FILES = ("kinematics/d1.urdf", "collision/collision.json",
+                  "guard/profile.d1.json", HAND_CATALOG)
+
 #: The lock file's format.
 LOCK_SCHEMA = "manipulation_kit.description_bundle_lock/1"
 #: The committed lock: the description version and the digest it names.
@@ -314,6 +324,7 @@ def bundle_files() -> Dict[str, bytes]:
         files[f"guard/profile.{name}.json"] = _json_bytes(guard_profile(name))
     for p in sorted((_CONFIG / "tool_configs").glob("*.json")):
         files[f"end_effectors/tool_configs/{p.name}"] = p.read_bytes()
+    files[HAND_CATALOG] = (ROOT.parent / "hands" / "catalog.json").read_bytes()
     return dict(sorted(files.items()))
 
 
@@ -406,6 +417,9 @@ def verify_bundle(bundle_dir) -> List[str]:
                if p.is_file()} - {MANIFEST_NAME}
     for extra in sorted(present - set(listed)):
         problems.append(f"{extra}: present but not in the manifest")
+    for required in REQUIRED_FILES:
+        if required not in listed:
+            problems.append(f"{required}: required but not in the manifest")
     if digest_of(listed) != man.get("digest"):
         problems.append(f"digest {man.get('digest')} is not the digest of the "
                         f"listed files ({digest_of(listed)})")
@@ -434,6 +448,16 @@ class Bundle:
 
     def read_json(self, bundle_path: str):
         return json.loads(self.path(bundle_path).read_text(encoding="utf-8"))
+
+    def hand_catalog(self) -> dict:
+        """``hands/catalog.json``, schema-checked."""
+        from ..hands.catalog import CATALOG_SCHEMA  # noqa: PLC0415
+
+        doc = self.read_json(HAND_CATALOG)
+        if doc.get("schema") != CATALOG_SCHEMA:
+            raise BundleError([f"{HAND_CATALOG}: schema {doc.get('schema')!r} "
+                               f"is not {CATALOG_SCHEMA!r}"])
+        return doc
 
 
 def load_bundle(bundle_dir) -> Bundle:

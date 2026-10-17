@@ -121,3 +121,23 @@ def test_safety_zones_json_says_it_is_deprecated():
     zones = json.loads((description.ROOT.parent / "config" / "safety_zones.json")
                        .read_text(encoding="utf-8"))
     assert zones["_deprecated"].startswith("DEPRECATED")
+
+
+def test_the_profile_file_keys_the_daemon_reads_are_pinned(tmp_path):
+    # d1-firmwared reads these keys from guard/profile.<name>.json in a
+    # bundle: `check_body` is canonical, `daemon_keys["arm.guard_body"]`
+    # repeats it, and d1-bench is selected only by the d1-bench record.
+    db.write_bundle(tmp_path / "b")
+    b = db.load_bundle(tmp_path / "b")
+    for name in db.GUARD_PROFILES:
+        doc = b.read_json(f"guard/profile.{name}.json")
+        assert doc["schema"] == "manipulation_kit.guard_profile/1"
+        assert isinstance(doc["check_body"], bool)
+        assert set(doc["daemon_keys"]) == {"arm.guard_body", "arm.guard_body_margin_m",
+                                           "arm.guard_arm_arm_margin_m"}
+        assert doc["daemon_keys"]["arm.guard_body"] is doc["check_body"]
+        assert set(doc["selected_by"]) == {"backend", "record"}
+    bench = b.read_json("guard/profile.d1-bench.json")
+    assert bench["selected_by"] == {"backend": "real", "record": "d1-bench"}
+    assert bench["check_body"] is False
+    assert b.read_json("guard/profile.d1.json")["check_body"] is True

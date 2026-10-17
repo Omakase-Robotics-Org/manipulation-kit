@@ -6,6 +6,19 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.4 — unreleased
+
+**The description bundle carries the hand catalog.** The bundle gains
+`hands/catalog.json` (the `manipulation_kit.hand_catalog.v1` document,
+verbatim), so the catalog's models, aliases and envelopes are covered by
+the bundle's digest and `description_version`. `description_version` moves
+1.1.0 -> 1.2.0. `verify_bundle` refuses a bundle whose manifest does not
+list `kinematics/d1.urdf`, `collision/collision.json`,
+`guard/profile.d1.json` or `hands/catalog.json` (`REQUIRED_FILES`);
+`Bundle.hand_catalog()` reads the catalog and checks its schema. A test
+pins the guard profile keys a daemon reads (`check_body`,
+`daemon_keys["arm.guard_body"]`, `selected_by`, and the `d1-bench` record).
+
 ## 0.22.3 — unreleased
 
 **One index over every hand: tables, tool configs, envelopes, model ids.**
