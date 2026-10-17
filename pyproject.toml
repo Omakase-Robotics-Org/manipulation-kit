@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.21.0"
+version = "0.21.1"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]
@@ -97,6 +97,9 @@ dev = ["pytest", "yourdfpy", "pillow"]
 
 [project.scripts]
 mkit-urdf = "manipulation_kit.description.cli:main"
+# Build, digest and verify the versioned D1 description bundle
+# (manipulation_kit.description.bundle).
+mkit-description = "manipulation_kit.description.bundle:main"
 mkit-toolconfig = "manipulation_kit.hands.cli:main"
 # Maintainer tool: regenerate the committed d1-firmwared client snapshot from a
 # daemon or from a spec file. Consumers never need it — their client self-heals
@@ -136,6 +139,8 @@ where = ["src"]
     # the omakase.camera_calibration/2 JSON Schema (description.camera_calibration).
     # A SCHEMA ships; per-robot VALUES never do — they live on the robot.
     "schemas/*.schema.json",
+    # the description bundle's lock: description_version and its digest.
+    "bundle.lock.json",
     "d1/*.urdf", "d1/*.xml", "d1/*.md", "d1/CMakeLists.txt",
     "d1/meshes/body/*", "d1/meshes/gripper/*", "d1/meshes/body_hifi/*",
     "d1_yubi_description_v2/*.xml", "d1_yubi_description_v2/*.md",

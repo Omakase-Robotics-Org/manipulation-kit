@@ -6,6 +6,30 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.21.1 — unreleased
+
+**The D1 description bundle: one versioned, digested copy of the robot's
+shape.** New: `manipulation_kit.description.bundle` and the `mkit-description`
+command. Nothing breaks: no existing module changes.
+
+- A bundle is a directory of plain files generated from this package's own
+  sources — the guard URDF (`kinematics/d1.urdf`), the articulated whole body
+  (`kinematics/d1_wholebody_gripper.urdf`), the guard URDF as data
+  (`collision/collision.json`), the motion guard's default policy
+  (`guard/profile.d1.json`), the HOME pose, the tool configs, and every mesh
+  reference with its licence class (`visual/visual.json`) — plus a
+  `manifest.json` listing each file's SHA-256, a `description_version` and
+  one `digest` over them all (schema `manipulation_kit.description_bundle/1`).
+- `description_version` is a version of the content, separate from the
+  package version, recorded with its digest in the committed
+  `description/bundle.lock.json` (now `1.0.0`). A test rebuilds the bundle
+  and fails when it no longer matches the lock; `mkit-description lock
+  --description-version X.Y.Z` records a change and refuses to reuse a
+  version for different content.
+- `mkit-description build --out DIR`, `digest`, `check`, `verify DIR
+  [--expect-digest D]`; in Python `write_bundle`, `verify_bundle`,
+  `load_bundle`, `digest`, `description_version`.
+
 ## 0.21.0 — unreleased
 
 **An end effector of your own, served to d1-firmwared over shared memory.**

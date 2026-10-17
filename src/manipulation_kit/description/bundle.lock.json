@@ -1,0 +1,20 @@
+{
+  "description_version": "1.0.0",
+  "digest": "sha256:dd87d9c67b002bd837412b71441818681af46e56a4db4291a1ca0dda50250b95",
+  "files": {
+    "collision/collision.json": "ce6f1848a93b760c627111ec143e4fba8e453136a7b44f2d08e5447460a052ae",
+    "end_effectors/tool_configs/d1_parallel_gripper.json": "a5c81fa2963bde3c8afa272cc739d02c2e7354ad51b6a55097153162536405be",
+    "end_effectors/tool_configs/leadshine_dh116s.json": "132e7fc5ab3ad0578c077a467d3c45d97457914e20ff729e17d92d29e1fc0819",
+    "end_effectors/tool_configs/linkerbot_o30.json": "5083081b376187e979cba281bd1fa75b1637561b7b75c1d8978a668069bb9cad",
+    "guard/profile.d1.json": "ba8ca9f05ffb5ce94b6fd62a5c54ba264032b551e3d938b1befc7a0214673f82",
+    "kinematics/d1.urdf": "10090c8c9ccc27b93261b031b2d82c7dcbbed45aa6665fe97d04a1db5a707026",
+    "kinematics/d1_wholebody_gripper.urdf": "c6026d848663614043c8e1b0bc488e0653d1de565d9fe761fa8323e374b347ba",
+    "poses/home_pose.json": "c4ca404fea6020e67db75724d7453661d36d1c02cecd8617a9f9a2f5b320418b",
+    "visual/visual.json": "5294af141ec3fdf8c340d4288420f824f29417332ec0ccc45c97caa95618cd7d"
+  },
+  "history": {
+    "1.0.0": "sha256:dd87d9c67b002bd837412b71441818681af46e56a4db4291a1ca0dda50250b95"
+  },
+  "model": "d1",
+  "schema": "manipulation_kit.description_bundle_lock/1"
+}
