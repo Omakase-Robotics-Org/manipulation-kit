@@ -70,8 +70,8 @@ def test_unknown_gestures_and_mixed_maps_are_refused():
 def test_gestures_need_a_controls_source():
     problems = _problems({"from": "glove/index_mp_pitch", "to": "gripper/left",
                           "map": {"tap": "open"}})
-    assert any("gestures need a teleop_controls.event_stream.v1 source" in p
-               for p in problems)
+    assert any("gestures need a teleop_controls.event_stream.v1 or "
+               "teleop_leaders.joint_stream.v1 source" in p for p in problems)
 
 
 def test_action_outputs_are_checked_against_the_action_table_not_the_robot():
@@ -79,7 +79,7 @@ def test_action_outputs_are_checked_against_the_action_table_not_the_robot():
                         "map": {"tap": "start"}}), available_outputs={"gripper/left"})
     (p,) = _problems({"from": "pedal/#0", "to": "action/teleport",
                       "map": {"tap": "start"}})
-    assert "'action/<name>' with <name> one of ['recording']" in p
+    assert "'action/<name>' with <name> one of ['engage', 'home', 'recording']" in p
     (p,) = _problems({"from": "pedal/#0", "to": "action/recording",
                       "map": {"tap": "pause"}})
     assert "['pause'] are not verbs of action/recording" in p
@@ -91,10 +91,30 @@ def test_action_outputs_are_checked_against_the_action_table_not_the_robot():
     assert "'action/<name>'" in p
 
 
-def test_two_binds_to_one_action_are_one_output():
+def test_several_controls_may_bind_verbs_of_one_action():
+    binds = parse_binding({
+        "schema": BINDING_SCHEMA,
+        "source": SOURCES + [{"device": "ker", "family": "teleop_leaders.joint_stream.v1"}],
+        "bind": [
+            {"from": "pedal/#0", "to": "action/engage", "map": {"tap": "toggle"}},
+            {"from": "ker/left_trigger", "to": "action/engage",
+             "map": {"hold": "one_arm"}},
+            {"from": "ker/right_trigger", "to": "action/engage",
+             "map": {"hold": "one_arm"}}]}).binds
+    assert [b.to for b in binds] == ["action/engage"] * 3
+
+
+def test_one_control_twice_to_one_action_is_refused():
     (p,) = _problems(
         {"from": "pedal/#0", "to": "action/recording", "map": {"tap": "toggle"}},
-        {"from": "pedal/#1", "to": "action/recording", "map": {"hold": "abort"}})
+        {"from": "pedal/#0", "to": "action/recording", "map": {"hold": "abort"}})
+    assert "two binds drive the same output" in p
+
+
+def test_two_binds_to_one_device_output_are_still_refused():
+    (p,) = _problems(
+        {"from": "pedal/#0", "to": "gripper/left", "map": {"press": "close"}},
+        {"from": "pedal/#1", "to": "gripper/left", "map": {"press": "open"}})
     assert "two binds drive the same output" in p
 
 
@@ -108,13 +128,15 @@ def test_the_module_docstring_example_loads(tmp_path):
     from manipulation_kit.gloves import CALIBRATION_SCHEMA
 
     doc = binding.__doc__
-    example = doc[doc.index("::\n") + 3:doc.index("Two kinds of bind")]
+    example = doc[doc.index("::\n") + 3:doc.index("Three kinds of bind")]
     (tmp_path / "operators").mkdir()
     (tmp_path / "operators" / "alice-udcap.json").write_text(
         json.dumps({"schema": CALIBRATION_SCHEMA, "ranges": {}}))
     path = tmp_path / "binding.toml"
     path.write_text(textwrap.dedent(example))
-    hand, rec, grip = load_binding(path).binds
+    hand, arm, rec, eng, grip = load_binding(path).binds
+    assert arm.whole_arm and arm.mode == "relative" and arm.to == "arm/left"
+    assert eng.map == {"hold": "one_arm"} and eng.gestures
     assert hand.retarget_config.joints["thumb_rota1"].lo == 0.12
     assert rec.to == "action/recording" and rec.hold_s == 0.8
     assert grip.range.invert

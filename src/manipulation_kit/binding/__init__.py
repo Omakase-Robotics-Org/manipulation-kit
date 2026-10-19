@@ -11,6 +11,10 @@ robot output, the one thing that drives it (``[[bind]]``)::
     family = "teleop_gloves.pose_stream.v1"
 
     [[source]]
+    device = "ker-left"
+    family = "teleop_leaders.joint_stream.v1"
+
+    [[source]]
     device = "pedal"
     family = "teleop_controls.event_stream.v1"
     instance = 0
@@ -32,6 +36,13 @@ robot output, the one thing that drives it (``[[bind]]``)::
     sources = { thumb_mp_pitch = 1.0 }
     lo = 0.12
 
+    # A whole arm bound to a leader arm. The leader's joints drive the
+    # arm's joints; this file only says which leader and how it is applied.
+    [[bind]]
+    from = "ker-left"
+    to   = "arm/left"
+    mode = "relative"                         # optional: "absolute" | "relative"
+
     # A pedal's gestures to an action of the teleoperation server itself.
     [[bind]]
     from   = "pedal/#1"
@@ -39,20 +50,35 @@ robot output, the one thing that drives it (``[[bind]]``)::
     map    = { tap = "toggle", hold = "abort" }
     hold_s = 0.8                              # optional; default 0.5
 
+    # A leader's trigger, held, engages one arm only.
+    [[bind]]
+    from = "ker-left/left_trigger"
+    to   = "action/engage"
+    map  = { hold = "one_arm" }
+
     # A simple output bound 1:1 to one input value.
     [[bind]]
     from  = "pedal/#0"
     to    = "gripper/left/openness"
     range = { lo = 0.0, hi = 1.0, invert = true }
 
-Two kinds of bind
------------------
+Three kinds of bind
+-------------------
 **Whole hand.** ``to = "hand/<left|right>"`` and ``from = "<device_id>"`` —
 no channel. A dexterous hand is driven as a unit, by one glove, through the
 hand's own retarget map (:mod:`manipulation_kit.hands`), so N gloves and M
 hands cost N + M maps instead of N x M per-axis lines. ``calibration`` names
 the operator's glove calibration file
 (:mod:`manipulation_kit.gloves.calibration`); it is parsed here, at startup.
+
+**Whole arm.** ``to = "arm/<left|right>"`` and ``from = "<device_id>"`` —
+no channel — where the device is a ``teleop_leaders.joint_stream.v1`` source
+(a leader arm). The leader's joints drive the arm's joints as a unit; which
+leader joint is which arm joint is the leader's own declaration, not this
+file's. ``mode`` is optional: ``"absolute"`` (the arm follows the leader's
+pose) or ``"relative"`` (the arm follows the leader's motion from the pose
+at engage); absent, the consumer's own default applies. There is no
+per-joint bind of an arm, and ``arm/<left|right>/<axis>`` is refused.
 
 **One to one.** ``from = "<device_id>/<channel>"`` (``<device_id>/#<index>``
 for a family that numbers its controls instead of naming them) and ``to`` an
@@ -63,7 +89,7 @@ output path:
 * ``accessory/<name>/<channel>`` — an external device registered with
   ``d1-firmwared`` under ``<name>``, likewise checked;
 * ``action/<name>`` — not a device: an action the teleoperation server
-  performs itself (:data:`ACTIONS`; today ``action/recording``). It is not
+  performs itself (:data:`ACTIONS`: ``recording``, ``engage``, ``home``). It is not
   checked against ``available_outputs``, because the robot does not have it;
   it is checked against :data:`ACTIONS` instead, and its ``map`` values must be
   that action's verbs. It is a kind of its own rather than
@@ -75,8 +101,8 @@ output path:
 ``range`` maps a continuous value to [0, 1] with the same
 ``lo``/``hi``/``invert`` semantics as a glove channel range. ``map`` maps to
 a verb or a value, keyed EITHER by discrete input values (integers, e.g. a
-pedal's level ``{ 0 = 0, 2 = 1 }``) OR — for a ``teleop_controls`` source
-only — by gestures (:data:`GESTURES`: ``press``, ``release``, ``tap``,
+pedal's level ``{ 0 = 0, 2 = 1 }``) OR — for a ``teleop_controls`` or a
+``teleop_leaders`` source only — by gestures (:data:`GESTURES`: ``press``, ``release``, ``tap``,
 ``hold``), never a mix. A gesture map that uses ``tap`` or ``hold`` splits
 them at ``hold_s`` seconds (the bind's, else :data:`DEFAULT_HOLD_S`); the
 split is in the file, not left to a consumer, so two consumers of one
@@ -89,7 +115,10 @@ Startup refusals
 :func:`load_binding` / :func:`parse_binding` raise :class:`BindingError`
 listing EVERY problem at once (so one restart fixes them all):
 
-* two binds to the same output. ``hand/right`` and ``hand/right/<axis>``
+* two binds to the same device output (``arm``, ``hand``, ``gripper``,
+  ``accessory``); an ``action/<name>`` may be bound by several different
+  controls, each with its own verbs, but one control twice to one action is
+  refused (put its gestures in one ``map``). For device outputs ``hand/right`` and ``hand/right/<axis>``
   count as the same output, and so does any pair where one path is a prefix
   of the other: a hand bound whole cannot also have one finger bound
   elsewhere. The message names both ``from`` values;
@@ -98,6 +127,10 @@ listing EVERY problem at once (so one restart fixes them all):
 * an output the live daemon does not have — checked only when the caller
   passes ``available_outputs`` (this package opens no socket; the caller asks
   ``d1-firmwared`` what is fitted and passes the paths it found);
+* a whole-arm bind whose source is not a leader joint stream, whose ``to`` has
+  an axis, or whose ``mode`` is neither ``absolute`` nor ``relative``; a
+  ``mode``, ``range``, ``map``, ``retarget`` or ``calibration`` anywhere it
+  does not apply;
 * a whole-hand bind whose source is not a glove pose stream, or whose
   ``retarget`` names no hand map in this package;
 * a ``retarget_config`` without a resolvable ``retarget``, or with a field
@@ -105,7 +138,7 @@ listing EVERY problem at once (so one restart fixes them all):
   length, an unknown joint or channel name, or values the config's own
   checks refuse (an XHAND1 interval outside a joint's limits);
 * a ``map`` key that is neither an integer nor a gesture, a map mixing the
-  two, gestures from a non-controls source, a ``hold_s`` that is not a
+  two, gestures from a source that is neither controls nor leaders, a ``hold_s`` that is not a
   positive number or has no ``tap``/``hold`` to split, an ``action/<name>``
   that is not in :data:`ACTIONS`, or an action ``map`` value that is not one
   of that action's verbs;
@@ -140,6 +173,15 @@ SIDES = ("left", "right")
 #: a GESTURE map may bind, because only it reports a control going down and up.
 CONTROLS_FAMILY = "teleop_controls.event_stream.v1"
 
+#: The leader-arm family (KER and other passive leader arms): the only source
+#: a whole arm binds to. It may also carry a gesture map on one of its own
+#: channels (a leader's trigger or start button), like a controls source.
+LEADERS_FAMILY = "teleop_leaders.joint_stream.v1"
+
+#: How a whole-arm bind applies the leader: ``absolute`` follows the leader's
+#: pose, ``relative`` follows its motion from the pose at engage.
+ARM_MODES = ("absolute", "relative")
+
 #: The gesture vocabulary of a controls-family ``map``. One press of a
 #: control produces, in order: ``press`` (it went down), then exactly ONE of
 #: ``tap`` (it came up before ``hold_s`` elapsed) or ``hold`` (it was still
@@ -147,6 +189,9 @@ CONTROLS_FAMILY = "teleop_controls.event_stream.v1"
 #: ``release`` (it came up, after either). ``tap`` and ``hold`` therefore never
 #: both fire for one press, which is what lets one pedal carry two verbs.
 GESTURES = ("press", "release", "tap", "hold")
+
+#: The families whose channels may carry a gesture map.
+GESTURE_FAMILIES = (CONTROLS_FAMILY, LEADERS_FAMILY)
 
 #: Seconds a control must stay down to be a ``hold`` rather than a ``tap``,
 #: when the bind gives no ``hold_s``. A file-level fact, not a consumer
@@ -158,9 +203,14 @@ DEFAULT_HOLD_S = 0.5
 #: server performs itself, addressed ``action/<name>``, with the verbs each
 #: accepts as ``map`` values. ``recording``: ``start`` an episode, ``stop``
 #: it and keep it, ``toggle`` (start when idle, stop when recording),
-#: ``abort`` (stop it and discard it).
+#: ``abort`` (stop it and discard it). ``engage``: ``start`` and ``stop``
+#: teleoperation of every bound arm, ``toggle`` flips it, ``one_arm`` engages
+#: only the arm whose leader raised the gesture. ``home``: ``run`` the home
+#: motion.
 ACTIONS = {
     "recording": ("start", "stop", "toggle", "abort"),
+    "engage": ("start", "stop", "toggle", "one_arm"),
+    "home": ("run",),
 }
 
 #: Human-facing side names to ``d1-firmwared``'s arm sides: ``a`` is the
@@ -182,7 +232,7 @@ _MODEL_RE = re.compile(rf"^{_ID}/{_ID}$")
 
 _SOURCE_KEYS = {"device", "family", "instance"}
 _BIND_KEYS = {"from", "to", "range", "map", "retarget", "calibration",
-              "retarget_config", "hold_s"}
+              "retarget_config", "hold_s", "mode"}
 
 
 class BindingError(ValueError):
@@ -224,6 +274,9 @@ class Bind:
     calibration: Optional[Path] = None
     #: Its parsed overrides (channel -> range), loaded at startup.
     calibration_ranges: Dict[str, ChannelRange] = field(default_factory=dict)
+    #: ``absolute`` or ``relative`` for a whole-arm bind that names one, else
+    #: ``None`` (the consumer's default applies).
+    mode: Optional[str] = None
     #: Whether ``map`` is keyed by gestures (:data:`GESTURES`) rather than by
     #: discrete input values.
     gestures: bool = False
@@ -253,8 +306,17 @@ class Bind:
         return get_retarget(model, config=self.retarget_config)
 
     @property
+    def kind(self) -> str:
+        """The output kind: ``hand``, ``arm``, ``gripper``, ``action``, ..."""
+        return self.to.split("/")[0]
+
+    @property
     def whole_hand(self) -> bool:
-        return self.channel is None
+        return self.channel is None and self.kind == "hand"
+
+    @property
+    def whole_arm(self) -> bool:
+        return self.channel is None and self.kind == "arm"
 
     @property
     def side(self) -> Optional[str]:
@@ -274,6 +336,9 @@ class Binding:
 
     def hand_binds(self) -> Tuple[Bind, ...]:
         return tuple(b for b in self.binds if b.whole_hand)
+
+    def arm_binds(self) -> Tuple[Bind, ...]:
+        return tuple(b for b in self.binds if b.whole_arm)
 
 
 def _overlaps(a: str, b: str) -> bool:
@@ -386,13 +451,19 @@ def parse_binding(data: Mapping[str, Any], *,
         if source is None:
             problems.append(f"{where}: device {device!r} is not a [[source]]")
 
-        whole_hand = channel is None
-        if whole_hand and not (kind == "hand" and len(rest) == 1):
-            problems.append(f"{where}: a 'from' with no channel binds a whole hand, "
-                            "so 'to' must be 'hand/<left|right>'")
-        if kind == "hand" and len(rest) == 1 and not whole_hand:
+        whole_hand = channel is None and kind == "hand" and len(rest) == 1
+        whole_arm = channel is None and kind == "arm" and len(rest) == 1
+        if channel is None and kind != "arm" and not whole_hand:
+            problems.append(f"{where}: a 'from' with no channel binds a whole hand "
+                            "or a whole arm, so 'to' must be 'hand/<left|right>' "
+                            "or 'arm/<left|right>'")
+        if kind == "hand" and len(rest) == 1 and channel is not None:
             problems.append(f"{where}: a whole hand is bound to a device, not to "
                             "one channel; drop the channel or bind an axis")
+        if kind == "arm" and (channel is not None or len(rest) != 1):
+            problems.append(f"{where}: an arm is bound whole, "
+                            "'<device>' -> 'arm/<left|right>'; a channel or an "
+                            "axis of an arm cannot be bound")
         if whole_hand and source is not None and source.family != GLOVE_FAMILY:
             problems.append(f"{where}: a whole hand binds to a {GLOVE_FAMILY} "
                             f"source; {device!r} is {source.family}")
@@ -414,6 +485,22 @@ def parse_binding(data: Mapping[str, Any], *,
         if whole_hand and ("range" in raw or "map" in raw):
             problems.append(f"{where}: a whole-hand bind takes no range or map; "
                             "per-channel ranges go in its calibration file")
+        if whole_arm and ("range" in raw or "map" in raw):
+            problems.append(f"{where}: a whole-arm bind takes no range or map; "
+                            "the leader's own joint declaration maps its joints")
+        if whole_arm and source is not None and source.family != LEADERS_FAMILY:
+            problems.append(f"{where}: a whole arm binds to a {LEADERS_FAMILY} "
+                            f"source; {device!r} is {source.family}")
+
+        mode = None
+        if "mode" in raw:
+            if not whole_arm:
+                problems.append(f"{where}: mode applies to a whole-arm bind only")
+            elif raw["mode"] not in ARM_MODES:
+                problems.append(f"{where}: mode must be one of {ARM_MODES}, "
+                                f"got {raw['mode']!r}")
+            else:
+                mode = raw["mode"]
 
         gestures, hold_s = False, None
         if mapping is not None:
@@ -428,9 +515,10 @@ def parse_binding(data: Mapping[str, Any], *,
                                 "discrete values, not both")
             elif named:
                 gestures = True
-                if source is not None and source.family != CONTROLS_FAMILY:
-                    problems.append(f"{where}: gestures need a {CONTROLS_FAMILY} "
-                                    f"source; {device!r} is {source.family}")
+                if source is not None and source.family not in GESTURE_FAMILIES:
+                    problems.append(f"{where}: gestures need a {CONTROLS_FAMILY} or "
+                                    f"{LEADERS_FAMILY} source; {device!r} is "
+                                    f"{source.family}")
         if "hold_s" in raw:
             value = raw["hold_s"]
             if not gestures or not ({"tap", "hold"} & set(mapping or {})):
@@ -506,10 +594,15 @@ def parse_binding(data: Mapping[str, Any], *,
                           retarget_overrides=dict(overrides)
                           if isinstance(overrides, Mapping) else {},
                           retarget_config=built, gestures=gestures,
-                          hold_s=hold_s))
+                          hold_s=hold_s, mode=mode))
 
     for i, a in enumerate(binds):
         for b in binds[i + 1:]:
+            # Several controls may bind verbs of one action (a pedal's toggle
+            # and each leader trigger's one_arm); one control's gestures for
+            # one action live in one map, so the same control twice is refused.
+            if a.kind == "action" and (a.device, a.channel) != (b.device, b.channel):
+                continue
             if _overlaps(a.to, b.to):
                 problems.append(f"two binds drive the same output: {a.from_} -> "
                                 f"{a.to} and {b.from_} -> {b.to}")
@@ -545,7 +638,7 @@ def load_binding(path: Union[str, Path], *,
                          available_outputs=available_outputs, origin=str(path))
 
 
-__all__ = ["ACTIONS", "BINDING_SCHEMA", "Bind", "Binding", "BindingError",
+__all__ = ["ACTIONS", "ARM_MODES", "BINDING_SCHEMA", "Bind", "Binding", "BindingError",
            "CONTROLS_FAMILY", "DAEMON_SIDE", "DEFAULT_HOLD_S", "GESTURES",
-           "GLOVE_FAMILY", "Source", "build_retarget_config", "load_binding",
+           "GESTURE_FAMILIES", "GLOVE_FAMILY", "LEADERS_FAMILY", "Source", "build_retarget_config", "load_binding",
            "parse_binding"]
