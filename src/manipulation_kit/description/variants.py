@@ -56,9 +56,9 @@ VARIANTS: Dict[str, Variant] = {
             "the vendor per-arm packages, copied verbatim (left and right)",
         ),
         Variant(
-            "arm-ee-bench", "arm_ee_bench",
-            "two D1 arms on a stand with no D1 body, each wearing a Wuji "
-            "Hand 2 as its envelope (robot model arm-ee-bench)",
+            "d1-arms-stand", "d1_arms_stand",
+            "two D1 arms on a stand with no D1 body and no end effector "
+            "(robot model d1-arms-stand)",
         ),
         Variant(
             "d1-wholebody-o30", None,

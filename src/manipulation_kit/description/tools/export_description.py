@@ -300,11 +300,11 @@ def export_d1_wholebody_gripper(dest, _mesh_prefix, files, with_assets=False):
     return _export_d1_dir_urdf("d1_wholebody_gripper.urdf", dest, files, with_assets)
 
 
-def export_arm_ee_bench(dest, _mesh_prefix, files, with_assets=False):
-    """arm_ee_bench_visual.urdf (robot model ``arm-ee-bench``: two D1 arms on
-    a stand, each wearing a Wuji Hand 2) and every mesh it references, as
+def export_d1_arms_stand(dest, _mesh_prefix, files, with_assets=False):
+    """d1_arms_stand_visual.urdf (robot model ``d1-arms-stand``: two D1 arms
+    on a stand, with no end effector) and every mesh it references, as
     :func:`export_d1_wholebody_gripper` exports the D1."""
-    return _export_d1_dir_urdf("arm_ee_bench_visual.urdf", dest, files, with_assets)
+    return _export_d1_dir_urdf("d1_arms_stand_visual.urdf", dest, files, with_assets)
 
 
 def _export_d1_dir_urdf(name, dest, files, with_assets):
@@ -355,7 +355,7 @@ FLAVOURS = {
     "d1_collision": export_d1_collision,
     "d1_wholebody_gripper": export_d1_wholebody_gripper,
     "d1_arm": export_d1_arm,
-    "arm_ee_bench": export_arm_ee_bench,
+    "d1_arms_stand": export_d1_arms_stand,
 }
 
 

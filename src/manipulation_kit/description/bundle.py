@@ -228,17 +228,20 @@ GUARD_PROFILES = {
     "sim": {"selected_by": {"backend": "sim", "record": None},
             "summary": "the simulated D1: identical to d1",
             "changes": {}},
-    # The arm + end-effector bench rig as a robot model of its own: there is
-    # no body in its URDF, so the body checks have nothing to judge, and the
-    # chest keep-out (fixed boxes where a D1's torso is) is off. The arm-arm
-    # and same-arm checks and every margin are the robot's. Selected by the
-    # model (robot.json's guard_profile); ``selected_by`` keeps the shape a
-    # daemon that selects by backend and record parses, and names the real
-    # backend with no record.
-    "arm-ee-bench": {"selected_by": {"backend": "real", "record": None},
-                     "summary": "two D1 arms on a stand with no D1 body: no "
-                                "body to keep out, arm checks as on the robot",
-                     "changes": {"chest_keepout": None}},
+    # Two D1 arms on a stand, a robot model of its own: there is no body in
+    # its URDF, so the body checks have nothing to judge, and the chest
+    # keep-out (fixed boxes where a D1's torso is) is off. Its URDF carries no
+    # end effector and no hand envelope: arm against arm, each arm against
+    # itself and the joint limits are checked, with the robot's margins, and
+    # nothing a flange carries. Selected by the model (robot.json's
+    # guard_profile); ``selected_by`` keeps the shape a daemon that selects
+    # by backend and record parses, and names the real backend with no
+    # record.
+    "d1-arms-stand": {"selected_by": {"backend": "real", "record": None},
+                      "summary": "two D1 arms on a stand: no body to keep "
+                                 "out, arm checks as on the robot, end "
+                                 "effectors not checked",
+                      "changes": {"chest_keepout": None}},
 }
 
 #: The profile file format.

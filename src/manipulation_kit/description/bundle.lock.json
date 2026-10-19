@@ -1,6 +1,6 @@
 {
-  "description_version": "1.3.0",
-  "digest": "sha256:4f2a5a47e0d154449b47d2150df28dc873d7a94dd6a9c25a980de00410104a0a",
+  "description_version": "1.4.0",
+  "digest": "sha256:a0352a811be5db64756ca56a2c44073118f78e1e8c03cceed9121b797d590bce",
   "files": {
     "collision/collision.json": "ce6f1848a93b760c627111ec143e4fba8e453136a7b44f2d08e5447460a052ae",
     "end_effectors/tool_configs/d1_parallel_gripper.json": "a5c81fa2963bde3c8afa272cc739d02c2e7354ad51b6a55097153162536405be",
@@ -13,14 +13,15 @@
     "kinematics/d1.urdf": "10090c8c9ccc27b93261b031b2d82c7dcbbed45aa6665fe97d04a1db5a707026",
     "kinematics/d1_wholebody_gripper.urdf": "fd41beb44d7eed0a0e90c0444592d134004ce9d48d1c22b76266cdf41fbba4fc",
     "poses/home_pose.json": "c4ca404fea6020e67db75724d7453661d36d1c02cecd8617a9f9a2f5b320418b",
-    "robot.json": "a1555e42bc33b8cde78856f513244935bf7d275e43b94626b4a33055ad97234d",
+    "robot.json": "41be858f758e57c2904eff99297d957227f91e06bd1bf82d9cdb9861f1df77f5",
     "visual/visual.json": "5294af141ec3fdf8c340d4288420f824f29417332ec0ccc45c97caa95618cd7d"
   },
   "history": {
     "1.0.0": "sha256:dd87d9c67b002bd837412b71441818681af46e56a4db4291a1ca0dda50250b95",
     "1.1.0": "sha256:bd14d723306661c4cd94b7eb877eeb426275f38f510efee47990f16c07702d36",
     "1.2.0": "sha256:d2cadf3665d483bda4904900b77100c04d312736de8c87746ae0f3a5c66d6fb6",
-    "1.3.0": "sha256:4f2a5a47e0d154449b47d2150df28dc873d7a94dd6a9c25a980de00410104a0a"
+    "1.3.0": "sha256:4f2a5a47e0d154449b47d2150df28dc873d7a94dd6a9c25a980de00410104a0a",
+    "1.4.0": "sha256:a0352a811be5db64756ca56a2c44073118f78e1e8c03cceed9121b797d590bce"
   },
   "model": "d1",
   "schema": "manipulation_kit.description_bundle_lock/1"

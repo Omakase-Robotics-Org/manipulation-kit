@@ -6,6 +6,30 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.8 — unreleased
+
+**The stand model is `d1-arms-stand`, with no end effector.** The robot model
+`arm-ee-bench` is renamed `d1-arms-stand`, under a naming rule
+(`manipulation_kit.description.robots`): an id names the kinematic
+structure (`<platform>` for a whole robot, `<platform>-<parts>-<mount>` for
+parts on something else), never a use, a site or an end effector. Its URDFs
+are `d1_arms_stand.urdf` and `d1_arms_stand_visual.urdf` (export variant
+`d1-arms-stand`), its guard profile `d1-arms-stand`, its lock
+`description/bundle.lock.d1-arms-stand.json` (`description_version` 1.0.0);
+`arm-ee-bench`'s URDFs, profile, variant and lock are gone.
+
+- The stand's URDFs carry no end effector and no hand envelope: the arms
+  end at their flanges. The guard checks arm against arm, each arm against
+  itself and the joint limits; nothing a flange carries is checked.
+- `robot.json` states it: `end_effectors.collision_checked` (`true` on
+  `d1`, `false` on `d1-arms-stand`; the end effector is chosen from the hand
+  catalog and declared by its provider at run time), and `recorded_input`
+  (`refused` on `d1`; `operator_override` on `d1-arms-stand`: a teleop
+  server may let recorded or synthetic input drive the real arms while the
+  operator's override is on). `devices` names `end_effectors` on both.
+- The `d1` bundle's `robot.json` changes accordingly: `description_version`
+  1.3.0 -> 1.4.0.
+
 ## 0.22.7 — unreleased
 
 **The rig's guard profile keeps the shape a daemon parses.** The

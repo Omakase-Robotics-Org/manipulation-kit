@@ -1,0 +1,22 @@
+{
+  "description_version": "1.0.0",
+  "digest": "sha256:1df454fe770142ccb2f37d5b7f117b6dd152224ca02b990eb934995b993fa259",
+  "files": {
+    "collision/collision.json": "6772563214cbac4dd1712ffac580a185277205c1605096114fc6544627aa1c83",
+    "end_effectors/tool_configs/d1_parallel_gripper.json": "a5c81fa2963bde3c8afa272cc739d02c2e7354ad51b6a55097153162536405be",
+    "end_effectors/tool_configs/leadshine_dh116s.json": "132e7fc5ab3ad0578c077a467d3c45d97457914e20ff729e17d92d29e1fc0819",
+    "end_effectors/tool_configs/linkerbot_o30.json": "5083081b376187e979cba281bd1fa75b1637561b7b75c1d8978a668069bb9cad",
+    "guard/profile.d1-arms-stand.json": "1c872f6f2f67f7883af0aca5f90cdb154fa01daefe44dd95c49f48040b2617c1",
+    "hands/catalog.json": "09ede4f9eedc4accdc81d88eaeb0e88ad461db099741e1a3e08fbc0368d8c70a",
+    "kinematics/d1_arms_stand.urdf": "c37f8d44337fa248e2a9e1d32f0842f43cc68bd4197280210f8b1852f6467a5b",
+    "kinematics/d1_arms_stand_visual.urdf": "458d172978e42a4ae733c6e778ea2617cef48bfe9c27675a1bc2f184af0d131e",
+    "poses/home_pose.json": "c4ca404fea6020e67db75724d7453661d36d1c02cecd8617a9f9a2f5b320418b",
+    "robot.json": "8a91690031c7b73e1b4292b44ec0817d8e0bd81db47ca40a6c6ad539e92e54ee",
+    "visual/visual.json": "a22f6773ab348bec18b2ad9ef77f92e0816bdb97291f1c5d9547e6e760bc4f14"
+  },
+  "history": {
+    "1.0.0": "sha256:1df454fe770142ccb2f37d5b7f117b6dd152224ca02b990eb934995b993fa259"
+  },
+  "model": "d1-arms-stand",
+  "schema": "manipulation_kit.description_bundle_lock/1"
+}

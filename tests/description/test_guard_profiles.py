@@ -70,11 +70,11 @@ def test_only_d1_bench_loosens_and_only_the_body_checks():
             assert _policy(name) == d1, name
 
 
-def test_the_rig_drops_only_the_chest_keepout():
-    d1, rig = _policy("d1"), _policy("arm-ee-bench")
+def test_the_stand_drops_only_the_chest_keepout():
+    d1, rig = _policy("d1"), _policy("d1-arms-stand")
     assert {k for k in POLICY_KEYS if d1[k] != rig[k]} == {"chest_keepout"}
     assert rig["chest_keepout"] is None and rig["check_arm_arm"] and rig["check_self"]
-    assert db.guard_profile("arm-ee-bench")["selected_by"] == {"backend": "real",
+    assert db.guard_profile("d1-arms-stand")["selected_by"] == {"backend": "real",
                                                               "record": None}
 
 
