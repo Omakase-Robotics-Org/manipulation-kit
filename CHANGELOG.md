@@ -6,6 +6,14 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.7 — unreleased
+
+**The rig's guard profile keeps the shape a daemon parses.** The
+`arm-ee-bench` profile's `selected_by` is `{"backend": "real", "record":
+null}` (it was `{"backend": null, ...}`, which a daemon that reads
+`selected_by.backend` as a string cannot parse). The `arm-ee-bench` bundle
+moves 1.0.0 -> 1.0.1.
+
 ## 0.22.6 — unreleased
 
 **Robot models: the bench rig is a model of its own, not a D1 profile.**

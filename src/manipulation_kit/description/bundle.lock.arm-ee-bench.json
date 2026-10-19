@@ -1,12 +1,12 @@
 {
-  "description_version": "1.0.0",
-  "digest": "sha256:53b1028500249de502179a45a846d49331caa73f56f0f9f0c050def20bcdc614",
+  "description_version": "1.0.1",
+  "digest": "sha256:e1c2c76a0cdf0070c7012a7b9984358a04bc602931f283ef090d5edf0e0d735f",
   "files": {
     "collision/collision.json": "662e8389dc88e3b4b69c7aa55c952419a36dcb86721bef356b4f330009546299",
     "end_effectors/tool_configs/d1_parallel_gripper.json": "a5c81fa2963bde3c8afa272cc739d02c2e7354ad51b6a55097153162536405be",
     "end_effectors/tool_configs/leadshine_dh116s.json": "132e7fc5ab3ad0578c077a467d3c45d97457914e20ff729e17d92d29e1fc0819",
     "end_effectors/tool_configs/linkerbot_o30.json": "5083081b376187e979cba281bd1fa75b1637561b7b75c1d8978a668069bb9cad",
-    "guard/profile.arm-ee-bench.json": "1af9590fd8574f254e3dbe1c6fc75b0ce464f3bf467d1b0ef37b2f0301555d78",
+    "guard/profile.arm-ee-bench.json": "359cccaaaffab88ce9c093cb7e1bfa7fc273597f93a0e0d1d90ec2fa0d62b1f5",
     "hands/catalog.json": "09ede4f9eedc4accdc81d88eaeb0e88ad461db099741e1a3e08fbc0368d8c70a",
     "kinematics/arm_ee_bench.urdf": "e5412188198b7806e89342738a77f877b819a64bb1c5f8bdb116a29df6f90b54",
     "kinematics/arm_ee_bench_visual.urdf": "374850c2e1b53c2a4bf89085cc1a208b9ea834f93a32ac89959e8f39091dd79e",
@@ -15,7 +15,8 @@
     "visual/visual.json": "490e2e53117f66a74a9cdc953e00b9723b6aa73973a4e2286c9638bad167510e"
   },
   "history": {
-    "1.0.0": "sha256:53b1028500249de502179a45a846d49331caa73f56f0f9f0c050def20bcdc614"
+    "1.0.0": "sha256:53b1028500249de502179a45a846d49331caa73f56f0f9f0c050def20bcdc614",
+    "1.0.1": "sha256:e1c2c76a0cdf0070c7012a7b9984358a04bc602931f283ef090d5edf0e0d735f"
   },
   "model": "arm-ee-bench",
   "schema": "manipulation_kit.description_bundle_lock/1"

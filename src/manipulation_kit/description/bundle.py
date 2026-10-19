@@ -232,8 +232,10 @@ GUARD_PROFILES = {
     # no body in its URDF, so the body checks have nothing to judge, and the
     # chest keep-out (fixed boxes where a D1's torso is) is off. The arm-arm
     # and same-arm checks and every margin are the robot's. Selected by the
-    # model (robot.json), on any backend.
-    "arm-ee-bench": {"selected_by": {"backend": None, "record": None},
+    # model (robot.json's guard_profile); ``selected_by`` keeps the shape a
+    # daemon that selects by backend and record parses, and names the real
+    # backend with no record.
+    "arm-ee-bench": {"selected_by": {"backend": "real", "record": None},
                      "summary": "two D1 arms on a stand with no D1 body: no "
                                 "body to keep out, arm checks as on the robot",
                      "changes": {"chest_keepout": None}},
