@@ -6,6 +6,36 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.5 — unreleased
+
+**`omakase.binding.v1` binds a whole arm to a leader arm, and a leader's
+channels can drive the server's engage and home actions.** Additive: every
+binding file that loaded before loads the same way. `Bind.whole_hand` is now
+true only for a channel-less bind to `hand/<side>` (it was true for any
+channel-less bind, which only a hand could be).
+
+### Changed: `manipulation_kit.binding`
+
+- Whole-arm bind: `from = "<device>"` (a `teleop_leaders.joint_stream.v1`
+  source, `LEADERS_FAMILY`) and `to = "arm/<left|right>"`, with an optional
+  `mode = "absolute" | "relative"` (`ARM_MODES`; absent means the consumer's
+  default, `Bind.mode is None`). New `Bind.whole_arm`, `Bind.kind` and
+  `Binding.arm_binds()`. Refused at load: a non-leader source, a channel or an
+  axis on the arm (`arm/left/<axis>`), a `mode` that is not one of the two or
+  that sits on anything but a whole arm, and `range`, `map`, `retarget`,
+  `calibration`, `retarget_config` or `hold_s` on a whole arm. A channel-less
+  bind to any other output now names both accepted shapes.
+- Several different controls may now bind verbs of one `action/<name>` (a
+  pedal's `toggle` and each leader trigger's `one_arm` on `action/engage`).
+  Binding one control twice to one action, and two binds to one device
+  output (`arm`, `hand`, `gripper`, `accessory`), are still refused.
+- `ACTIONS` gains `engage` (verbs `start`, `stop`, `toggle`, `one_arm`) and
+  `home` (verb `run`).
+- Gesture maps are accepted from a `teleop_leaders.joint_stream.v1` channel as
+  well as from a controls source (`GESTURE_FAMILIES`), for a leader's trigger
+  or start button, e.g. `from = "ker-left/left_trigger"`,
+  `to = "action/engage"`, `map = { hold = "one_arm" }`.
+
 ## 0.22.3 — unreleased
 
 **One index over every hand: tables, tool configs, envelopes, model ids.**
