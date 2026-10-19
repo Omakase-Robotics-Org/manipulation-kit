@@ -113,6 +113,16 @@ this file. `tests/data/gloves/litchibot_wujihand2.calibration.json` holds
 the flexion in radians, and `tests/hands/test_wujihand2.py` checks that
 it, that swing range and the default map give the table's outputs.
 
+### Absolute and range mapping
+
+`RetargetConfig.mapping` is `"absolute"` by default: the glove's finger angles
+(radians) drive the matching joints 1:1, less a per-joint `zero_rad`, clamped
+to the joint's limits, and no channel range is read. Pass the angles:
+`wuji.joint_targets(pose, angles=hand_angles)`. `"range"` stretches the
+operator's calibrated range onto the interval in the table above; set it per
+binding with `[bind.retarget_config] mapping = "range"`. The thumb follows
+the table in both modes. See the module docstring of `retarget.py`.
+
 ## What is not here
 
 - **No `toolconfig`.** No measured mass, centre of mass or tool point of the

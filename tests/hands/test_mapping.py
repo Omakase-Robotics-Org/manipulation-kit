@@ -36,6 +36,7 @@ def test_the_map_reproduces_its_golden_vectors(model):
     assert len(golden["vectors"]) >= 3 + 2 * len(table.channels())
     for vector in golden["vectors"]:
         mapper = get_retarget(model)
+        mapper = getattr(mapper, "flex_map", lambda: mapper)()
         assert mapper.joint_targets(HandPose("t", vector["flex"])) == vector["targets"]
         assert table.evaluate(vector["flex"]) == vector["targets"]
 
@@ -52,7 +53,7 @@ def test_a_table_round_trips_through_json(model):
 
 
 def test_a_table_follows_a_config_as_well_as_the_defaults():
-    config = RetargetConfig(hold=(False,) * 20)
+    config = RetargetConfig(hold=(False,) * 20, mapping="range")
     table = retarget_table("wuji/wujihand2", config)
     assert not any(table.held())
     rng = random.Random(7)

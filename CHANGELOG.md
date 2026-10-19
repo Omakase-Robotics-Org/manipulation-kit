@@ -6,6 +6,38 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.10 — unreleased
+
+**Wuji Hand 2 follows the glove's angles 1:1 by default.** The range map
+stretches an operator's calibrated range onto the joint's interval, so a
+glove whose measured spread is narrower than the interval multiplies its own
+error by the ratio: a right LitchiBot glove whose fitted finger spread is
+5 to 10 degrees, stretched onto the spread joint's +-0.648 rad, magnified
+glove error 2.4 to 7.3 times. A replay of one recorded right-hand session
+(27501 frames, 102 Hz) through both maps puts the index finger's spread joint
+at its limit in 52.8 % of the frames of the bound span with `range` and in
+0 % with `absolute` (its range: +-0.648 rad against +-0.135 rad).
+
+### Changed (breaking for a Wuji bind that relied on the range map)
+
+- `wuji/wujihand2` `RetargetConfig.mapping`: `"absolute"` (default) or
+  `"range"`. `absolute`: finger joints read the glove's radians 1:1
+  (`<finger>_S1/S3/S4` from `mp_pitch`/`pip_pitch`/`dip_pitch`, `<finger>_S2`
+  from `mp_swing`), less `RetargetConfig.zero_rad` (new, per joint, default
+  0), negated where the joint map says `invert`, clamped to the joint's
+  limits. No channel range is read, so a calibration need not carry any.
+  `range` is the previous arithmetic, unchanged; select it per binding with
+  `[bind.retarget_config] mapping = "range"`.
+- `Retargeter.joint_targets(pose, angles=None)`: `absolute` needs `angles`
+  (a `HandAngles`, radians) and raises without it or when given a flexion
+  `HandPose` as `angles`; the flexion `pose` is read only by the thumb. The
+  thumb is unchanged in both modes (it reads opposition, a fraction rather
+  than an angle).
+- `Retargeter.flex_map()` returns the `range` twin; the retarget table and
+  its golden vectors describe the range arithmetic and are regenerated from
+  it, so they are unchanged. The version-1 call `retarget(flex)` is the
+  range map in either mode.
+
 ## 0.22.9 — unreleased
 
 **`omakase.binding.v1` binds a whole arm to a leader arm, and a leader's

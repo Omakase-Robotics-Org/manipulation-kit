@@ -306,6 +306,9 @@ def golden_vectors(model: str, config=None) -> Dict[str, object]:
     vectors = []
     for flex in golden_inputs(table.channels()):
         mapper = get_retarget(model, config=config)
+        # A map with an absolute mode is described, and its vectors made, in
+        # flexion space: its range-mode twin.
+        mapper = getattr(mapper, "flex_map", lambda: mapper)()
         out = mapper.joint_targets(HandPose("golden", dict(flex)))
         vectors.append({"flex": flex, "targets": [None if v is None else float(v) for v in out]})
     return {"schema": GOLDEN_SCHEMA, "model": model, "table_digest": table.digest(),

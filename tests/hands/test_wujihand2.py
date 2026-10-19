@@ -5,6 +5,7 @@ import os
 import random
 import textwrap
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -24,11 +25,22 @@ from manipulation_kit.hands.wuji.wujihand2.retarget import (
     PINKY_SPREAD_RAD,
     SPREAD_RAD,
     JointMap,
-    RetargetConfig,
     Retargeter,
     config_for,
     default_joint_maps,
 )
+from manipulation_kit.hands.wuji.wujihand2.retarget import RetargetConfig as _Config
+
+# The tests in this file pin the flexion-space arithmetic, which is the
+# ``range`` mapping; tests/hands/test_wuji_absolute.py covers ``absolute``.
+
+
+def RetargetConfig(**kw):  # noqa: N802
+    return _Config(**{"mapping": "range", **kw})
+
+
+def _range_for(declaration, config=None):
+    return replace(config_for(declaration, config), mapping="range")
 
 DATA = Path(__file__).resolve().parents[1] / "data" / "gloves"
 FINGERS = ("index", "middle", "ring", "pinky")
@@ -112,7 +124,7 @@ def test_the_table_matches_both_vendor_urdfs():
 
 # ------------------------------------------------------------- the map --
 def test_the_defaults_follow_every_finger_joint_and_hold_the_thumb():
-    r = Retargeter()
+    r = Retargeter(RetargetConfig())
     assert DEFAULT_HOLD == (True,) * 4 + (False,) * 16
     assert set(r.required_channels()) == {
         f"{f}_{c}" for f in FINGERS for c in ("mp_pitch", "mp_swing", "pip_pitch", "dip_pitch")}
@@ -121,7 +133,7 @@ def test_the_defaults_follow_every_finger_joint_and_hold_the_thumb():
 
 
 def test_open_neutral_and_closed():
-    r = Retargeter()
+    r = Retargeter(RetargetConfig())
     channels = r.required_channels()
     open_ = r.joint_targets(_pose({c: 0.0 for c in channels}))
     closed = r.joint_targets(_pose({c: 1.0 for c in channels}))
@@ -183,7 +195,7 @@ def test_the_declared_spread_is_scaled_once_and_reaches_the_pinky_interval():
 
 
 def test_a_missing_input_holds_only_its_joint():
-    r = Retargeter()
+    r = Retargeter(RetargetConfig())
     values = {c: 0.5 for c in r.required_channels()}
     values["ring_pip_pitch"] = None
     values["index_mp_swing"] = None
@@ -258,7 +270,7 @@ def _declaration_and_frames():
 def test_a_litchibot_bind_is_refused_for_spread_and_accepted_with_it_held():
     declaration, frames = _declaration_and_frames()
     with pytest.raises(DeclarationError) as err:
-        declaration.check_drive_sources(Retargeter().required_channels())
+        declaration.check_drive_sources(Retargeter(RetargetConfig()).required_channels())
     refused = [line.split(" ")[0] for line in str(err.value).splitlines()]
     assert sorted(refused) == sorted(f"{f}_mp_swing" for f in FINGERS)
 
@@ -350,12 +362,12 @@ def _spread_declaration(middle="synthesized", swing="measured"):
 def test_a_glove_that_derives_the_middle_spread_binds_with_middle_s2_held():
     declaration = _spread_declaration()
     with pytest.raises(DeclarationError) as err:
-        declaration.check_drive_sources(Retargeter(config_for(declaration)).required_channels())
+        declaration.check_drive_sources(Retargeter(_range_for(declaration)).required_channels())
     refused = [line.split(" ")[0] for line in str(err.value).splitlines()]
     assert refused == ["middle_mp_swing"]
     hold = list(DEFAULT_HOLD)
     hold[AXIS_NAMES.index("middle_S2")] = True
-    r = Retargeter(config_for(declaration, RetargetConfig(hold=tuple(hold))))
+    r = Retargeter(_range_for(declaration, RetargetConfig(hold=tuple(hold))))
     declaration.check_drive_sources(r.required_channels())
     assert "middle_mp_swing" not in r.required_channels()
 
@@ -363,18 +375,18 @@ def test_a_glove_that_derives_the_middle_spread_binds_with_middle_s2_held():
 def test_config_for_does_not_loosen_what_cannot_be_driven():
     # uncalibrated swing: every spread still refused
     declaration = _spread_declaration(middle="uncalibrated", swing="uncalibrated")
-    r = Retargeter(config_for(declaration))
+    r = Retargeter(_range_for(declaration))
     with pytest.raises(DeclarationError, match="UNCALIBRATED"):
         declaration.check_drive_sources(r.required_channels())
     # a synthesized middle whose input is itself uncalibrated stays refused
     declaration = _spread_declaration(middle="missing-input")
-    r = Retargeter(config_for(declaration))
+    r = Retargeter(_range_for(declaration))
     with pytest.raises(DeclarationError) as err:
         declaration.check_drive_sources(r.required_channels())
     assert "ring_mp_swing" in str(err.value) and "UNCALIBRATED" in str(err.value)
     # holding the spreads still binds, config_for leaves held joints alone
     hold = tuple(_hold_thumb_and_spread())
-    cfg = config_for(declaration, RetargetConfig(hold=hold))
+    cfg = _range_for(declaration, RetargetConfig(hold=hold))
     declaration.check_drive_sources(Retargeter(cfg).required_channels())
     assert cfg.joints == RetargetConfig(hold=hold).joints
 
@@ -408,7 +420,7 @@ def _thumb_declaration(thumb="derived"):
 
 def test_a_glove_that_solves_the_thumb_releases_all_four_thumb_joints():
     declaration = _thumb_declaration()
-    cfg = config_for(declaration)
+    cfg = _range_for(declaration)
     thumb = [AXIS_NAMES.index(f"thumb_S{i}") for i in range(1, 5)]
     assert [cfg.hold[i] for i in thumb] == [False, False, False, False]
     assert {n: cfg.joints[n] for n in AXIS_NAMES[:4]} == {
@@ -420,7 +432,7 @@ def test_a_glove_that_solves_the_thumb_releases_all_four_thumb_joints():
 
     # a bind that holds the finger spreads is accepted, and its thumb follows
     hold = tuple(i in S2 for i in range(20))
-    cfg = config_for(declaration, RetargetConfig(hold=hold))
+    cfg = _range_for(declaration, RetargetConfig(hold=hold))
     r = Retargeter(cfg)
     declaration.check_drive_sources(r.required_channels())
 
@@ -458,7 +470,7 @@ def test_a_thumb_without_its_flexion_stays_held():
 
 def test_an_uncalibrated_thumb_keeps_the_default_hold():
     declaration = _thumb_declaration(thumb="uncalibrated")
-    cfg = config_for(declaration)
+    cfg = _range_for(declaration)
     assert cfg.hold == DEFAULT_HOLD
     assert cfg.joints == default_joint_maps()
     r = Retargeter(cfg)

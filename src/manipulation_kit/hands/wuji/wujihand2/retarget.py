@@ -80,6 +80,33 @@ joint                      default source                   interval (rad)
   away, and an open thumb is 147 mm away.
   The thumb's lateral swing (``thumb_cm_swing``) drives nothing.
 
+Absolute and range mapping
+--------------------------
+``RetargetConfig.mapping`` picks how a finger joint reads its channel:
+
+* ``"absolute"`` (the default): the glove's angle IS the joint angle, 1:1 in
+  radians. ``<finger>_S1/S3/S4`` read the finger's ``mp_pitch`` / ``pip_pitch``
+  / ``dip_pitch`` and ``<finger>_S2`` its ``mp_swing``; the output is the
+  angle less the joint's entry of :attr:`RetargetConfig.zero_rad` (default 0:
+  the glove driver's own re-zero already makes an open hand read 0), negated
+  where the joint map says ``invert``, clamped to the joint's limits. No
+  channel range is read and none is needed, so an operator calibration may
+  carry no range for the channels. A joint map's ``lo`` and ``hi`` are not
+  used. The angles are RADIANS, so this mode takes them as
+  :meth:`Retargeter.joint_targets`'s ``angles`` argument (a
+  :class:`~manipulation_kit.gloves.pose.HandAngles`); the flexion ``pose``
+  is then read only by the thumb.
+* ``"range"``: the table above, exactly: the glove's calibrated range is
+  stretched onto the joint's interval. A glove whose measured range is
+  narrower than the interval (a spread of 5 to 10 degrees onto ±0.648 rad)
+  multiplies its own error by the ratio, 2.4 to 7.3 times on the LitchiBot
+  glove's right hand; use it only for a glove whose range is the operator's
+  own full range of motion.
+
+The thumb follows the table above in both modes, from the flexion pose:
+its sources are opposition (``thumb_cm_yaw``, a fraction of the wearer's
+maximum), not an angle, so there is no radian to pass 1:1.
+
 Sides: the vendor's left and right URDFs share limits and anatomical
 directions (:mod:`.axes`), so this one map serves both hands. Whether the
 LitchiBot glove's LEFT hand reports swing with the same anatomical sign as
@@ -97,6 +124,7 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import ClassVar, Dict, List, Optional, Tuple
 
+from ....gloves.pose import HandPose
 from ...joints import JointSpec
 from ...robotera.xhand1.retarget import JointMap
 from ...robotera.xhand1.retarget import RetargetConfig as _XhandConfig
@@ -108,6 +136,9 @@ SPREAD_RAD = 0.648
 
 #: The little finger's spread interval (see the module docstring).
 PINKY_SPREAD_RAD = 0.45
+
+#: The values of :attr:`RetargetConfig.mapping`.
+MAPPINGS = ("absolute", "range")
 
 #: The thumb's maps (see the module docstring): joint -> (channel, interval max).
 THUMB_MAPS: Dict[str, Tuple[str, float]] = {
@@ -152,9 +183,22 @@ class RetargetConfig(_XhandConfig):
     hold: Tuple[bool, ...] = DEFAULT_HOLD
     #: Per joint, SDK order: the angle a held joint is commanded to.
     hold_rad: Tuple[float, ...] = (0.0,) * NUM_AXES
+    #: ``"absolute"`` (glove radians 1:1) or ``"range"`` (calibrated range
+    #: stretched onto the joint's interval); see the module docstring.
+    mapping: str = "absolute"
+    #: Per joint, SDK order: radians subtracted from the glove's angle before
+    #: it is applied, in absolute mode only.
+    zero_rad: Tuple[float, ...] = (0.0,) * NUM_AXES
 
     def __post_init__(self):
         super().__post_init__()
+        if self.mapping not in MAPPINGS:
+            raise ValueError(f"mapping must be one of {MAPPINGS}, got {self.mapping!r}")
+        if len(self.zero_rad) != len(self.JOINTS):
+            raise ValueError(f"zero_rad needs {len(self.JOINTS)} entries, "
+                             f"got {len(self.zero_rad)}")
+        if not all(math.isfinite(v) for v in self.zero_rad):
+            raise ValueError("zero_rad must be finite")
         for what, values in (("hold", self.hold), ("hold_rad", self.hold_rad)):
             if len(values) != len(self.JOINTS):
                 raise ValueError(f"{what} needs {len(self.JOINTS)} entries, got {len(values)}")
@@ -195,13 +239,79 @@ class Retargeter(_XhandRetargeter):
                     out.append(ch)
         return tuple(out)
 
-    def joint_targets(self, pose) -> List[Optional[float]]:
-        """One canonical hand pose → twenty ``rad`` targets or ``None``."""
+    _plain = False
+
+    def _smooth(self, targets):
+        return targets if self._plain else super()._smooth(targets)
+
+    def flex_map(self) -> "Retargeter":
+        """This map in ``range`` mode (``self`` when it already is): the
+        flexion-space arithmetic :meth:`table_rows` and the golden vectors
+        describe."""
+        if self.cfg.mapping == "range":
+            return self
+        return Retargeter(replace(self.cfg, mapping="range"))
+
+    def __call__(self, flex):
+        """Version-1 seam: flexion in, radians out, always the range map."""
+        return self.flex_map()._call_range(flex)
+
+    def _call_range(self, flex):
+        return super().__call__(flex)
+
+    def joint_targets(self, pose, angles=None) -> List[Optional[float]]:
+        """One canonical hand pose → twenty ``rad`` targets or ``None``.
+
+        ``range`` mapping reads ``pose`` (flexion in [0, 1]) only. ``absolute``
+        mapping reads the thumb from ``pose`` and every other joint from
+        ``angles``, the glove's radians (anything with ``get(channel)`` in
+        radians, such as :class:`~manipulation_kit.gloves.pose.HandAngles`);
+        calling it without ``angles`` is an error, not a hand held open."""
+        if self.cfg.mapping == "range":
+            return self._range_targets(pose)
+        if angles is None:
+            raise ValueError("absolute mapping reads the glove's angles in radians: "
+                             "pass angles=HandAngles (the flexion pose has no radians)")
+        if isinstance(angles, HandPose):
+            raise TypeError("angles must be radians (HandAngles); got a flexion HandPose")
+        self._plain = True  # the thumb is read unsmoothed; the whole row is smoothed below
+        try:
+            thumb = {ch for spec, held in zip(self.JOINTS, self.cfg.hold)
+                     if not held and spec.name.startswith("thumb_")
+                     for ch, w in self.cfg.joints[spec.name].sources if w > 0}
+            flex = self._range_targets(pose if pose is not None else {}, thumb)
+        finally:
+            self._plain = False
+        out: List[Optional[float]] = []
+        for i, (spec, held) in enumerate(zip(self.JOINTS, self.cfg.hold)):
+            if held or spec.name.startswith("thumb_"):
+                out.append(flex[i])
+                continue
+            m = self.cfg.joints[spec.name]
+            total = acc = 0.0
+            for ch, w in m.sources:
+                if w <= 0:
+                    continue
+                v = angles.get(ch)
+                if v is None or not math.isfinite(v):
+                    acc = None
+                    break
+                acc += w * v
+                total += w
+            if acc is None:
+                out.append(None)
+                continue
+            rad = acc / total - self.cfg.zero_rad[i]
+            out.append(spec.clamp(-rad if m.invert else rad))
+        return self._smooth(out)
+
+    def _range_targets(self, pose, channels=None) -> List[Optional[float]]:
         # A held joint reads nothing: its channels are never asked of the
         # pose, so a calibration with no range for them (a glove that
         # declares finger swing uncalibrated, with the spreads held) is not
         # refused for a channel nothing drives.
-        out = super().joint_targets(_Only(pose, self.required_channels()))
+        out = super().joint_targets(
+            _Only(pose, self.required_channels() if channels is None else channels))
         for i, held in enumerate(self.cfg.hold):
             if held:
                 out[i] = float(self.cfg.hold_rad[i])
