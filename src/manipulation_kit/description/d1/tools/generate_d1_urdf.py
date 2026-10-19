@@ -170,9 +170,11 @@ ARM_PLATE_CHECK = {"rarmbase_Link": ("L", (0.0, -0.037, 0.50)),
                    "larmbase_Link": ("R", (0.0, 0.037, 0.50))}
 ARM_PLATE_TOLERANCE_M = 0.005
 
-#: Every file this generator owns: name -> (wholebody?, end effector id).
+#: Every file this generator owns:
+#: name -> (body?, wholebody?, end effector id, visual meshes?).
 #: Regenerate them all with no arguments; `--only <name>` writes just one.
-#: (wholebody?, end effector id, visual meshes?)
+#: ``body`` False is a robot without the D1 body: the two arms on a stand
+#: (see STAND below).
 OUTPUTS = {
     # The GUARD model: primitives only and NO meshes at all. pyguard parses it
     # directly and has to load on the robot with zero assets, the C++
@@ -180,13 +182,20 @@ OUTPUTS = {
     # because that is what all of them were built against — swapping it is a
     # safety-behaviour change, not a regeneration. This is the deliberate
     # lightweight variant; it is not the "primitive version" being retired.
-    "d1.urdf": (False, "omakase/yubi", False),
+    "d1.urdf": (True, False, "omakase/yubi", False),
     # Whole body with the base, lift and neck as real joints, wearing the YUBI
     # hand, with real CAD visuals.
-    "d1_wholebody.urdf": (True, "omakase/yubi", True),
+    "d1_wholebody.urdf": (True, True, "omakase/yubi", True),
     # Same again wearing the D1 stock parallel gripper. THE authoritative
     # whole-body asset: what d1-isaaclab and anything else should reference.
-    "d1_wholebody_gripper.urdf": (True, "d1/parallel_gripper", True),
+    "d1_wholebody_gripper.urdf": (True, True, "d1/parallel_gripper", True),
+    # The arm + end-effector bench rig, robot model `arm-ee-bench` (see
+    # manipulation_kit.description.robots): the same two D1 arms at the same
+    # mounts, on a stand, with no chassis, lift, torso or head, each wearing a
+    # Wuji Hand 2. The guard model (primitives, no meshes) and the drawn
+    # model (the arms' CAD as visuals); both carry the hand as its envelope.
+    "arm_ee_bench.urdf": (False, False, "wuji/wujihand2", False),
+    "arm_ee_bench_visual.urdf": (False, False, "wuji/wujihand2", True),
 }
 
 # --------------------------------------------------------------------------
@@ -372,13 +381,36 @@ HAND_ENVELOPE = [
 ]
 
 
-def hand_envelope(side, indent="  "):
+#: The envelope of a five-finger hand nobody has measured: one capsule along
+#: the approach axis from 0.04 to 0.20 m, radius 0.07 m (a palm up to 140 mm
+#: across, reaching 270 mm from the flange). The same capsule as
+#: manipulation_kit.hands.catalog.FIVE_FINGER_DEFAULT; a test holds them
+#: together. NOT measured on any hand.
+FIVE_FINGER_ENVELOPE = [
+    ("hand", (0.0, 0.0, 0.04), (0.0, 0.0, 0.20), 0.07),
+]
+
+#: Which envelope a guard model hangs on each end effector's flange. The YUBI
+#: guard model wears the gripper's: that is the tool the fleet wears.
+ENVELOPES = {
+    "omakase/yubi": HAND_ENVELOPE,
+    "d1/parallel_gripper": HAND_ENVELOPE,
+    "wuji/wujihand2": FIVE_FINGER_ENVELOPE,
+}
+
+
+def hand_envelope(side, indent="  ", capsules=HAND_ENVELOPE):
     """The guard model's hand envelope on arm ``side`` (see HAND_ENVELOPE)."""
     (fx, fr) = GRIPPER_FLANGE[side]
     name = f"hand_envelope_{side}"
-    s = (f"\n{indent}<!-- Hand envelope on arm {side}: the parallel gripper and its\n"
-         f"{indent}     wrist-camera plate as capsules, for the guard's body, chest and\n"
-         f"{indent}     other-arm checks (HAND_ENVELOPE in the generator). -->\n")
+    if capsules is HAND_ENVELOPE:
+        s = (f"\n{indent}<!-- Hand envelope on arm {side}: the parallel gripper and its\n"
+             f"{indent}     wrist-camera plate as capsules, for the guard's body, chest and\n"
+             f"{indent}     other-arm checks (HAND_ENVELOPE in the generator). -->\n")
+    else:
+        s = (f"\n{indent}<!-- Hand envelope on arm {side}: a five-finger hand as one\n"
+             f"{indent}     conservative capsule, not measured on the hand, for the guard's\n"
+             f"{indent}     other-arm checks (FIVE_FINGER_ENVELOPE in the generator). -->\n")
     s += (f"{indent}<joint name=\"{name}_mount\" type=\"fixed\">\n"
           f"{indent}  <origin xyz=\"{_xyz(fx)}\" rpy=\"{_xyz(fr)}\"/>\n"
           f"{indent}  <parent link=\"TCP_Link_{side}\"/>\n"
@@ -386,7 +418,7 @@ def hand_envelope(side, indent="  "):
           f"{indent}</joint>\n")
     link = frame_link(name, indent)
     caps = "".join(capsule_collision(f"{name}_capsule_{part}", a, b, r, indent + "  ")
-                   for part, a, b, r in HAND_ENVELOPE)
+                   for part, a, b, r in capsules)
     return s + link.replace(f"{indent}</link>\n", caps + f"{indent}</link>\n")
 
 
@@ -1551,7 +1583,8 @@ def arm_mesh_visual(link, side, meshes):
                             _mat(), ARM_GREY, "d1_arm_shell")
 
 
-def arm(side, end_effector, meshes=False, cameras=False, envelope=False):
+def arm(side, end_effector, meshes=False, cameras=False, envelope=False,
+        parent="torso_column"):
     s = f"\n  <!-- ===== Arm {side} "
     s += ("(SDK ArmSide::A, physical LEFT, +y)" if side == "R"
           else "(SDK ArmSide::B, physical RIGHT, -y)")
@@ -1559,7 +1592,7 @@ def arm(side, end_effector, meshes=False, cameras=False, envelope=False):
     (mx, mr) = MOUNTS[side]
     s += (f"  <joint name=\"mount_{side}\" type=\"fixed\">\n"
           f"    <origin xyz=\"{_xyz(mx)}\" rpy=\"{_xyz(mr)}\"/>\n"
-          f"    <parent link=\"torso_column\"/>\n"
+          f"    <parent link=\"{parent}\"/>\n"
           f"    <child link=\"Base_{side}\"/>\n"
           f"  </joint>\n")
     vendor = vendor_arm_inertials(side)
@@ -1588,7 +1621,8 @@ def arm(side, end_effector, meshes=False, cameras=False, envelope=False):
           f"    <child link=\"TCP_Link_{side}\"/>\n"
           f"  </joint>\n")
     s += END_EFFECTORS[end_effector](side, meshes, cameras)
-    return s + (hand_envelope(side) if envelope else "")
+    return s + (hand_envelope(side, capsules=ENVELOPES[end_effector])
+                if envelope else "")
 
 
 def yubi(side, meshes=False, cameras=False):
@@ -1858,10 +1892,50 @@ def gripper_camera_plate(side, meshes=False, cameras=False):
 #: consumer already addresses a hand (``get_hand`` / ``get_tool_config`` /
 #: d1-isaaclab ``get_end_effector``). The stock gripper is one instance of the
 #: abstraction, not a special case.
+def wuji_hand2(side, meshes=False, cameras=False):
+    """Wuji Hand 2 on arm ``side``: its mount frame only.
+
+    This package holds no geometry of the hand (no vendor CAD, no collision
+    model) and no measurement of its adapter, so the frame sits on the flange
+    the gripper uses (GRIPPER_FLANGE) and the hand's shape enters the model
+    only as its envelope (FIVE_FINGER_ENVELOPE, through ``arm(envelope=True)``).
+    """
+    (fx, fr) = GRIPPER_FLANGE[side]
+    name = f"wujihand2_{side}"
+    s = (f"\n  <!-- Wuji Hand 2 on arm {side}: a mount frame on the flange; no hand\n"
+         f"       geometry and no measured adapter offset exist in this package. -->\n")
+    s += (f"  <joint name=\"{name}_mount\" type=\"fixed\">\n"
+          f"    <origin xyz=\"{_xyz(fx)}\" rpy=\"{_xyz(fr)}\"/>\n"
+          f"    <parent link=\"TCP_Link_{side}\"/>\n"
+          f"    <child link=\"{name}\"/>\n"
+          f"  </joint>\n")
+    return s + frame_link(name)
+
+
 END_EFFECTORS = {
     "omakase/yubi": yubi,
     "d1/parallel_gripper": parallel_gripper,
+    "wuji/wujihand2": wuji_hand2,
 }
+
+
+# --------------------------------------------------------------------------
+# STAND (robot model `arm-ee-bench`): the two D1 arms without the D1 body.
+#
+# The root `dual_base` is the D1's dual_base frame and `stand` is fixed on it
+# with no offset, so each arm hangs at exactly the D1's MOUNTS and every arm
+# number (joints, limits, capsules, the HOME pose) is the D1's. The stand's
+# own shape is not measured: it carries no collision geometry, so nothing
+# keeps an arm off the stand or the table it stands on.
+# --------------------------------------------------------------------------
+def stand():
+    return ("\n  <!-- Stand: the arms' mount at the D1's dual_base frame; no body,\n"
+            "       no head, no chassis, no measured stand geometry. -->\n"
+            '  <joint name="stand_mount" type="fixed">\n'
+            '    <origin xyz="0 0 0" rpy="0 0 0"/>\n'
+            '    <parent link="dual_base"/>\n'
+            '    <child link="stand"/>\n'
+            "  </joint>\n" + frame_link("stand"))
 
 
 # --------------------------------------------------------------------------
@@ -1993,22 +2067,36 @@ def torso_cameras():
 
 
 def main(filename="d1.urdf", out_dir=None, revision=None):
-    wholebody, end_effector, meshes = OUTPUTS[filename]
+    body, wholebody, end_effector, meshes = OUTPUTS[filename]
     revision = revision or default_hardware_revision()
     robot = os.path.splitext(filename)[0]
     u = ['<?xml version="1.0" encoding="utf-8"?>']
     u.append("<!-- AUTO-GENERATED by description/d1/tools/generate_d1_urdf.py — edit the")
-    u.append("     generator, not this file.  Full-body D1 COLLISION model: primitives only")
-    u.append("     (boxes/cylinders/spheres), no meshes.  See the generator header for the")
-    u.append("     frame convention and the provenance of every number.")
+    if body:
+        u.append("     generator, not this file.  Full-body D1 COLLISION model: primitives only")
+        u.append("     (boxes/cylinders/spheres), no meshes.  See the generator header for the")
+        u.append("     frame convention and the provenance of every number.")
+    else:
+        u.append("     generator, not this file.  The two D1 arms on a stand (robot model")
+        u.append("     arm-ee-bench), no D1 body: see STAND in the generator.  COLLISION is")
+        u.append("     primitives only.")
     u.append(f"     END EFFECTOR: {end_effector}.")
-    u.append(f"     HARDWARE REVISION: {revision} (head-camera mount tilt "
-             f"{head_camera_tilt_deg(revision):g} deg). -->")
+    if body:
+        u.append(f"     HARDWARE REVISION: {revision} (head-camera mount tilt "
+                 f"{head_camera_tilt_deg(revision):g} deg). -->")
+    else:
+        u[-1] += " -->"
     u.append(f'<robot name="{robot}">')
     if wholebody:
         u.append(wholebody_root())
     else:
         u.append('  <link name="dual_base"/>')
+
+    if not body:
+        u.append(stand())
+        u.append(arm("R", end_effector, meshes, envelope=True, parent="stand"))
+        u.append(arm("L", end_effector, meshes, envelope=True, parent="stand"))
+        return _write(filename, robot, u, end_effector, out_dir)
 
     # torso
     u.append("\n  <!-- Torso: measured boxes from the D1 CAD STEP (2026-07-01). -->")
@@ -2056,6 +2144,10 @@ def main(filename="d1.urdf", out_dir=None, revision=None):
     # carry the real hand's own collision geometry.
     u.append(arm("R", end_effector, meshes, cameras=wholebody, envelope=not wholebody))
     u.append(arm("L", end_effector, meshes, cameras=wholebody, envelope=not wholebody))
+    return _write(filename, robot, u, end_effector, out_dir)
+
+
+def _write(filename, robot, u, end_effector, out_dir):
     u.append("</robot>")
     text = "\n".join(u) + "\n"
 

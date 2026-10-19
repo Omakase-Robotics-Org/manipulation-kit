@@ -1,4 +1,4 @@
-"""The D1 description bundle: one versioned, digested copy of the robot's shape.
+"""The description bundle: one versioned, digested copy of a robot's shape.
 
 Several programs need the same facts about the D1 — the daemon's motion guard,
 a planner, a 3D view, a simulator — and each used to take its own copy of the
@@ -14,6 +14,12 @@ What is in it (bundle schema ``manipulation_kit.description_bundle/1``)
 ==========================================  ==================================
 path                                        what it is
 ==========================================  ==================================
+``robot.json``                              which robot model the bundle
+                                            describes (schema
+                                            ``manipulation_kit.robot_model/1``):
+                                            its URDFs, its guard profile, its
+                                            devices, each arm's joints and
+                                            end effector
 ``kinematics/d1.urdf``                      the mesh-free whole-body model the
                                             motion guard parses (kinematics
                                             plus collision primitives)
@@ -36,6 +42,13 @@ path                                        what it is
                                             reference, with its licence class
 ==========================================  ==================================
 
+That table is the ``d1`` model's bundle. One bundle is built per robot model
+(:mod:`manipulation_kit.description.robots`): another model's bundle has the
+same layout with its own URDFs (``robot.json``'s ``urdf.guard`` and
+``urdf.view``), its own collision model and its own guard profile, and its
+own lock. ``mkit-description --model <id>`` selects one; ``d1`` is the
+default.
+
 Every file is GENERATED from this package's own single sources (the URDF
 generator's output, ``config/``, the guard's defaults); nothing in a bundle is
 authored by hand. The CAD meshes themselves are not in the bundle:
@@ -56,8 +69,9 @@ digest — depend only on the content.
 A semantic version of the CONTENT, separate from the package version: the
 package version moves with every change to the code, the description version
 only when a bundled byte changes. It is recorded, with the digest it names, in
-the committed lock file ``description/bundle.lock.json``; a test rebuilds the
-bundle and fails when its digest is not the locked one. To change the
+the committed lock file ``description/bundle.lock.json`` (``d1``) or
+``description/bundle.lock.<model>.json`` (any other model); a test rebuilds
+each bundle and fails when its digest is not the locked one. To change the
 description: change its source, then ``mkit-description lock
 --description-version X.Y.Z`` (refused when the digest changed and the version
 did not, or when a version is reused for another digest).
@@ -76,21 +90,40 @@ from typing import Dict, List, Mapping, Optional, Tuple
 
 from .. import assets
 from . import ROOT
+from .robots import DEFAULT_MODEL, ROBOT_MODELS, robot_model
 
 #: The bundle format this module writes and reads.
 BUNDLE_SCHEMA = "manipulation_kit.description_bundle/1"
 #: The hand catalog's bundle path; a bundle without it is refused.
 HAND_CATALOG = "hands/catalog.json"
-#: Files every bundle must list (besides the per-profile and tool files).
+#: The robot model statement every bundle carries.
+ROBOT_JSON = "robot.json"
+#: Files every ``d1`` bundle must list (besides the per-profile and tool
+#: files); :func:`required_files` names any model's.
 REQUIRED_FILES = ("kinematics/d1.urdf", "collision/collision.json",
-                  "guard/profile.d1.json", HAND_CATALOG)
+                  "guard/profile.d1.json", HAND_CATALOG, ROBOT_JSON)
+
+
+def required_files(model: str = DEFAULT_MODEL) -> tuple:
+    """The files a bundle of robot model ``model`` must list."""
+    m = robot_model(model)
+    return ("kinematics/" + m.guard_urdf, "collision/collision.json",
+            f"guard/profile.{m.guard_profiles[0]}.json", HAND_CATALOG, ROBOT_JSON)
+
 
 #: The lock file's format.
 LOCK_SCHEMA = "manipulation_kit.description_bundle_lock/1"
-#: The committed lock: the description version and the digest it names.
+#: The committed lock of the ``d1`` bundle: the description version and the
+#: digest it names (:func:`lock_path` names any model's).
 LOCK_PATH = ROOT / "bundle.lock.json"
-#: The robot this bundle describes.
-ROBOT = "d1"
+#: The robot model a bundle describes when none is named.
+ROBOT = DEFAULT_MODEL
+
+
+def lock_path(model: str = DEFAULT_MODEL) -> Path:
+    """The committed lock of robot model ``model``'s bundle."""
+    robot_model(model)
+    return LOCK_PATH if model == DEFAULT_MODEL else ROOT / f"bundle.lock.{model}.json"
 #: The manifest's file name inside a bundle directory (not digested).
 MANIFEST_NAME = "manifest.json"
 
@@ -195,6 +228,15 @@ GUARD_PROFILES = {
     "sim": {"selected_by": {"backend": "sim", "record": None},
             "summary": "the simulated D1: identical to d1",
             "changes": {}},
+    # The arm + end-effector bench rig as a robot model of its own: there is
+    # no body in its URDF, so the body checks have nothing to judge, and the
+    # chest keep-out (fixed boxes where a D1's torso is) is off. The arm-arm
+    # and same-arm checks and every margin are the robot's. Selected by the
+    # model (robot.json), on any backend.
+    "arm-ee-bench": {"selected_by": {"backend": None, "record": None},
+                     "summary": "two D1 arms on a stand with no D1 body: no "
+                                "body to keep out, arm checks as on the robot",
+                     "changes": {"chest_keepout": None}},
 }
 
 #: The profile file format.
@@ -307,20 +349,23 @@ def visual_refs(urdfs: Mapping[str, Path]) -> dict:
             "meshes": meshes}
 
 
-def bundle_files() -> Dict[str, bytes]:
-    """The bundle's files, bundle path -> bytes, built from this package."""
-    guard_urdf = ROOT / "d1" / "d1.urdf"
-    wholebody = ROOT / "d1" / "d1_wholebody_gripper.urdf"
+def bundle_files(model: str = DEFAULT_MODEL) -> Dict[str, bytes]:
+    """Robot model ``model``'s bundle files, bundle path -> bytes, built from
+    this package."""
+    m = robot_model(model)
+    guard_urdf = ROOT / "d1" / m.guard_urdf
+    view_urdf = ROOT / "d1" / m.view_urdf
+    guard_path, view_path = "kinematics/" + m.guard_urdf, "kinematics/" + m.view_urdf
     files: Dict[str, bytes] = {
-        "kinematics/d1.urdf": guard_urdf.read_bytes(),
-        "kinematics/d1_wholebody_gripper.urdf": wholebody.read_bytes(),
+        guard_path: guard_urdf.read_bytes(),
+        view_path: view_urdf.read_bytes(),
         "collision/collision.json": _json_bytes(collision_model(guard_urdf)),
         "poses/home_pose.json": (_CONFIG / "home_pose.json").read_bytes(),
         "visual/visual.json": _json_bytes(visual_refs({
-            "kinematics/d1.urdf": guard_urdf,
-            "kinematics/d1_wholebody_gripper.urdf": wholebody})),
+            guard_path: guard_urdf, view_path: view_urdf})),
+        ROBOT_JSON: _json_bytes(m.document()),
     }
-    for name in GUARD_PROFILES:
+    for name in m.guard_profiles:
         files[f"guard/profile.{name}.json"] = _json_bytes(guard_profile(name))
     for p in sorted((_CONFIG / "tool_configs").glob("*.json")):
         files[f"end_effectors/tool_configs/{p.name}"] = p.read_bytes()
@@ -340,9 +385,10 @@ def digest_of(hashes: Mapping[str, str]) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def digest() -> str:
-    """The digest of the bundle this package builds now."""
-    return digest_of(file_hashes(bundle_files()))
+def digest(model: str = DEFAULT_MODEL) -> str:
+    """The digest of robot model ``model``'s bundle as this package builds it
+    now."""
+    return digest_of(file_hashes(bundle_files(model)))
 
 
 def read_lock(path: Path = LOCK_PATH) -> dict:
@@ -352,34 +398,37 @@ def read_lock(path: Path = LOCK_PATH) -> dict:
     return lock
 
 
-def description_version() -> str:
-    """The locked ``description_version`` of this package's bundle."""
-    return read_lock()["description_version"]
+def description_version(model: str = DEFAULT_MODEL) -> str:
+    """The locked ``description_version`` of robot model ``model``'s bundle."""
+    return read_lock(lock_path(model))["description_version"]
 
 
 def manifest(files: Optional[Mapping[str, bytes]] = None,
-             version: Optional[str] = None) -> dict:
-    """The ``manifest.json`` of the bundle built from ``files``."""
-    files = bundle_files() if files is None else files
+             version: Optional[str] = None,
+             model: str = DEFAULT_MODEL) -> dict:
+    """The ``manifest.json`` of robot model ``model``'s bundle built from
+    ``files``."""
+    files = bundle_files(model) if files is None else files
     hashes = file_hashes(files)
     return {
         "schema": BUNDLE_SCHEMA,
-        "model": ROBOT,
-        "description_version": version or description_version(),
+        "model": model,
+        "description_version": version or description_version(model),
         "digest": digest_of(hashes),
         "files": [{"path": p, "sha256": hashes[p], "bytes": len(files[p])}
                   for p in sorted(files)],
     }
 
 
-def write_bundle(out_dir, *, force: bool = False) -> dict:
-    """Write the bundle into ``out_dir`` (created; must be empty unless
-    ``force``) and return its manifest."""
+def write_bundle(out_dir, *, force: bool = False,
+                 model: str = DEFAULT_MODEL) -> dict:
+    """Write robot model ``model``'s bundle into ``out_dir`` (created; must be
+    empty unless ``force``) and return its manifest."""
     out = Path(out_dir)
     if out.exists() and any(out.iterdir()) and not force:
         raise BundleError([f"{out} is not empty (pass force to overwrite)"])
-    files = bundle_files()
-    man = manifest(files)
+    files = bundle_files(model)
+    man = manifest(files, model=model)
     for path, data in files.items():
         dest = out / path
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -417,7 +466,12 @@ def verify_bundle(bundle_dir) -> List[str]:
                if p.is_file()} - {MANIFEST_NAME}
     for extra in sorted(present - set(listed)):
         problems.append(f"{extra}: present but not in the manifest")
-    for required in REQUIRED_FILES:
+    model = man.get("model")
+    if model not in ROBOT_MODELS:
+        problems.append(f"model {model!r} is not a known robot model "
+                        f"({', '.join(sorted(ROBOT_MODELS))})")
+        model = DEFAULT_MODEL
+    for required in required_files(model):
         if required not in listed:
             problems.append(f"{required}: required but not in the manifest")
     if digest_of(listed) != man.get("digest"):
@@ -440,6 +494,22 @@ class Bundle:
     @property
     def description_version(self) -> str:
         return self.manifest["description_version"]
+
+    @property
+    def model(self) -> str:
+        """The robot model the bundle describes."""
+        return self.manifest["model"]
+
+    def robot(self) -> dict:
+        """``robot.json``, schema-checked and naming the manifest's model."""
+        from .robots import ROBOT_SCHEMA  # noqa: PLC0415
+
+        doc = self.read_json(ROBOT_JSON)
+        if doc.get("schema") != ROBOT_SCHEMA or doc.get("model") != self.model:
+            raise BundleError([f"{ROBOT_JSON}: schema {doc.get('schema')!r} "
+                               f"model {doc.get('model')!r} is not "
+                               f"{ROBOT_SCHEMA!r} {self.model!r}"])
+        return doc
 
     def path(self, bundle_path: str) -> Path:
         if bundle_path not in {e["path"] for e in self.manifest["files"]}:
@@ -486,11 +556,14 @@ def lock_problems(lock: dict, built_digest: str) -> List[str]:
     return problems
 
 
-def update_lock(new_version: Optional[str], path: Path = LOCK_PATH) -> dict:
-    """Record the current digest in the lock under ``new_version``."""
-    built = digest()
+def update_lock(new_version: Optional[str], path: Optional[Path] = None,
+                model: str = DEFAULT_MODEL) -> dict:
+    """Record robot model ``model``'s current digest in its lock under
+    ``new_version``."""
+    path = lock_path(model) if path is None else path
+    built = digest(model)
     lock = read_lock(path) if Path(path).exists() else {
-        "schema": LOCK_SCHEMA, "model": ROBOT, "history": {}}
+        "schema": LOCK_SCHEMA, "model": model, "history": {}}
     history = dict(lock.get("history", {}))
     version = new_version or lock.get("description_version")
     if version is None:
@@ -504,7 +577,7 @@ def update_lock(new_version: Optional[str], path: Path = LOCK_PATH) -> dict:
             raise BundleError([f"this content is already description_version {v}"])
     history[version] = built
     lock.update({"description_version": version, "digest": built,
-                 "files": file_hashes(bundle_files()), "history": history})
+                 "files": file_hashes(bundle_files(model)), "history": history})
     Path(path).write_bytes(_json_bytes(lock))
     return lock
 
@@ -518,9 +591,14 @@ def main(argv=None) -> int:
     mkit-description check                        the build matches the lock
     mkit-description verify DIR [--expect-digest D]   check a bundle directory
     mkit-description lock --description-version V     record a new digest
+    mkit-description models                       list the robot models
+
+    ``--model <id>`` (before the command) selects the robot model; ``d1`` by
+    default. ``check`` checks every model's bundle against its lock.
     """
     ap = argparse.ArgumentParser(prog="mkit-description",
                                  description=main.__doc__.split("\n")[0])
+    ap.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(ROBOT_MODELS))
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="write the bundle into a directory")
     b.add_argument("--out", required=True)
@@ -532,22 +610,29 @@ def main(argv=None) -> int:
     v.add_argument("--expect-digest", default=None)
     lk = sub.add_parser("lock", help="record the current digest (maintainers)")
     lk.add_argument("--description-version", default=None)
+    sub.add_parser("models", help="list the robot models")
     args = ap.parse_args(argv)
+    model = args.model
 
     try:
         if args.cmd == "build":
-            man = write_bundle(args.out, force=args.force)
+            man = write_bundle(args.out, force=args.force, model=model)
             print(f"wrote {len(man['files'])} files to {args.out}: "
                   f"description_version {man['description_version']} {man['digest']}")
         elif args.cmd == "digest":
-            print(f"{description_version()} {digest()}")
+            print(f"{description_version(model)} {digest(model)}")
         elif args.cmd == "check":
-            problems = lock_problems(read_lock(), digest())
-            for p in problems:
-                print(f"mkit-description: {p}", file=sys.stderr)
-            if problems:
+            failed = False
+            for name in sorted(ROBOT_MODELS):
+                problems = lock_problems(read_lock(lock_path(name)), digest(name))
+                for p in problems:
+                    print(f"mkit-description: {name}: {p}", file=sys.stderr)
+                failed = failed or bool(problems)
+                if not problems:
+                    print(f"{name}: bundle matches the lock: "
+                          f"{description_version(name)} {digest(name)}")
+            if failed:
                 return 1
-            print(f"bundle matches the lock: {description_version()} {digest()}")
         elif args.cmd == "verify":
             problems = verify_bundle(args.dir)
             if not problems and args.expect_digest:
@@ -560,9 +645,12 @@ def main(argv=None) -> int:
                 return 1
             print(f"{args.dir}: intact")
         elif args.cmd == "lock":
-            lock = update_lock(args.description_version)
+            lock = update_lock(args.description_version, model=model)
             print(f"locked description_version {lock['description_version']} "
                   f"{lock['digest']}")
+        elif args.cmd == "models":
+            for name, m in sorted(ROBOT_MODELS.items()):
+                print(f"{name}\t{m.summary}")
     except BundleError as exc:
         for p in exc.problems:
             print(f"mkit-description: {p}", file=sys.stderr)

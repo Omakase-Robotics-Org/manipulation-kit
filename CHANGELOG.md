@@ -6,6 +6,38 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.6 — unreleased
+
+**Robot models: the bench rig is a model of its own, not a D1 profile.**
+New `manipulation_kit.description.robots` registers the robot models by
+name: `d1` (the D1 robot) and `arm-ee-bench` (two D1 arms on a stand, with
+no chassis, lift, torso or head, each wearing a Wuji Hand 2). One
+description bundle is built per model; every bundle carries `robot.json`
+(schema `manipulation_kit.robot_model/1`: the model, its guard and view
+URDFs, its guard profile, its devices, each arm's joints, URDF suffix and
+end effector). `mkit-description --model <id>` builds, digests and locks a
+model's bundle; `mkit-description check` checks every model against its
+lock; `mkit-description models` lists them.
+
+- `d1`: the bundle gains `robot.json`; nothing else changes.
+  `description_version` moves 1.2.0 -> 1.3.0.
+- `arm-ee-bench`: new bundle, `description_version` 1.0.0, lock
+  `description/bundle.lock.arm-ee-bench.json`. Its URDFs are generated
+  (`arm_ee_bench.urdf`, the guard model; `arm_ee_bench_visual.urdf`, the
+  drawn model, also `mkit-urdf export arm-ee-bench`): the D1's arms at the
+  D1's mounts on a `stand` frame, the hand as the catalog's unmeasured
+  five-finger envelope on each flange. Its guard profile `arm-ee-bench` is
+  the D1's with the chest keep-out off; the body check has no body to
+  judge; arm-arm and same-arm checks and every margin are the D1's.
+- `d1-bench` stays in the `d1` bundle for daemons that still select it by
+  their record; `arm-ee-bench` replaces it.
+- `verify_bundle` reads the manifest's `model` and refuses an unknown one;
+  the files it requires are the model's (`required_files(model)`).
+
+Not measured: the stand's shape (no geometry keeps an arm off the stand),
+the Wuji Hand 2 adapter offset (its frame sits on the flange) and the hand's
+own shape (only the conservative envelope).
+
 ## 0.22.4 — unreleased
 
 **The description bundle carries the hand catalog.** The bundle gains

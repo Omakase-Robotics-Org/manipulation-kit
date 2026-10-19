@@ -33,12 +33,19 @@ def _guard(name):
     return MotionGuard(**db.motion_guard_kwargs(db.guard_profile(name)))
 
 
-def test_the_bundle_carries_every_profile():
-    files = db.bundle_files()
-    for name in db.GUARD_PROFILES:
-        prof = json.loads(files[f"guard/profile.{name}.json"])
-        assert prof == db.guard_profile(name)
-        assert prof["schema"] == db.GUARD_PROFILE_SCHEMA
+def test_each_model_s_bundle_carries_its_profiles():
+    carried = set()
+    for model, m in db.ROBOT_MODELS.items():
+        files = db.bundle_files(model)
+        for name in m.guard_profiles:
+            prof = json.loads(files[f"guard/profile.{name}.json"])
+            assert prof == db.guard_profile(name)
+            assert prof["schema"] == db.GUARD_PROFILE_SCHEMA
+            carried.add(name)
+        others = {p for p in files if p.startswith("guard/")} - {
+            f"guard/profile.{n}.json" for n in m.guard_profiles}
+        assert not others, (model, others)
+    assert carried == set(db.GUARD_PROFILES)
 
 
 def test_d1_builds_the_default_guard():
@@ -58,9 +65,15 @@ def test_only_d1_bench_loosens_and_only_the_body_checks():
     changed = {k for k in POLICY_KEYS if d1[k] != bench[k]}
     assert changed == {"check_body", "chest_keepout"}
     assert bench["check_body"] is False and bench["chest_keepout"] is None
-    for name in db.GUARD_PROFILES:
+    for name in db.ROBOT_MODELS["d1"].guard_profiles:
         if name != "d1-bench":
             assert _policy(name) == d1, name
+
+
+def test_the_rig_drops_only_the_chest_keepout():
+    d1, rig = _policy("d1"), _policy("arm-ee-bench")
+    assert {k for k in POLICY_KEYS if d1[k] != rig[k]} == {"chest_keepout"}
+    assert rig["chest_keepout"] is None and rig["check_arm_arm"] and rig["check_self"]
 
 
 def test_selection_rules():
@@ -129,7 +142,7 @@ def test_the_profile_file_keys_the_daemon_reads_are_pinned(tmp_path):
     # repeats it, and d1-bench is selected only by the d1-bench record.
     db.write_bundle(tmp_path / "b")
     b = db.load_bundle(tmp_path / "b")
-    for name in db.GUARD_PROFILES:
+    for name in db.ROBOT_MODELS["d1"].guard_profiles:
         doc = b.read_json(f"guard/profile.{name}.json")
         assert doc["schema"] == "manipulation_kit.guard_profile/1"
         assert isinstance(doc["check_body"], bool)

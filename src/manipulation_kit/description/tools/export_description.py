@@ -297,12 +297,23 @@ def export_d1_wholebody_gripper(dest, _mesh_prefix, files, with_assets=False):
     nothing in the manifest to explain why, is the failure mode this flavour
     exists to prevent.
     """
-    src_urdf = os.path.join(DESCRIPTION, "d1", "d1_wholebody_gripper.urdf")
+    return _export_d1_dir_urdf("d1_wholebody_gripper.urdf", dest, files, with_assets)
+
+
+def export_arm_ee_bench(dest, _mesh_prefix, files, with_assets=False):
+    """arm_ee_bench_visual.urdf (robot model ``arm-ee-bench``: two D1 arms on
+    a stand, each wearing a Wuji Hand 2) and every mesh it references, as
+    :func:`export_d1_wholebody_gripper` exports the D1."""
+    return _export_d1_dir_urdf("arm_ee_bench_visual.urdf", dest, files, with_assets)
+
+
+def _export_d1_dir_urdf(name, dest, files, with_assets):
+    src_urdf = os.path.join(DESCRIPTION, "d1", name)
     tree = ET.parse(src_urdf)
     refs = _relative_refs(tree, os.path.dirname(src_urdf))
     os.makedirs(dest, exist_ok=True)
     absent_opt, absent_ext = _collect_refs(refs, dest, files, with_assets)
-    out = _rewrite(tree, dest, "d1_wholebody_gripper.urdf", refs, files)
+    out = _rewrite(tree, dest, name, refs, files)
 
     declared = set(absent_opt) | set(absent_ext)
     missing = [m.get("filename") for m in ET.parse(out).getroot().iter("mesh")
@@ -344,6 +355,7 @@ FLAVOURS = {
     "d1_collision": export_d1_collision,
     "d1_wholebody_gripper": export_d1_wholebody_gripper,
     "d1_arm": export_d1_arm,
+    "arm_ee_bench": export_arm_ee_bench,
 }
 
 
