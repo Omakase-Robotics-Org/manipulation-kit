@@ -307,6 +307,16 @@ generated gesture CSV must be re-recorded or regenerated, because a CSV pins
 HOME as its first and last keyframe (omakaseos'
 `test_d1_gesture_home_sync.py` is the gate for that).
 
+#### Manipulation HOME — `config/manipulation_home_pose.json`
+
+A second, independent pose in the same format: the arms' ready pose for
+manipulation. Teleop (`dx-vr-teleop`) and policy inference (`d1-inference`)
+start from and return to it; `omakase-core`, the gesture tools and
+`d1-firmwared`'s `/v1/arm/{side}/home` keep the base HOME above. Gestures never
+reference it, so changing it regenerates nothing. It obeys the same rules: one
+real file, never copied, mirror-symmetric, guard- and FK-tested. Resolve it with
+`manipulation_kit.arms.d1.arm.kinematics.default_manipulation_home_pose_json()`.
+
 ### 3. `gesture_play` CLI signature (how omakaseos subprocesses it)
 
 ```

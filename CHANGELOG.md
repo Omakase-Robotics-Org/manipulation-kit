@@ -6,6 +6,19 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.0 — unreleased
+
+**A manipulation HOME, separate from the base HOME.** New:
+`config/manipulation_home_pose.json`, the arms' ready pose for teleop and
+policy inference, in the same format as `config/home_pose.json`, and
+`arms.d1.arm.kinematics.default_manipulation_home_pose_json()` to resolve it
+(load it with `load_home(path)`). `config/home_pose.json` is unchanged and
+stays the base HOME: the rest pose of the conversation stack, the first and
+last keyframe of every CSV gesture, and the pose `d1-firmwared` embeds. No
+gesture needs regenerating. Both files are covered by the same tests
+(single real file, no copied literals, 14 mirror-symmetric degrees, guard
+clearance, coupled wrist limit, pinned FK). Nothing breaks.
+
 ## 0.21.0 — unreleased
 
 **An end effector of your own, served to d1-firmwared over shared memory.**

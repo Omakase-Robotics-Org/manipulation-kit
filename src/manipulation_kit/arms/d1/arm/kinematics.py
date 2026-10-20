@@ -65,6 +65,17 @@ def default_home_pose_json() -> Path:
     return _KIT / "config" / "home_pose.json"
 
 
+def default_manipulation_home_pose_json() -> Path:
+    """The manipulation HOME pose, same format as :func:`default_home_pose_json`.
+
+    The arms' ready pose for manipulation, used by teleop and policy inference.
+    It may differ from the base HOME, which stays the rest pose of the
+    conversation stack and the first and last keyframe of every CSV gesture.
+    Load it with ``load_home(default_manipulation_home_pose_json())``.
+    """
+    return _KIT / "config" / "manipulation_home_pose.json"
+
+
 def load_home(path: Optional[Path] = None, *, quiet: bool = False
               ) -> Dict[str, np.ndarray]:
     """Per-logical-side 7-joint HOME [rad]; URDF zero (T-pose) as fallback.

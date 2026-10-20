@@ -104,6 +104,23 @@ def test_fk_home_pose(model):
         assert _close((pr[0], -pr[1], pr[2]), pl, 1e-4)
 
 
+def test_fk_manipulation_home_pose(model):
+    """Manipulation HOME (config/manipulation_home_pose.json): the arms' ready
+    pose for teleop and inference, left/right mirror-symmetric."""
+    with open(os.path.join(CONFIG, "manipulation_home_pose.json")) as f:
+        hp = json.load(f)["home_pose"]
+    q = {f"Joint{i + 1}_R": math.radians(hp[i]) for i in range(7)}
+    q.update({f"Joint{i + 1}_L": math.radians(hp[7 + i]) for i in range(7)})
+    tfs = model.link_transforms(q)
+    assert _close(tfs["Link4_R"].t, (0.020540, 0.424807, 0.369377), 1e-4)
+    assert _close(tfs["Link7_R"].t, (0.266905, 0.362541, 0.295574), 1e-4)
+    assert _close(tfs["TCP_Link_R"].t, (0.305914, 0.286321, 0.280152), 1e-4)
+    for r, l in (("Link4_R", "Link4_L"), ("Link7_R", "Link7_L"),
+                 ("TCP_Link_R", "TCP_Link_L")):
+        pr, pl = tfs[r].t, tfs[l].t
+        assert _close((pr[0], -pr[1], pr[2]), pl, 1e-4)
+
+
 def test_default_urdf_is_the_repo_description(model):
     assert DEFAULT_URDF.endswith(os.path.join("description", "d1", "d1.urdf"))
     assert os.path.exists(DEFAULT_URDF)
