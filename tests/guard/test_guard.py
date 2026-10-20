@@ -67,6 +67,16 @@ def test_home_pose_passes(guard, home):
     assert rep.min_self_clearance > 0.0
 
 
+def test_manipulation_home_pose_passes(guard):
+    with open(os.path.join(CONFIG, "manipulation_home_pose.json")) as f:
+        hp = json.load(f)["home_pose"]
+    rep = guard.check(hp[:7], hp[7:])
+    assert rep.ok, str(rep)
+    assert rep.min_body_clearance >= 0.03
+    assert rep.min_chest_clearance >= 0.03
+    assert rep.min_self_clearance > 0.0
+
+
 def test_readme_example_pose_passes(guard):
     q = [0, -70, 0, -40, 0, 0, 0]
     assert guard.check(q, q).ok

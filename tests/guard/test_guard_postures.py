@@ -16,6 +16,10 @@ from manipulation_kit.guard import MotionGuard
 with open(os.path.join(os.path.dirname(manipulation_kit.__file__), "config", "home_pose.json")) as f:
     _HOME = json.load(f)["home_pose"]
 HOME = (_HOME[:7], _HOME[7:])
+with open(os.path.join(os.path.dirname(manipulation_kit.__file__), "config",
+                       "manipulation_home_pose.json")) as f:
+    _MANIPULATION_HOME = json.load(f)["home_pose"]
+MANIPULATION_HOME = (_MANIPULATION_HOME[:7], _MANIPULATION_HOME[7:])
 MIRROR = (-1, 1, -1, 1, -1, 1, -1)
 
 
@@ -32,9 +36,11 @@ P2 = ([-136.35, 101.22, 134.69, -86.76, 101.01, -54.44, -14.24],
       [125.75, 99.37, -136.56, -78.99, -96.71, -45.66, 4.09])
 
 
-def test_home_clears_the_body_by_the_margin_plus_5mm():
+@pytest.mark.parametrize("pose", [HOME, MANIPULATION_HOME],
+                         ids=["home", "manipulation_home"])
+def test_home_clears_the_body_by_the_margin_plus_5mm(pose):
     guard = MotionGuard(clamp_limits=False)
-    report = guard.check(*HOME)
+    report = guard.check(*pose)
     assert report.ok, report
     need = guard.body_margin_m + 0.005
     assert report.min_body_clearance >= need, report

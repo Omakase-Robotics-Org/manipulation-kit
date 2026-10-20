@@ -1304,10 +1304,12 @@ def test_the_flange_spacer_is_labelled_measured():
 
 
 # ---------------------------------------------------------------------------
-# HOME pose: exactly one file owns it, repo-wide
+# HOME poses: exactly one file owns each, repo-wide
 # ---------------------------------------------------------------------------
 
-CANONICAL_HOME = os.path.join(CONFIG, "home_pose.json")
+#: The base HOME (conversation gestures, omakase-core) and the manipulation
+#: HOME (teleop, policy inference). Same format, same rules.
+HOME_FILES = ("home_pose.json", "manipulation_home_pose.json")
 
 
 def _tracked_files():
@@ -1320,42 +1322,61 @@ def _tracked_files():
     return [p for p in out.stdout.splitlines() if p]
 
 
-def test_only_one_real_home_pose_file():
-    """`devices/omakase_arm/config/home_pose.json` is the ONLY home_pose.json
-    with content; any other must be a symlink pointing at it.
+@pytest.mark.parametrize("name", HOME_FILES)
+def test_only_one_real_home_pose_file(name):
+    """`manipulation_kit/config/<name>` is the ONLY file of that name with
+    content; any other must be a symlink pointing at it.
 
     The description package used to carry its own radians copy and sat a full
     pose (the pre-2026-06 "だらん") behind the robot for weeks. A second real
     file is the bug, so it is banned outright rather than diffed.
     """
+    canonical = os.path.join(CONFIG, name)
     tracked = _tracked_files()
     if tracked is None:
         pytest.skip("not a git checkout (installed wheel); "
                     "this test scans tracked files")
     reals, links = [], []
     for rel in tracked:
-        if os.path.basename(rel) != "home_pose.json":
+        if os.path.basename(rel) != name:
             continue
         path = os.path.join(REPO, rel)
         (links if os.path.islink(path) else reals).append(path)
 
-    assert reals == [CANONICAL_HOME], (
-        "home_pose.json must exist exactly once as a real file "
-        f"({CANONICAL_HOME}); found {reals}")
+    assert reals == [canonical], (
+        f"{name} must exist exactly once as a real file "
+        f"({canonical}); found {reals}")
     for link in links:
-        assert os.path.realpath(link) == os.path.realpath(CANONICAL_HOME), (
+        assert os.path.realpath(link) == os.path.realpath(canonical), (
             f"{link} is a symlink but does not point at the canonical "
-            f"home_pose.json (resolves to {os.path.realpath(link)})")
+            f"{name} (resolves to {os.path.realpath(link)})")
 
 
-def test_home_pose_numbers_are_not_copied_into_docs_or_code():
-    """No tracked file may reproduce the HOME angles as literals.
+@pytest.mark.parametrize("name", HOME_FILES)
+def test_home_pose_is_fourteen_mirrored_degrees(name):
+    """Both HOME files share one format (degrees, A1..A7 then B1..B7) and are
+    mirror-symmetric, B = A * MIRROR_SIGN, as MIRROR_SIGN above and every
+    consumer's mirroring assume."""
+    with open(os.path.join(CONFIG, name)) as f:
+        doc = json.load(f)
+    assert doc["units"] == "degrees"
+    assert doc["joint_order"] == [f"{s}{j}" for s in "AB" for j in range(1, 8)]
+    pose = doc["home_pose"]
+    assert len(pose) == 14 and all(math.isfinite(v) for v in pose)
+    for j, sign in enumerate(MIRROR_SIGN):
+        assert abs(pose[7 + j] - sign * pose[j]) < 1e-9, (name, j + 1)
+
+
+@pytest.mark.parametrize("name", HOME_FILES)
+def test_home_pose_numbers_are_not_copied_into_docs_or_code(name):
+    """No tracked file may reproduce a HOME pose's angles as literals.
 
     Docs, headers and viewer constants that inline the numbers are copies that
     nothing updates. Consumers must read the file (or, cross-repo, the
     `/api/d1/home_pose` endpoint that reads it).
     """
-    with open(CANONICAL_HOME) as f:
+    canonical = os.path.join(CONFIG, name)
+    with open(canonical) as f:
         pose = json.load(f)["home_pose"]
     # Two distinct, non-mirrored angles: matching BOTH in one file means the
     # pose was pasted in, not that a value coincidentally appears.
@@ -1368,7 +1389,7 @@ def test_home_pose_numbers_are_not_copied_into_docs_or_code():
     offenders = []
     for rel in tracked:
         path = os.path.join(REPO, rel)
-        if os.path.islink(path) or os.path.samefile(path, CANONICAL_HOME):
+        if os.path.islink(path) or os.path.samefile(path, canonical):
             continue
         # Recorded hardware fixtures under tests/data/ are measurements of a
         # robot that happened to stand at HOME, not copies of this file; they
@@ -1385,4 +1406,4 @@ def test_home_pose_numbers_are_not_copied_into_docs_or_code():
 
     assert not offenders, (
         "these files inline the HOME angles instead of reading "
-        f"manipulation_kit/config/home_pose.json: {offenders}")
+        f"manipulation_kit/config/{name}: {offenders}")

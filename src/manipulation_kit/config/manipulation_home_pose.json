@@ -1,0 +1,36 @@
+{
+  "_comment": "D1 dual-arm MANIPULATION HOME -- the arms' ready pose for manipulation: the pose teleop (dx-vr-teleop) and policy inference (d1-inference) start from and return to. It is NOT the base HOME in home_pose.json, which stays the rest pose of omakase-core and every CSV gesture (gestures pin home_pose.json as first and last keyframe, so changing THIS file regenerates nothing). Measured on d1-8 (right arm, arm B) and mirrored onto arm A, so it is exactly mirror-symmetric by construction: B = A * MIRROR_SIGN, sign-flipped on J1/J3/J5/J7 and equal on J2/J4/J6. Same format and conventions as home_pose.json: 14 arm joint angles in DEGREES, executable order ArmSide::A then ArmSide::B (A = physical left, B = physical right); gripper is controlled separately. Guard-checked by tests/guard (body, chest and self clearance) and FK-pinned in tests/guard/test_urdf_fk.py. Limits (Lite, deg): J1/J3/J5 +/-173, J2 +/-118, J4 -145..+45, J6 +/-60, J7 +/-90, J7 narrowed by J6 per coupled_joint_limits.json.",
+  "units": "degrees",
+  "joint_order": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "B5",
+    "B6",
+    "B7"
+  ],
+  "home_pose": [
+    -91.71,
+    28.29,
+    112.47,
+    -97.45,
+    48.99,
+    -43.06,
+    11.85,
+    91.71,
+    28.29,
+    -112.47,
+    -97.45,
+    -48.99,
+    -43.06,
+    -11.85
+  ]
+}

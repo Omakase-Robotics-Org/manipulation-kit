@@ -173,6 +173,22 @@ def test_home_reads_degrees_A_then_B(tmp_path):
     np.testing.assert_allclose(home["right"], np.deg2rad(deg[7:]))
 
 
+@pytest.mark.parametrize("path", [mk.default_home_pose_json,
+                                  mk.default_manipulation_home_pose_json],
+                         ids=["home", "manipulation_home"])
+def test_home_poses_are_holdable_by_the_arm(arm, path):
+    """Both HOME poses load from the package and sit inside the joint box and
+    the coupled wrist limit (J7 narrowed by J6) on both arms."""
+    assert path().is_file(), path()
+    home = mk.load_home(path())
+    for side in arm.sides:
+        assert arm.posture_violation(side, home[side]) is None, (side, path())
+
+
+def test_the_two_home_poses_are_distinct_files():
+    assert mk.default_home_pose_json() != mk.default_manipulation_home_pose_json()
+
+
 def test_clutch_tuning_is_the_measured_box():
     from manipulation_kit.arms import safety
 
