@@ -3,11 +3,12 @@
 schema = "omakase.binding.v1"
 
 [[source]]
-device = "udcap-right"                  # the glove driver's device id
+device = "native@5555"                  # the driver's device id, "<role>@<udp port>":
+                                        # "native" on the native path, "omakase" through HDService
 family = "teleop_gloves.pose_stream.v1"
 
 [[bind]]
-from     = "udcap-right"
+from     = "native@5555"
 to       = "hand/right"
 retarget = "wuji/wujihand2"
 
