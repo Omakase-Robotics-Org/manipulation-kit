@@ -3,12 +3,13 @@
 schema = "omakase.binding.v1"
 
 [[source]]
-device = "native@5555"                  # the driver's device id, "<role>@<udp port>":
-                                        # "native" on the native path, "omakase" through HDService
+device = "udcap"                        # the native driver's device id (one stream, both
+                                        # gloves; `--device-id` overrides it). Through
+                                        # HDService it is "<role>@<udp port>", e.g. "omakase@5555"
 family = "teleop_gloves.pose_stream.v1"
 
 [[bind]]
-from     = "native@5555"
+from     = "udcap"
 to       = "hand/right"
 retarget = "wuji/wujihand2"
 
