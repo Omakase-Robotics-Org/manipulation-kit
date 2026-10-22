@@ -18,6 +18,8 @@ replaced with neutral values:
 | `per_hand.dropout.jsonl` | the same driver with the ring finger's distal sensor node silent, so `ring.pip_flex`, `ring.dip_flex` and `ring.total_flex` are absent from every frame. |
 | `litchibot_wujihand2.calibration.json` | a `manipulation_kit.glove_calibration.v1` file, not a recording: the flexion half of the glove-to-Wuji Hand 2 table that drove a right hand on 2026-09-25 (`tests/hands/test_wujihand2.py` checks that it and the `wuji/wujihand2` map give that table's flexion outputs). It holds no swing range: the spread is scaled by the range the glove declares. |
 
+| `udcap_right_range.jsonl` | a UDCAP right hand's channels in radians, every fifth sample of a 30 s capture of the fingers and the thumb moving through their range (299 lines of `{"t", "radians"}`; `*_total_pitch` removed, no spread channels: the capture predates the driver publishing them). Used by `tests/hands/test_wuji_udcap.py`. |
+
 `tests/gloves/test_v1.py::test_derived_fixtures_decode_like_the_originals`
 checks that each fixture decodes exactly like its reference recording. Node
 names are compared by count only, because they were replaced. The test runs

@@ -130,3 +130,12 @@ the table in both modes. See the module docstring of `retarget.py`.
   is measured, so the integrator registers it.
 - **No `description`.** The vendor URDFs and meshes are not redistributed
   here.
+
+### From a UDCAP glove
+
+`manipulation_kit.hands.wuji.wujihand2.udcap.udcap_config()` is the absolute
+map for a UDCAP glove: the fingers and the thumb follow the glove's angles
+1:1, and `middle_S2` is held at 0 (the glove's spreads are measured against
+the middle finger). The same config as a binding is
+`docs/binding-examples/udcap-wuji-right.toml`. The thumb's `S2` follows
+`thumb_cm_yaw` with sign +1, which has not been seen on a hand.

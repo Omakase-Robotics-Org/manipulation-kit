@@ -6,6 +6,30 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.11 — unreleased
+
+**A UDCAP data glove drives the Wuji Hand 2 1:1, thumb included.** New:
+`manipulation_kit.hands.wuji.wujihand2.udcap.udcap_config()`, the
+`RetargetConfig` for a UDCAP glove under the `absolute` mapping, and
+`RetargetConfig.thumb_absolute` (default `False`, so no existing config
+changes): with it the thumb's joints read their `sources` as radians like the
+fingers' instead of opposition fractions.
+
+- Fingers: `<finger>_S1/S3/S4` from the finger's `mp/pip/dip_pitch`; `S2` from
+  `index/ring/pinky_mp_swing` (the glove's spread sign and the Wuji's agree).
+- `middle_S2` is held at 0 rad: the glove's spreads are measured against the
+  middle finger, and its own `middle_mp_swing` is computed by the vendor and
+  declared synthesized, so a bind that read it was refused.
+- Thumb: `thumb_S1` from `thumb_cm_pitch`, `thumb_S2` from `thumb_cm_yaw`,
+  `thumb_S3` from `thumb_mp_pitch`, `thumb_S4` from `thumb_ip_pitch`, each
+  clamped to the Wuji's limits. `thumb_S2` (sign +1) is a judgement that has
+  not been seen on a hand; set `invert` on that joint if it swings the wrong
+  way.
+- `docs/binding-examples/udcap-wuji-right.toml` is the same config as a
+  binding; a test pins the two together. The test fixture
+  `tests/data/gloves/udcap_right_range.jsonl` is a real right-hand capture
+  (299 samples, every fifth of a 30 s movement of the fingers and thumb).
+
 ## 0.22.10 — unreleased
 
 **Wuji Hand 2 follows the glove's angles 1:1 by default.** The range map

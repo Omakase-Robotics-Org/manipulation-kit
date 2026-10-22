@@ -1,0 +1,33 @@
+# A UDCAP data glove (right) driving a Wuji Hand 2 (right), 1:1 in radians.
+# The same table as manipulation_kit.hands.wuji.wujihand2.udcap.udcap_config().
+schema = "omakase.binding.v1"
+
+[[source]]
+device = "udcap-right"                  # the glove driver's device id
+family = "teleop_gloves.pose_stream.v1"
+
+[[bind]]
+from     = "udcap-right"
+to       = "hand/right"
+retarget = "wuji/wujihand2"
+
+[bind.retarget_config]
+mapping        = "absolute"             # the glove's angle IS the joint angle
+thumb_absolute = true                   # the thumb reads the glove's thumb angles
+# Joint order: thumb S1..S4, index, middle, ring, pinky (S1..S4 each).
+# middle_S2 is held at 0 rad (hold_rad is 0 for every joint): the glove's
+# spreads are measured against the middle finger, and its own is computed.
+hold = [false, false, false, false,
+        false, false, false, false,
+        false, true,  false, false,
+        false, false, false, false,
+        false, false, false, false]
+
+[bind.retarget_config.joints.thumb_S1]
+sources = { thumb_cm_pitch = 1.0 }
+[bind.retarget_config.joints.thumb_S2]
+sources = { thumb_cm_yaw = 1.0 }        # sign +1 is unverified on a hand: invert = true flips it
+[bind.retarget_config.joints.thumb_S3]
+sources = { thumb_mp_pitch = 1.0 }
+[bind.retarget_config.joints.thumb_S4]
+sources = { thumb_ip_pitch = 1.0 }

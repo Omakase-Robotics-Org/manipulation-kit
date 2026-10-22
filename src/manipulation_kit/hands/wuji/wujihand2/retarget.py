@@ -105,7 +105,10 @@ Absolute and range mapping
 
 The thumb follows the table above in both modes, from the flexion pose:
 its sources are opposition (``thumb_cm_yaw``, a fraction of the wearer's
-maximum), not an angle, so there is no radian to pass 1:1.
+maximum), not an angle, so there is no radian to pass 1:1 — unless the
+glove measures the thumb's joints as angles: with
+:attr:`RetargetConfig.thumb_absolute` the thumb's joints read their
+``sources`` as radians like the fingers (see :mod:`.udcap`).
 
 Sides: the vendor's left and right URDFs share limits and anatomical
 directions (:mod:`.axes`), so this one map serves both hands. Whether the
@@ -189,6 +192,11 @@ class RetargetConfig(_XhandConfig):
     #: Per joint, SDK order: radians subtracted from the glove's angle before
     #: it is applied, in absolute mode only.
     zero_rad: Tuple[float, ...] = (0.0,) * NUM_AXES
+    #: ``absolute`` mapping only: whether the thumb's joints read the glove's
+    #: angles 1:1 like the fingers' (their ``sources`` then name angle
+    #: channels, as :func:`manipulation_kit.hands.wuji.wujihand2.udcap.udcap_config`
+    #: sets them) instead of the opposition fractions of the table above.
+    thumb_absolute: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -278,13 +286,14 @@ class Retargeter(_XhandRetargeter):
         try:
             thumb = {ch for spec, held in zip(self.JOINTS, self.cfg.hold)
                      if not held and spec.name.startswith("thumb_")
+                     and not self.cfg.thumb_absolute
                      for ch, w in self.cfg.joints[spec.name].sources if w > 0}
             flex = self._range_targets(pose if pose is not None else {}, thumb)
         finally:
             self._plain = False
         out: List[Optional[float]] = []
         for i, (spec, held) in enumerate(zip(self.JOINTS, self.cfg.hold)):
-            if held or spec.name.startswith("thumb_"):
+            if held or (spec.name.startswith("thumb_") and not self.cfg.thumb_absolute):
                 out.append(flex[i])
                 continue
             m = self.cfg.joints[spec.name]
