@@ -1,19 +1,19 @@
 {
-  "description_version": "1.4.0",
-  "digest": "sha256:a0352a811be5db64756ca56a2c44073118f78e1e8c03cceed9121b797d590bce",
+  "description_version": "1.5.0",
+  "digest": "sha256:8266cd71eee039236d12740fb7cad66e1763d44e4ab57596d83c8820013bd791",
   "files": {
     "collision/collision.json": "ce6f1848a93b760c627111ec143e4fba8e453136a7b44f2d08e5447460a052ae",
     "end_effectors/tool_configs/d1_parallel_gripper.json": "a5c81fa2963bde3c8afa272cc739d02c2e7354ad51b6a55097153162536405be",
     "end_effectors/tool_configs/leadshine_dh116s.json": "132e7fc5ab3ad0578c077a467d3c45d97457914e20ff729e17d92d29e1fc0819",
     "end_effectors/tool_configs/linkerbot_o30.json": "5083081b376187e979cba281bd1fa75b1637561b7b75c1d8978a668069bb9cad",
-    "guard/profile.d1-bench.json": "99387f5a9039ab17871f6e0a80c116945771b47b784b05fc9b70490dd57dffad",
-    "guard/profile.d1.json": "6043066268a61bbc64b6677a07642355a32c99546850d749981eafaccd3cf080",
-    "guard/profile.sim.json": "96503d127ce4283334e1ae22f53f1461784c8ff3e7a251fc4f25fee18ad6806e",
+    "guard/profile.d1-arms-stand.json": "8c75e4b23fef5980c0bbee694a85231b1b4f65b3a13e62b4c5a8ecbef1e49949",
+    "guard/profile.d1.json": "ff85903899dfbb88178384fe5c60bdec0cb151b02ca3449bed654769deef1a4a",
+    "guard/profile.sim.json": "e99783b6cb235d7be1ec344d5e6b3c978f8995ea6f0df528d9b0a74e9fb15407",
     "hands/catalog.json": "09ede4f9eedc4accdc81d88eaeb0e88ad461db099741e1a3e08fbc0368d8c70a",
     "kinematics/d1.urdf": "10090c8c9ccc27b93261b031b2d82c7dcbbed45aa6665fe97d04a1db5a707026",
     "kinematics/d1_wholebody_gripper.urdf": "fd41beb44d7eed0a0e90c0444592d134004ce9d48d1c22b76266cdf41fbba4fc",
     "poses/home_pose.json": "c4ca404fea6020e67db75724d7453661d36d1c02cecd8617a9f9a2f5b320418b",
-    "robot.json": "41be858f758e57c2904eff99297d957227f91e06bd1bf82d9cdb9861f1df77f5",
+    "robot.json": "bb610f7646914f0c4cea4ddcdeb8e538566adc8d11297879fb4f2333d0ce9857",
     "visual/visual.json": "5294af141ec3fdf8c340d4288420f824f29417332ec0ccc45c97caa95618cd7d"
   },
   "history": {
@@ -21,7 +21,8 @@
     "1.1.0": "sha256:bd14d723306661c4cd94b7eb877eeb426275f38f510efee47990f16c07702d36",
     "1.2.0": "sha256:d2cadf3665d483bda4904900b77100c04d312736de8c87746ae0f3a5c66d6fb6",
     "1.3.0": "sha256:4f2a5a47e0d154449b47d2150df28dc873d7a94dd6a9c25a980de00410104a0a",
-    "1.4.0": "sha256:a0352a811be5db64756ca56a2c44073118f78e1e8c03cceed9121b797d590bce"
+    "1.4.0": "sha256:a0352a811be5db64756ca56a2c44073118f78e1e8c03cceed9121b797d590bce",
+    "1.5.0": "sha256:8266cd71eee039236d12740fb7cad66e1763d44e4ab57596d83c8820013bd791"
   },
   "model": "d1",
   "schema": "manipulation_kit.description_bundle_lock/1"

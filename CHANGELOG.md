@@ -6,6 +6,38 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.12 — unreleased
+
+**The `d1` bundle carries the `d1-arms-stand` guard profile, and `d1-bench`
+is gone.** `d1-firmwared` is always a D1 and reads one D1 description bundle;
+what changes for two arms on a stand is the guard profile, which it selects by
+name (`[arm] guard_profile`, default `d1`). So `guard/profile.d1-arms-stand.json`
+is now in the `d1` bundle, with the content `d1-bench` had (`check_body` false,
+`chest_keepout` null; the arm-to-arm and same-arm checks, the joint limits and
+every margin unchanged) and one more key, below. The `d1-bench` profile and its
+file `guard/profile.d1-bench.json` are removed: nothing released selects it.
+
+### Breaking
+
+- `d1` bundle: `guard/profile.d1-bench.json` is gone,
+  `guard/profile.d1-arms-stand.json` is new (`description_version` 1.4.0 ->
+  1.5.0). The `d1-arms-stand` model's own bundle (its URDFs, for a 3D view)
+  carries the same profile file, now also with `check_body` false
+  (`description_version` 1.0.0 -> 1.1.0). A reader that selected `d1-bench`
+  by its record must select `d1-arms-stand` by name.
+- Every guard profile file gains `check_hand_envelope` (`true` on `d1` and
+  `sim`, `false` on `d1-arms-stand`); `motion_guard_kwargs` does not pass it to `MotionGuard`.
+
+### Notes
+
+- `check_hand_envelope` is how the profile says end effectors are not checked:
+  the end effector is chosen from the hand catalog at run time, and nothing a
+  flange carries is judged, so a consumer of the profile (the daemon) leaves
+  the hand envelope capsules out of its checks. The kit's own `MotionGuard` is
+  unchanged (its module is pinned as shared with firmware-side hosts) and does
+  not take the key: on the D1's URDF it keeps checking the envelope, the more
+  conservative side, and the stand's URDF has no envelope.
+
 ## 0.22.11 — unreleased
 
 **A UDCAP data glove drives the Wuji Hand 2 1:1, thumb included.** New:

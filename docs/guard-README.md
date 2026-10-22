@@ -31,11 +31,12 @@ under one with `MotionGuard(**motion_guard_kwargs(guard_profile(name)))`):
 | profile | selected by | differs from `d1` |
 | --- | --- | --- |
 | `d1` | the real backend (default) | — |
-| `d1-bench` | the real backend and a `d1-bench` record written by the bench host package | body checks off (the bench stand has no torso, head or chassis); arm–arm and same-arm checks and every margin unchanged |
+| `d1-arms-stand` | by name: `[arm] guard_profile` in the daemon's configuration | body checks and chest keep-out off (a stand has no torso, head or chassis) and the hand envelope not checked (`check_hand_envelope: false`: a consumer leaves the end effectors out of its checks; the kit's own `MotionGuard` does not take the key); arm–arm and same-arm checks, joint limits and every margin unchanged |
 | `sim` | the simulated backend | nothing |
 
-Only `d1-bench` loosens anything; a test holds the other two to the guard's
-defaults.
+Only `d1-arms-stand` loosens anything; a test holds the other two to the guard's
+defaults. A daemon selects the profile by name and reports the one in force;
+`selected_by` keeps the shape an older daemon parses.
 
 ### `config/safety_zones.json` is deprecated
 

@@ -50,11 +50,11 @@ A new model is an entry here plus its URDFs (in the D1 generator's
 (:data:`~manipulation_kit.description.bundle.GUARD_PROFILES`); its bundle and
 its lock follow from those.
 
-``d1-arms-stand`` replaces the ``d1-bench`` guard profile of the ``d1``
-model, which described the same arms on a stand as a D1 whose body checks
-are off while still drawing and modelling the D1 body. ``d1-bench`` stays in
-the ``d1`` bundle so a daemon that selects it by its record keeps working
-until it selects the ``d1-arms-stand`` model instead.
+``d1-arms-stand`` is also a guard profile of the ``d1`` model: a daemon is
+always a D1 and selects the profile by name (``[arm] guard_profile``) from the
+one D1 bundle it reads; this model's own bundle (the stand's URDFs, for a 3D
+view) carries the same profile. It replaces the ``d1-bench`` profile, which
+described the same arms on a stand as a D1 whose body checks are off.
 """
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ ROBOT_MODELS: Dict[str, RobotModel] = {
             guard_urdf="d1.urdf",
             view_urdf="d1_wholebody_gripper.urdf",
             view_variant="d1-wholebody-gripper",
-            guard_profiles=("d1", "d1-bench", "sim"),
+            guard_profiles=("d1", "d1-arms-stand", "sim"),
             devices=("arms", "end_effectors", "lift", "neck", "eyes", "chassis"),
             end_effector_collision=True,
             recorded_input="refused",

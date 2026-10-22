@@ -30,7 +30,7 @@ path                                        what it is
                                             a consumer needs no URDF parser
 ``guard/profile.<name>.json``               a motion guard policy (checks,
                                             margins, keep-outs, exemptions):
-                                            ``d1``, ``d1-bench``, ``sim``
+                                            ``d1``, ``d1-arms-stand``, ``sim``
                                             (:data:`GUARD_PROFILES`)
 ``poses/home_pose.json``                    the HOME pose, verbatim
 ``end_effectors/tool_configs/<id>.json``    the tool configs, verbatim
@@ -205,43 +205,36 @@ def collision_model(urdf_path: Path) -> dict:
 #: The guard profiles a daemon selects between, and what selects each.
 #:
 #: Each is the guard's own defaults (``d1``) with the listed changes. Only
-#: ``d1-bench`` loosens anything, and only what a bench is physically
-#: missing: a bench carries the two arms on a stand with no torso, head or
-#: chassis, so the body checks (body boxes and chest keep-out) would judge a
-#: body that is not there. The arm-to-arm and same-arm checks, and every
-#: margin, stay as on the robot. ``sim`` reproduces the robot exactly; it
+#: ``d1-arms-stand`` loosens anything, and only what a stand is physically
+#: missing: two D1 arms on a stand carry no torso, head or chassis, so the
+#: body checks (body boxes and chest keep-out) would judge a body that is not
+#: there, and the arms wear no end effector the kit knows the shape of, so the
+#: hand envelope is not checked (``check_hand_envelope``: false; the end
+#: effector is chosen from the hand catalog at run time and nothing it carries
+#: is judged; the kit's own ``MotionGuard`` does not take this key, so on the
+#: D1's URDF it keeps checking the envelope, the more conservative side, while
+#: the stand's URDF has no envelope to check). The arm-to-arm and same-arm checks, the joint limits and every
+#: margin stay as on the robot. ``sim`` reproduces the robot exactly; it
 #: differs from ``d1`` only in what selects it.
 #:
-#: ``selected_by`` states the rule the daemon is to apply: ``d1`` is the real
-#: backend's default; ``d1-bench`` only with the real backend AND a
-#: ``d1-bench`` record written by the bench host package (never by a
-#: configuration file); ``sim`` only with the simulated backend.
+#: A daemon selects a profile BY NAME, from its configuration (``[arm]
+#: guard_profile``, default ``d1``) and reports the one in force; the
+#: description bundle holds every profile. ``selected_by`` keeps the shape an
+#: older daemon that selects by backend and record parses: ``d1`` is the real
+#: backend's default, ``sim`` the simulated backend's.
 GUARD_PROFILES = {
     "d1": {"selected_by": {"backend": "real", "record": None},
            "summary": "the D1 robot: every check on, reference margins",
            "changes": {}},
-    "d1-bench": {"selected_by": {"backend": "real", "record": "d1-bench"},
-                 "summary": "two D1 arms on a bench stand with no torso, head "
-                            "or chassis: body checks off, arm checks as on "
-                            "the robot",
-                 "changes": {"check_body": False, "chest_keepout": None}},
     "sim": {"selected_by": {"backend": "sim", "record": None},
             "summary": "the simulated D1: identical to d1",
             "changes": {}},
-    # Two D1 arms on a stand, a robot model of its own: there is no body in
-    # its URDF, so the body checks have nothing to judge, and the chest
-    # keep-out (fixed boxes where a D1's torso is) is off. Its URDF carries no
-    # end effector and no hand envelope: arm against arm, each arm against
-    # itself and the joint limits are checked, with the robot's margins, and
-    # nothing a flange carries. Selected by the model (robot.json's
-    # guard_profile); ``selected_by`` keeps the shape a daemon that selects
-    # by backend and record parses, and names the real backend with no
-    # record.
     "d1-arms-stand": {"selected_by": {"backend": "real", "record": None},
                       "summary": "two D1 arms on a stand: no body to keep "
                                  "out, arm checks as on the robot, end "
                                  "effectors not checked",
-                      "changes": {"chest_keepout": None}},
+                      "changes": {"check_body": False, "chest_keepout": None,
+                                  "check_hand_envelope": False}},
 }
 
 #: The profile file format.
@@ -258,6 +251,7 @@ def _guard_defaults() -> dict:
         "check_body": sig["check_body"].default,
         "check_arm_arm": sig["check_arm_arm"].default,
         "check_self": sig["check_self"].default,
+        "check_hand_envelope": True,
         "body_margin_m": sig["body_margin_m"].default,
         "arm_arm_margin_m": sig["arm_arm_margin_m"].default,
         "self_margin_m": sig["self_margin_m"].default,

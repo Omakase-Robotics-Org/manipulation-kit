@@ -1,5 +1,6 @@
-"""Guard profiles: d1 is the guard's defaults, sim equals d1, only d1-bench
-loosens and only the body checks; one neck yaw; safety_zones.json deprecated."""
+"""Guard profiles: d1 is the guard's defaults, sim equals d1, only d1-arms-stand
+loosens and only the body checks and the hand envelope; one neck yaw;
+safety_zones.json deprecated."""
 
 from __future__ import annotations
 
@@ -19,7 +20,8 @@ POSE_ELBOW_INTO_TORSO = [-20.8, -106.6, -3.6, -95.7, 24.0, -38.2, -63.9]
 POSE_AA_A = [158.8, 87.8, -134.1, -66.6, 89.8, -20.3, 90.0]
 POSE_AA_B = [-158.8, 87.8, 134.1, -66.6, -89.8, -20.3, 90.0]
 
-POLICY_KEYS = ("check_body", "check_arm_arm", "check_self", "body_margin_m",
+POLICY_KEYS = ("check_body", "check_arm_arm", "check_self", "check_hand_envelope",
+               "body_margin_m",
                "arm_arm_margin_m", "self_margin_m", "body_exempt_links",
                "disabled_body_boxes", "chest_keepout", "chest_exempt_links")
 
@@ -50,7 +52,8 @@ def test_each_model_s_bundle_carries_its_profiles():
 
 def test_d1_builds_the_default_guard():
     d1, default = _guard("d1"), MotionGuard()
-    for attr in ("check_body", "check_arm_arm", "check_self", "body_margin_m",
+    for attr in ("check_body", "check_arm_arm", "check_self",
+                 "body_margin_m",
                  "arm_arm_margin_m", "self_margin_m", "body_exempt_links",
                  "disabled_body_boxes", "chest_keepout", "chest_exempt_links"):
         assert getattr(d1, attr) == getattr(default, attr), attr
@@ -60,28 +63,41 @@ def test_sim_is_d1():
     assert _policy("sim") == _policy("d1")
 
 
-def test_only_d1_bench_loosens_and_only_the_body_checks():
-    d1, bench = _policy("d1"), _policy("d1-bench")
-    changed = {k for k in POLICY_KEYS if d1[k] != bench[k]}
-    assert changed == {"check_body", "chest_keepout"}
-    assert bench["check_body"] is False and bench["chest_keepout"] is None
+def test_only_d1_arms_stand_loosens_and_only_the_body_and_the_end_effectors():
+    d1, stand = _policy("d1"), _policy("d1-arms-stand")
+    changed = {k for k in POLICY_KEYS if d1[k] != stand[k]}
+    assert changed == {"check_body", "chest_keepout", "check_hand_envelope"}
+    assert stand["check_body"] is False and stand["chest_keepout"] is None
+    assert stand["check_hand_envelope"] is False and d1["check_hand_envelope"] is True
+    assert stand["check_arm_arm"] and stand["check_self"]
     for name in db.ROBOT_MODELS["d1"].guard_profiles:
-        if name != "d1-bench":
+        if name != "d1-arms-stand":
             assert _policy(name) == d1, name
 
 
-def test_the_stand_drops_only_the_chest_keepout():
-    d1, rig = _policy("d1"), _policy("d1-arms-stand")
-    assert {k for k in POLICY_KEYS if d1[k] != rig[k]} == {"chest_keepout"}
-    assert rig["chest_keepout"] is None and rig["check_arm_arm"] and rig["check_self"]
-    assert db.guard_profile("d1-arms-stand")["selected_by"] == {"backend": "real",
-                                                              "record": None}
+def test_the_d1_bundle_carries_the_stand_profile_and_not_d1_bench():
+    assert db.ROBOT_MODELS["d1"].guard_profiles == ("d1", "d1-arms-stand", "sim")
+    files = db.bundle_files("d1")
+    assert "guard/profile.d1-arms-stand.json" in files
+    assert "guard/profile.d1-bench.json" not in files
+    assert "d1-bench" not in db.GUARD_PROFILES
+    # The stand's own bundle carries the very same profile.
+    assert (db.bundle_files("d1-arms-stand")["guard/profile.d1-arms-stand.json"]
+            == files["guard/profile.d1-arms-stand.json"])
+
+
+def test_the_profile_file_says_the_end_effectors_are_not_checked():
+    stand = json.loads(db.bundle_files("d1")["guard/profile.d1-arms-stand.json"])
+    assert stand["check_hand_envelope"] is False and stand["check_body"] is False
+    assert stand["chest_keepout"] is None
+    assert json.loads(db.bundle_files("d1")["guard/profile.d1.json"])[
+        "check_hand_envelope"] is True
 
 
 def test_selection_rules():
     assert db.guard_profile("d1")["selected_by"] == {"backend": "real", "record": None}
-    assert db.guard_profile("d1-bench")["selected_by"] == {"backend": "real",
-                                                          "record": "d1-bench"}
+    assert db.guard_profile("d1-arms-stand")["selected_by"] == {"backend": "real",
+                                                               "record": None}
     assert db.guard_profile("sim")["selected_by"] == {"backend": "sim", "record": None}
 
 
@@ -94,14 +110,14 @@ def test_daemon_keys_repeat_the_policy():
 
 
 @pytest.mark.parametrize("pose", [POSE_BODY_HIT, POSE_ELBOW_INTO_TORSO])
-def test_a_body_hit_is_refused_on_the_robot_and_not_on_the_bench(pose):
+def test_a_body_hit_is_refused_on_the_robot_and_not_on_the_stand(pose):
     assert not _guard("d1").check(pose, None).ok
     assert not _guard("sim").check(pose, None).ok
-    assert _guard("d1-bench").check(pose, None).ok
+    assert _guard("d1-arms-stand").check(pose, None).ok
 
 
-def test_the_bench_still_keeps_the_arms_apart():
-    assert not _guard("d1-bench").check(POSE_AA_A, POSE_AA_B).ok
+def test_the_stand_still_keeps_the_arms_apart():
+    assert not _guard("d1-arms-stand").check(POSE_AA_A, POSE_AA_B).ok
 
 
 def test_an_unknown_profile_is_refused():
@@ -141,7 +157,7 @@ def test_safety_zones_json_says_it_is_deprecated():
 def test_the_profile_file_keys_the_daemon_reads_are_pinned(tmp_path):
     # d1-firmwared reads these keys from guard/profile.<name>.json in a
     # bundle: `check_body` is canonical, `daemon_keys["arm.guard_body"]`
-    # repeats it, and d1-bench is selected only by the d1-bench record.
+    # repeats it.
     db.write_bundle(tmp_path / "b")
     b = db.load_bundle(tmp_path / "b")
     for name in db.ROBOT_MODELS["d1"].guard_profiles:
@@ -152,7 +168,7 @@ def test_the_profile_file_keys_the_daemon_reads_are_pinned(tmp_path):
                                            "arm.guard_arm_arm_margin_m"}
         assert doc["daemon_keys"]["arm.guard_body"] is doc["check_body"]
         assert set(doc["selected_by"]) == {"backend", "record"}
-    bench = b.read_json("guard/profile.d1-bench.json")
-    assert bench["selected_by"] == {"backend": "real", "record": "d1-bench"}
-    assert bench["check_body"] is False
+    stand = b.read_json("guard/profile.d1-arms-stand.json")
+    assert stand["selected_by"] == {"backend": "real", "record": None}
+    assert stand["check_body"] is False
     assert b.read_json("guard/profile.d1.json")["check_body"] is True

@@ -66,7 +66,7 @@ def test_model_ids_name_the_structure():
 def test_the_d1_bundle_keeps_its_paths():
     files = db.bundle_files("d1")
     for p in ("kinematics/d1.urdf", "kinematics/d1_wholebody_gripper.urdf",
-              "guard/profile.d1.json", "guard/profile.d1-bench.json",
+              "guard/profile.d1.json", "guard/profile.d1-arms-stand.json",
               "guard/profile.sim.json", "robot.json"):
         assert p in files
     doc = json.loads(files["robot.json"])
