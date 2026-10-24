@@ -128,7 +128,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from typing import ClassVar, Dict, List, Optional, Tuple
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Tuple
 
 from ....gloves.pose import HandPose
 from ...joints import JointSpec
@@ -136,11 +136,12 @@ from ...robotera.xhand1.retarget import JointMap
 from ...robotera.xhand1.retarget import RetargetConfig as _XhandConfig
 from ...robotera.xhand1.retarget import Retargeter as _XhandRetargeter
 from .axes import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS, NUM_AXES  # noqa: F401
-from .pinch import BLEND_LEAD, INDEX_AXES, THUMB_AXES, opposition, pinch_table
+from .pinch import (BLEND_LEAD, TARGET_FINGERS, THUMB_AXES, ThumbModel, finger_axes, opposition,
+                    pinch_tables)
 
-#: SDK indices of the thumb's joints and of the index joints the pinch table reads.
+#: SDK indices of the thumb's joints, and per finger of the joints its pinch table reads.
 _THUMB = tuple(AXIS_NAMES.index(n) for n in THUMB_AXES)
-_INDEX = tuple(AXIS_NAMES.index(n) for n in INDEX_AXES)
+_MEET = {f: tuple(AXIS_NAMES.index(n) for n in finger_axes(f)) for f in TARGET_FINGERS}
 
 #: The spread interval: the URDF's ±0.698 rad less a 0.05 rad margin.
 SPREAD_RAD = 0.648
@@ -221,11 +222,25 @@ class RetargetConfig(_XhandConfig):
     #: opposition or of the index's curl makes; the consumer's own velocity
     #: limit still applies on top.
     pinch_max_step_rad: float = 0.1
+    #: ``thumb_pinch`` only: the per-operator model that says which finger
+    #: the thumb is at (:class:`~.pinch.ThumbModel`). When set, the thumb
+    #: blends towards the thumb that meets each of the four fingers by the
+    #: model's weights, and ``pinch_channel`` / ``pinch_open_rad`` /
+    #: ``pinch_closed_rad`` are not read. A binding writes it as the table
+    #: ``[bind.retarget_config.thumb_model]``.
+    thumb_model: Optional[ThumbModel] = None
+
+    #: Fields a binding file sets through their own parser (see
+    #: :mod:`manipulation_kit.binding.retarget_config`).
+    BINDING_FIELDS: ClassVar[Dict[str, Callable[..., Any]]] = {
+        "thumb_model": ThumbModel.from_table}
 
     def __post_init__(self):
         super().__post_init__()
         if self.thumb_pinch and not (self.mapping == "absolute" and self.thumb_absolute):
             raise ValueError("thumb_pinch needs mapping = \"absolute\" and thumb_absolute")
+        if self.thumb_model is not None and not self.thumb_pinch:
+            raise ValueError("thumb_model needs thumb_pinch")
         if not (math.isfinite(self.pinch_open_rad) and math.isfinite(self.pinch_closed_rad)
                 and self.pinch_open_rad < self.pinch_closed_rad):
             raise ValueError(f"pinch_open_rad ({self.pinch_open_rad}) must be below "
@@ -277,8 +292,11 @@ class Retargeter(_XhandRetargeter):
             for ch, w in self.cfg.joints[spec.name].sources:
                 if w > 0 and ch not in out:
                     out.append(ch)
-        if self._pinching() and self.cfg.pinch_channel not in out:
-            out.append(self.cfg.pinch_channel)
+        if self._pinching():
+            model = self.cfg.thumb_model
+            for ch in (model.channels if model is not None else (self.cfg.pinch_channel,)):
+                if ch not in out:
+                    out.append(ch)
         return tuple(out)
 
     def _pinching(self) -> bool:
@@ -290,32 +308,85 @@ class Retargeter(_XhandRetargeter):
     def reset(self) -> None:
         super().reset()
         self._last_thumb = None
+        self._last_shift = None
+
+    def _weights(self, angles) -> Optional[Dict[str, float]]:
+        """Finger -> blend weight towards the thumb that meets it, or ``None``."""
+        cfg = self.cfg
+        if cfg.thumb_model is not None:
+            return cfg.thumb_model.finger_weights(angles)
+        o = opposition(angles.get(cfg.pinch_channel), cfg.pinch_open_rad, cfg.pinch_closed_rad)
+        return None if o is None else {"index": o}
 
     def _pinch(self, out: List[Optional[float]], angles) -> None:
-        """Blend the 1:1 thumb in ``out`` towards the pinch thumb, in place
-        (see :mod:`.pinch`), then bound each thumb joint's step."""
+        """Blend the 1:1 thumb in ``out`` towards the thumbs that meet the
+        fingers, in place (see :mod:`.pinch`), then bound each thumb joint's step."""
         cfg = self.cfg
-        o = opposition(angles.get(cfg.pinch_channel), cfg.pinch_open_rad, cfg.pinch_closed_rad)
-        index = [out[i] for i in _INDEX]
-        pinch = None
-        if o is not None and o > 0.0 and None not in index:
-            pinch = pinch_table().thumb_for(*index)
+        weights = self._weights(angles)
+        total = None if weights is None else sum(weights.values())
+        model = cfg.thumb_model
+        if model is not None and model.thumb_s2_max is not None:
+            i = _THUMB[1]
+            if out[i] is not None and not cfg.hold[i]:
+                out[i] = min(out[i], model.thumb_s2_max)
+        if model is not None and model.finger_shift:
+            self._shift_fingers(out, weights)
+        meets = {}
+        if weights is not None:
+            tables = pinch_tables()
+            for f, w in list(weights.items()):
+                if w <= 0.0:
+                    continue
+                finger = [out[i] for i in _MEET[f]]
+                if None in finger:
+                    meets = None  # nothing to aim at: the consumer holds the thumb
+                    break
+                if model is not None:
+                    weights[f] = w = w * model.reach(tables[f].gap_for(*finger))
+                    if w <= 0.0:
+                        continue
+                meets[f] = tables[f].thumb_for(*finger)
+            total = sum(weights.values())
         last = self._last_thumb or [None] * len(_THUMB)
         step = cfg.pinch_max_step_rad
         for n, i in enumerate(_THUMB):
             if cfg.hold[i]:
                 continue
-            on = None if o is None else min(1.0, BLEND_LEAD[n] * o)
-            if on is None or (on > 0.0 and pinch is None) or (on < 1.0 and out[i] is None):
+            on = None if total is None else min(1.0, BLEND_LEAD[n] * total)
+            if on is None or (on > 0.0 and meets is None) or (on < 1.0 and out[i] is None):
                 out[i] = None  # nothing to aim with: the consumer holds the joint
                 continue
             if on > 0.0:
                 one = out[i] if on < 1.0 else 0.0
-                out[i] = self.JOINTS[i].clamp((1.0 - on) * one + on * pinch[n])
+                aim = sum(weights[f] * q[n] for f, q in meets.items()) / total
+                out[i] = self.JOINTS[i].clamp((1.0 - on) * one + on * aim)
             if step > 0.0 and last[n] is not None:
                 out[i] = min(last[n] + step, max(last[n] - step, out[i]))
             last[n] = out[i]
         self._last_thumb = last
+
+    _last_shift: Optional[Dict[str, List[float]]] = None
+
+    def _shift_fingers(self, out: List[Optional[float]], weights) -> None:
+        """Add each finger's :attr:`~.pinch.ThumbModel.finger_shift`, scaled by
+        its weight, to its targets in ``out`` (in place); the added amount
+        moves at most ``pinch_max_step_rad`` per call, like the thumb."""
+        step = self.cfg.pinch_max_step_rad
+        last = self._last_shift or {}
+        now: Dict[str, List[float]] = {}
+        for f, shift in zip(TARGET_FINGERS, self.cfg.thumb_model.finger_shift):
+            w = 0.0 if weights is None else weights.get(f, 0.0)
+            prev = last.get(f, [0.0] * len(shift))
+            add = []
+            for k, i in enumerate(_MEET[f]):
+                a = w * shift[k]
+                if step > 0.0:
+                    a = min(prev[k] + step, max(prev[k] - step, a))
+                add.append(a)
+                if out[i] is not None and not self.cfg.hold[i]:
+                    out[i] = self.JOINTS[i].clamp(out[i] + a)
+            now[f] = add
+        self._last_shift = now
 
     _plain = False
 

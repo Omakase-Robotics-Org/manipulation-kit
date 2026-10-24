@@ -32,6 +32,10 @@ default            TOML value
 
 ``sources`` REPLACES the joint's source list (it is not merged channel by
 channel), so the table says the whole weighted mean.
+
+A config class may parse a field of its own shape: ``BINDING_FIELDS`` on the
+dataclass maps a field name to ``parse(value, where, problems) -> value or
+None`` (the Wuji Hand 2's ``thumb_model`` table is read this way).
 """
 from __future__ import annotations
 
@@ -139,7 +143,12 @@ def build_retarget_config(model: str, overrides: Mapping[str, Any],
                             f"(fields: {', '.join(sorted(fields))})")
             continue
         default = getattr(defaults, key)
-        if isinstance(default, dict):
+        parse = getattr(cls, "BINDING_FIELDS", {}).get(key)
+        if parse is not None:
+            got = parse(value, w, problems)
+            if got is not None:
+                kwargs[key] = got
+        elif isinstance(default, dict):
             kwargs[key] = _joint_maps(default, value, w, problems)
         elif isinstance(default, tuple):
             if not isinstance(value, list) or len(value) != len(default):

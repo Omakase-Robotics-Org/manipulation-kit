@@ -78,8 +78,14 @@ that meets the Wuji's index tip.
   (median 78 to 71 mm) because some open-hand frames read a ``thumb_cm_pitch``
   above 0.15. ``thumb_pinch = False`` restores the plain 1:1 thumb.
   ``pinch_open_rad`` and ``pinch_closed_rad`` are per operator: set them in
-  the binding (a "pinch" calibration pose would write them, see
-  :mod:`.pinch`).
+  the binding.
+* **Which finger, per operator.** For some operators ``thumb_cm_pitch``
+  reads the same with an open hand and a pinch (0.31 and 0.30 rad in one
+  calibration session), and the glove has no sensor for which finger the
+  thumb opposes. A binding that carries a fitted ``thumb_model``
+  (:class:`.pinch.ThumbModel`) reads that from the whole hand instead and
+  sends the thumb to whichever of the four fingers it names;
+  ``udcap_config()`` carries none, since the model is the operator's.
 * **No channel range is read.** The glove's declared ranges are its catalogue
   ranges (a finger's full flexion), not the operator's, which is why the
   absolute mapping does not use them.

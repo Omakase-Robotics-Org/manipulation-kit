@@ -163,15 +163,46 @@ that meets the Wuji's index tip:
 - `thumb_S2` runs its blend twice as fast as the others (`pinch.BLEND_LEAD`):
   a positive `S2` from the 1:1 thumb is what pushes a half-opposed thumb into
   the index.
-- `pinch_table.json` holds the pinch thumb on a 13 x 14 x 12 grid over index
-  `S1` 0..1.2, `S3` 0..1.3, `S4` 0..1.1 rad, read trilinearly (an index past
-  the grid reads its edge). `pinch_build.py` solved it from the vendor's
+- `pinch_table.json` holds, per finger (index, middle, ring, pinky), the
+  thumb that meets that finger on a 16 x 19 x 15 grid over the finger's `S1`
+  0..1.5, `S3` 0..1.8, `S4` 0..1.4 rad (what the UDCAP glove reads for a
+  finger), read trilinearly. `pinch_build.py` solved it from the vendor's
   right-hand URDF and meshes (not in this repository; the file records the
-  URDF's SHA-256): the thumb tip on a point 8 mm from the index tip towards
+  URDF's SHA-256): the thumb tip on a point 8 mm from the finger tip towards
   its pad, raised in 2 mm steps until the thumb's last two segments are
-  outside the index's segment meshes, with a posture term that keeps
-  neighbouring grid points' thumbs close. The index's spread is not an input.
+  outside the finger's segment meshes, with a posture term that keeps
+  neighbouring grid points' thumbs close. Per grid point the file also holds
+  `pad_gap_mm`, how far the thumb tip stayed from the pad (100 mm more where
+  the thumb still overlaps the finger). The finger's spread is not an input.
 - Per operator: `pinch_open_rad` and `pinch_closed_rad` are a binding's
-  `retarget_config` fields. They are what a fourth, "pinch", calibration pose
-  would write (open hand, then a pinch: the two readings of `pinch_channel`);
-  no such pose exists yet.
+  `retarget_config` fields.
+
+### The per-operator thumb model (which finger the thumb is at)
+
+The UDCAP glove measures three thumb angles and nothing that says which
+finger the thumb opposes (`thumb_cm_yaw` is computed from `thumb_cm_pitch`),
+and `thumb_cm_pitch` alone does not separate an open hand from a pinch for
+every operator (0.31 against 0.30 rad in one calibration session). With
+`RetargetConfig.thumb_model` set (a `ThumbModel`, written in a binding as
+`[bind.retarget_config.thumb_model]`), the weights come from the whole hand
+instead:
+
+    p      = softmax(weights @ (angles[channels] / scale) + bias)   over none, index, middle, ring, pinky
+    w[f]   = clamp((p[f] - gate_lo) / (gate_hi - gate_lo), 0, 1), scaled to sum <= 1
+    w[f]  *= reach(pad_gap of finger f's table at its target)
+    thumb  = (1 - sum w) * 1:1 thumb + sum over f of w[f] * pinch_table[f](finger f's S1, S3, S4)
+
+| `thumb_model` key | meaning |
+|---|---|
+| `channels`, `scale` | the glove angles read (rad) and what each is divided by |
+| `weights`, `bias` | 5 rows (none, index, middle, ring, pinky) of the softmax regression |
+| `gate_lo`, `gate_hi` | probability below which a finger gets no weight, above which all (0.3, 0.7) |
+| `finger_shift` | per finger, `(S1, S3, S4)` rad added to that finger's target in proportion to its weight: moves the operator's pinch curl onto a curl the Wuji's thumb reaches (a nearly straight little finger is 40 mm out of reach) |
+| `thumb_s2_max` | cap on the 1:1 thumb's `S2` before blending (the glove's computed yaw puts the thumb inside the index's first segment at 0.611 rad) |
+| `reach_mm` | a finger's weight is full below this pad gap and gone above it (15, 30 mm) |
+| `fitted_from` | free text: the session it came from |
+
+The model is fitted per operator from a calibration session (outside this
+repository); nothing here fits it. The thumb target and the finger shift move
+at most `pinch_max_step_rad` per call. `pinch_channel`, `pinch_open_rad` and
+`pinch_closed_rad` are not read while a model is set.

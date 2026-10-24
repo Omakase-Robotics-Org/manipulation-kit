@@ -6,6 +6,35 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.14 — unreleased
+
+**The Wuji Hand 2's thumb can meet any of the four fingers, by a per-operator
+model.** `thumb_cm_pitch` does not tell an open hand from a pinch for every
+operator, and the UDCAP glove has no sensor for which finger the thumb opposes.
+New, opt-in per binding: `RetargetConfig.thumb_model` (a
+`pinch.ThumbModel`, `[bind.retarget_config.thumb_model]`): a softmax
+regression over the glove's angles gives weights for none / index / middle /
+ring / pinky, and the thumb blends towards each finger's meeting thumb by its
+weight. Without a model nothing changes.
+
+- `pinch_table.json` is schema `manipulation_kit.wuji_pinch_table/2`: one
+  table per finger, each on a wider grid (`S1` 0..1.5, `S3` 0..1.8, `S4`
+  0..1.4 rad, where the first version stopped at 1.2 / 1.3 / 1.1 and a finger
+  curled further read the edge and was aimed into), with a per-point
+  `pad_gap_mm`. `pinch_build.py` solves all four (`--jobs`).
+- `ThumbModel`: `finger_shift` (move an unreachable pinch curl onto a
+  reachable one), `thumb_s2_max` (cap the 1:1 thumb's computed `S2`),
+  `reach_mm` (fade a finger's weight as the thumb's reach to it goes).
+- `binding.retarget_config`: a config class may declare `BINDING_FIELDS`, a
+  field name -> parser for values of its own shape (used for `thumb_model`).
+
+### Breaking
+
+- `pinch.PinchTable` is one finger's table (`PinchTable(part, finger)`); the
+  file is read through `pinch_tables()`. `pinch_table()` still returns the
+  index table. `pinch_build.solve_point` takes the finger and returns
+  `(q, offset, residual, still_overlapping)`.
+
 ## 0.22.13 — unreleased
 
 **The Wuji Hand 2's thumb can pinch from a UDCAP glove.** A glove's thumb
