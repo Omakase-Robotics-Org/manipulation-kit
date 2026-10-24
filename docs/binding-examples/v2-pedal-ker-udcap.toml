@@ -1,0 +1,83 @@
+# One operator station: a foot pedal, a KER leader arm pair and a UDCAP glove.
+# Parsed by manipulation_kit.binding (schema omakase.binding.v2); a test pins it.
+schema = "omakase.binding.v2"
+
+[[source]]
+device = "pedal"
+family = "teleop_controls.event_stream.v1"
+
+[[source]]
+device    = "udcap-buttons"             # the driver was started with --device-id udcap
+companion = "udcap-sticks"              # the same glove's sticks confirm a real release
+sides     = { left = [0, 1, 2, 3], right = [4, 5, 6, 7] }   # which control is which hand
+family    = "teleop_controls.event_stream.v1"
+endpoint  = "127.0.0.1:5582"
+
+[[source]]
+device   = "udcap-sticks"
+family   = "teleop_controllers.input_stream.v1"
+endpoint = "127.0.0.1:5592"
+
+[[source]]
+device = "ker-0"
+family = "teleop_leaders.joint_stream.v1"
+
+[[bind]]
+from = "ker-0"
+to   = "arm/left"
+
+[[bind]]
+from = "ker-0"
+to   = "arm/right"
+
+[[input]]                               # applied to the calibrated closure of the grip
+name      = "ker-left-grip"
+from      = "ker-0/left_gripper"
+threshold = { on = 0.8, off = 0.6 }
+
+[[input]]
+name      = "ker-right-grip"
+from      = "ker-0/right_gripper"
+threshold = { on = 0.8, off = 0.6 }
+
+[[trigger]]                             # while following, a press stops; when still, a release under 5.0 s engages
+from = "pedal/#0"
+on   = "tap"
+do   = "engage.toggle"
+args = { arms = "both" }
+
+[[trigger]]
+from   = "pedal/#0"
+on     = "hold"
+hold_s = 5.0
+do     = "home.run"
+
+[[trigger]]                             # when still, grip the left leader and hold the pedal 2 s: the left arm stays, the right engages
+from      = "pedal/#0"
+with      = ["ker-left-grip"]
+modifiers = "during"
+on        = "hold"
+hold_s    = 2.0
+do        = "engage.start"
+args      = { arms = "right" }
+
+[[trigger]]                             # grip the right leader and hold 2 s: only the left arm engages
+from      = "pedal/#0"
+with      = ["ker-right-grip"]
+modifiers = "during"
+on        = "hold"
+hold_s    = 2.0
+do        = "engage.start"
+args      = { arms = "left" }
+
+[[trigger]]                             # a key that always stops; no motion trigger shares it
+from = "udcap-buttons/#5"               # right B
+on   = "press"
+do   = "engage.stop"
+args = { arms = "both" }
+
+[[trigger]]                             # while left A is down, the left stick drives the base
+from = "udcap-buttons/#0"
+on   = "while"
+do   = "base.drive"
+args = { linear = "udcap-sticks/left_stick_y", angular = "udcap-sticks/left_stick_x", invert_linear = true, invert_angular = true }

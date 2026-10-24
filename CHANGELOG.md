@@ -6,6 +6,35 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.12 — unreleased
+
+**`omakase.binding.v2`: operator inputs to actions, parsed and validated.**
+`manipulation_kit.binding` now accepts `schema = "omakase.binding.v2"` beside
+v1 (v1 files parse exactly as before). Nothing here runs: the kit only reads
+and checks the file, and carries no robot-specific number (`max_*` must only
+be positive). New, all exported from `manipulation_kit.binding` and defined in
+`manipulation_kit.binding.triggers`:
+
+- `[[source]]` keys `endpoint` ("host:port"), `companion` (a
+  `teleop_controllers.input_stream.v1` source of the same glove) and `sides`
+  (hand -> control indices); `Source` gains `endpoint`, `companion`, `sides`.
+- `[[input]]` (`DerivedInput`): a button from an analog value, with
+  `threshold = { on, off }`, `0 <= off < on <= 1`.
+- `[[trigger]]` (`Trigger`): `from`, `with`, `modifiers`, `on`, `hold_s`,
+  `do`, `args`, checked against `CATALOG` (`ActionSpec`): `engage.start|stop|
+  toggle`, `home.run`, `recording.start|stop|toggle|abort`, `base.drive`,
+  `base.stop`, each with a safety class that fixes its gestures and whether it
+  takes modifiers. `Binding` gains `inputs` and `triggers` (empty for v1).
+- In v2, `to = "action/..."` binds are refused: an action is a `[[trigger]]`.
+- `v1_action_triggers(binding)` converts a v1 binding's `action/...` binds to
+  v2 inputs and triggers. It uses the server's meaning of `one_arm`: the
+  gripped leader's arm stays still and the OTHER arm engages. The v1 docstring
+  of `one_arm` said the opposite and is corrected.
+- `docs/binding-examples/v2-pedal-ker-udcap.toml` is a pinned example.
+
+`large_motion` `hold_s` has a floor of 0.8 s here; the per-kind floors (a pedal
+needs longer) are the consumer's.
+
 ## 0.22.11 — unreleased
 
 **A UDCAP data glove drives the Wuji Hand 2 1:1, thumb included.** New:

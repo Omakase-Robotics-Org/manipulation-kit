@@ -50,7 +50,8 @@ robot output, the one thing that drives it (``[[bind]]``)::
     map    = { tap = "toggle", hold = "abort" }
     hold_s = 0.8                              # optional; default 0.5
 
-    # A leader's trigger, held, engages one arm only.
+    # A leader's grip, held, engages one arm only: the OTHER arm (the gripped
+    # leader's arm stays still).
     [[bind]]
     from = "ker-left/left_trigger"
     to   = "action/engage"
@@ -160,6 +161,9 @@ from typing import (Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union)
 
 from ..gloves.calibration import ChannelRange, load_ranges
 from .retarget_config import build_retarget_config
+from .triggers import (BINDING_SCHEMA_V2, CATALOG, CONTROLLERS_FAMILY, ActionSpec,
+                       DerivedInput, Trigger, check_sources_v2, parse_source_v2,
+                       parse_v2_sections, v1_action_triggers)
 
 #: The ``schema`` string a binding file carries. Refused if different.
 BINDING_SCHEMA = "omakase.binding.v1"
@@ -204,8 +208,9 @@ DEFAULT_HOLD_S = 0.5
 #: accepts as ``map`` values. ``recording``: ``start`` an episode, ``stop``
 #: it and keep it, ``toggle`` (start when idle, stop when recording),
 #: ``abort`` (stop it and discard it). ``engage``: ``start`` and ``stop``
-#: teleoperation of every bound arm, ``toggle`` flips it, ``one_arm`` engages
-#: only the arm whose leader raised the gesture. ``home``: ``run`` the home
+#: teleoperation of every bound arm, ``toggle`` flips it, ``one_arm`` (held on a
+#: leader's grip channel, with the engage switch) engages only the OTHER arm:
+#: the arm whose leader is gripped stays still. ``home``: ``run`` the home
 #: motion.
 ACTIONS = {
     "recording": ("start", "stop", "toggle", "abort"),
@@ -231,6 +236,7 @@ _OUTPUT_RE = re.compile(rf"^(?P<kind>{_ID})/(?P<rest>{_ID}(?:/{_ID})*)$")
 _MODEL_RE = re.compile(rf"^{_ID}/{_ID}$")
 
 _SOURCE_KEYS = {"device", "family", "instance"}
+_SOURCE_KEYS_V2 = _SOURCE_KEYS | {"endpoint", "companion", "sides"}
 _BIND_KEYS = {"from", "to", "range", "map", "retarget", "calibration",
               "retarget_config", "hold_s", "mode"}
 
@@ -251,6 +257,14 @@ class Source:
     device: str
     family: str
     instance: Optional[int] = None
+    #: ``"host:port"`` to subscribe to (version 2), else ``None``.
+    endpoint: Optional[str] = None
+    #: Device id of the controllers-family source of the same glove that
+    #: confirms this source's releases (version 2), else ``None``.
+    companion: Optional[str] = None
+    #: ``{"left": (control indices...), "right": (...)}`` -- which control
+    #: belongs to which hand (version 2), else ``None``.
+    sides: Optional[Dict[str, Tuple[int, ...]]] = None
 
 
 @dataclass(frozen=True)
@@ -330,9 +344,16 @@ class Binding:
     schema: str
     sources: Tuple[Source, ...]
     binds: Tuple[Bind, ...]
+    #: ``[[input]]`` derived inputs (version 2); empty for version 1.
+    inputs: Tuple[DerivedInput, ...] = ()
+    #: ``[[trigger]]`` objects (version 2); empty for version 1.
+    triggers: Tuple[Trigger, ...] = ()
 
     def source(self, device: str) -> Optional[Source]:
         return next((s for s in self.sources if s.device == device), None)
+
+    def input(self, name: str) -> Optional[DerivedInput]:
+        return next((i for i in self.inputs if i.name == name), None)
 
     def hand_binds(self) -> Tuple[Bind, ...]:
         return tuple(b for b in self.binds if b.whole_hand)
@@ -379,9 +400,12 @@ def parse_binding(data: Mapping[str, Any], *,
     base = Path(base_dir) if base_dir is not None else Path.cwd()
 
     schema = data.get("schema")
-    if schema != BINDING_SCHEMA:
-        problems.append(f"schema must be {BINDING_SCHEMA!r}, got {schema!r}")
-    unknown_top = set(data) - {"schema", "source", "bind"}
+    v2 = schema == BINDING_SCHEMA_V2
+    if schema != BINDING_SCHEMA and not v2:
+        problems.append(f"schema must be {BINDING_SCHEMA!r} or {BINDING_SCHEMA_V2!r}, "
+                        f"got {schema!r}")
+    unknown_top = set(data) - ({"schema", "source", "bind", "input", "trigger"} if v2
+                               else {"schema", "source", "bind"})
     if unknown_top:
         problems.append(f"unknown top-level key(s) {sorted(unknown_top)}")
 
@@ -391,7 +415,7 @@ def parse_binding(data: Mapping[str, Any], *,
         if not isinstance(raw, Mapping):
             problems.append(f"{where}: not a table")
             continue
-        extra = set(raw) - _SOURCE_KEYS
+        extra = set(raw) - (_SOURCE_KEYS_V2 if v2 else _SOURCE_KEYS)
         if extra:
             problems.append(f"{where}: unknown key(s) {sorted(extra)}")
         device, family, instance = raw.get("device"), raw.get("family"), raw.get("instance")
@@ -409,8 +433,13 @@ def parse_binding(data: Mapping[str, Any], *,
         if any(s.device == device for s in sources):
             problems.append(f"{where}: device {device!r} is declared twice")
             continue
-        sources.append(Source(device, family, instance))
+        endpoint = companion = sides = None
+        if v2:
+            endpoint, companion, sides = parse_source_v2(raw, f"{where} {device}", problems)
+        sources.append(Source(device, family, instance, endpoint, companion, sides))
     by_device = {s.device: s for s in sources}
+    if v2:
+        check_sources_v2(sources, problems)
 
     available = None if available_outputs is None else set(available_outputs)
     binds: List[Bind] = []
@@ -436,6 +465,10 @@ def parse_binding(data: Mapping[str, Any], *,
         where = f"{where} ({frm} -> {to})"
         device, channel = fm.group("device"), fm.group("channel")
         kind, rest = om.group("kind"), om.group("rest").split("/")
+        if v2 and kind == "action":
+            problems.append(f"{where}: in {BINDING_SCHEMA_V2} an action is run by a "
+                            "[[trigger]], not bound with 'to = \"action/...\"'")
+            continue
         if kind == "accessory":
             if len(rest) != 2:
                 problems.append(f"{where}: an accessory output is "
@@ -607,9 +640,16 @@ def parse_binding(data: Mapping[str, Any], *,
                 problems.append(f"two binds drive the same output: {a.from_} -> "
                                 f"{a.to} and {b.from_} -> {b.to}")
 
+    inputs: Tuple[DerivedInput, ...] = ()
+    triggers: Tuple[Trigger, ...] = ()
+    if v2:
+        inputs, triggers = parse_v2_sections(data, by_device, problems)
+
     if problems:
         raise BindingError(problems, origin)
-    return Binding(schema=BINDING_SCHEMA, sources=tuple(sources), binds=tuple(binds))
+    return Binding(schema=BINDING_SCHEMA_V2 if v2 else BINDING_SCHEMA,
+                   sources=tuple(sources), binds=tuple(binds),
+                   inputs=inputs, triggers=triggers)
 
 
 def _toml_loads(text: str) -> Dict[str, Any]:
@@ -638,7 +678,8 @@ def load_binding(path: Union[str, Path], *,
                          available_outputs=available_outputs, origin=str(path))
 
 
-__all__ = ["ACTIONS", "ARM_MODES", "BINDING_SCHEMA", "Bind", "Binding", "BindingError",
-           "CONTROLS_FAMILY", "DAEMON_SIDE", "DEFAULT_HOLD_S", "GESTURES",
-           "GESTURE_FAMILIES", "GLOVE_FAMILY", "LEADERS_FAMILY", "Source", "build_retarget_config", "load_binding",
-           "parse_binding"]
+__all__ = ["ACTIONS", "ARM_MODES", "BINDING_SCHEMA", "BINDING_SCHEMA_V2", "Bind", "Binding",
+           "BindingError", "CATALOG", "CONTROLLERS_FAMILY", "CONTROLS_FAMILY", "ActionSpec",
+           "DAEMON_SIDE", "DEFAULT_HOLD_S", "DerivedInput", "GESTURES",
+           "GESTURE_FAMILIES", "GLOVE_FAMILY", "LEADERS_FAMILY", "Source", "Trigger",
+           "build_retarget_config", "load_binding", "parse_binding", "v1_action_triggers"]
