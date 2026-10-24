@@ -1,4 +1,4 @@
-"""The UDCAP data glove driving a Wuji Hand 2: the absolute (1:1) map.
+"""The UDCAP data glove driving a Wuji Hand 2: 1:1 fingers, a pinch-aware thumb.
 
 What the UDCAP glove stream publishes, per hand, in the shared glove channel
 vocabulary and in radians (0 = extended, positive towards the palm; zero is
@@ -14,10 +14,15 @@ the vendor open pose, offsets already removed by the driver):
 * ``middle_mp_swing``, which the vendor computes from the index and ring
   spreads (``0.24 * index - 0.32 * ring``): declared synthesized, so a bind
   that reads it is refused (``Declaration.check_drive_sources``);
-* the thumb: ``thumb_cm_pitch`` (flexion at the base joint), ``thumb_mp_pitch``,
-  ``thumb_ip_pitch``, ``thumb_cm_yaw`` (the base joint's second axis; the
-  driver removes the vendor's +20 degree rest offset) and ``thumb_cm_roll``,
-  all measured.
+* the thumb: ``thumb_cm_pitch`` (flexion at the base joint), ``thumb_mp_pitch``
+  and ``thumb_ip_pitch``, from the glove's thumb sensors, and
+  ``thumb_cm_yaw`` (the base joint's second axis; the driver removes the
+  vendor's +20 degree rest offset) and ``thumb_cm_roll``, which are NOT
+  measured although the driver declares them so: the vendor's solver computes
+  them from ``thumb_cm_pitch``. Its row for the yaw has a zero weight on every
+  sensor, so the yaw is ``min(2.5 * thumb_cm_pitch, 0.611)`` rad plus a term
+  from the little finger's spread, and the roll is ``0.6 * thumb_cm_pitch``
+  less 5 degrees. No sensor reports how far the thumb is opposed.
 
 :func:`udcap_config` is the :class:`RetargetConfig` that follows them:
 
@@ -33,6 +38,11 @@ joint                      source (radians, 1:1)            note
 ``thumb_S3``               ``thumb_mp_pitch``               ``mcp``
 ``thumb_S4``               ``thumb_ip_pitch``               ``ip``
 =========================  ===============================  ==============
+
+and on top of the thumb's four, the pinch-aware thumb
+(:attr:`RetargetConfig.thumb_pinch`, :mod:`.pinch`): as ``thumb_cm_pitch``
+rises from 0.15 to 0.30 rad the thumb moves from the 1:1 thumb to the thumb
+that meets the Wuji's index tip.
 
 * **Signs.** The glove's spread sign and the Wuji's ``S2`` agree (negative
   when the index moves away from the middle finger, positive for ring and
@@ -54,6 +64,22 @@ joint                      source (radians, 1:1)            note
   thumb swings the wrong way. ``thumb_cm_roll`` drives nothing. Each thumb
   joint is clamped to the Wuji's limits, narrower than what the glove reads
   (``thumb_cm_yaw`` reads up to 0.96 rad, ``thumb_S2`` stops at 0.698).
+* **The thumb pinches.** The 1:1 thumb alone cannot: over an operator's
+  recorded pinches (index tip and thumb tip touching on the glove) forward
+  kinematics of the vendor's right-hand URDF put the Wuji's thumb tip 81 mm
+  (median) from its index tip, and a positive ``thumb_S2`` (the computed yaw
+  never goes negative) pushes the thumb into the side of the index. So
+  ``thumb_pinch`` is on: opposition is read from ``thumb_cm_pitch`` (the
+  glove's one measured opposition signal; the recorded open hand reads 0.07
+  rad median, the pinches 0.42), ``pinch_open_rad = 0.15`` and
+  ``pinch_closed_rad = 0.30`` bound the blend, and each thumb joint moves at
+  most ``pinch_max_step_rad = 0.1`` rad per call. Over the same recording the
+  pinches come to 13 mm (median, tip to tip); an open hand moves 7 mm
+  (median 78 to 71 mm) because some open-hand frames read a ``thumb_cm_pitch``
+  above 0.15. ``thumb_pinch = False`` restores the plain 1:1 thumb.
+  ``pinch_open_rad`` and ``pinch_closed_rad`` are per operator: set them in
+  the binding (a "pinch" calibration pose would write them, see
+  :mod:`.pinch`).
 * **No channel range is read.** The glove's declared ranges are its catalogue
   ranges (a finger's full flexion), not the operator's, which is why the
   absolute mapping does not use them.
@@ -80,15 +106,19 @@ HELD = ("middle_S2",)
 
 
 def udcap_config(**overrides) -> RetargetConfig:
-    """The absolute map for a UDCAP glove (see the module docstring).
+    """The map for a UDCAP glove (see the module docstring).
 
     ``overrides`` are fields of :class:`RetargetConfig` applied on top
-    (``zero_rad``, ``ema_alpha``, a joint's ``invert`` through ``joints``)."""
+    (``zero_rad``, ``ema_alpha``, a joint's ``invert`` through ``joints``,
+    an operator's ``pinch_open_rad`` / ``pinch_closed_rad``, or
+    ``thumb_pinch=False`` for the plain 1:1 thumb)."""
     joints = default_joint_maps()
     for joint, channel in THUMB_SOURCES.items():
         joints[joint] = JointMap(((channel, 1.0),), joints[joint].lo, joints[joint].hi)
     hold = tuple(name in HELD for name in AXIS_NAMES)
-    cfg = RetargetConfig(joints=joints, hold=hold, mapping="absolute", thumb_absolute=True)
+    cfg = RetargetConfig(joints=joints, hold=hold, mapping="absolute", thumb_absolute=True,
+                         thumb_pinch=True, pinch_channel="thumb_cm_pitch",
+                         pinch_open_rad=0.15, pinch_closed_rad=0.30, pinch_max_step_rad=0.1)
     return replace(cfg, **overrides) if overrides else cfg
 
 

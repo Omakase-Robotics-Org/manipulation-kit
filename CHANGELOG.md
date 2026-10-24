@@ -6,6 +6,37 @@ bump (`tools/check_version_bump.py`). This file says what the bump was for, and
 in particular what it **breaks** — the repository's rule is a clean break with a
 loud reason, not a legacy path kept alive beside the new one.
 
+## 0.22.13 — unreleased
+
+**The Wuji Hand 2's thumb can pinch from a UDCAP glove.** A glove's thumb
+angles copied 1:1 do not pinch on this hand: over an operator's recorded
+pinches, forward kinematics of the vendor's right-hand URDF put the Wuji's
+thumb tip 81 mm (median) from its index tip. New, opt-in per binding:
+`RetargetConfig.thumb_pinch` (default `False`, so no existing config changes)
+blends the 1:1 thumb towards the thumb that meets the Wuji's index tip as an
+opposition angle (`pinch_channel`, default `thumb_cm_pitch`) rises from
+`pinch_open_rad` to `pinch_closed_rad`; each thumb joint then moves at most
+`pinch_max_step_rad` per call. The four fingers stay 1:1.
+
+- `manipulation_kit.hands.wuji.wujihand2.pinch`: the pinch table (package data
+  `pinch_table.json`, index `S1 x S3 x S4` -> thumb `S1..S4`, read
+  trilinearly) and the opposition ramp. `thumb_S2` blends twice as fast as the
+  other three (`BLEND_LEAD`).
+- `manipulation_kit.hands.wuji.wujihand2.pinch_build`: the maintainer tool that
+  solved the table from the vendor's URDF and meshes (not in this repository;
+  the table records the URDF's SHA-256). The same URDF gives the same file.
+- `udcap_config()` and `docs/binding-examples/udcap-wuji-right.toml` turn the
+  pinch on: `thumb_cm_pitch` 0.15 to 0.30 rad, 0.1 rad per call.
+  `thumb_pinch = false` is the previous 1:1 thumb.
+- `udcap.py` no longer calls `thumb_cm_yaw` and `thumb_cm_roll` measured: the
+  vendor's solver computes both from `thumb_cm_pitch`.
+
+### Breaking
+
+- `udcap_config()`'s thumb is no longer the glove's thumb angles 1:1 once
+  `thumb_cm_pitch` exceeds 0.15 rad. Pass `thumb_pinch=False` for the old
+  thumb.
+
 ## 0.22.12 — unreleased
 
 **The `d1` bundle carries the `d1-arms-stand` guard profile, and `d1-bench`

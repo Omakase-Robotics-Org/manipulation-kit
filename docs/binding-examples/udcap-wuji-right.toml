@@ -1,4 +1,5 @@
-# A UDCAP data glove (right) driving a Wuji Hand 2 (right), 1:1 in radians.
+# A UDCAP data glove (right) driving a Wuji Hand 2 (right): the fingers 1:1 in
+# radians, the thumb 1:1 blended towards a pinch as the thumb opposes.
 # The same table as manipulation_kit.hands.wuji.wujihand2.udcap.udcap_config().
 schema = "omakase.binding.v1"
 
@@ -16,6 +17,15 @@ retarget = "wuji/wujihand2"
 [bind.retarget_config]
 mapping        = "absolute"             # the glove's angle IS the joint angle
 thumb_absolute = true                   # the thumb reads the glove's thumb angles
+# The pinch-aware thumb: as thumb_cm_pitch rises from pinch_open_rad to
+# pinch_closed_rad, the thumb moves from the 1:1 thumb to the one that meets
+# the Wuji's index tip. Per operator: put your own open-hand and pinch
+# readings of thumb_cm_pitch here. thumb_pinch = false is the plain 1:1 thumb.
+thumb_pinch        = true
+pinch_channel      = "thumb_cm_pitch"
+pinch_open_rad     = 0.15
+pinch_closed_rad   = 0.30
+pinch_max_step_rad = 0.1                # rad per call, per thumb joint
 # Joint order: thumb S1..S4, index, middle, ring, pinky (S1..S4 each).
 # middle_S2 is held at 0 rad (hold_rad is 0 for every joint): the glove's
 # spreads are measured against the middle finger, and its own is computed.

@@ -139,3 +139,39 @@ map for a UDCAP glove: the fingers and the thumb follow the glove's angles
 the middle finger). The same config as a binding is
 `docs/binding-examples/udcap-wuji-right.toml`. The thumb's `S2` follows
 `thumb_cm_yaw` with sign +1, which has not been seen on a hand.
+
+### The pinch-aware thumb
+
+Copied 1:1, a glove's thumb does not pinch on this hand: the Wuji's thumb base
+and segments differ from a person's, and over a UDCAP operator's recorded
+pinches the Wuji's thumb tip ends 81 mm (median) from its index tip (forward
+kinematics of the vendor's right-hand URDF). `RetargetConfig.thumb_pinch`
+(off by default, on in `udcap_config()`) blends the 1:1 thumb towards the thumb
+that meets the Wuji's index tip:
+
+    o     = clamp((pinch_channel - pinch_open_rad) / (pinch_closed_rad - pinch_open_rad), 0, 1)
+    thumb = (1 - o) * 1:1 thumb + o * pinch_table(index S1, S3, S4)
+
+| field | default | meaning |
+|---|---|---|
+| `thumb_pinch` | `false` | the blend is on (needs `mapping = "absolute"` and `thumb_absolute`) |
+| `pinch_channel` | `thumb_cm_pitch` | the glove angle that says how far the thumb is opposed |
+| `pinch_open_rad` | 0.15 | that angle at `o = 0`: the 1:1 thumb |
+| `pinch_closed_rad` | 0.30 | that angle at `o = 1`: the pinch thumb |
+| `pinch_max_step_rad` | 0.1 | the most a thumb joint's target moves per call (0 = no bound) |
+
+- `thumb_S2` runs its blend twice as fast as the others (`pinch.BLEND_LEAD`):
+  a positive `S2` from the 1:1 thumb is what pushes a half-opposed thumb into
+  the index.
+- `pinch_table.json` holds the pinch thumb on a 13 x 14 x 12 grid over index
+  `S1` 0..1.2, `S3` 0..1.3, `S4` 0..1.1 rad, read trilinearly (an index past
+  the grid reads its edge). `pinch_build.py` solved it from the vendor's
+  right-hand URDF and meshes (not in this repository; the file records the
+  URDF's SHA-256): the thumb tip on a point 8 mm from the index tip towards
+  its pad, raised in 2 mm steps until the thumb's last two segments are
+  outside the index's segment meshes, with a posture term that keeps
+  neighbouring grid points' thumbs close. The index's spread is not an input.
+- Per operator: `pinch_open_rad` and `pinch_closed_rad` are a binding's
+  `retarget_config` fields. They are what a fourth, "pinch", calibration pose
+  would write (open hand, then a pinch: the two readings of `pinch_channel`);
+  no such pose exists yet.

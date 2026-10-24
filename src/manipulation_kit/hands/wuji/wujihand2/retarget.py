@@ -108,7 +108,10 @@ its sources are opposition (``thumb_cm_yaw``, a fraction of the wearer's
 maximum), not an angle, so there is no radian to pass 1:1 — unless the
 glove measures the thumb's joints as angles: with
 :attr:`RetargetConfig.thumb_absolute` the thumb's joints read their
-``sources`` as radians like the fingers (see :mod:`.udcap`).
+``sources`` as radians like the fingers (see :mod:`.udcap`). On top of that,
+:attr:`RetargetConfig.thumb_pinch` (off by default) blends that 1:1 thumb
+towards the thumb that meets the index tip as an opposition angle rises
+(:mod:`.pinch`); the four fingers stay 1:1.
 
 Sides: the vendor's left and right URDFs share limits and anatomical
 directions (:mod:`.axes`), so this one map serves both hands. Whether the
@@ -133,6 +136,11 @@ from ...robotera.xhand1.retarget import JointMap
 from ...robotera.xhand1.retarget import RetargetConfig as _XhandConfig
 from ...robotera.xhand1.retarget import Retargeter as _XhandRetargeter
 from .axes import AXIS_NAMES, JOINT_LIMITS_RAD, JOINTS, NUM_AXES  # noqa: F401
+from .pinch import BLEND_LEAD, INDEX_AXES, THUMB_AXES, opposition, pinch_table
+
+#: SDK indices of the thumb's joints and of the index joints the pinch table reads.
+_THUMB = tuple(AXIS_NAMES.index(n) for n in THUMB_AXES)
+_INDEX = tuple(AXIS_NAMES.index(n) for n in INDEX_AXES)
 
 #: The spread interval: the URDF's ±0.698 rad less a 0.05 rad margin.
 SPREAD_RAD = 0.648
@@ -197,9 +205,33 @@ class RetargetConfig(_XhandConfig):
     #: channels, as :func:`manipulation_kit.hands.wuji.wujihand2.udcap.udcap_config`
     #: sets them) instead of the opposition fractions of the table above.
     thumb_absolute: bool = False
+    #: ``absolute`` mapping with ``thumb_absolute`` only: blend the 1:1 thumb
+    #: towards the thumb that meets the index (:mod:`.pinch`) as the
+    #: ``pinch_channel`` angle rises from ``pinch_open_rad`` to
+    #: ``pinch_closed_rad``. The four fingers are not affected.
+    thumb_pinch: bool = False
+    #: The glove angle that says how far the thumb is opposed, rad.
+    pinch_channel: str = "thumb_cm_pitch"
+    #: ``pinch_channel`` at which the thumb is still the 1:1 thumb (``o = 0``).
+    pinch_open_rad: float = 0.15
+    #: ``pinch_channel`` at which the thumb is the pinch thumb (``o = 1``).
+    pinch_closed_rad: float = 0.30
+    #: The most a thumb joint's target moves per call while ``thumb_pinch``
+    #: is on, rad (0 = no bound). It bounds the step a fast change of
+    #: opposition or of the index's curl makes; the consumer's own velocity
+    #: limit still applies on top.
+    pinch_max_step_rad: float = 0.1
 
     def __post_init__(self):
         super().__post_init__()
+        if self.thumb_pinch and not (self.mapping == "absolute" and self.thumb_absolute):
+            raise ValueError("thumb_pinch needs mapping = \"absolute\" and thumb_absolute")
+        if not (math.isfinite(self.pinch_open_rad) and math.isfinite(self.pinch_closed_rad)
+                and self.pinch_open_rad < self.pinch_closed_rad):
+            raise ValueError(f"pinch_open_rad ({self.pinch_open_rad}) must be below "
+                             f"pinch_closed_rad ({self.pinch_closed_rad})")
+        if not (math.isfinite(self.pinch_max_step_rad) and self.pinch_max_step_rad >= 0):
+            raise ValueError(f"pinch_max_step_rad must be >= 0, got {self.pinch_max_step_rad}")
         if self.mapping not in MAPPINGS:
             raise ValueError(f"mapping must be one of {MAPPINGS}, got {self.mapping!r}")
         if len(self.zero_rad) != len(self.JOINTS):
@@ -245,7 +277,45 @@ class Retargeter(_XhandRetargeter):
             for ch, w in self.cfg.joints[spec.name].sources:
                 if w > 0 and ch not in out:
                     out.append(ch)
+        if self._pinching() and self.cfg.pinch_channel not in out:
+            out.append(self.cfg.pinch_channel)
         return tuple(out)
+
+    def _pinching(self) -> bool:
+        """Whether the pinch-aware thumb is on and some thumb joint is driven."""
+        return self.cfg.thumb_pinch and not all(self.cfg.hold[i] for i in _THUMB)
+
+    _last_thumb: Optional[List[Optional[float]]] = None
+
+    def reset(self) -> None:
+        super().reset()
+        self._last_thumb = None
+
+    def _pinch(self, out: List[Optional[float]], angles) -> None:
+        """Blend the 1:1 thumb in ``out`` towards the pinch thumb, in place
+        (see :mod:`.pinch`), then bound each thumb joint's step."""
+        cfg = self.cfg
+        o = opposition(angles.get(cfg.pinch_channel), cfg.pinch_open_rad, cfg.pinch_closed_rad)
+        index = [out[i] for i in _INDEX]
+        pinch = None
+        if o is not None and o > 0.0 and None not in index:
+            pinch = pinch_table().thumb_for(*index)
+        last = self._last_thumb or [None] * len(_THUMB)
+        step = cfg.pinch_max_step_rad
+        for n, i in enumerate(_THUMB):
+            if cfg.hold[i]:
+                continue
+            on = None if o is None else min(1.0, BLEND_LEAD[n] * o)
+            if on is None or (on > 0.0 and pinch is None) or (on < 1.0 and out[i] is None):
+                out[i] = None  # nothing to aim with: the consumer holds the joint
+                continue
+            if on > 0.0:
+                one = out[i] if on < 1.0 else 0.0
+                out[i] = self.JOINTS[i].clamp((1.0 - on) * one + on * pinch[n])
+            if step > 0.0 and last[n] is not None:
+                out[i] = min(last[n] + step, max(last[n] - step, out[i]))
+            last[n] = out[i]
+        self._last_thumb = last
 
     _plain = False
 
@@ -258,7 +328,7 @@ class Retargeter(_XhandRetargeter):
         describe."""
         if self.cfg.mapping == "range":
             return self
-        return Retargeter(replace(self.cfg, mapping="range"))
+        return Retargeter(replace(self.cfg, mapping="range", thumb_pinch=False))
 
     def __call__(self, flex):
         """Version-1 seam: flexion in, radians out, always the range map."""
@@ -312,6 +382,8 @@ class Retargeter(_XhandRetargeter):
                 continue
             rad = acc / total - self.cfg.zero_rad[i]
             out.append(spec.clamp(-rad if m.invert else rad))
+        if self._pinching():
+            self._pinch(out, angles)
         return self._smooth(out)
 
     def _range_targets(self, pose, channels=None) -> List[Optional[float]]:

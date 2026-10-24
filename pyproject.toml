@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manipulation-kit"
-version = "0.22.12"
+version = "0.22.13"
 description = "D1 manipulation kit: IK, URDF/description build, motion guard, end-effector configs, world views and manipulation primitives (pure computation; hardware via d1-firmwared)"
 readme = "README.md"
 authors = [{ name = "Omakase Robotics" }]
@@ -173,7 +173,7 @@ where = ["src"]
 "manipulation_kit.hands.linkerbot.o30" = ["README.md"]
 "manipulation_kit.hands.robotera.xhand1" = ["README.md", "retarget_*.json"]
 "manipulation_kit.hands.robotera.xhand1_lite" = ["README.md", "retarget_*.json"]
-"manipulation_kit.hands.wuji.wujihand2" = ["README.md", "retarget_*.json"]
+"manipulation_kit.hands.wuji.wujihand2" = ["README.md", "retarget_*.json", "pinch_table.json"]
 # The bundled d1-firmwared client is generated CODE (found by packages.find on
 # its own __init__.py files), but the two non-Python files beside it have to be
 # named: the OpenAPI document it was generated from and the snapshot metadata.

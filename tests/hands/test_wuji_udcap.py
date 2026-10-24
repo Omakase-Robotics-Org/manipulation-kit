@@ -51,7 +51,8 @@ def test_the_config_holds_only_the_middle_spread_and_drives_the_thumb():
 
 
 def test_every_joint_follows_the_glove_one_to_one_and_the_middle_spread_is_zero():
-    r = Retargeter(udcap_config())
+    # The plain 1:1 thumb; tests/hands/test_wuji_pinch.py covers the pinch.
+    r = Retargeter(udcap_config(thumb_pinch=False))
     out = r.joint_targets(None, angles=_angles(
         index_mp_pitch=0.4, index_pip_pitch=0.9, index_dip_pitch=0.3,
         index_mp_swing=-0.2, ring_mp_swing=0.1, pinky_mp_swing=0.3,
@@ -64,7 +65,7 @@ def test_every_joint_follows_the_glove_one_to_one_and_the_middle_spread_is_zero(
 
 
 def test_the_thumb_is_clamped_to_the_wujis_limits():
-    out = Retargeter(udcap_config()).joint_targets(None, angles=_angles(
+    out = Retargeter(udcap_config(thumb_pinch=False)).joint_targets(None, angles=_angles(
         thumb_cm_pitch=1.4, thumb_cm_yaw=0.96, thumb_mp_pitch=1.8, thumb_ip_pitch=-1.5))
     assert out[_i("thumb_S1")] == _clamp("thumb_S1", 1.4) == 1.291
     assert out[_i("thumb_S2")] == _clamp("thumb_S2", 0.96) == 0.698
@@ -98,7 +99,7 @@ def test_the_default_thumb_still_reads_the_flexion_pose():
 def test_a_real_right_hand_capture_stays_inside_the_limits_and_follows_the_glove():
     rows = [json.loads(line) for line in CAPTURE.read_text().splitlines()]
     assert len(rows) == 299
-    r = Retargeter(udcap_config())
+    r = Retargeter(udcap_config(thumb_pinch=False))
     seen = {n: [] for n in AXIS_NAMES}
     for row in rows:
         angles = HandAngles("right", row["radians"])
